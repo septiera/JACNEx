@@ -5,10 +5,7 @@
 ############# STEP0 IntervalList Initialisation
 #############################################################################################################
 # How the script works ?
-#This script allows to generate several kind of interval files for the different CNV calling tools.
-#Some of them are duplicated because informative columns are not adequate to the treatments (such as the name of the genes, the numbers of the exons ...)
-#Similarly, interval files must have a specific format, as is the case for GATK which does not require a .bed but an .interval.list.
-#Also to optimize the processing of certain data the interval files have been subdivided into 4. Following the process time evaluations.
+#This script is used to generate exon interval files (.bed) for use with the DECON/ExomeDepth tool.
 #Its use is described in the README of the scripts.
 
 #############################################################################################################
@@ -22,7 +19,7 @@ import sys # this module provides system information. (ex argv argument)
 import time # is a module for obtaining the date and time of the system.
 import logging # is a practical logging module. (process monitoring and development support)
 sys.path.append("/home/septiera/Benchmark_CNVTools/Scripts/Modules/")
-import FileFolderManagement.functions as ffm
+import FileFolderManagement.functions as ffm 
 
 #Definition of the scripts'execution date (allows to annotate the output files to track them over time) 
 now=time.strftime("%y%m%d")
@@ -30,7 +27,6 @@ now=time.strftime("%y%m%d")
 #############################################################################################################
 ############# Logging Definition 
 #############################################################################################################
-
 logging.basicConfig(level=logging.DEBUG)
 # create logger
 logger=logging.getLogger(sys.argv[0])
@@ -44,8 +40,6 @@ ch.setFormatter(formatter)
 logger.addHandler(ch)
 logging.getLogger().addHandler(ch)
 logger.propagate=False
-
-
 #############################################################################################################
 ############# Initiales files  
 #############################################################################################################
@@ -53,21 +47,20 @@ logger.propagate=False
 
 #Bed extracted from Nicolas' data (cf : /home/nthierry/Transcripts_Data/README) (4 columns : CHR Start End ENSEMBID_NBEX)
 #Particularity of this bed: it contains all the intervals for each exons of the canonical transcripts of the reference genome Grch38_p101.  (294 153 exons)
-PathBedToComplete="/data/septiera/REF_GENOME/canonicalTranscripts_200923.bed.gz"
+PathBedToComplete="/data/septiera/REF_GENOME/canonicalTranscripts_210826.bed.gz"
 
 #Bed from the gtf Grch38_p101 (cf : /data/septiera/REF_GENOME/README) (12 columns :"CHR1","START2","END3","DIR","ENSEMBLID","EXON","Gene_Name","gene_biotype","source","exon_version","tag","transcript_support_level")
 #Contains all the annotations of the canonical transcripts and more.
-PathBedWithAnnotation="/data/septiera/REF_GENOME/GRCh38.101_exonOnly_ForAnnotationSegments_200925.bed"
+PathBedWithAnnotation="/data/septiera/REF_GENOME/GRCh38.104_exonOnly_ForAnnotationSegments_210922.bed"
 
 #Path to the static results files folder (normally the generated files do not need to be changed often)
-OutputFolder="/home/septiera/Benchmark_CNVTools/Scripts/"
+OutputFolder="/home/septiera/InfertilityCohort_Analysis/Scripts/"
 
 #Indication of a dictionary file to be used necessary for the picard BedToInterval command to obtain an interval_list file.
 Dict="/data/septiera/REF_GENOME/hs38DH.dict"
 
 # Fasta file path definition for the reference genome useful to apply the preprocessedInterval GATK4 command.
 Fasta="/data/septiera/REF_GENOME/hs38DH.fa"
-
 
 ##############################################################################################################
 ############### Script Body
@@ -141,7 +134,6 @@ MergeTable=MergeTable.sort_values(by=["CHR1","START2","END3"])
 MergeTable=MergeTable[["CHR","START","END","DIR","ENSEMBLID","EXON","Gene_Name"]]
 logger.info("The sorting stage of the table works well.")
 
-
 ######################################
 # E) Padding File
 BED=MergeTable
@@ -155,11 +147,10 @@ BED["END"]=BED["END"]+10
 PathStaticFolder=ffm.CreateAnalysisFolder(OutputFolder,"StaticFiles")
 
 #1) Annotation file containing all the intervals of the exons of canonical transcripts (even the overlapping ones).
-MergeTable.to_csv(os.path.join(PathStaticFolder,"STEP0_Annotation_GRCH38_101_InitialData_"+str(len(MergeTable))+"exons_"+str(now)+".csv"),index=False,sep="\t")
+MergeTable.to_csv(os.path.join(PathStaticFolder,"STEP0_Annotation_GRCH38_101_InitialData_"+str(len(MergeTable))+"exons_"+str(now)+".tsv"),index=False,sep="\t")
 
 #2) Annotation file containing the padding intervals 10pb. 
-BED.to_csv(os.path.join(PathStaticFolder,"STEP0_Annotation_GRCH38_101_Padding10pb_"+str(len(BED))+"exons_"+str(now)+".csv"),index=False,sep="\t")
-
+BED.to_csv(os.path.join(PathStaticFolder,"STEP0_Annotation_GRCH38_101_Padding10pb_"+str(len(BED))+"exons_"+str(now)+".tsv"),index=False,sep="\t")
 
 #3) Bed file containing the following indications:
 #CHR:START:END
@@ -167,70 +158,15 @@ NameClassicBEDOv=os.path.join(PathStaticFolder,"STEP0_GRCH38_101_Padding10pb_"+s
 ClassicBEDOv=BED[["CHR","START","END"]]
 ClassicBEDOv.to_csv(NameClassicBEDOv,index=False, header=False,sep="\t")
 
-BED=BED.reset_index(drop=True)
-Tosep=len(BED)/4
-list=[0,1,2,3]
-print(Tosep)
-for i in  list:
-    nb=i+1
-    NBligneEnd=nb*Tosep
-    NBligneStart=NBligneEnd-Tosep
-    #CHR:START:END
-    ClassicBEDOv=BED.loc[NBligneStart:NBligneEnd,["CHR","START","END"]]
-    ClassicBEDOv.to_csv(os.path.join(PathStaticFolder,"STEP0_GRCH38_101_scatter"+str(i)+"_"+str(len(ClassicBEDOv))+"exons_"+str(now)+".bed"),index=False, header=False,sep="\t")
-
-
-	
-
-
 # 4) Deletion of duplicated exons because several genes have sequence homology, hence the duplication of exon intervals. (ex )
 BED["compare"]=BED.CHR+"_"+BED.START.astype(str)+"_"+BED.END.astype(str)
 BEDNoDup=BED.drop_duplicates(subset="compare")
-BEDNoDup.to_csv(os.path.join(PathStaticFolder,"STEP0_Annotation_GRCH38_101_Padding10pb_NoDupExons_"+str(len(BEDNoDup))+"exons_"+str(now)+".csv"),index=False,sep="\t")
+BEDNoDup.to_csv(os.path.join(PathStaticFolder,"STEP0_Annotation_GRCH38_101_Padding10pb_NoDupExons_"+str(len(BEDNoDup))+"exons_"+str(now)+".tsv"),index=False,sep="\t")
 
 #CHR:START:END
 NameClassicBEDNoDup=os.path.join(PathStaticFolder,"STEP0_GRCH38_101_Padding10pb_NoDupExons_"+str(len(BEDNoDup))+"exons_"+str(now)+".bed")
 ClassicBEDNoDup=BEDNoDup[["CHR","START","END"]]
 ClassicBEDNoDup.to_csv(NameClassicBEDNoDup,index=False, header=False,sep="\t")
 
-BEDNoChrM=BEDNoDup[BEDNoDup.CHR!="chrM"]
-#CHR:START:END
-NameClassicBEDNoCHRM=os.path.join(PathStaticFolder,"STEP0_GRCH38_101_Padding10pb_NoDupExons_NoCHRM_"+str(len(BEDNoChrM))+"exons_"+str(now)+".bed")
-ClassicBEDNoCHRM=BEDNoChrM[["CHR","START","END"]]
-ClassicBEDNoCHRM.to_csv(NameClassicBEDNoCHRM,index=False, header=False,sep="\t")
 
-#Add all caracteristique
-NameClassicBEDNoCHRM=os.path.join(PathStaticFolder,"STEP0_GRCH38_101_Padding10pb_NoDupExons_NoCHRM_AddAll_"+str(len(BEDNoChrM))+"exons_"+str(now)+".bed")
-BEDNoChrM.to_csv(NameClassicBEDNoCHRM,index=False, header=False,sep="\t")
-
-#CHR:START:END:GeneNAME
-NameClassicBEDNoCHRM=os.path.join(PathStaticFolder,"STEP0_GRCH38_101_Padding10pb_NoDupExons_NoCHRM_AddGN_"+str(len(BEDNoChrM))+"exons_"+str(now)+".bed")
-ClassicBEDNoCHRM=BEDNoChrM[["CHR","START","END","Gene_Name"]]
-ClassicBEDNoCHRM.to_csv(NameClassicBEDNoCHRM,index=False, header=False,sep="\t")
-
-
-# 5) Interval file production with the picard BedToIntervals command 
-#Check reference genome dictionnary existence:
-ffm.checkFileExistance(Dict)
-
-NameIntOv=os.path.join(PathStaticFolder,"STEP0_GRCH38_101_Padding10pb_"+now+".interval_list")
-GatkCommand='singularity run -B /data,/home --no-home  /data/septiera/singularity-cachedir/gatk_4.1.8.1.img gatk BedToIntervalList -I '+NameClassicBEDNoCHRM+' -O '+NameIntOv+' -SD '+Dict
-logger.info("GATK COMMAND: %s", GatkCommand)
-returned_value = os.system(GatkCommand)
-if returned_value == 0:
-	logger.info("Command Line picard BedTOintervalList for overlap intervals works well")
-else:
-	logger.error("Command Line picard BedTOintervalList for overlap intervals don't work, error status = %s", returned_value)
-	sys.exit()
-
-# 6) Creation of a preprocessed interval, GATK4 advises to do it for the exome by completing each end of the intervals with more bp as 250bp we will limit ourselves to 10.
-NamePreprocessedIntOv=os.path.join(PathStaticFolder,"STEP0_GRCH38_101_PreprocessedOverlap_"+now+".interval_list")
-GatkCommand='singularity run -B /data,/home --no-home  /data/septiera/singularity-cachedir/gatk_4.1.8.1.img gatk PreprocessIntervals -R '+Fasta+' -L '+NameIntOv+' --bin-length 0 --padding 0 -imr OVERLAPPING_ONLY -O '+NamePreprocessedIntOv
-logger.info("GATK COMMAND: %s", GatkCommand)
-returned_value =os.system(GatkCommand)
-if returned_value == 0:
-	logger.info("Command Line GATK PreprocessInterval for overlap intervals works well")
-else:
-	logger.error("Command Line GATK PreprocessInterval for overlap intervals don't work, error status = %s", returned_value)
-	sys.exit()
 
