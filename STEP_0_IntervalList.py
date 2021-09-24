@@ -155,7 +155,7 @@ BED.to_csv(os.path.join(PathStaticFolder,"STEP0_Annotation_GRCH38_101_Padding10p
 #3) Bed file containing the following indications:
 #CHR:START:END
 NameClassicBEDOv=os.path.join(PathStaticFolder,"STEP0_GRCH38_101_Padding10pb_"+str(len(BED))+"exons_"+str(now)+".bed")
-ClassicBEDOv=BED[["CHR","START","END"]]
+ClassicBEDOv=BED[["CHR","START","END","ENSEMBLID"]]
 ClassicBEDOv.to_csv(NameClassicBEDOv,index=False, header=False,sep="\t")
 
 # 4) Deletion of duplicated exons because several genes have sequence homology, hence the duplication of exon intervals. (ex )
@@ -165,7 +165,7 @@ BEDNoDup.to_csv(os.path.join(PathStaticFolder,"STEP0_Annotation_GRCH38_101_Paddi
 
 #CHR:START:END
 NameClassicBEDNoDup=os.path.join(PathStaticFolder,"STEP0_GRCH38_101_Padding10pb_NoDupExons_"+str(len(BEDNoDup))+"exons_"+str(now)+".bed")
-ClassicBEDNoDup=BEDNoDup[["CHR","START","END"]]
+ClassicBEDNoDup=BEDNoDup[["CHR","START","END","ENSEMBLID"]]
 ClassicBEDNoDup.to_csv(NameClassicBEDNoDup,index=False, header=False,sep="\t")
 
 
