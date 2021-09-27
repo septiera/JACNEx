@@ -20,7 +20,7 @@ import time # is a module for obtaining the date and time of the system.
 import logging # is a practical logging module. (process monitoring and development support)
 sys.path.append("/home/septiera/Benchmark_CNVTools/Scripts/Modules/")
 import FileFolderManagement.functions as ffm 
-
+import re
 #Definition of the scripts'execution date (allows to annotate the output files to track them over time) 
 now=time.strftime("%y%m%d")
 
@@ -49,9 +49,9 @@ logger.propagate=False
 #Particularity of this bed: it contains all the intervals for each exons of the canonical transcripts of the reference genome Grch38_p101.  (294 153 exons)
 PathBedToComplete="/data/septiera/REF_GENOME/canonicalTranscripts_210826.bed.gz"
 
-#Bed from the gtf Grch38_p101 (cf : /data/septiera/REF_GENOME/README) (12 columns :"CHR1","START2","END3","DIR","ENSEMBLID","EXON","Gene_Name","gene_biotype","source","exon_version","tag","transcript_support_level")
+#Bed from the gtf Grch38_p101 (cf : /data/septiera/REF_GENOME/README) (9 columns :"CHR","source","feature","START","END","score","DIR","frame","transcript_support_level")
 #Contains all the annotations of the canonical transcripts and more.
-PathBedWithAnnotation="/data/septiera/REF_GENOME/GRCh38.104_exonOnly_ForAnnotationSegments_210922.bed"
+PathBedWithAnnotation="/data/septiera/REF_GENOME/Homo_sapiens.GRCh38.104.gtf"
 
 #Path to the static results files folder (normally the generated files do not need to be changed often)
 OutputFolder="/home/septiera/InfertilityCohort_Analysis/Scripts/"
@@ -89,56 +89,88 @@ else:
 ffm.checkFileExistance(PathBedWithAnnotation)
 #####################
 #Bed file with annotation, reading and formatting.
-BedWithAnnotation=pd.read_table(PathBedWithAnnotation,header=None,dtype='unicode')
-#### Columns renaming (Warning : the columns number must be equal to 12).
-if len(BedWithAnnotation.columns) == 12:
-    logger.info("BedWithAnnotation contains 12 columns")
-    BedWithAnnotation.columns=["CHR1","START2","END3","DIR","ENSEMBLID","EXON","Gene_Name","gene_biotype","source","exon_version","tag","transcript_support_level"]
+BedWithAnnotation=pd.read_table(PathBedWithAnnotation,header=None,dtype='unicode',comment='#')
+# non Exon-lines removal
+BedWithAnnotation=BedWithAnnotation.loc[BedWithAnnotation[2]=="exon",]
+#### Columns renaming (Warning : the columns number must be equal to 9).
+if len(BedWithAnnotation.columns) == 9:
+    logger.info("BedWithAnnotation contains 9 columns")
+    BedWithAnnotation.columns=["CHR","source","feature","START","END","score","DIR","frame","transcript_support_level"]
 else:
-    logger.error("BedWithAnnotation doesn't contains 12 columns:"
-                 +"\n CHR, START, END, DIR, ENSEMBLID, EXON, Gene_Name, gene_biotype, source, exon_version, tag, transcript_support_level."
+    logger.error("BedWithAnnotation doesn't contains 9 columns:"
+                 +"\n CHR,source,feature,START,END,score,DIR,frame,transcript_support_level"
                  +"\n Please check the file before launching the script.")
     sys.exit()
+
+#Extraction of important information from transcript_support_level column.
+BedWithAnnotation=BedWithAnnotation.reset_index(drop=True)
+DictInf={}
+for index, row in BedWithAnnotation.iterrows():
+    pos="Nothing"
+    posKey="Nothing"
+    posValue="Nothing"
+    print(index)
+    pos=row["transcript_support_level"].split(";")
+    pos=[re.sub(" ","",x)for x in pos]
+    posKey=[re.sub("\".*","",x)for x in pos]
+    posValue=[re.sub(r'^"|"$', '',x)for x in pos]
+    posValue=[re.sub(r'.*\"', '',x)for x in posValue]
+    if 'gene_name' not in posKey:
+        posKey.append("gene_name")
+        posValue.append("Nothing")
+    for i, j in zip(posKey, posValue):
+        DictInf.setdefault(i, []).append(j)
+BedWithAnnotation['gene_id']=DictInf['gene_id']
+BedWithAnnotation['transcript_id']=DictInf['transcript_id']
+BedWithAnnotation['exon_id']=DictInf['exon_id']
+BedWithAnnotation['exon_version']=DictInf['exon_version']
+BedWithAnnotation['exon_number']=DictInf['exon_number']
+BedWithAnnotation['gene_name']=DictInf['gene_name']
+BedWithAnnotation['gene_source']=DictInf['gene_source']
+BedWithAnnotation['gene_biotype']=DictInf['gene_biotype']
     
 ##############################
 # C) Creation of an extra column to combine ENSEMBLID transcript and EXON to help merge tables on a single key (like a dictionary, but since the bed files are read only once, no waste of time).
-BedWithAnnotation["IDTrans"]=BedWithAnnotation.ENSEMBLID+"_"+BedWithAnnotation.EXON.astype(str)
+BedWithAnnotation["IDTrans"]=BedWithAnnotation.transcript_id+"_"+BedWithAnnotation.exon_number.astype(str)
 
 #Two tables merge (Warning the merger is based on the number of lines of BedWithAnnotation also on the 294 153 exons).)
 MergeTable=BedToComplete.merge(BedWithAnnotation,how='left',on="IDTrans")
 
+MergeTable["START_y"]=MergeTable["START_y"].astype(float)
+
 #Check that the annotation has been carried out correctly by comparing the starts for each line.
-test=MergeTable[~MergeTable.START.isin(MergeTable.START2)]
-if len(test)==0:
-    logger.info("The fusion between the BedToComplet and the BedWithAnnotation works well")
-else:
+test=MergeTable["START_x"]-MergeTable["START_y"]
+
+if sum(test)>0 and MergeTable['transcript_id'].isnull().sum() >0 :
     logger.error("The fusion between the BedToComplet and the BedWithAnnotation didn't works well."
                 +"\n Difference between the starts of the intervals defining the exons."
                 +"\n Please check the reference genome version for both bed files before restarting the script.")
     sys.exist()
+else:
+    logger.info("The fusion between the BedToComplet and the BedWithAnnotation works well")
 
 ##############################
 # D) Sorting the lines according to their genomic position.
 #X and Y annotations replacement for the sex chromosomes by their numerical values (23 and 24)
+MergeTable["CHR1"]=MergeTable["CHR_y"]
 MergeTable.loc[MergeTable["CHR1"]=='X',"CHR1"]=23
 MergeTable.loc[MergeTable["CHR1"]=='Y',"CHR1"]=24
 MergeTable.loc[MergeTable["CHR1"]=='MT',"CHR1"]=25
 MergeTable.CHR1=MergeTable.CHR1.astype(int)
-MergeTable.START2=MergeTable.START2.astype(int)
-MergeTable.END3=MergeTable.END3.astype(int)
-MergeTable.START=MergeTable.START.astype(int)
-MergeTable.END=MergeTable.END.astype(int)
+MergeTable.START_y=MergeTable.START_y.astype(float)
+MergeTable.END_y=MergeTable.END_y.astype(float)
+MergeTable.START_x=MergeTable.START_x.astype(int)
+MergeTable.END_x=MergeTable.END_x.astype(int)
 
 #Primary sorting = CHR, secondary sorting = START.
-MergeTable=MergeTable.sort_values(by=["CHR1","START2","END3"])
-MergeTable=MergeTable[["CHR","START","END","DIR","ENSEMBLID","EXON","Gene_Name"]]
+MergeTable=MergeTable.sort_values(by=["CHR1","START_y","END_y"])
 logger.info("The sorting stage of the table works well.")
 
 ######################################
 # E) Padding File
 BED=MergeTable
-BED["START"]=BED["START"]-10
-BED["END"]=BED["END"]+10
+BED["START_x"]=BED["START_x"]-10
+BED["END_x"]=BED["END_x"]+10
 
 ######################################
 # F) Writing annotation files.
@@ -155,7 +187,7 @@ BED.to_csv(os.path.join(PathStaticFolder,"STEP0_Annotation_GRCH38_101_Padding10p
 #3) Bed file containing the following indications:
 #CHR:START:END
 NameClassicBEDOv=os.path.join(PathStaticFolder,"STEP0_GRCH38_101_Padding10pb_"+str(len(BED))+"exons_"+str(now)+".bed")
-ClassicBEDOv=BED[["CHR","START","END","ENSEMBLID"]]
+ClassicBEDOv=BED[["CHR_x","START_x","END_x","IDTrans"]]
 ClassicBEDOv.to_csv(NameClassicBEDOv,index=False, header=False,sep="\t")
 
 # 4) Deletion of duplicated exons because several genes have sequence homology, hence the duplication of exon intervals. (ex )
@@ -165,7 +197,7 @@ BEDNoDup.to_csv(os.path.join(PathStaticFolder,"STEP0_Annotation_GRCH38_101_Paddi
 
 #CHR:START:END
 NameClassicBEDNoDup=os.path.join(PathStaticFolder,"STEP0_GRCH38_101_Padding10pb_NoDupExons_"+str(len(BEDNoDup))+"exons_"+str(now)+".bed")
-ClassicBEDNoDup=BEDNoDup[["CHR","START","END","ENSEMBLID"]]
+ClassicBEDNoDup=BEDNoDup[["CHR_x","START_x","END_x","IDTrans"]]
 ClassicBEDNoDup.to_csv(NameClassicBEDNoDup,index=False, header=False,sep="\t")
 
 
