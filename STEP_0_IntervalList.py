@@ -8,8 +8,8 @@
 #This script is used to generate exon interval files (.bed) for use with the DECON/ExomeDepth tool.
 #Its use is described in the README of the scripts.
 
-#The input files are:
-#-a file containing the canonical transcripts (cf /home/nthierry/Transcripts_Data/README)
+#The input entries are:
+#-the path to a file containing the canonical transcripts (cf /home/nthierry/Transcripts_Data/README)
 #-genome version string (ex: "GRCH38_v101")
 #-the path to the output file
 
