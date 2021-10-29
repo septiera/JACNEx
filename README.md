@@ -1,7 +1,5 @@
-<p align="center">
-  <a href="https://github.com/septiera/Dev_InfertilityCohort_CNVAnalysis"><img alt="ndim" src="https://www.google.com/search?q=TIMC&tbm=isch&ved=2ahUKEwjh08eG2e_zAhWW0oUKHfZ3AMEQ2-cCegQIABAA&oq=TIMC&gs_lcp=CgNpbWcQAzIHCCMQ7wMQJzIFCAAQgAQyBQgAEIAEMgUIABCABDIFCAAQgAQyBQgAEIAEMgUIABCABDIFCAAQgAQyBQgAEIAEMgUIABCABDoECAAQHjoKCCMQ7wMQ6gIQJzoECAAQQzoICAAQgAQQsQM6CwgAEIAEELEDEIMBUJUHWIIQYKIRaAFwAHgAgAFriAHeA5IBAzMuMpgBAKABAaoBC2d3cy13aXotaW1nsAEKwAEB&sclient=img&ei=A_N7YaHGBZallwT274GIDA&bih=810&biw=1265&client=firefox-b-e#imgrc=mHSwLr8DdNnigM" width="50%"></a>
-  <p align="center">CNV calls for exome sequencing data from human cohort.</p>
-</p>
+#CNV calls for exome sequencing data from human cohort
+
 
 The pipeline enables germline Copy Number Variations (CNVs) to be called from human exome sequencing data.
 The input data of this pipeline are Binary Alignment Maps (BAM) and Browser Extensible Data (BED) containing the intervals associated with the canonical transcripts.
@@ -9,7 +7,8 @@ For more information how obtaining the different files see https://github.com/nt
 
 ### EXAMPLE USAGE:
 
-* STEP 0 : Interval bed creation
+* STEP 0 : Interval bed creation 
+
 This step consists in creating an interval file in the bed format.
 It performs a verification of the input bed file, performs a padding +-10pb and sorts the data in genomic order.
 It is necessary to respect the format of the reference genome name for pipeline interoperability at each new process started.
@@ -21,6 +20,7 @@ OUTPUT="~/Scripts/"
 ```
 
 * STEP 1 : Counting reads
+
 This step uses the bam files to record the number of reads overlapping the intervals present in the bed file created in step 0.
 It will create a new folder for storing the results. 
 This script uses Bedtoolsv2.18 and its multibamCov program.
@@ -37,6 +37,7 @@ OUTPUT="~/SelectOutputFolder/"
 ```
 
 * STEP 2 : CNV Calling
+
 This step performs the CNV calling.
 However it uses the DECON/ExomeDepth script in R modified to allow inserting different inputs (tsv instead of Rdata).
 It has also been modified by adding a sanity check of the input files.
@@ -50,6 +51,7 @@ OUTPUT="~/SelectOutputFolder/"
 ```
 
 * STEP 3 : VCF Formatting
+
 This step allows the conversion of CNV calling results into vcfv4.3 format that can be interpreted by the VEP software (annotation of structural variants) 
 The Bayes Factor(BF) parameter is user selectable. It will be necessary to perform a first filtering of the CNV. 
 ```
