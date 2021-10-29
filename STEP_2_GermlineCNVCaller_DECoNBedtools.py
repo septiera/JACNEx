@@ -65,14 +65,14 @@ def main(argv):
     outputfile = ''
 
     try:
-	    opts, args = getopt.getopt(argv,"h:b:r:o:",["help","intervalFile=","readCountFolder=","outputfile="])
+	    opts, args = getopt.getopt(argv,"h:i:r:o:",["help","intervalFile=","readCountFolder=","outputfile="])
     except getopt.GetoptError:
 	    print('python3.6 STEP_2_GermlineCNVCaller_DECoNBedtools.py -i <intervalFile> -r <readCountFolder> -o <outputfile>')
 	    sys.exit(2)
     for opt, value in opts:
 	    if opt == '-h':
 		    print("COMMAND SUMMARY:"			
-		    +"\n This python script allows to launch the DECON tool (in R) modified to use the Bedtools results (script AdaptDECON_CallingCNV_BedtoolsRes.R)
+		    +"\n This python script allows to launch the DECON tool (in R) modified to use the Bedtools results (script AdaptDECON_CallingCNV_BedtoolsRes.R)"
             +"\n Its main role is to carry out the CNVs calls."
 		    +"\n"
 		    +"\n USAGE:"
