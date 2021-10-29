@@ -1,5 +1,5 @@
 <p align="center">
-# CNV calls for exome sequencing data from human cohort
+   <h1> CNV calls for exome sequencing data from human cohort </h1>
 </p>
 
 The pipeline enables germline Copy Number Variations (CNVs) to be called from human exome sequencing data.<br>
