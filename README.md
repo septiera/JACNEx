@@ -1,6 +1,5 @@
-<p align="center">
-   <h1> CNV calls for exome sequencing data from human cohort </h1>
-</p>
+<h1 align="center"> CNV calls for exome sequencing data from human cohort </h1>
+
 
 The pipeline enables germline Copy Number Variations (CNVs) to be called from human exome sequencing data.<br>
 The input data of this pipeline are Binary Alignment Maps (BAM) and Browser Extensible Data (BED) containing the intervals associated with the canonical transcripts.<br>
