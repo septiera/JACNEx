@@ -1,5 +1,6 @@
+<p align="center">
 # CNV calls for exome sequencing data from human cohort
-
+</p>
 
 The pipeline enables germline Copy Number Variations (CNVs) to be called from human exome sequencing data.<br>
 The input data of this pipeline are Binary Alignment Maps (BAM) and Browser Extensible Data (BED) containing the intervals associated with the canonical transcripts.<br>
@@ -23,7 +24,7 @@ OUTPUT="~/Scripts/"
 
 This step uses the bam files to record the number of reads overlapping the intervals present in the bed file created in step 0.<br>
 It will create a new folder for storing the results. <br>
-This script uses Bedtoolsv2.18 and its multibamCov program.<br>
+This script uses Bedtoolsv2.29.1 and its multibamCov program.<br>
 It is executed in parallel to reduce the process time.<br>
 Warning: the number of cpu used for parallelization is optimized.<br>
 If the number of cpu is increased manually within the script it can lead to waiting times increasing the global process time.<br>
@@ -62,8 +63,20 @@ OUTPUT="~/SelectOutputFolder/Calling_results_Bedtools_Date/"
 ```
 
 ### CONFIGURATION:
+To launch the different stages of the pipeline it is necessary to be located in the folder where you want to obtain the outputs. <br>
 
 ### DEPENDENCIES:
-
+It is necessary that all the software used is present. <br>
+DECON: <br>
+```
+git clone https://github.com/RahmanTeam/DECoN
+```
+Bedtools 2:<br>
+```
+wget https://github.com/arq5x/bedtools2/releases/download/v2.29.1/bedtools-2.29.1.tar.gz
+tar -zxvf bedtools-2.29.1.tar.gz
+cd bedtools2
+make
+```
 
 
