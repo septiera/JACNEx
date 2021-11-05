@@ -19,7 +19,8 @@ OUTPUT="~/Scripts/"
 /bin/time -v ~/FolderContainsScript/python3.6 STEP_0_IntervalList.py -b $BED -n $GENOMEV -o $OUTPUT 2> ./.err
 ```
 
-* STEP 1 : Counting reads <br>
+* STEP 1 : Counting reads  <br>
+* Bedtools Process<br>
 
 This step uses the bam files to record the number of reads overlapping the intervals present in the bed file created in step 0.<br>
 It will create a new folder for storing the results. <br>
@@ -35,6 +36,21 @@ BAM="~/BAMs/"
 OUTPUT="~/SelectOutputFolder/"
 /bin/time -v ~/FolderContainsScript/python3.6 STEP_1_CollectReadCounts_Bedtools.py -i $INTERVAL -b $BAM -o $OUTPUT 2> ./.err 
 ```
+
+* DECONA2 Process
+
+This script allows to perform both a fragmentation count and an unmatched reads count to take into account the splits reads that pollute DECON results. <br>
+The initial read counts are identical to those of bedtools. It is possible to check: fragment count*2+read count= bedtools read count. <br>
+The outputs of this script are identical to those of bedtools, i.e. tsv containing 5 columns (chrom, start, end, ENST_ExonNb, Count).<br>
+The files are thus directly usable by the next pre-modified step.<br>
+
+```
+INTERVAL="~/STEP0_GRCH38_vXXX_Padding10pb_NBexons_Date.bed"
+BAM="~/BAMs/"
+OUTPUT="~/SelectOutputFolder/"
+/bin/time -v ~/FolderContainsScript/python3.6 STEP_1_CollectReadCounts_DECONA2.py -i $INTERVAL -b $BAM -o $OUTPUT 2> ./.err 
+```
+
 
 * STEP 2 : CNV Calling<br>
 
