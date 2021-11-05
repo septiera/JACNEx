@@ -214,7 +214,7 @@ def main(argv):
                                                 CountRead=CountRead+2
                                                 listNotKeep.append(cp1)
                                                 listNotKeep.append(cp2)
-                        #3) Si un plusieurs read n ont pas trouvés de paires         
+                        #2) Si un plusieurs read n ont pas trouvés de paires         
                         if len(set(range(NbReads))-set(listNotKeep))>=1:
                             CountRead=CountRead+len(set(range(NbReads))-set(listNotKeep))
 
@@ -232,14 +232,15 @@ def main(argv):
         return(FinalTab)
 
     for s in sample:
-        print(s)
+        name=s.replace(".bam","")
+        print(name)
         bamFile=os.path.join(bamOrigFolder,s)
         bam=pysam.AlignmentFile(bamFile, "rb")
         #processed_list = Parallel(n_jobs=num_cores)(delayed(my_function(i) for i in inputs)
         FinalTab=pd.DataFrame()
         results = Parallel(n_jobs=12)(delayed(CountingFunction)(i,intervalBed,bamFile,FinalTab) for i in numpy.arange(0,len(CHRlist)))
         results=pd.concat(results)
-        results.to_csv(os.path.join(RCPathOutput,s+".tsv"),sep="\t", index=False)
+        results.to_csv(os.path.join(RCPathOutput,name+".tsv"),sep="\t", index=False, header=None)
 
 if __name__ =='__main__':
     main(sys.argv[1:])
