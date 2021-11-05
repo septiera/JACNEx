@@ -171,11 +171,11 @@ def main(argv):
         #######################################
         ## Key processing
         #chromosome treatment
-        chrom=re.sub("^chr([\d]{1,2}):[\d]{3,9}_[\d]{3,9}","\\1", key)
+        chrom=re.sub("^chr([\w]{1,2}):[\d]{3,9}_[\d]{3,9}","\\1", key)
         #pos
-        pos=re.sub("^chr[\d]{1,2}:([\d]{3,9})_[\d]{3,9}","\\1", key)
+        pos=re.sub("^chr[\w]{1,2}:([\d]{3,9})_[\d]{3,9}","\\1", key)
         #end
-        end=re.sub("^chr[\d]{1,2}:[\d]{3,9}_([\d]{4,9})","\\1", key)
+        end=re.sub("^chr[\w]{1,2}:[\d]{3,9}_([\d]{4,9})","\\1", key)
         
         #initialization of the lines to generate.
         line=0
