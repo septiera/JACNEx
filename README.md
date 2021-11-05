@@ -81,7 +81,7 @@ OUTPUT="~/SelectOutputFolder/Calling_results_Bedtools_Date/"
 To launch the different stages of the pipeline it is necessary to be located in the folder where you want to obtain the outputs. <br>
 
 ### DEPENDENCIES:
-It is necessary that all the software used is present. <br>
+It is necessary that all the software used are present. <br>
 DECON: <br>
 ```
 git clone https://github.com/RahmanTeam/DECoN
