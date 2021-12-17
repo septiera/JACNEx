@@ -65,30 +65,30 @@ def main(argv):
     outputfile = ''
 
     try:
-	    opts, args = getopt.getopt(argv,"h:i:r:o:",["help","intervalFile=","readCountFolder=","outputfile="])
+        opts, args = getopt.getopt(argv,"h:i:r:o:",["help","intervalFile=","readCountFolder=","outputfile="])
     except getopt.GetoptError:
-	    print('python3.6 STEP_2_GermlineCNVCaller_DECoNBedtools.py -i <intervalFile> -r <readCountFolder> -o <outputfile>')
-	    sys.exit(2)
+        print('python3.6 STEP_2_GermlineCNVCaller_DECoNBedtools.py -i <intervalFile> -r <readCountFolder> -o <outputfile>')
+        sys.exit(2)
     for opt, value in opts:
-	    if opt == '-h':
-		    print("COMMAND SUMMARY:"			
-		    +"\n This python script allows to launch the DECON tool (in R) modified to use the Bedtools results (script AdaptDECON_CallingCNV_BedtoolsRes.R)"
+        if opt == '-h':
+            print("COMMAND SUMMARY:"			
+            +"\n This python script allows to launch the DECON tool (in R) modified to use the Bedtools results (script AdaptDECON_CallingCNV_BedtoolsRes.R)"
             +"\n Its main role is to carry out the CNVs calls."
-		    +"\n"
-		    +"\n USAGE:"
-		    +"\n python3.6 STEP_2_GermlineCNVCaller_DECoNDECoNBedtools.py -i <intervalFile> -r <readCountFolder> -o <outputfile> "
-		    +"\n"
-		    +"\n OPTIONS:"
-		    +"\n	-i : A bed file obtained in STEP0. Please indicate the full path.(4 columns : CHR, START, END, TranscriptID_ExonNumber)"
-		    +"\n	-o : path to the folder containing the read counts for each patient."
-		    +"\n	-n : path to the output folder.")
-		    sys.exit()
-	    elif opt in ("-i", "--intervalFile"):
-		    intervalFile = value
-	    elif opt in ("-r", "--readCountFolder"):
-		    readCountFolder = value
-	    elif opt in ("-o", "--outputfile"):
-		    outputfile = value
+            +"\n"
+            +"\n USAGE:"
+            +"\n python3.6 STEP_2_GermlineCNVCaller_DECoNDECoNBedtools.py -i <intervalFile> -r <readCountFolder> -o <outputfile> "
+            +"\n"
+            +"\n OPTIONS:"
+            +"\n	-i : A bed file obtained in STEP0. Please indicate the full path.(4 columns : CHR, START, END, TranscriptID_ExonNumber)"
+            +"\n	-r : path to the folder containing the read counts for each patient."
+            +"\n	-o : path to the output folder.")
+            sys.exit()
+        elif opt in ("-i", "--intervalFile"):
+            intervalFile = value
+        elif opt in ("-r", "--readCountFolder"):
+            readCountFolder = value
+        elif opt in ("-o", "--outputfile"):
+            outputfile = value
 
     #Check that all the arguments are present.
     logger.info('Intervals bed file path is %s', intervalFile)
