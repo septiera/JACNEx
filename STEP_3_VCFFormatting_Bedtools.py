@@ -195,7 +195,7 @@ def main(argv):
                 TAB.loc[line,"ALT"]="<DEL>"
                 TAB.loc[line,"INFO"]="SVTYPE=DEL;END="+end
                 TAB.loc[line,"FORMAT"]="GT:BF:RR"
-                TAB.loc[line,list(np.unique(CNVTableAllFilter["sample"]))]="0/0:0:0"
+                TAB.loc[line,list(np.unique(CNVTableAllFilter["sample"]))]="0/0"
                 # CNV type distinction : Homo-deletion
                 if int(info_list[1])==0:
                     TAB.loc[line,info_list[0]]="1/1:"+str(round(float(info_list[2]),2))+":"+str(round(float(info_list[3]),2))
@@ -215,7 +215,7 @@ def main(argv):
                     TAB.loc[linedup,"ALT"]="<DUP>"
                     TAB.loc[linedup,"INFO"]="SVTYPE=DUP;END="+end
                     TAB.loc[linedup,"FORMAT"]="GT:CN:BF:RR"
-                    TAB.loc[linedup,list(np.unique(CNVTableAllFilter["sample"]))]="0/0:2:0:0"
+                    TAB.loc[linedup,list(np.unique(CNVTableAllFilter["sample"]))]="0/0"
                     TAB.loc[linedup,info_list[0]]="0/1:"+info_list[1]+":"+str(round(float(info_list[2]),2))+":"+str(round(float(info_list[3]),2))
                 else:
                     TAB.loc[linedup,info_list[0]]="0/1:"+info_list[1]+":"+str(round(float(info_list[2]),2))+":"+str(round(float(info_list[3]),2))    
