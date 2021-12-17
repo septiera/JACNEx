@@ -34,13 +34,12 @@ The script provides a read count file for each sample analyzed (tsv files).<br>
 INTERVAL="~/STEP0_GRCH38_vXXX_Padding10pb_NBexons_Date.bed"
 BAM="~/BAMs/"
 OUTPUT="~/SelectOutputFolder/"
-/bin/time -v ~/FolderContainsScript/python3.6 STEP_1_CollectReadCounts_Bedtools.py -i $INTERVAL -b $BAM -o $OUTPUT 2> ./.err 
+/bin/time -v ~/FolderContainsScript/python3.6 STEP_1_CollectReadCounts_Bedtools.py -i $INTERVAL -b $BAM -o $OUTPUT 2> ./.err
 ```
 
  * DECONA2 Process
 
 This script allows to perform both a fragmentation count and an unmatched reads count to take into account the splits reads that pollute DECON results. <br>
-The initial read counts are identical to those of bedtools. It is possible to check: fragment count*2+read count= bedtools read count. <br>
 The outputs of this script are identical to those of bedtools, i.e. tsv containing 5 columns (chrom, start, end, ENST_ExonNb, Count).<br>
 The files are thus directly usable by the next pre-modified step.<br>
 
@@ -48,7 +47,7 @@ The files are thus directly usable by the next pre-modified step.<br>
 INTERVAL="~/STEP0_GRCH38_vXXX_Padding10pb_NBexons_Date.bed"
 BAM="~/BAMs/"
 OUTPUT="~/SelectOutputFolder/"
-/bin/time -v ~/FolderContainsScript/python3.6 STEP_1_CollectReadCounts_DECONA2.py -i $INTERVAL -b $BAM -o $OUTPUT 2> ./.err 
+/bin/time -v ~/FolderContainsScript/python3.6 STEP_1_CollectReadCounts_DECONA2New.py -i $INTERVAL -b $BAM -o $OUTPUT 2> ./.err
 ```
 
 
@@ -93,5 +92,16 @@ tar -zxvf bedtools-2.29.1.tar.gz
 cd bedtools2
 make
 ```
+It is also necessary to have python version 3.6.
+As well as the following modules:
+```
+pip3 install --user logging=0.5.1.2
+pip3 install --user pandas=1.1.5
+pip3 install --user numpy=1.19.5
+pip3 install --user re=2.2.1
+pip3 install --user fnmatch #no version
+pip3 install --user ncls #no version
+pip3 install --user multiprocessing #no version
+pip3 install --user joblib #no version
 
-
+```
