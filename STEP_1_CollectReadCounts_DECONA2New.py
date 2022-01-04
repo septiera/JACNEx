@@ -29,10 +29,10 @@ import sys #Path
 import getopt
 import logging
 import os
-from typing import Dict # operating system-dependent functionality. (opening and saving files)
 import pandas as pd #read,make,treat Dataframe object
 import numpy as np
-import re, fnmatch # regular expressions
+import re  # regular expressions
+import fnmatch
 from ncls import NCLS # generating interval trees (cf : https://github.com/biocore-ntnu/ncls)
 import subprocess #spawn new processes, connect to their input/output/error pipes, and obtain their return codes.
 import io
@@ -331,30 +331,28 @@ def main(argv):
     #####################################################
     # A) Setting up the analysis tree.
         # 1) Creation of the DataToProcess folder if not existing.
-    DataToProcessPath=ffm.CreateAnalysisFolder(outputFile,"DataToProcess")
+    DataToProcessPath=CreateAnalysisFolder(outputFile,"DataToProcess")
         # 2) Creation of the ReadCount folder if not existing.
-    RCPath=ffm.CreateAnalysisFolder(DataToProcessPath,"ReadCount")
+    RCPath=CreateAnalysisFolder(DataToProcessPath,"ReadCount")
         # 3) Creation of the Bedtools folder if not existing.
-    RCPathOutput=ffm.CreateAnalysisFolder(RCPath,"DECONA2")
+    RCPathOutput=CreateAnalysisFolder(RCPath,"DECONA2")
 
     #####################################################
     # B)Bam files list extraction
     #This list contains the path to each bam.
-    ffm.checkFolderExistance(bamOrigFolder)
+    checkFolderExistance(bamOrigFolder)
     sample=fnmatch.filter(os.listdir(bamOrigFolder), '*.bam')
     inputs=np.arange(0,len(sample))
 
     #####################################################
     # C) Canonical transcript bed, existence check
-    ffm.checkFileExistance(intervalFile)
+    checkFileExistance(intervalFile)
     # Bed file load and Sanity Check : If the file does not have the expected format, the process ends.
-    intervalBed=isc.BedSanityCheck(intervalFile, "TRUE") #The table will not be used but the verification of its format is necessary.
+    intervalBed=BedSanityCheck(intervalFile, "TRUE") #The table will not be used but the verification of its format is necessary.
 
     ############################################
     # D]  Creating interval trees for each chromosome
     DictIntervalTree=IntervalTreeDictCreation(intervalBed)
-
-    NameCountFile=os.path.join(RCPathOutput,sampleName+".tsv")
 
     #####################################################
     # E) Definition of a loop for each sample allowing the BAM files symlinks and the reads counting.
@@ -367,13 +365,13 @@ def main(argv):
         ############################################
         #I] Check that the process has not already been applied to the current bam.
         NameCountFile=os.path.join(RCPathOutput,sampleName+".tsv")
-        if (os.path.isfile(NameCountFrag)) and (sum(1 for _ in open(NameCountFrag))==len(intervalBed)):
-            logger.info("File ",NameCountFrag," already exists and has the same lines number as the bed file ", intervalFile)
-            continue # Bam re-analysis is not effective.
+        if (os.path.isfile(NameCountFile)) and (sum(1 for _ in open(NameCountFile))==len(intervalBed)):
+            logger.info("File ",NameCountFile," already exists and has the same lines number as the bed file ", intervalFile)
+            return # Bam re-analysis is not effective.
         #else : We process the bam without tsv file or with incomplete tsv file.
-        if os.path.isfile(NameCountFrag): #Be careful when updating the bed if there is no change in the output directory, all the files are replaced.
-            logger.warning("File ",NameCountFrag," already exists but it's truncated. This involves replacing the corrupted file.")
-            CommandLine="rm "+NameCountFrag
+        if os.path.isfile(NameCountFile): #Be careful when updating the bed if there is no change in the output directory, all the files are replaced.
+            logger.warning("File ",NameCountFile," already exists but it's truncated. This involves replacing the corrupted file.")
+            CommandLine="rm "+NameCountFile
             returned_value=os.system(CommandLine)
             #Security Check
             if returned_value == 0:
