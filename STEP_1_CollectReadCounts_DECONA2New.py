@@ -36,6 +36,7 @@ import fnmatch
 from ncls import NCLS # generating interval trees (cf : https://github.com/biocore-ntnu/ncls)
 import subprocess #spawn new processes, connect to their input/output/error pipes, and obtain their return codes.
 import io
+import dill as pickle
 
 # 2) Python Parallelization modules
 import multiprocessing
@@ -49,7 +50,7 @@ os.environ['NUMEXPR_NUM_THREADS'] = '10'
 ################################ Logging Definition #################################################
 #####################################################################################################
 #create logger
-logger = logging.getLogger(sys.argv[0])
+logger=logging.getLogger(os.path.basename(sys.argv[0]))
 logger.setLevel(logging.DEBUG)
 #create console handler and set level to debug
 ch = logging.StreamHandler(sys.stderr)
@@ -64,41 +65,22 @@ logger.addHandler(ch)
 #####################################################################################################
 ################################ Functions ##########################################################
 #####################################################################################################
-#Function allowing to test the existence of a file when only its path is indicated.
-def checkFileExistance(filePath):
-    try:
-        with open(filePath, 'r') as f:
-            logger.info('File %s exist', f)
-    except FileNotFoundError as e:
-        logger.error("File %s doesn't exist for this path. Please indicate a correct path.", filePath)
-        sys.exit()
-    except IOError as e:
-        logger.error("File %s can't be opened for reading. Please check the files' formatting.", filePath)
-        sys.exit()
 
-###################################
-#Function allowing to test the existence of a folder when only its path is indicated.
-def checkFolderExistance(folderPath):
-    if os.path.isdir(folderPath):
-        logger.info('Folder %s exist', folderPath)
-    else:
-        logger.error("Folder %s doesn't exist for this path. Please indicate a correct path.", folderPath)
-        sys.exit()
 
 ###################################
 #Function allowing to create output folder.
-def CreateAnalysisFolder(outFile, nameFolder):
-    checkFolderExistance(outFile)
-    nameFolder=os.path.join(outFile,nameFolder)
-    try:
-	    os.mkdir(nameFolder)
-    except OSError:
-	    logger.warning("Creation of the directory %s failed. The folder must already exist", nameFolder)
-    else:
-	    logger.info("Successfully created the directory %s ", nameFolder)
-    return nameFolder
-
-###################################
+#input : take path
+#create outdir if it doesn't exist, die on failure
+def CreateFolder(outdir):
+    if not os.path.isdir(outdir):
+        try:
+            os.mkdir(outdir)
+        except OSError as error:
+            logger.error("Creation of the directory %s failed : %s", outdir, error.strerror)
+            sys.exit()
+  
+  
+############################
 #Canonical transcripts sanity check.
 #This function is useful for the bed file of canonical transcripts.
 #It allows to check that the input file is clean.
@@ -111,8 +93,11 @@ def CreateAnalysisFolder(outFile, nameFolder):
 #   -- CHR : must start with "chr" and contain 25 different chromosomes (if less or more return warnings). The column must be in object format for processing.
 #   -- START , END : must be in int64 format and not contain null value (necessary for comparison steps after calling CNVs)
 #   -- TranscriptID_ExonNumber : all lines must start with ENST and end with an integer for exonNumber. The column must be in object format for processing.
-#-Step 3: Allows you to indicate whether you want to work on the test table and therefore extract it from the function or not.
-def BedSanityCheck(PathBedToCheck,TrueFalseExtractTab):
+
+def BedParseAndSanityCheck(PathBedToCheck):
+    if not os.path.isfile(PathBedToCheck):
+        logger.error("file %s doesn't exist ",PathBedToCheck)
+        sys.exit()
     BedToCheck=pd.read_table(PathBedToCheck,header=None,sep="\t")
     #####################
     #STEP1 : check that the loaded table contains 4 columns + columns renaming.
@@ -156,16 +141,8 @@ def BedSanityCheck(PathBedToCheck,TrueFalseExtractTab):
                      +"\n Please check the file before launching the script.")
         sys.exit()
 
-    #######################
-    #STEP3 : Extract TAB
-    #######################
-    if TrueFalseExtractTab=="TRUE":
-        return(BedToCheck)
-    elif TrueFalseExtractTab=="FALSE":
-        logger.info("The function is used as sanity check no table extracted from this check.")
-    else:
-        logger.error("The argument indicating if we want to extract the table is wrong. Please indicate TRUE to extract the table or FALSE if the function is used as a check.")
-        sys.exit()
+    return(BedToCheck)
+    
 
 ###################################
 #This function uses the ncls module to create interval trees
@@ -286,100 +263,31 @@ def Qname2ExonCount(qnameString,chromString,startFList,endFList,startRList,endRL
         else:
             DictStatCount["QNOverlapOnTargetInterval"]+=1
 
-
-##############################################################################################################
-######################################### Script Body ########################################################
-##############################################################################################################
-###################################
-def main(argv):
-    ##########################################
-    # A) ARGV parameters definition
-    intervalFile = ''
-    bamOrigFolder=''
-    outputFile =''
-
-    try:
-        opts, args = getopt.getopt(argv,"h:i:b:o:",["help","intervalFile=","bamfolder=","outputfile="])
-    except getopt.GetoptError:
-        print('python3.6 STEP_1_CollectReadCounts_DECONA2New.py -i <intervalFile> -b <bamfolder> -o <outputfile>')
-        sys.exit(2)
-    for opt, value in opts:
-        if opt == '-h':
-            print("COMMAND SUMMARY:"
-            +"\n This script performs READ counts using the bedtools software from exome sequencing data."
-            +"\n"
-            +"\n USAGE:"
-            +"\n python3.6 STEP_1_CollectReadCounts_DECONA2New.py -i <intervalfile> -b <bamfolder> -o <outputfile>"
-            +"\n"
-            +"\n OPTIONS:"
-            +"\n	-i : A bed file obtained in STEP0. Please indicate the full path.(4 columns : CHR, START, END, TranscriptID_ExonNumber)"
-            +"\n	-b : The path to the folder containing the BAM files."
-            +"\n	-o : The path where create the new output file for the current analysis.")
-            sys.exit()
-        elif opt in ("-i", "--intervalFile"):
-            intervalFile=value
-        elif opt in ("-b", "--bamfolder"):
-            bamOrigFolder=value
-        elif opt in ("-o", "--outputfile"):
-            outputFile=value
-
-    #Check that all the arguments are present.
-    logger.info('Intervals bed file path is %s', intervalFile)
-    logger.info('BAM folder path is %s', bamOrigFolder)
-    logger.info('Output file path is %s ', outputFile)
-
-    #####################################################
-    # A) Setting up the analysis tree.
-        # 1) Creation of the DataToProcess folder if not existing.
-    DataToProcessPath=CreateAnalysisFolder(outputFile,"DataToProcess")
-        # 2) Creation of the ReadCount folder if not existing.
-    RCPath=CreateAnalysisFolder(DataToProcessPath,"ReadCount")
-        # 3) Creation of the Bedtools folder if not existing.
-    RCPathOutput=CreateAnalysisFolder(RCPath,"DECONA2")
-
-    #####################################################
-    # B)Bam files list extraction
-    #This list contains the path to each bam.
-    checkFolderExistance(bamOrigFolder)
-    sample=fnmatch.filter(os.listdir(bamOrigFolder), '*.bam')
-    inputs=np.arange(0,len(sample))
-
-    #####################################################
-    # C) Canonical transcript bed, existence check
-    checkFileExistance(intervalFile)
-    # Bed file load and Sanity Check : If the file does not have the expected format, the process ends.
-    intervalBed=BedSanityCheck(intervalFile, "TRUE") #The table will not be used but the verification of its format is necessary.
-
-    ############################################
-    # D]  Creating interval trees for each chromosome
-    DictIntervalTree=IntervalTreeDictCreation(intervalBed)
-
-    #####################################################
-    # E) Definition of a loop for each sample allowing the BAM files symlinks and the reads counting.
-    def SampleParalelization(i):
+####################################################
+#
+#
+def SampleCountingFrag(bamFile,RCPathOutput,DictIntervalTrees,intervalBed,ProcessTmpDir):
+    with tempfile.TemporaryDirectory(dir=ProcessTmpDir) as SampleTmpDir:
+        numberExons=len(intervalBed)
         bamFile=sample[i]
         sampleName=bamFile.replace(".bam","")
         bamFile=os.path.join(bamOrigFolder,bamFile)
-        logger.info('Sample being processed : ', sampleName)
+        logger.info('Sample being processed : %s', sampleName)
 
         ############################################
         #I] Check that the process has not already been applied to the current bam.
         NameCountFile=os.path.join(RCPathOutput,sampleName+".tsv")
-        if (os.path.isfile(NameCountFile)) and (sum(1 for _ in open(NameCountFile))==len(intervalBed)):
-            logger.info("File ",NameCountFile," already exists and has the same lines number as the bed file ", intervalFile)
+        if (os.path.isfile(NameCountFile)) and (sum(1 for _ in open(NameCountFile))==numberExons):
+            logger.info("File %s already exists and has the same lines number as the bed file %s ",NameCountFile,numberExons)
             return # Bam re-analysis is not effective.
         #else : We process the bam without tsv file or with incomplete tsv file.
-        if os.path.isfile(NameCountFile): #Be careful when updating the bed if there is no change in the output directory, all the files are replaced.
-            logger.warning("File ",NameCountFile," already exists but it's truncated. This involves replacing the corrupted file.")
-            CommandLine="rm "+NameCountFile
-            returned_value=os.system(CommandLine)
-            #Security Check
-            if returned_value == 0:
-                print("File deletion has been carried out correctly.")
-            else:
-                print("File deletion has encountered an error ", CommandLine)
+        elif os.path.isfile(NameCountFile): #Be careful when updating the bed if there is no change in the output directory, all the files are replaced.
+            logger.warning("File %s already exists but it's truncated. This involves replacing the corrupted file.",NameCountFile)
+            try:
+                os.remove(NameCountFile)
+            except OSError as error:
+                logger.error("File deletion has encountered an error %s %s", NameCountFile, error.strerror)
                 sys.exit()
-        #else : processing can then be done on the current bam.
 
         ############################################
         # II] Pretreatments on the sample bam.
@@ -388,7 +296,7 @@ def main(argv):
         # -@ allows the process to be split across multiple cores.
         # -T is used to store the process temporary files in the ram memory.
         # -O indicates the stdout result must be in sam format.
-        cmd1 ="samtools sort -n "+bamFile+" -@ "+str(num_cores)+" -T /mnt/RamDisk/ -O sam"
+        cmd1 ="samtools sort -n "+bamFile+" -@ "+str(num_cores)+" -T "+SampleTmpDir+" -O sam"
 
         # Using samtools view, the following flag filters can be performed with the -F option:
         #   -4 0x4 Read Unmapped
@@ -405,30 +313,30 @@ def main(argv):
 
         # III] Outpout variables initialization
         #list containing the fragment counts for the exons.
-        VecExonCount=[0]*len(intervalBed) #The indexes correspond to the exon order in the "intervalBed".
+        VecExonCount=[0]*numberExons #The indexes correspond to the exon order in the "intervalBed".
 
         #Process control : skip mention corresponds to the Qnames removal for fragments counts
         #Aligments = alignements count, QN= qnames counts , Frag= fragments counts
         keys=["AlignmentsInBam",
-             "AlignmentsOnMainChr",
-             "QNProcessed",  #sum of all folowing keys => control
-             "QNAliOnDiffChrSkip",
-             "QNSameReadDiffStrandSkip",
-             "QNSingleReadSkip",
-             "QNNbAliR&FBetween1-3", #sum of the following 7 keys => control
-             "QN1F&1R",
-             "QN2F&1R_2FOverlapSkip",
-             "QN2F&1R_SA",
-             "QN1F&2R_2ROverlapSkip",
-             "QN1F&2R_SA",
-             "QNAliGapLength>1000bpSkip",
-             "QNAliBackToBackSkip",
-             "QNAli2F&2R_SA", #sum of the following 2 keys => control
-             "QNAli2F&2R_F1&R1_F2&R2_NotOverlapSkip",
-             "QNAliUnsuitableCombination_aliRorF>3Skip",
-             "FragOverlapOnTargetInterval", # equal to the sum of VecExonCount results
-             "QNNoOverlapOnTargetIntervalSkip",
-             "QNOverlapOnTargetInterval"]
+            "AlignmentsOnMainChr",
+            "QNProcessed",  #sum of all folowing keys => control
+            "QNAliOnDiffChrSkip",
+            "QNSameReadDiffStrandSkip",
+            "QNSingleReadSkip",
+            "QNNbAliR&FBetween1-3", #sum of the following 7 keys => control
+            "QN1F&1R",
+            "QN2F&1R_2FOverlapSkip",
+            "QN2F&1R_SA",
+            "QN1F&2R_2ROverlapSkip",
+            "QN1F&2R_SA",
+            "QNAliGapLength>1000bpSkip",
+            "QNAliBackToBackSkip",
+            "QNAli2F&2R_SA", #sum of the following 2 keys => control
+            "QNAli2F&2R_F1&R1_F2&R2_NotOverlapSkip",
+            "QNAliUnsuitableCombination_aliRorF>3Skip",
+            "FragOverlapOnTargetInterval", # equal to the sum of VecExonCount results
+            "QNNoOverlapOnTargetIntervalSkip",
+            "QNOverlapOnTargetInterval"]
         DictStatCount={ i : 0 for i in keys }
 
         #Variables to be processed for each Qname's alignment.
@@ -562,7 +470,83 @@ def main(argv):
         SampleTsv['FragCount']=VecExonCount
         SampleTsv.to_csv(os.path.join(NameCountFile),sep="\t", index=False, header=None)
 
-    Parallel(n_jobs=num_cores,backend="threading")(delayed(SampleParalelization)(i) for i in inputs)# TODO find an alternative to backend="threading"
+
+##############################################################################################################
+######################################### Script Body ########################################################
+##############################################################################################################
+###################################
+def main(argv):
+    ##########################################
+    # A) ARGV parameters definition
+    intervalFile = ''
+    bamOrigFolder=''
+    outputFile =''
+
+    try:
+        opts, args = getopt.getopt(argv,"h:i:b:o:",["help","intervalFile=","bamfolder=","outputfile="])
+    except getopt.GetoptError:
+        print('python3.6 STEP_1_CollectReadCounts_DECONA2New.py -i <intervalFile> -b <bamfolder> -o <outputfile>')
+        sys.exit(2)
+    for opt, value in opts:
+        if opt == '-h':
+            print("COMMAND SUMMARY:"
+            +"\n This script performs READ counts using the bedtools software from exome sequencing data."
+            +"\n"
+            +"\n USAGE:"
+            +"\n python3.6 STEP_1_CollectReadCounts_DECONA2New.py -i <intervalfile> -b <bamfolder> -o <outputfile>"
+            +"\n"
+            +"\n OPTIONS:"
+            +"\n	-i : A bed file obtained in STEP0. Please indicate the full path.(4 columns : CHR, START, END, TranscriptID_ExonNumber)"
+            +"\n	-b : The path to the folder containing the BAM files."
+            +"\n	-o : The path where create the new output file for the current analysis.")
+            sys.exit()
+        elif opt in ("-i", "--intervalFile"):
+            intervalFile=value
+        elif opt in ("-b", "--bamfolder"):
+            bamOrigFolder=value
+        elif opt in ("-o", "--outputfile"):
+            outputFile=value
+
+    #Check that all the arguments are present.
+    logger.info('Intervals bed file path is %s', intervalFile)
+    logger.info('BAM folder path is %s', bamOrigFolder)
+    logger.info('Output file path is %s ', outputFile)
+
+    #####################################################
+    # A) Setting up the analysis tree.
+        # 1) Creation of the DataToProcess folder if not existing.
+    DataToProcessPath=outputFile+"DataToProcess"
+    CreateFolder(DataToProcessPath)
+        # 2) Creation of the ReadCount folder if not existing.
+    RCPath=DataToProcessPath+"ReadCount"
+    CreateFolder(RCPath)
+        # 3) Creation of the Bedtools folder if not existing.
+    RCPathOutput=RCPath+"DECONA2"
+    CreateFolder(RCPathOutput)
+
+    #####################################################
+    # B)Bam files list extraction
+    #This list contains the path to each bam.
+    if not os.path.isdir(bamOrigFolder):
+        logger.error("Bam folder doesn't exist %s",bamOrigFolder)
+        sys.exit()
+    
+    sample=fnmatch.filter(os.listdir(bamOrigFolder), '*.bam')
+    inputs=np.arange(0,len(sample))
+
+    #####################################################
+    # C) Canonical transcript bed, existence check    
+    # Bed file load and Sanity Check : If the file does not have the expected format, the process ends.
+    intervalBed=BedParseAndSanityCheck(intervalFile)
+
+    ############################################
+    # D]  Creating interval trees for each chromosome
+    DictIntervalTree=IntervalTreeDictCreation(intervalBed)
+
+    #####################################################
+    # E) Definition of a loop for each sample allowing the BAM files symlinks and the reads counting.
+
+    Parallel(n_jobs=num_cores)(delayed(SampleParalelization)(i) for i in inputs)# TODO find an alternative to backend="threading"
 
 if __name__ =='__main__':
     main(sys.argv[1:])
