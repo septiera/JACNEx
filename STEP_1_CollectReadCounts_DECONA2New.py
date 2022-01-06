@@ -11,6 +11,7 @@
 #-access path to the folder containing the bams to be processed
 #-access path to the file containing the exonic intervals (bed file)
 #-access path to the output folder (for storage)
+#-access path to tmpDir
 
 #The output of this script is a tsv file in the same format as the interval file with the
 #addition of the "FragCount" column for each sample processed.
@@ -36,7 +37,7 @@ import fnmatch
 from ncls import NCLS # generating interval trees (cf : https://github.com/biocore-ntnu/ncls)
 import subprocess #spawn new processes, connect to their input/output/error pipes, and obtain their return codes.
 import io
-import dill as pickle
+import tempfile #manages the creation and deletion of temporary folders/files
 
 # 2) Python Parallelization modules
 import multiprocessing
@@ -49,27 +50,25 @@ os.environ['NUMEXPR_NUM_THREADS'] = '10'
 #####################################################################################################
 ################################ Logging Definition #################################################
 #####################################################################################################
-#create logger
+#create logger : Loggers expose the interface that the application code uses directly
 logger=logging.getLogger(os.path.basename(sys.argv[0]))
 logger.setLevel(logging.DEBUG)
-#create console handler and set level to debug
+#create console handler and set level to debug : The handlers send the log entries (created by the loggers) to the desired destinations.
 ch = logging.StreamHandler(sys.stderr)
 ch.setLevel(logging.DEBUG)
-#create formatter
+#create formatter : Formatters specify the structure of the log entry in the final output.
 formatter = logging.Formatter('%(asctime)s %(name)s: %(levelname)-8s [%(process)d] %(message)s', '%Y-%m-%d %H:%M:%S')
-#add formatter to ch
+#add formatter to ch(handler)
 ch.setFormatter(formatter)
-#add ch to logger
+#add ch(handler) to logger
 logger.addHandler(ch)
 
 #####################################################################################################
 ################################ Functions ##########################################################
 #####################################################################################################
-
-
 ###################################
 #Function allowing to create output folder.
-#input : take path
+#input : take output path
 #create outdir if it doesn't exist, die on failure
 def CreateFolder(outdir):
     if not os.path.isdir(outdir):
@@ -168,129 +167,55 @@ def ExtractAliLength(CIGARAlign):
         length+=int(Op)
     return(length)
 
-###################################
-#This function identifies the fragments for each Qname
-#When the fragment(s) are identified and it(they) overlap interest interval=> increment count for this intervals.
-#The inputs are :
-#-2 strings: qname and chr
-#-4 lists for R and F strand positions (start and end)
-#-the dictionary containing the interval trees for each chromosome
-#-list containing the fragment counts which will be completed/increment
-#-the dictionary to check the results at the process end.
-#There is no output object, we just want to complete the fragment counts list by interest intervals.
-def Qname2ExonCount(qnameString,chromString,startFList,endFList,startRList,endRList,ReadsBit,DictIntervalTree,VecExonCount,DictStatCount): # treatment on each Qname
-    Frag=[] #fragment(s) intervals
-    #####################################################################
-    ###I) DIFFERENTS CONDITIONS ESTABLISHMENT : for fragment detection
-    #####################################################################
-    ########################
-    #-Removing Qnames containing only one read (possibly split into several alignments, mostly due to MAPQ filtering)
-    if ReadsBit!=3:
-        DictStatCount["QNSingleReadSkip"]+=1
-        return
+####################################################
+#This function checks the presence of a results file for the sample being processed and performs an integrity check.
+#If the file does not exist or the integrity of the old file is not validated then the count will be performed.
+#Otherwise the process will be skipped for that sample.
+#inputs : 
+#- access path to the tsv
+#- panda dataframe containing all genomic positions of exons
 
-    elif (1<len(startFList+startRList)<=3): # only 1 or 2 ali on each strand but not 2 on each
-        DictStatCount["QNNbAliR&FBetween1-3"]+=1
-        if len(startFList)==0:
-            print(qnameString,chromString)
-            print(startFList,endFList)
-            print(startRList,endRList,ReadsBit)
-            sys.exit()
-        if max(startFList)<min(endRList):# alignments are not back-to-back
-            GapLength=min(startRList)-max(endFList)# gap length between the two alignments (negative if overlapping)
-            if (GapLength<=1000):
-                if (len(startFList)==1) and (len(startRList)==1):# one ali on each strand, whether SA or not doesn't matter
-                    DictStatCount["QN1F&1R"]+=1
-                    Frag=[min(startFList[0],startRList[0]),max(endFList[0],endRList[0])]
-                elif (len(startFList)==2) and (len(startRList)==1):
-                    if (min(startFList)<max(endFList)) and (min(endFList)>max(startFList)):
-                        DictStatCount["QN2F&1R_2FOverlapSkip"]+=1
-                        return # Qname deletion if the ali on the same strand overlap (SV ?!)
-                    else:
-                        DictStatCount["QN2F&1R_SA"]+=1
-                        Frag=[min(startFList[0],max(startRList)),max(endFList[0],max(endRList)),
-                              min(startFList),min(endFList)]
-                elif (len(startFList)==1) and (len(startRList)==2):
-                    if (min(startRList)<max(endRList)) and (min(endRList)>max(startRList)):
-                        DictStatCount["QN1F&2R_2ROverlapSkip"]+=1
-                        return # Qname deletion if the ali on the same strand overlap (SV ?!)
-                    else:
-                        DictStatCount["QN1F&2R_SA"]+=1
-                        Frag=[min(startFList[0],min(startRList)),max(endFList[0],min(endRList)),
-                              max(startRList),max(endRList)]
-            else: # Skipped Qname, GapLength too large, big del !?
-                DictStatCount["QNAliGapLength>1000bpSkip"]+=1
-                return
-        else: # Skipped Qname, ali back-to-back (SV, dup ?!)
-            DictStatCount["QNAliBackToBackSkip"]+=1
-            return
-
-    elif(len(startFList)==2) and (len(startRList)==2): # only 2F and 2 R combinations
-        #Only one possibility to generate fragments in this case
-        if ( (min(startFList)<min(endRList)) and (min(endFList)>min(startRList)) and
-             (max(startFList)<max(endRList)) and (max(endFList)>max(startRList)) ):
-            Frag=[min(min(startFList),min(startRList)),
-                   max(min(endFList),min(endRList)),
-                   min(max(startFList),max(startRList)),
-                   max(max(endFList),max(endRList))]
-            DictStatCount["QNAli2F&2R_SA"]+=1
-        else: # The alignments describe SVs that are too close => Skipped Qname
-            DictStatCount["QNAli2F&2R_F1&R1_F2&R2_NotOverlapSkip"]+=1
-            return
-    else: # At least 3 alignments on one strand => Skipped Qname
-        DictStatCount["QNAliUnsuitableCombination_aliRorF>3Skip"]+=1
-        return
-
-    #####################################################################
-    ###II)- FRAGMENT COUNTING FOR EXONIC REGIONS
-    #####################################################################
-    #Retrieving the corresponding interval tree
-    RefIntervalTree=DictIntervalTree[chromString]
-
-    for idx in list(range(0,(int(len(Frag)/2)))):
-        SelectInterval=RefIntervalTree.find_overlap(Frag[2*idx],Frag[2*idx+1])
-        # how many overlapping intervals did we find
-        overlaps=0
-        for interval in SelectInterval:
-            indexIntervalRef=int(interval[2])
-            VecExonCount[indexIntervalRef]+=1
-            DictStatCount["FragOverlapOnTargetInterval"]+=1
-            overlaps += 1
-
-        if overlaps==0:
-            DictStatCount["QNNoOverlapOnTargetIntervalSkip"]+=1
-            return #if the frag does not overlap a target interval => Skip
+def SanityCheckPreExistingTSV(countFilePath,BedIntervalFile):
+    validSanity=0
+    numberExons=len(BedIntervalFile)
+    if (os.path.isfile(countFilePath)) and (sum(1 for _ in open(countFilePath))==numberExons):
+        logger.info("File %s already exists and has the same lines number as the bed file %s ",countFilePath,numberExons)
+        count=pd.read_table(countFilePath,header=None,sep="\t")
+        comparison_CHR = np.where(count[0] == BedIntervalFile[0], True, False)
+        comparison_START = np.where(count[1] == BedIntervalFile[1], True, False)
+        comparison_END = np.where(count[2] == BedIntervalFile[2], True, False)
+        comparison_ENST = np.where(count[3] == BedIntervalFile[3], True, False)
+        if np.unique(comparison_CHR) and np.unique(comparison_START) and np.unique(comparison_END) and np.unique(comparison_ENST):
+            validSanity+=1# Bam re-analysis is not effective.
         else:
-            DictStatCount["QNOverlapOnTargetInterval"]+=1
+            logger.warning("File %s already exists but it's truncated. This involves replacing the corrupted file.",countFilePath)
+            try:
+                os.remove(countFilePath)
+            except OSError as error:
+                logger.error("File deletion has encountered an error %s %s", countFilePath, error.strerror)
+                sys.exit()
+            
+    #else : We process the bam without tsv file or with incomplete tsv file.
+    elif os.path.isfile(countFilePath): #Be careful when updating the bed if there is no change in the output directory, all the files are replaced.
+        logger.warning("File %s already exists but it's truncated. This involves replacing the corrupted file.",countFilePath)
+        try:
+            os.remove(countFilePath)
+        except OSError as error:
+            logger.error("File deletion has encountered an error %s %s", countFilePath, error.strerror)
+            sys.exit()
+    
+    return(validSanity)
 
 ####################################################
 #
 #
-def SampleCountingFrag(bamFile,RCPathOutput,DictIntervalTrees,intervalBed,ProcessTmpDir):
-    with tempfile.TemporaryDirectory(dir=ProcessTmpDir) as SampleTmpDir:
+def SampleCountingFrag(bamFile,nameCountFilePath,dictIntervalTree,intervalBed,processTmpDir,num_cores):
+    with tempfile.TemporaryDirectory(dir=processTmpDir) as SampleTmpDir:
         numberExons=len(intervalBed)
-        bamFile=sample[i]
-        sampleName=bamFile.replace(".bam","")
-        bamFile=os.path.join(bamOrigFolder,bamFile)
-        logger.info('Sample being processed : %s', sampleName)
+        logger.info('Sample BAM being processed : %s', bamFile)
 
         ############################################
-        #I] Check that the process has not already been applied to the current bam.
-        NameCountFile=os.path.join(RCPathOutput,sampleName+".tsv")
-        if (os.path.isfile(NameCountFile)) and (sum(1 for _ in open(NameCountFile))==numberExons):
-            logger.info("File %s already exists and has the same lines number as the bed file %s ",NameCountFile,numberExons)
-            return # Bam re-analysis is not effective.
-        #else : We process the bam without tsv file or with incomplete tsv file.
-        elif os.path.isfile(NameCountFile): #Be careful when updating the bed if there is no change in the output directory, all the files are replaced.
-            logger.warning("File %s already exists but it's truncated. This involves replacing the corrupted file.",NameCountFile)
-            try:
-                os.remove(NameCountFile)
-            except OSError as error:
-                logger.error("File deletion has encountered an error %s %s", NameCountFile, error.strerror)
-                sys.exit()
-
-        ############################################
-        # II] Pretreatments on the sample bam.
+        # I] Pretreatments on the sample bam.
         # Samtools commands line :
         # The bam should be sorted by Qname to facilitate the fragments counting (-n option).
         # -@ allows the process to be split across multiple cores.
@@ -313,7 +238,7 @@ def SampleCountingFrag(bamFile,RCPathOutput,DictIntervalTrees,intervalBed,Proces
 
         # III] Outpout variables initialization
         #list containing the fragment counts for the exons.
-        VecExonCount=[0]*numberExons #The indexes correspond to the exon order in the "intervalBed".
+        vecExonCount=[0]*numberExons #The indexes correspond to the exon order in the "intervalBed".
 
         #Process control : skip mention corresponds to the Qnames removal for fragments counts
         #Aligments = alignements count, QN= qnames counts , Frag= fragments counts
@@ -337,7 +262,7 @@ def SampleCountingFrag(bamFile,RCPathOutput,DictIntervalTrees,intervalBed,Proces
             "FragOverlapOnTargetInterval", # equal to the sum of VecExonCount results
             "QNNoOverlapOnTargetIntervalSkip",
             "QNOverlapOnTargetInterval"]
-        DictStatCount={ i : 0 for i in keys }
+        dictStatCount={ i : 0 for i in keys }
 
         #Variables to be processed for each Qname's alignment.
         qchrom="" # unique
@@ -359,19 +284,19 @@ def SampleCountingFrag(bamFile,RCPathOutput,DictIntervalTrees,intervalBed,Proces
         for line in p2.stdout:
             line=line.rstrip('\r\n')
             align=line.split('\t')
-            DictStatCount["AlignmentsInBam"]+=1
+            dictStatCount["AlignmentsInBam"]+=1
 
             #################################################################################################
             #A] Selection of information for the current alignment only if it is on main chr
             if not mainChr.match(align[2]): continue #TODO make this work for different naming conventions
-            DictStatCount["AlignmentsOnMainChr"]+=1 #Only alignments on the main chromosomes are treated
+            dictStatCount["AlignmentsOnMainChr"]+=1 #Only alignments on the main chromosomes are treated
 
             #################################################################################################
             #B] If we are done with previous qname: process it and reset accumulators
             if (qname!=align[0]) and (qname!=""):  # align[0] is the qname
-                DictStatCount["QNProcessed"]+=1
+                dictStatCount["QNProcessed"]+=1
                 if not qBad:
-                    Qname2ExonCount(qname,qchrom,qstartF,qendF,qstartR,qendR,qReads,DictIntervalTree,VecExonCount,DictStatCount)
+                    Qname2ExonCount(qname,qchrom,qstartF,qendF,qstartR,qendR,qReads,dictIntervalTree,vecExonCount,dictStatCount)
                 qchrom=""
                 qname=""
                 qstartR=[]
@@ -395,7 +320,7 @@ def SampleCountingFrag(bamFile,RCPathOutput,DictIntervalTrees,intervalBed,Proces
                 qchrom=align[2]
             elif qchrom!=align[2]:
                 qBad=True
-                DictStatCount["QNAliOnDiffChrSkip"]+=1
+                dictStatCount["QNAliOnDiffChrSkip"]+=1
                 continue
             # else same chrom, don't modify qchrom
 
@@ -434,41 +359,139 @@ def SampleCountingFrag(bamFile,RCPathOutput,DictIntervalTrees,intervalBed,Proces
                 qFirstOnForward=currentFirstOnForward
             elif qFirstOnForward!=currentFirstOnForward:
                 qBad=True
-                DictStatCount["QNSameReadDiffStrandSkip"]+=1
+                dictStatCount["QNSameReadDiffStrandSkip"]+=1
                 continue
             # else this ali agrees with previous alis for qname -> NOOP
 
 
         #################################################################################################
         #VI]  Process last Qname
-        Qname2ExonCount(qname,qchrom,qstartF,qendF,qstartR,qendR,qReads,DictIntervalTree,VecExonCount,DictStatCount)
+        Qname2ExonCount(qname,qchrom,qstartF,qendF,qstartR,qendR,qReads,dictIntervalTree,vecExonCount,dictStatCount)
 
         #################################################################################################
         #VII] Process Monitoring
-        NBTotalQname=(DictStatCount["QN1F&1R_SA&notSA"]+
-                DictStatCount["QNAliOnDiffChrSkip"]+
-                DictStatCount["QNAliSameStrandOrAloneSkip"]+
-                DictStatCount["QN2F&1R_2FOverlapSkip"]+
-                DictStatCount["QN2F&1R_SA"]+
-                DictStatCount["QN1F&2R_2ROverlapSkip"]+
-                DictStatCount["QN1F&2R_SA"]+
-                DictStatCount["QNAliGapLength>1000bpSkip"]+
-                DictStatCount["QNAliBackToBackSkip"]+
-                DictStatCount["QNAli2F&2R_SA"]+
-                DictStatCount["QNAli2F&2R_F1&R1_F2&R2_NotOverlapSkip"]+
-                DictStatCount["QNAliUnsuitableCombination_aliRorF>3Skip"]+
-                DictStatCount["QNNoOverlapFragOnTargetIntervalSkip"])
+        NBTotalQname=(dictStatCount["QN1F&1R"]+
+                        dictStatCount["QNAliOnDiffChrSkip"]+
+                        dictStatCount["QNSameReadDiffStrandSkip"]+
+                        dictStatCount["QN2F&1R_2FOverlapSkip"]+
+                        dictStatCount["QN2F&1R_SA"]+
+                        dictStatCount["QN1F&2R_2ROverlapSkip"]+
+                        dictStatCount["QN1F&2R_SA"]+
+                        dictStatCount["QNAliGapLength>1000bpSkip"]+
+                        dictStatCount["QNAliBackToBackSkip"]+
+                        dictStatCount["QNAli2F&2R_SA"]+
+                        dictStatCount["QNAli2F&2R_F1&R1_F2&R2_NotOverlapSkip"]+
+                        dictStatCount["QNAliUnsuitableCombination_aliRorF>3Skip"]+
+                        dictStatCount["QNOverlapOnTargetInterval"])
         #the last qname is not taken into account in the loop, hence the +1
-        if NBTotalQname==DictStatCount["QNProcessed"]+1 and sum(VecExonCount)==DictStatCount["QNOverlapFragOnTargetInterval"]:
-            logger.info("CONTROL : all the qnames of "+bamFile+" were seen in the different conditions.")
+        if NBTotalQname==dictStatCount["QNProcessed"]+1 and sum(vecExonCount)==dictStatCount["QNOverlapOnTargetInterval"]:
+            logger.info("CONTROL : all the qnames of %s were seen in the different conditions.",bamFile)
         else:
-            logger.error("Not all of "+bamFile+"'s qnames were seen in the different conditions!!! Please check results below "+DictStatCount)
+            statslist=dictStatCount.items()
+            logger.error("Not all of %s's qnames were seen in the different conditions!!! Please check stats results below %s",bamFile,statslist)
             sys.exit()
         #################################################################################################
         #IX] Saving the tsv file
         SampleTsv=intervalBed
-        SampleTsv['FragCount']=VecExonCount
-        SampleTsv.to_csv(os.path.join(NameCountFile),sep="\t", index=False, header=None)
+        SampleTsv['FragCount']=vecExonCount
+        SampleTsv.to_csv(os.path.join(nameCountFilePath),sep="\t", index=False, header=None)
+
+
+
+###################################
+#This function identifies the fragments for each Qname
+#When the fragment(s) are identified and it(they) overlap interest interval=> increment count for this intervals.
+#The inputs are :
+#-2 strings: qname and chr
+#-4 lists for R and F strand positions (start and end)
+#-the dictionary containing the interval trees for each chromosome
+#-list containing the fragment counts which will be completed/increment
+#-the dictionary to check the results at the process end.
+#There is no output object, we just want to complete the fragment counts list by interest intervals.
+def Qname2ExonCount(qnameString,chromString,startFList,endFList,startRList,endRList,readsBit,dictIntervalTree,vecExonCount,dictStatCount): # treatment on each Qname
+    Frag=[] #fragment(s) intervals
+    #####################################################################
+    ###I) DIFFERENTS CONDITIONS ESTABLISHMENT : for fragment detection
+    #####################################################################
+    ########################
+    #-Removing Qnames containing only one read (possibly split into several alignments, mostly due to MAPQ filtering)
+    if readsBit!=3:
+        dictStatCount["QNSingleReadSkip"]+=1
+        return
+
+    elif (1<len(startFList+startRList)<=3): # only 1 or 2 ali on each strand but not 2 on each
+        dictStatCount["QNNbAliR&FBetween1-3"]+=1
+        if len(startFList)==0:
+            print(qnameString,chromString)
+            print(startFList,endFList)
+            print(startRList,endRList,readsBit)
+            sys.exit()
+        if max(startFList)<min(endRList):# alignments are not back-to-back
+            GapLength=min(startRList)-max(endFList)# gap length between the two alignments (negative if overlapping)
+            if (GapLength<=1000):
+                if (len(startFList)==1) and (len(startRList)==1):# one ali on each strand, whether SA or not doesn't matter
+                    dictStatCount["QN1F&1R"]+=1
+                    Frag=[min(startFList[0],startRList[0]),max(endFList[0],endRList[0])]
+                elif (len(startFList)==2) and (len(startRList)==1):
+                    if (min(startFList)<max(endFList)) and (min(endFList)>max(startFList)):
+                        dictStatCount["QN2F&1R_2FOverlapSkip"]+=1
+                        return # Qname deletion if the ali on the same strand overlap (SV ?!)
+                    else:
+                        dictStatCount["QN2F&1R_SA"]+=1
+                        Frag=[min(startFList[0],max(startRList)),max(endFList[0],max(endRList)),
+                              min(startFList),min(endFList)]
+                elif (len(startFList)==1) and (len(startRList)==2):
+                    if (min(startRList)<max(endRList)) and (min(endRList)>max(startRList)):
+                        dictStatCount["QN1F&2R_2ROverlapSkip"]+=1
+                        return # Qname deletion if the ali on the same strand overlap (SV ?!)
+                    else:
+                        dictStatCount["QN1F&2R_SA"]+=1
+                        Frag=[min(startFList[0],min(startRList)),max(endFList[0],min(endRList)),
+                              max(startRList),max(endRList)]
+            else: # Skipped Qname, GapLength too large, big del !?
+                dictStatCount["QNAliGapLength>1000bpSkip"]+=1
+                return
+        else: # Skipped Qname, ali back-to-back (SV, dup ?!)
+            dictStatCount["QNAliBackToBackSkip"]+=1
+            return
+
+    elif(len(startFList)==2) and (len(startRList)==2): # only 2F and 2 R combinations
+        #Only one possibility to generate fragments in this case
+        if ( (min(startFList)<min(endRList)) and (min(endFList)>min(startRList)) and
+             (max(startFList)<max(endRList)) and (max(endFList)>max(startRList)) ):
+            Frag=[min(min(startFList),min(startRList)),
+                   max(min(endFList),min(endRList)),
+                   min(max(startFList),max(startRList)),
+                   max(max(endFList),max(endRList))]
+            dictStatCount["QNAli2F&2R_SA"]+=1
+        else: # The alignments describe SVs that are too close => Skipped Qname
+            dictStatCount["QNAli2F&2R_F1&R1_F2&R2_NotOverlapSkip"]+=1
+            return
+    else: # At least 3 alignments on one strand => Skipped Qname
+        dictStatCount["QNAliUnsuitableCombination_aliRorF>3Skip"]+=1
+        return
+
+    #####################################################################
+    ###II)- FRAGMENT COUNTING FOR EXONIC REGIONS
+    #####################################################################
+    #Retrieving the corresponding interval tree
+    RefIntervalTree=dictIntervalTree[chromString]
+
+    for idx in list(range(0,(int(len(Frag)/2)))):
+        SelectInterval=RefIntervalTree.find_overlap(Frag[2*idx],Frag[2*idx+1])
+        # how many overlapping intervals did we find
+        overlaps=0
+        for interval in SelectInterval:
+            indexIntervalRef=int(interval[2])
+            vecExonCount[indexIntervalRef]+=1
+            dictStatCount["FragOverlapOnTargetInterval"]+=1
+            overlaps += 1
+
+        if overlaps==0:
+            dictStatCount["QNNoOverlapOnTargetIntervalSkip"]+=1
+            return #if the frag does not overlap a target interval => Skip
+        else:
+            dictStatCount["QNOverlapOnTargetInterval"]+=1
 
 
 ##############################################################################################################
@@ -481,11 +504,12 @@ def main(argv):
     intervalFile = ''
     bamOrigFolder=''
     outputFile =''
+    processTmpDir=''
 
     try:
-        opts, args = getopt.getopt(argv,"h:i:b:o:",["help","intervalFile=","bamfolder=","outputfile="])
+        opts, args = getopt.getopt(argv,"h:i:b:o:t:",["help","intervalFile=","bamfolder=","outputfile=","tmpfolder="])
     except getopt.GetoptError:
-        print('python3.6 STEP_1_CollectReadCounts_DECONA2New.py -i <intervalFile> -b <bamfolder> -o <outputfile>')
+        print('python3.6 STEP_1_CollectReadCounts_DECONA2New.py -i <intervalFile> -b <bamfolder> -o <outputfile> -t <tmpfolder>')
         sys.exit(2)
     for opt, value in opts:
         if opt == '-h':
@@ -493,12 +517,13 @@ def main(argv):
             +"\n This script performs READ counts using the bedtools software from exome sequencing data."
             +"\n"
             +"\n USAGE:"
-            +"\n python3.6 STEP_1_CollectReadCounts_DECONA2New.py -i <intervalfile> -b <bamfolder> -o <outputfile>"
+            +"\n python3.6 STEP_1_CollectReadCounts_DECONA2New.py -i <intervalfile> -b <bamfolder> -o <outputfile> -t <tmpfolder>"
             +"\n"
             +"\n OPTIONS:"
             +"\n	-i : A bed file obtained in STEP0. Please indicate the full path.(4 columns : CHR, START, END, TranscriptID_ExonNumber)"
             +"\n	-b : The path to the folder containing the BAM files."
-            +"\n	-o : The path where create the new output file for the current analysis.")
+            +"\n	-o : The path where create the new output file for the current analysis."
+            +"\n	-t : The path to the temporary folder containing the samtools results ")
             sys.exit()
         elif opt in ("-i", "--intervalFile"):
             intervalFile=value
@@ -506,11 +531,14 @@ def main(argv):
             bamOrigFolder=value
         elif opt in ("-o", "--outputfile"):
             outputFile=value
-
+        elif opt in ("-t","--tmpfolder"):
+            processTmpDir=value
+            
     #Check that all the arguments are present.
     logger.info('Intervals bed file path is %s', intervalFile)
     logger.info('BAM folder path is %s', bamOrigFolder)
     logger.info('Output file path is %s ', outputFile)
+    logger.info('Temporary folder path is %s ', processTmpDir)
 
     #####################################################
     # A) Setting up the analysis tree.
@@ -518,10 +546,10 @@ def main(argv):
     DataToProcessPath=outputFile+"DataToProcess"
     CreateFolder(DataToProcessPath)
         # 2) Creation of the ReadCount folder if not existing.
-    RCPath=DataToProcessPath+"ReadCount"
+    RCPath=DataToProcessPath+"/ReadCount"
     CreateFolder(RCPath)
         # 3) Creation of the Bedtools folder if not existing.
-    RCPathOutput=RCPath+"DECONA2"
+    RCPathOutput=RCPath+"/DECONA2"
     CreateFolder(RCPathOutput)
 
     #####################################################
@@ -531,8 +559,7 @@ def main(argv):
         logger.error("Bam folder doesn't exist %s",bamOrigFolder)
         sys.exit()
     
-    sample=fnmatch.filter(os.listdir(bamOrigFolder), '*.bam')
-    inputs=np.arange(0,len(sample))
+    samples=fnmatch.filter(os.listdir(bamOrigFolder), '*.bam')
 
     #####################################################
     # C) Canonical transcript bed, existence check    
@@ -541,12 +568,23 @@ def main(argv):
 
     ############################################
     # D]  Creating interval trees for each chromosome
-    DictIntervalTree=IntervalTreeDictCreation(intervalBed)
+    dictIntervalTree=IntervalTreeDictCreation(intervalBed)
 
     #####################################################
     # E) Definition of a loop for each sample allowing the BAM files symlinks and the reads counting.
+    for S in samples:
+        sampleName=S.replace(".bam","")
+        bamFile=os.path.join(bamOrigFolder,S)
+        logger.info('Sample being processed : %s', sampleName)
 
-    Parallel(n_jobs=num_cores)(delayed(SampleParalelization)(i) for i in inputs)# TODO find an alternative to backend="threading"
+        #output TSV name definition
+        nameCountFilePath=os.path.join(RCPathOutput,sampleName+".tsv")
+        validSanity=SanityCheckPreExistingTSV(nameCountFilePath,intervalBed)
+        logger.info(validSanity)
+        if validSanity==0:
+            SampleCountingFrag(bamFile,nameCountFilePath,dictIntervalTree,intervalBed,processTmpDir,num_cores)
+        else:
+            continue    
 
 if __name__ =='__main__':
     main(sys.argv[1:])
