@@ -30,6 +30,7 @@ import sys #Path
 import getopt
 import logging
 import os
+from numpy.lib.shape_base import column_stack
 import pandas as pd #read,make,treat Dataframe object
 import numpy as np
 import re  # regular expressions
@@ -178,20 +179,17 @@ def ExtractAliLength(CIGARAlign):
 #Output: a Boolean variable
 
 def SanityCheckPreExistingTSV(countFilePath,BedIntervalFile):
-    validSanity=0 #Boolean: 0 analysis/reanalysis; 1 no analysis
+    validSanity=True #Boolean: 0 analysis/reanalysis; 1 no analysis
     numberExons=len(BedIntervalFile)
     if (os.path.isfile(countFilePath)) and (sum(1 for _ in open(countFilePath))==numberExons): #file exists and has the same lines number as the exonic interval file
         logger.info("File %s already exists and has the same lines number as the bed file %s ",countFilePath,numberExons)
         count=pd.read_table(countFilePath,header=None,sep="\t")
         #Columns comparisons
-        comparison_CHR = np.where(count[0] == BedIntervalFile[0], True, False)
-        comparison_START = np.where(count[1] == BedIntervalFile[1], True, False)
-        comparison_END = np.where(count[2] == BedIntervalFile[2], True, False)
-        comparison_ENST = np.where(count[3] == BedIntervalFile[3], True, False)
-        if np.unique(comparison_CHR) and np.unique(comparison_START) and np.unique(comparison_END) and np.unique(comparison_ENST):
-            validSanity+=1# Bam re-analysis is not effective.
+        if (count[0].equals(BedIntervalFile['CHR'])) and (count[1].equals(BedIntervalFile['START'])) and (count[2].equals(BedIntervalFile['END'])) and (count[3].equals(BedIntervalFile['TranscriptID_ExonNumber'])):
+            print("OK")
+            validSanity=False# Bam re-analysis is not effective.
         else:
-            logger.warning("The file %s exists, has the same lines number as the bed file. However there are differences between the columns. Check and correct these differences.",countFilePath)
+            logger.warning("However there are differences between the columns. Check and correct these differences.",countFilePath)
             try:
                 os.remove(countFilePath)
             except OSError as error:
@@ -601,8 +599,8 @@ def main(argv):
         #output TSV name definition
         nameCountFilePath=os.path.join(RCPathOutput,sampleName+".tsv")
         validSanity=SanityCheckPreExistingTSV(nameCountFilePath,intervalBed)
-        logger.info(validSanity)
-        if validSanity==0:
+        print(validSanity)
+        if validSanity:
             SampleCountingFrag(bamFile,nameCountFilePath,dictIntervalTree,intervalBed,processTmpDir,num_cores)
         else:
             continue    
