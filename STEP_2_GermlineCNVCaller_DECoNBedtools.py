@@ -2,7 +2,7 @@
 # coding: utf-8
 
 #############################################################################################################
-############# STEP2 makeCNVCalls DECoN
+############################################## STEP2 makeCNVCalls DECoN #####################################
 #############################################################################################################
 # How the script works ?
 
@@ -20,39 +20,54 @@
 # This base profile is then compared to the target patient.
 # A beta-binomial distribution is fitted to the data to extract the differences in copy number via a likelihood profile.
 # The segmentation is performed using a hidden Markov chain model.
-# The output results have a format identical to the basic DECON format. 
+# The output results have a format identical to the basic DECON/ExomDepth format. 
 # It corresponds to a .tsv table containing all the CNVs called for the samples set considered.
 
 #############################################################################################################
-############# Loading of the modules required for processing.
+################################ Loading of the modules required for processing #############################
 #############################################################################################################
-import pandas as pd #is a module that makes it easier to process data in tabular form by formatting them in dataframes as in R.
-import numpy #is a module often associated with the pandas library it allows the processing of matrix or tabular data.
-import os # this module provides a portable way to use operating system-dependent functionality. (opening and saving files)
-import sys, getopt # this module provides system information. (ex argv argument)
-import time # is a module for obtaining the date and time of the system.
-import logging # is a practical logging module. (process monitoring and development support)
-sys.path.append("/home/septiera/Benchmark_CNVTools/Scripts/Modules/")
-import FileFolderManagement.functions as ffm #Module to check the existence of files
+import sys #path
+import pandas as pd #read,make,treat Dataframe object
+import numpy #help in processing matrices or tabular data
+import os
+import getopt 
+import time # system date 
+import logging 
 
 #Definition of the scripts'execution date (allows to annotate the output files to track them over time) 
 now=time.strftime("%y%m%d")
 
-#############################################################################################################
-############# Logging Definition 
-#############################################################################################################
-#create logger
-logger = logging.getLogger(sys.argv[0])
+#####################################################################################################
+################################ Logging Definition #################################################
+#####################################################################################################
+#create logger : Loggers expose the interface that the application code uses directly
+logger=logging.getLogger(os.path.basename(sys.argv[0]))
 logger.setLevel(logging.DEBUG)
-#create console handler and set level to debug
+#create console handler and set level to debug : The handlers send the log entries (created by the loggers) to the desired destinations.
 ch = logging.StreamHandler(sys.stderr)
 ch.setLevel(logging.DEBUG)
-#create formatter
+#create formatter : Formatters specify the structure of the log entry in the final output.
 formatter = logging.Formatter('%(asctime)s %(name)s: %(levelname)-8s [%(process)d] %(message)s', '%Y-%m-%d %H:%M:%S')
-#add formatter to ch
+#add formatter to ch(handler)
 ch.setFormatter(formatter)
-#add ch to logger
+#add ch(handler) to logger
 logger.addHandler(ch)
+
+#####################################################################################################
+################################ Functions ##########################################################
+#####################################################################################################
+####################################################
+#Function allowing to create output folder.
+#Input : take output path
+#create outdir if it doesn't exist, die on failure
+def CreateFolder(outdir):
+    if not os.path.isdir(outdir):
+        try:
+            os.mkdir(outdir)
+        except OSError as error:
+            logger.error("Creation of the directory %s failed : %s", outdir, error.strerror)
+            sys.exit()
+        
 ##############################################################################################################
 ############### Script Body
 ##############################################################################################################
@@ -97,16 +112,22 @@ def main(argv):
 
     #####################################################
     # B) Bedtools analysis output file creation 
-    OutputAnalysisPath=ffm.CreateAnalysisFolder(outputfile, "Calling_results_Bedtools_"+now )
+    outputFolderPath=outputfile+"Calling_results_Bedtools_"+now 
+    CreateFolder(outputFolderPath)
 
     #####################################################
-    # C) Existence File Check
-    ffm.checkFolderExistance(readCountFolder)
-    ffm.checkFileExistance(intervalFile)
+    # C) Existence File/Folder Check
+    if not os.path.isdir(readCountFolder):
+        logger.error("Bam folder doesn't exist %s",readCountFolder)
+        sys.exit()
+
+    if not os.path.isfile(intervalFile):
+        logger.error("file %s doesn't exist ",intervalFile)
+        sys.exit()
 
     #####################################################
     # D) Use of the R script for calling
-    DECoNCommand="Rscript /home/septiera/InfertilityCohort_Analysis/Scripts/Rscript/AdaptDECON_CallingCNV_BedtoolsRes.R "+readCountFolder+" "+intervalFile+" "+OutputAnalysisPath
+    DECoNCommand="Rscript /home/septiera/InfertilityCohort_Analysis/Scripts/Rscript/AdaptDECON_CallingCNV_BedtoolsRes.R "+readCountFolder+" "+intervalFile+" "+outputFolderPath
     logger.info("DECoN modified COMMAND: %s", DECoNCommand)
     returned_value = os.system(DECoNCommand)
     if returned_value == 0:
