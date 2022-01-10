@@ -186,7 +186,6 @@ def SanityCheckPreExistingTSV(countFilePath,BedIntervalFile):
         count=pd.read_table(countFilePath,header=None,sep="\t")
         #Columns comparisons
         if (count[0].equals(BedIntervalFile['CHR'])) and (count[1].equals(BedIntervalFile['START'])) and (count[2].equals(BedIntervalFile['END'])) and (count[3].equals(BedIntervalFile['TranscriptID_ExonNumber'])):
-            print("OK")
             validSanity=False# Bam re-analysis is not effective.
         else:
             logger.warning("However there are differences between the columns. Check and correct these differences.",countFilePath)
@@ -498,6 +497,8 @@ def SampleCountingFrag(bamFile,nameCountFilePath,dictIntervalTree,intervalBed,pr
                       dictStatCount["QNAli2F&2R_SA"]+
                       dictStatCount["QNAli2F&2R_F1&R1_F2&R2_NotOverlapSkip"]+
                       dictStatCount["QNAliUnsuitableCombination_aliRorF>3Skip"])
+
+        #IX]Fragment count good progress control 
         #the last qname is not taken into account in the loop, hence the +1
         if (NBTotalQname==(dictStatCount["QNProcessed"])+1) and (sum(vecExonCount)==dictStatCount["FragOverlapOnTargetInterval"]):
             logger.info("CONTROL : all the qnames of %s were seen in the different conditions.",bamFile)
@@ -507,7 +508,7 @@ def SampleCountingFrag(bamFile,nameCountFilePath,dictIntervalTree,intervalBed,pr
             logger.error("Nb total Qname : %s. Nb Qname overlap target interval %s",NBTotalQname,sum(vecExonCount))
             sys.exit()
         #################################################################################################
-        #IX] Saving the tsv file
+        #X] Saving the tsv file
         SampleTsv=intervalBed
         SampleTsv['FragCount']=vecExonCount
         SampleTsv.to_csv(os.path.join(nameCountFilePath),sep="\t", index=False, header=None)
@@ -599,7 +600,8 @@ def main(argv):
         #output TSV name definition
         nameCountFilePath=os.path.join(RCPathOutput,sampleName+".tsv")
         validSanity=SanityCheckPreExistingTSV(nameCountFilePath,intervalBed)
-        print(validSanity)
+        print(sampleName," : never seen ",validSanity)
+
         if validSanity:
             SampleCountingFrag(bamFile,nameCountFilePath,dictIntervalTree,intervalBed,processTmpDir,num_cores)
         else:
