@@ -81,7 +81,7 @@ def CreateFolder(outdir):
   
 ####################################################
 #Canonical transcripts sanity check.
-#This function is useful for the bed file of canonical transcripts.
+#This function is useful for the bed file of canonical.
 #It allows to check that the input file is clean.
 
 #Input:
@@ -498,6 +498,8 @@ def SampleCountingFrag(bamFile,nameCountFilePath,dictIntervalTree,intervalBed,pr
                       dictStatCount["QNAli2F&2R_SA"]+
                       dictStatCount["QNAli2F&2R_F1&R1_F2&R2_NotOverlapSkip"]+
                       dictStatCount["QNAliUnsuitableCombination_aliRorF>3Skip"])
+
+        #IX] Fragment count good progress control             
         #the last qname is not taken into account in the loop, hence the +1
         if (NBTotalQname==(dictStatCount["QNProcessed"])+1) and (sum(vecExonCount)==dictStatCount["FragOverlapOnTargetInterval"]):
             logger.info("CONTROL : all the qnames of %s were seen in the different conditions.",bamFile)
@@ -507,7 +509,7 @@ def SampleCountingFrag(bamFile,nameCountFilePath,dictIntervalTree,intervalBed,pr
             logger.error("Nb total Qname : %s. Nb Qname overlap target interval %s",NBTotalQname,sum(vecExonCount))
             sys.exit()
         #################################################################################################
-        #IX] Saving the tsv file
+        #X] Saving the tsv file
         SampleTsv=intervalBed
         SampleTsv['FragCount']=vecExonCount
         SampleTsv.to_csv(os.path.join(nameCountFilePath),sep="\t", index=False, header=None)
