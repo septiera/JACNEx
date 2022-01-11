@@ -551,7 +551,7 @@ def main(argv):
     try:
         opts, args = getopt.getopt(argv,"h:i:b:o:t:",["help","intervalFile=","bamfolder=","outputfile=","tmpfolder="])
     except getopt.GetoptError:
-        print('python3.6 STEP_1_CollectReadCounts_DECONA2New.py -i <intervalFile> -b <bamfolder> -o <outputfile> -t <tmpfolder>')
+        print(sys.argv[0]+' -i <intervalFile> -b <bamfolder> -o <outputfile> -t <tmpfolder>')
         sys.exit(2)
     for opt, value in opts:
         if opt == '-h':
@@ -559,7 +559,7 @@ def main(argv):
             +"\n This script performs READ counts using the bedtools software from exome sequencing data."
             +"\n"
             +"\n USAGE:"
-            +"\n python3.6 STEP_1_CollectReadCounts_DECONA2New.py -i <intervalfile> -b <bamfolder> -o <outputfile> -t <tmpfolder>"
+            +"\n"+sys.argv[0]+" -i <intervalfile> -b <bamfolder> -o <outputfile> -t <tmpfolder>"
             +"\n"
             +"\n OPTIONS:"
             +"\n	-i : A bed file obtained in STEP0. Please indicate the full path.(4 columns :"+
