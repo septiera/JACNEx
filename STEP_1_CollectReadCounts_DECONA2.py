@@ -41,12 +41,12 @@ import io
 import tempfile #manages the creation and deletion of temporary folders/files
 
 # 2) Python Parallelization modules
-import multiprocessing
-from joblib import Parallel, delayed #parallelization characteristics works with the multiprocessing module.
-num_cores=20 #CPU number definition to use during parallelization.
+#import multiprocessing
+#from joblib import Parallel, delayed #parallelization characteristics works with the multiprocessing module.
+#num_cores=20 #CPU number definition to use during parallelization.
 #Next Line define a CPUs minimum number to use for the process.
 #Must be greater than the cores number defined below.
-os.environ['NUMEXPR_NUM_THREADS'] = '10'
+#os.environ['NUMEXPR_NUM_THREADS'] = '10'
 
 #####################################################################################################
 ################################ Logging Definition #################################################
@@ -158,7 +158,7 @@ def BedParseAndSanityCheck(PathBedToCheck):
 ####################################################
 #This function uses the ncls module to create interval trees
 #Input : bed file with exon interval
-#Output: dictionary(hash): key=chr, values=interval_tree
+#Output: dictionary(hash): key=chr, value=interval_tree
 def IntervalTreeDictCreation(BedIntervalFile):
     DictIntervalTree={}
     listCHR=list(BedIntervalFile.CHR.unique())
