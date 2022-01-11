@@ -54,11 +54,13 @@ os.environ['NUMEXPR_NUM_THREADS'] = '10'
 #create logger : Loggers expose the interface that the application code uses directly
 logger=logging.getLogger(os.path.basename(sys.argv[0]))
 logger.setLevel(logging.DEBUG)
-#create console handler and set level to debug : The handlers send the log entries (created by the loggers) to the desired destinations.
+#create console handler and set level to debug : The handlers send the log entries (created by
+#the loggers) to the desired destinations.
 ch = logging.StreamHandler(sys.stderr)
 ch.setLevel(logging.DEBUG)
 #create formatter : Formatters specify the structure of the log entry in the final output.
-formatter = logging.Formatter('%(asctime)s %(name)s: %(levelname)-8s [%(process)d] %(message)s', '%Y-%m-%d %H:%M:%S')
+formatter = logging.Formatter('%(asctime)s %(name)s: %(levelname)-8s [%(process)d] %(message)s',
+                              '%Y-%m-%d %H:%M:%S')
 #add formatter to ch(handler)
 ch.setFormatter(formatter)
 #add ch(handler) to logger
@@ -89,9 +91,12 @@ def CreateFolder(outdir):
 # It is divided into several steps:
 #-Step I): check that the loaded table contains 4 columns + name addition.
 #-Step II): Column content verification
-#   -- CHR : must start with "chr" and contain 25 different chromosomes (if less or more return warnings). The column must be in object format for processing.
-#   -- START , END : must be in int64 format and not contain null value (necessary for comparison steps after calling CNVs)
-#   -- TranscriptID_ExonNumber : all lines must start with ENST and end with an integer for exonNumber. The column must be in object format for processing.
+#   -- CHR : must start with "chr" and contain 25 different chromosomes (if less or more return warnings).
+#The column must be in object format for processing.
+#   -- START , END : must be in int64 format and not contain null value (necessary for comparison steps
+#after calling CNVs)
+#   -- TranscriptID_ExonNumber : all lines must start with ENST and end with an integer for exonNumber.
+#The column must be in object format for processing.
 
 #Output: This function returns a dataframe 
 
@@ -114,9 +119,11 @@ def BedParseAndSanityCheck(PathBedToCheck):
             if len(BedToCheck["CHR"].unique())==25:
                 logger.info("The CHR column has a correct format.")
             else:
-                logger.warning("The canonical transcript file does not contain all the chromosomes = %s (Normally 24+chrM).", len(BedToCheck["CHR"].unique()))
+                logger.warning("The canonical transcript file does not contain all the chromosomes = %s "+
+                               "(Normally 24+chrM).", len(BedToCheck["CHR"].unique()))
         else:
-            logger.error("The 'CHR' column doesn't have an adequate format. Please check it. The column must be a python object and each row must start with 'chr'.")
+            logger.error("The 'CHR' column doesn't have an adequate format. Please check it. The column "+
+                         "must be a python object and each row must start with 'chr'.")
             sys.exit()
         #######################
         #Start and End column
@@ -126,15 +133,18 @@ def BedParseAndSanityCheck(PathBedToCheck):
                 logger.error("Presence of outliers in the START and END columns. Values <=0.")
                 sys.exit()
         else:
-            logger.error("One or both of the 'START' and 'END' columns are not in the correct format. Please check. The columns must contain integers.")
+            logger.error("One or both of the 'START' and 'END' columns are not in the correct format. "+
+                         "Please check. The columns must contain integers.")
             sys.exit()
 
         #######################
         #transcript_id_exon_number column
-        if (len(BedToCheck[BedToCheck["TranscriptID_ExonNumber"].str.contains(r"^ENST.*_[0-9]{1,3}$")])==len(BedToCheck)) and (BedToCheck["CHR"].dtype=="O"):
+        if (len(BedToCheck[BedToCheck["TranscriptID_ExonNumber"].str.contains(r"^ENST.*_[0-9]{1,3}$")])==len(BedToCheck)
+            and BedToCheck["CHR"].dtype=="O"):
             logger.info("The 'TranscriptID_ExonNumber' column has a correct format.")
         else:
-            logger.error("The 'TranscriptID_ExonNumber' column doesn't have an adequate format. Please check it. The column must be a python object and each row must start with 'ENST'.")
+            logger.error("The 'TranscriptID_ExonNumber' column doesn't have an adequate format. Please "+
+                         "check it. The column must be a python object and each row must start with 'ENST'.")
             sys.exit()
     else:
         logger.error("BedToCheck doesn't contains 4 columns:"
@@ -181,22 +191,27 @@ def ExtractAliLength(CIGARAlign):
 def SanityCheckPreExistingTSV(countFilePath,BedIntervalFile):
     validSanity=True #Boolean: 0 analysis/reanalysis; 1 no analysis
     numberExons=len(BedIntervalFile)
-    if (os.path.isfile(countFilePath)) and (sum(1 for _ in open(countFilePath))==numberExons): #file exists and has the same lines number as the exonic interval file
+    if (os.path.isfile(countFilePath)) and (sum(1 for _ in open(countFilePath))==numberExons):
+        #file exists and has the same lines number as the exonic interval file
         logger.info("File %s already exists and has the same lines number as the bed file %s ",countFilePath,numberExons)
         count=pd.read_table(countFilePath,header=None,sep="\t")
         #Columns comparisons
-        if (count[0].equals(BedIntervalFile['CHR'])) and (count[1].equals(BedIntervalFile['START'])) and (count[2].equals(BedIntervalFile['END'])) and (count[3].equals(BedIntervalFile['TranscriptID_ExonNumber'])):
+        if (count[0].equals(BedIntervalFile['CHR']) and count[1].equals(BedIntervalFile['START']) and
+            count[2].equals(BedIntervalFile['END']) and count[3].equals(BedIntervalFile['TranscriptID_ExonNumber'])):
             validSanity=False# Bam re-analysis is not effective.
         else:
-            logger.warning("However there are differences between the columns. Check and correct these differences.",countFilePath)
+            logger.warning("However there are differences between the columns. Check and correct these differences.",
+                           countFilePath)
             try:
                 os.remove(countFilePath)
             except OSError as error:
                 logger.error("File deletion has encountered an error %s %s", countFilePath, error.strerror)
                 sys.exit()
             
-    elif os.path.isfile(countFilePath): #Be careful when updating the bed if there is no change in the output directory, all the files are replaced.
-        logger.warning("File %s already exists but it's truncated. This involves replacing the corrupted file.",countFilePath)
+    elif os.path.isfile(countFilePath):
+        #Be careful when updating the bed if there is no change in the output directory, all the files are replaced.
+        logger.warning("File %s already exists but it's truncated. This involves replacing the corrupted file.",
+                       countFilePath)
         try:
             os.remove(countFilePath)
         except OSError as error:
@@ -219,7 +234,8 @@ def SanityCheckPreExistingTSV(countFilePath,BedIntervalFile):
 
 #There is no output object, we just want to complete the fragment counts list by interest intervals.
 
-def Qname2ExonCount(qnameString,chromString,startFList,endFList,startRList,endRList,readsBit,dictIntervalTree,vecExonCount,dictStatCount): # treatment on each Qname
+def Qname2ExonCount(qnameString,chromString,startFList,endFList,startRList,endRList,readsBit,dictIntervalTree,
+                    vecExonCount,dictStatCount): # treatment on each Qname
     Frag=[] #fragment(s) intervals
     #####################################################################
     ###I) DIFFERENTS CONDITIONS ESTABLISHMENT : for fragment detection
@@ -240,7 +256,8 @@ def Qname2ExonCount(qnameString,chromString,startFList,endFList,startRList,endRL
         if max(startFList)<min(endRList):# alignments are not back-to-back
             GapLength=min(startRList)-max(endFList)# gap length between the two alignments (negative if overlapping)
             if (GapLength<=1000):
-                if (len(startFList)==1) and (len(startRList)==1):# one ali on each strand, whether SA or not doesn't matter
+                if (len(startFList)==1) and (len(startRList)==1):
+                    # one ali on each strand, whether SA or not doesn't matter
                     dictStatCount["QN1F&1R"]+=1
                     Frag=[min(startFList[0],startRList[0]),max(endFList[0],endRList[0])]
                 elif (len(startFList)==2) and (len(startRList)==1):
@@ -260,7 +277,8 @@ def Qname2ExonCount(qnameString,chromString,startFList,endFList,startRList,endRL
                         Frag=[min(startFList[0],min(startRList)),max(endFList[0],min(endRList)),
                               max(startRList),max(endRList)]
             else: # Skipped Qname, GapLength too large, big del !?
-                dictStatCount["QNAliGapLength>1000bpSkip"]+=1 # TODO extract the associated Qnames for breakpoint detection.
+                dictStatCount["QNAliGapLength>1000bpSkip"]+=1
+                # TODO extract the associated Qnames for breakpoint detection.
                 return
         else: # Skipped Qname, ali back-to-back (SV, dup ?!)
             dictStatCount["QNAliBackToBackSkip"]+=1
@@ -319,7 +337,8 @@ def Qname2ExonCount(qnameString,chromString,startFList,endFList,startRList,endRL
 #It uses samtools commands to filter reads and sort them in Qnames order (.sam file generated in a temporary file).
 #It creates a list of fragment count results for each line index of the bed file.
 #It also creates a dictionary containing all the counts for each condition imposed to obtain a fragment count. 
-#This dictionary is used as a control in order not to miss any condition not envisaged (number of Qname processed must be the same at the end of the process).
+#This dictionary is used as a control in order not to miss any condition not envisaged (number of Qname
+#processed must be the same at the end of the process).
 
 #Output: tsv files formatted as follows (no row or column index, 5 columns => CHR, START, END, ENSTID_Exon, FragCount)
 
@@ -410,7 +429,8 @@ def SampleCountingFrag(bamFile,nameCountFilePath,dictIntervalTree,intervalBed,pr
             if (qname!=align[0]) and (qname!=""):  # align[0] is the qname
                 dictStatCount["QNProcessed"]+=1
                 if not qBad:
-                    Qname2ExonCount(qname,qchrom,qstartF,qendF,qstartR,qendR,qReads,dictIntervalTree,vecExonCount,dictStatCount)
+                    Qname2ExonCount(qname,qchrom,qstartF,qendF,qstartR,qendR,qReads,dictIntervalTree,vecExonCount,
+                                    dictStatCount)
                 qchrom=""
                 qname=""
                 qstartR=[]
@@ -500,11 +520,13 @@ def SampleCountingFrag(bamFile,nameCountFilePath,dictIntervalTree,intervalBed,pr
 
         #IX]Fragment count good progress control 
         #the last qname is not taken into account in the loop, hence the +1
-        if (NBTotalQname==(dictStatCount["QNProcessed"])+1) and (sum(vecExonCount)==dictStatCount["FragOverlapOnTargetInterval"]):
+        if ((NBTotalQname==(dictStatCount["QNProcessed"])+1) and
+            (sum(vecExonCount)==dictStatCount["FragOverlapOnTargetInterval"])):
             logger.info("CONTROL : all the qnames of %s were seen in the different conditions.",bamFile)
         else:
             statslist=dictStatCount.items()
-            logger.error("Not all of %s's qnames were seen in the different conditions!!! Please check stats results below %s",bamFile,statslist)
+            logger.error("Not all of %s's qnames were seen in the different conditions!!! Please check stats "+
+                         "results below %s",bamFile,statslist)
             logger.error("Nb total Qname : %s. Nb Qname overlap target interval %s",NBTotalQname,sum(vecExonCount))
             sys.exit()
         #################################################################################################
@@ -540,7 +562,8 @@ def main(argv):
             +"\n python3.6 STEP_1_CollectReadCounts_DECONA2New.py -i <intervalfile> -b <bamfolder> -o <outputfile> -t <tmpfolder>"
             +"\n"
             +"\n OPTIONS:"
-            +"\n	-i : A bed file obtained in STEP0. Please indicate the full path.(4 columns : CHR, START, END, TranscriptID_ExonNumber)"
+            +"\n	-i : A bed file obtained in STEP0. Please indicate the full path.(4 columns :"+
+            +"\n             CHR, START, END, TranscriptID_ExonNumber)"
             +"\n	-b : The path to the folder containing the BAM files."
             +"\n	-o : The path where create the new output file for the current analysis."
             +"\n	-t : The path to the temporary folder containing the samtools results ")
