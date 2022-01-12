@@ -47,7 +47,8 @@ The files are thus directly usable by the next pre-modified step.<br>
 INTERVAL="~/STEP0_GRCH38_vXXX_Padding10pb_NBexons_Date.bed"
 BAM="~/BAMs/"
 OUTPUT="~/SelectOutputFolder/"
-/bin/time -v ~/FolderContainsScript/python3.6 STEP_1_CollectReadCounts_DECONA2New.py -i $INTERVAL -b $BAM -o $OUTPUT 2> ./.err
+TMPFOLDER="~/tmpDir/"
+/bin/time -v ~/FolderContainsScript/python3.6 STEP_1_CollectReadCounts_DECONA2.py -i $INTERVAL -b $BAM -o $OUTPUT -t $TMPFOLDER 2> ./.err
 ```
 
 
