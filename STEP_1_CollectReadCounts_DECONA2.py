@@ -26,13 +26,11 @@
 ################################ Loading of the modules required for processing #############################
 #############################################################################################################
 # 1) Python Modules
-import sys #Path
+import sys
 import getopt
 import logging
 import os
-from numpy.lib.shape_base import column_stack
 import pandas as pd #read,make,treat Dataframe object
-import numpy as np
 import re  # regular expressions
 import fnmatch
 from ncls import NCLS # generating interval trees (cf : https://github.com/biocore-ntnu/ncls)
@@ -59,8 +57,7 @@ logger.setLevel(logging.DEBUG)
 ch = logging.StreamHandler(sys.stderr)
 ch.setLevel(logging.DEBUG)
 #create formatter : Formatters specify the structure of the log entry in the final output.
-formatter = logging.Formatter('%(asctime)s %(name)s: %(levelname)-8s [%(process)d] %(message)s',
-                              '%Y-%m-%d %H:%M:%S')
+formatter = logging.Formatter('%(asctime)s %(levelname)s %(name)s: %(message)s', '%Y-%m-%d %H:%M:%S')
 #add formatter to ch(handler)
 ch.setFormatter(formatter)
 #add ch(handler) to logger
