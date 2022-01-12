@@ -1,17 +1,33 @@
 
 
+#### these draft notes need cleaning up, most should move to USAGE
+###
+# script will take as args:
+# -> a bed file, possibly gzipped but not padded or sorted
+#   (eg canonicalTranscripts_210826.bed.gz). Padding and sorting happens
+#   internally on-the-fly, this takes less than a second on fauve, see
+#   /home/nthierry/AmandineSeptier/Decona/Tests_countFrags_2201/README .
+#
+# -> optionally a countFile.tsv with counts from previously processed BAMs, this
+#    countFile is as produced by this script and will be similar to AS's current
+#    Readcount_BindBedtoolsRes_2022-01-11.tsv .
+# If countFile is provided:
+# - check that the first 4 columns are identical to the provided BED file (after
+#   calling processBed), if not die with a warning;
+# - identify all samples that are already counted in the file, for these samples
+#   we won't examine the BAMs.
+#
+# -> a tmpDir (for samtools sort), defaults to /tmp probably
+#
+# -> a list of one or more bamFiles to process, ASSUMPTION: each bamfile is
+#    named [$sample].bam , we use this to grab sample identifiers and compare them
+#    to the sampleIDs already present in countFile. BAMs that don't have counts
+#    in countFile will be parsed and fragments overlapping each exon will be counted.
+#
+# script will print to stdout a new countFile in TSV format, copying the data from
+# the pre-existing countFile if provided and adding columns with counts for the
+# new BAMs/samples.
 
-
-# -> a bed file, possibly gzipped but not padded or sorted (eg canonicalTranscripts_210826.bed.gz). Padding and sorting happens internally on-the-fly, this takes less than a second on fauve, see /home/nthierry/AmandineSeptier/Decona/Tests_countFrags_2201/README .
-
-# -> optionally a countFile.tsv with counts from previously processed BAMs, this countFile is as described above and similar to AS's current Readcount_BindBedtoolsRes_2022-01-11.tsv .
-# If this file is provided:
-# - check that the first 4 columns are identical to the provided BED file (after calling processBed), if not die with a warning;
-# - identify all samples that are already counted in the file.
-
-# -> a tmpDir (for samtools sort), defaults to /tmp
-
-# -> a list of one or more bamFiles to process, ASSUMPTION: each bamfile is called [$sample].bam and we use this to grab sample identifiers and compare them to the sampleIDs already counted in countFile
 
 import sys
 import os
