@@ -30,7 +30,6 @@ import sys #Path
 import getopt
 import logging
 import os
-from numpy.lib.shape_base import column_stack
 import pandas as pd #read,make,treat Dataframe object
 import numpy as np
 import re  # regular expressions
@@ -116,7 +115,8 @@ def BedParseAndSanityCheck(PathBedToCheck):
             else:
                 logger.warning("The canonical transcript file does not contain all the chromosomes = %s (Normally 24+chrM).", len(BedToCheck["CHR"].unique()))
         else:
-            logger.error("The 'CHR' column doesn't have an adequate format. Please check it. The column must be a python object and each row must start with 'chr'.")
+            logger.error("The 'CHR' column doesn't have an adequate format. Please check it."
+                        +"\n The column must be a python object and each row must start with 'chr'.")
             sys.exit()
         #######################
         #Start and End column
@@ -126,7 +126,8 @@ def BedParseAndSanityCheck(PathBedToCheck):
                 logger.error("Presence of outliers in the START and END columns. Values <=0.")
                 sys.exit()
         else:
-            logger.error("One or both of the 'START' and 'END' columns are not in the correct format. Please check. The columns must contain integers.")
+            logger.error("One or both of the 'START' and 'END' columns are not in the correct format. Please check."
+                        +"\n The columns must contain integers.")
             sys.exit()
 
         #######################
@@ -134,7 +135,8 @@ def BedParseAndSanityCheck(PathBedToCheck):
         if (len(BedToCheck[BedToCheck["TranscriptID_ExonNumber"].str.contains(r"^ENST.*_[0-9]{1,3}$")])==len(BedToCheck)) and (BedToCheck["CHR"].dtype=="O"):
             logger.info("The 'TranscriptID_ExonNumber' column has a correct format.")
         else:
-            logger.error("The 'TranscriptID_ExonNumber' column doesn't have an adequate format. Please check it. The column must be a python object and each row must start with 'ENST'.")
+            logger.error("The 'TranscriptID_ExonNumber' column doesn't have an adequate format. Please check it."
+                        +"\n The column must be a python object and each row must start with 'ENST'.")
             sys.exit()
     else:
         logger.error("BedToCheck doesn't contains 4 columns:"
@@ -178,29 +180,37 @@ def ExtractAliLength(CIGARAlign):
 #- panda dataframe containing all genomic exons positions 
 #Output: a Boolean variable
 
-def SanityCheckPreExistingTSV(countFilePath,BedIntervalFile):
-    validSanity=True #Boolean: 0 analysis/reanalysis; 1 no analysis
+def SanityCheckPreExistingTSV(countFilePath,BedIntervalFilePath,BedIntervalFile):
+    tsvFileName=os.path.basename(countFilePath)
+    bedFileName=os.path.basename(BedIntervalFilePath)
+    validSanity=False #Boolean: True=analysis/reanalysis; False=no analysis
     numberExons=len(BedIntervalFile)
     if (os.path.isfile(countFilePath)) and (sum(1 for _ in open(countFilePath))==numberExons): #file exists and has the same lines number as the exonic interval file
-        logger.info("File %s already exists and has the same lines number as the bed file %s ",countFilePath,numberExons)
+        logger.info("File %s already exists and has the same lines number as the bed file %s (%s) ",tsvFileName,bedFileName,numberExons)
         count=pd.read_table(countFilePath,header=None,sep="\t")
         #Columns comparisons
-        if (count[0].equals(BedIntervalFile['CHR'])) and (count[1].equals(BedIntervalFile['START'])) and (count[2].equals(BedIntervalFile['END'])) and (count[3].equals(BedIntervalFile['TranscriptID_ExonNumber'])):
-            validSanity=False# Bam re-analysis is not effective.
+        if ((count[0].equals(BedIntervalFile['CHR'])) 
+            and (count[1].equals(BedIntervalFile['START'])) 
+            and (count[2].equals(BedIntervalFile['END'])) 
+            and (count[3].equals(BedIntervalFile['TranscriptID_ExonNumber'])) 
+            and (count[4].sum()>0)):
+            logger.warning("Fragment count file %s has the same columns as the reference bed %s and the count column is non-zero.",tsvFileName,bedFileName)
+            validSanity=True# Bam re-analysis is not effective.
         else:
-            logger.warning("However there are differences between the columns. Check and correct these differences.",countFilePath)
+            logger.warning("The fragment count file %s does not have the same columns as the reference bed %s. Check their format."
+                     +"\n CHR:str, START:int, END:int, TranscriptID_ExonNumber:str, sum(FragmentCount)!=0.",tsvFileName,bedFileName)
             try:
                 os.remove(countFilePath)
             except OSError as error:
-                logger.error("File deletion has encountered an error %s %s", countFilePath, error.strerror)
+                logger.error("File deletion has encountered an error %s %s", tsvFileName, error.strerror)
                 sys.exit()
             
     elif os.path.isfile(countFilePath): #Be careful when updating the bed if there is no change in the output directory, all the files are replaced.
-        logger.warning("File %s already exists but it's truncated. This involves replacing the corrupted file.",countFilePath)
+        logger.warning("File %s already exists but it's truncated. This involves replacing the corrupted file.",tsvFileName)
         try:
             os.remove(countFilePath)
         except OSError as error:
-            logger.error("File deletion has encountered an error %s %s", countFilePath, error.strerror)
+            logger.error("File deletion has encountered an error %s %s", tsvFileName, error.strerror)
             sys.exit()
     
     return(validSanity)
@@ -233,9 +243,7 @@ def Qname2ExonCount(qnameString,chromString,startFList,endFList,startRList,endRL
     elif (1<len(startFList+startRList)<=3): # only 1 or 2 ali on each strand but not 2 on each
         dictStatCount["QNNbAliR&FBetween1-3"]+=1
         if len(startFList)==0:
-            print(qnameString,chromString)
-            print(startFList,endFList)
-            print(startRList,endRList,readsBit)
+            logger.error(qnameString,chromString,"\n",startFList,endFList,"\n",startRList,endRList,readsBit)
             sys.exit()
         if max(startFList)<min(endRList):# alignments are not back-to-back
             GapLength=min(startRList)-max(endFList)# gap length between the two alignments (negative if overlapping)
@@ -348,7 +356,13 @@ def SampleCountingFrag(bamFile,nameCountFilePath,dictIntervalTree,intervalBed,pr
         cmd2 ="samtools view -F 1796 -q 20 -@ "+str(num_cores)
         # Orders execution
         p1 = subprocess.Popen(cmd1.split(),stdout=subprocess.PIPE,bufsize=1)
-        p2 = subprocess.Popen(cmd2.split(), stdin=p1.stdout,stdout=subprocess.PIPE,bufsize=1,encoding='utf8')
+        p2 = subprocess.Popen(cmd2.split(), stdin=p1.stdout,stdout=subprocess.PIPE,bufsize=1,encoding='ascii')
+
+        p1.communicate() #allows to wait for the process end to return the following status error
+        if p1.returncode != 0:
+            logger.error('the "Samtools sort" command encountered an error. error status : %s',p1.returncode)
+            sys.exit()
+        p1.terminate() #stops the process (deletes the list of temporary files)
 
         # III] Outpout variables initialization
         #list containing the fragment counts for the exons.
@@ -512,7 +526,7 @@ def SampleCountingFrag(bamFile,nameCountFilePath,dictIntervalTree,intervalBed,pr
         SampleTsv=intervalBed
         SampleTsv['FragCount']=vecExonCount
         SampleTsv.to_csv(os.path.join(nameCountFilePath),sep="\t", index=False, header=None)
-
+        p2.terminate()
 
 ##############################################################################################################
 ######################################### Script Body ########################################################
@@ -599,10 +613,10 @@ def main(argv):
 
         #output TSV name definition
         nameCountFilePath=os.path.join(RCPathOutput,sampleName+".tsv")
-        validSanity=SanityCheckPreExistingTSV(nameCountFilePath,intervalBed)
-        print(sampleName," : never seen ",validSanity)
+        validSanity=SanityCheckPreExistingTSV(nameCountFilePath,intervalFile,intervalBed)
+        print(sampleName,"pre-existing correct count file :",validSanity)
 
-        if validSanity:
+        if not validSanity:
             SampleCountingFrag(bamFile,nameCountFilePath,dictIntervalTree,intervalBed,processTmpDir,num_cores)
         else:
             continue    
