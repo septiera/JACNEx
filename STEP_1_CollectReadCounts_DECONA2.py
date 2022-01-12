@@ -95,15 +95,16 @@ def CreateFolder(outdir):
 #Output: This function returns a dataframe 
 
 def BedParseAndSanityCheck(PathBedToCheck):
+    bedname=os.path.basename(PathBedToCheck)
     if not os.path.isfile(PathBedToCheck):
-        logger.error("file %s doesn't exist ",PathBedToCheck)
+        logger.error("exon interval file %s doesn't exist ",bedname)
         sys.exit()
     BedToCheck=pd.read_table(PathBedToCheck,header=None,sep="\t")
     #####################
     #I): check that the loaded table contains 4 columns + columns renaming.
     #####################
     if len(BedToCheck.columns) == 4:
-        logger.info("BedToCheck contains 4 columns.")
+        logger.info("%s contains 4 columns.",bedname)
         BedToCheck.columns=["CHR","START","END","TranscriptID_ExonNumber"]
         #######################
         #II) : Sanity Check
@@ -193,12 +194,12 @@ def SanityCheckPreExistingTSV(countFilePath,BedIntervalFilePath,BedIntervalFile)
             and (count[1].equals(BedIntervalFile['START'])) 
             and (count[2].equals(BedIntervalFile['END'])) 
             and (count[3].equals(BedIntervalFile['TranscriptID_ExonNumber'])) 
-            and (count[4].sum()>0)):
+            and (count[4].sum()>15000000)):
             logger.warning("Fragment count file %s has the same columns as the reference bed %s and the count column is non-zero.",tsvFileName,bedFileName)
             validSanity=True# Bam re-analysis is not effective.
         else:
-            logger.warning("The fragment count file %s does not have the same columns as the reference bed %s. Check their format."
-                     +"\n CHR:str, START:int, END:int, TranscriptID_ExonNumber:str, sum(FragmentCount)!=0.",tsvFileName,bedFileName)
+            logger.warning("The fragment count file %s does not have the same columns as the reference bed or does not have enough fragment count. "
+                     +"\n This will cause the previous file deletion and a new analysis are performed.",tsvFileName)
             try:
                 os.remove(countFilePath)
             except OSError as error:
@@ -355,14 +356,8 @@ def SampleCountingFrag(bamFile,nameCountFilePath,dictIntervalTree,intervalBed,pr
         # By default the stdout is in sam format
         cmd2 ="samtools view -F 1796 -q 20 -@ "+str(num_cores)
         # Orders execution
-        p1 = subprocess.Popen(cmd1.split(),stdout=subprocess.PIPE,bufsize=1)
+        p1 = subprocess.Popen(cmd1.split(),stdout=subprocess.PIPE,bufsize=1,encoding='ascii')
         p2 = subprocess.Popen(cmd2.split(), stdin=p1.stdout,stdout=subprocess.PIPE,bufsize=1,encoding='ascii')
-
-        p1.communicate() #allows to wait for the process end to return the following status error
-        if p1.returncode != 0:
-            logger.error('the "Samtools sort" command encountered an error. error status : %s',p1.returncode)
-            sys.exit()
-        p1.terminate() #stops the process (deletes the list of temporary files)
 
         # III] Outpout variables initialization
         #list containing the fragment counts for the exons.
@@ -526,6 +521,12 @@ def SampleCountingFrag(bamFile,nameCountFilePath,dictIntervalTree,intervalBed,pr
         SampleTsv=intervalBed
         SampleTsv['FragCount']=vecExonCount
         SampleTsv.to_csv(os.path.join(nameCountFilePath),sep="\t", index=False, header=None)
+
+        p1.communicate() #allows to wait for the process end to return the following status error
+        if p1.returncode != 0:
+            logger.error('the "Samtools sort" command encountered an error. error status : %s',p1.returncode)
+            sys.exit()
+        p1.terminate() #stops the process (deletes the list of temporary files)
         p2.terminate()
 
 ##############################################################################################################
@@ -616,10 +617,11 @@ def main(argv):
         validSanity=SanityCheckPreExistingTSV(nameCountFilePath,intervalFile,intervalBed)
         print(sampleName,"pre-existing correct count file :",validSanity)
 
-        if not validSanity:
-            SampleCountingFrag(bamFile,nameCountFilePath,dictIntervalTree,intervalBed,processTmpDir,num_cores)
+        if validSanity:
+            continue
         else:
-            continue    
+            SampleCountingFrag(bamFile,nameCountFilePath,dictIntervalTree,intervalBed,processTmpDir,num_cores)
+                
 
 if __name__ =='__main__':
     main(sys.argv[1:])
