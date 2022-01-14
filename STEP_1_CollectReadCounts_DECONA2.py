@@ -1,26 +1,6 @@
 #############################################################################################################
 ######################################## STEP1 Collect Read Count DECONA2 ###################################
 #############################################################################################################
-#This script allows you to perform a fragment count.
-#This count is an alternative to the one performed by DECON because it generates erroneous fragment counts
-#(e.g. split reads!!!)
-#Our script allows to take into account all the particular cases of the reads paired association
-#(thus it is only usable on paired-end technology) in the particular case of deletion.
-
-#The input parameters are the following:
-#-access path to the folder containing the bams to be processed
-#-access path to the file containing the exonic intervals (bed file)
-#-access path to the output folder (for storage)
-#-access path to tmpDir
-
-#The output of this script is a tsv file in the same format as the interval file with the
-#addition of the "FragCount" column for each sample processed.
-
-#The first step of this script sorts the bams into Qname order and then filters the alignments
-#according to specific flags (described below)
-#This is done by samtools Version: 1.9 (using htslib 1.9).
-#The second step is to read the sam file line by line and count the fragments for each exonic
-#interval (process details inside the script).
 
 #############################################################################################################
 ################################ Loading of the modules required for processing #############################
@@ -70,20 +50,23 @@ def usage():
 "Fragments counting for exonic intervals(.bed) using paired-end alignment file(.bam):\n"+
 "   1.Exonic intervals file parsing and preparing.\n"+
 "   2.Interval trees initialisation (with ncls python module).\n"+
-"   3.Patients Identifications for analysis.\n"+
+"   3.New Patients identification for analysis.\n"+
 "   4.Sorting .bam by QNAME (with samtools sort).\n"+
 "   5.Filtering tmpsort.sam (with samtools view).\n"+
-"   6.Fragment counting and results sanity check.\n\n"+
-
+"   6.Fragment counting and results sanity check.\n"+
+"Script will print to stdout a new countFile in TSV format, copying the data from the pre-existing\n"+
+"countFile if provided and adding columns with counts for the new BAMs/samples..\n\n"
 "OPTIONS:\n"+
 "   -i or --intervalFile [str]: a bed file (with path), possibly gzipped, containing exon definitions \n"+
 "                               formatted as CHR START END EXON_ID\n"+
 "   -b or --bamFile [str]: a bam file or a bam list (with path)\n"+
 "   -o or --outputfile [str]: a output file (with path)\n"+
-"   -t or --tmpfolder [str]: a temporary folder (with path),allows to save temporary files from samtools sort.\n"+
-"                            By default, this is placed in '/tmp'.\n"+
-"                            Tip: place the storage preferably in RAM.\n"+
-"   -c or --cpu [int]: a cpu number to allocate for samtools. By default, the value is set to 10.\n")
+"   -p or --precountfile [str] optional: a pre-parsed count file (with path), old fragment count file  \n"+
+"                                        to be completed if new patient(s) is(are) added. \n"
+"   -t or --tmpfolder [str] optional: a temporary folder (with path),allows to save temporary files \n"+
+"                                     from samtools sort. By default, this is placed in '/tmp'.\n"+
+"                                     Tip: place the storage preferably in RAM.\n"+
+"   -c or --cpu [int] optional: a cpu number to allocate for samtools. By default, the value is set to 10.\n")
 
 ####################################################
 #Function allowing to create output folder.
@@ -559,8 +542,8 @@ def main():
     processTmpDirPath="/tmp"
 
     try:
-        opts,args = getopt.gnu_getopt(sys.argv[1:],'hi:b:o:t:c:',
-        ["help","intervalFile=","bamFile=","outputfile=","tmpfolder=","cpu="])
+        opts,args = getopt.gnu_getopt(sys.argv[1:],'hi:b:o:p:t:c:',
+        ["help","intervalFile=","bamFile=","outputfile=","precountfile=","tmpfolder=","cpu="])
         if not opts:
             sys.stderr.write("ERROR : No options supplied. Please follow the instructions.\n\n")
             usage()
@@ -585,6 +568,8 @@ def main():
             elif opt in ("-o", "--outputfile"):
                 outputFilePath=value
                 argvNumber+=1
+            elif opt in ("-p","--precountfile"):
+                preCountFilePath=value
             elif opt in ("-t","--tmpfolder"):
                 processTmpDirPath=value
             elif opt in ("-c","--cpu"):
@@ -599,8 +584,9 @@ def main():
     logger.info("Intervals bed file path is %s", intervalFilePath)
     logger.info("BAM folder path is %s", bamFilePath)
     logger.info("Output file path is %s", outputFilePath)
+    logger.info("Old fragment count file path is %s", preCountFilePath)
     logger.info("Temporary folder path is %s", processTmpDirPath)
-    logger.info("CPU number is %s", cpu)
+    logger.info("CPU number used is %s", cpu)
 
     #####################################################
     # A) Setting up the analysis tree.
