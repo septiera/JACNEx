@@ -18,7 +18,7 @@
 
 #The first step of this script sorts the bams into Qname order and then filters the alignments
 #according to specific flags (described below)
-#This is done by the samtools Version: 1.9 (using htslib 1.9).
+#This is done by samtools Version: 1.9 (using htslib 1.9).
 #The second step is to read the sam file line by line and count the fragments for each exonic
 #interval (process details inside the script).
 
@@ -31,12 +31,10 @@ import getopt
 import logging
 import os
 import pandas as pd #read,make,treat Dataframe object
-import numpy as np
 import re  # regular expressions
 import fnmatch
 from ncls import NCLS # generating interval trees (cf : https://github.com/biocore-ntnu/ncls)
 import subprocess #spawn new processes, connect to their input/output/error pipes, and obtain their return codes.
-import io
 import tempfile #manages the creation and deletion of temporary folders/files
 
 # 2) Python Parallelization modules
@@ -50,22 +48,43 @@ os.environ['NUMEXPR_NUM_THREADS'] = '10'
 #####################################################################################################
 ################################ Logging Definition #################################################
 #####################################################################################################
-#create logger : Loggers expose the interface that the application code uses directly
+# set up logger
 logger=logging.getLogger(os.path.basename(sys.argv[0]))
 logger.setLevel(logging.DEBUG)
-#create console handler and set level to debug : The handlers send the log entries (created by the loggers) to the desired destinations.
-ch = logging.StreamHandler(sys.stderr)
-ch.setLevel(logging.DEBUG)
-#create formatter : Formatters specify the structure of the log entry in the final output.
-formatter = logging.Formatter('%(asctime)s %(name)s: %(levelname)-8s [%(process)d] %(message)s', '%Y-%m-%d %H:%M:%S')
-#add formatter to ch(handler)
-ch.setFormatter(formatter)
-#add ch(handler) to logger
-logger.addHandler(ch)
+# create console handler for STDERR
+stderr = logging.StreamHandler(sys.stderr)
+stderr.setLevel(logging.DEBUG)
+#create formatter
+formatter = logging.Formatter('%(asctime)s %(levelname)s %(name)s: %(message)s',
+                                '%Y-%m-%d %H:%M:%S')
+#add formatter to stderr handler
+stderr.setFormatter(formatter)
+#add stderr handler to logger
+logger.addHandler(stderr)
 
 #####################################################################################################
 ################################ Functions ##########################################################
 #####################################################################################################
+def usage():
+    print("COMMAND SUMMARY:\n"+
+"Fragments counting for exonic intervals(.bed) using paired-end alignment file(.bam):\n"+
+"   1.Exonic intervals file parsing and preparing.\n"+
+"   2.Interval trees initialisation (with ncls python module).\n"+
+"   3.Patients Identifications for analysis.\n"+
+"   4.Sorting .bam by QNAME (with samtools sort).\n"+
+"   5.Filtering tmpsort.sam (with samtools view).\n"+
+"   6.Fragment counting and results sanity check.\n\n"+
+
+"OPTIONS:\n"+
+"   -i or --intervalFile [str]: a bed file (with path), possibly gzipped, containing exon definitions \n"+
+"                               formatted as CHR START END EXON_ID\n"+
+"   -b or --bamFile [str]: a bam file or a bam list (with path)\n"+
+"   -o or --outputfile [str]: a output file (with path)\n"+
+"   -t or --tmpfolder [str]: a temporary folder (with path),allows to save temporary files from samtools sort.\n"+
+"                            By default, this is placed in '/tmp'.\n"+
+"                            Tip: place the storage preferably in RAM.\n"+
+"   -c or --cpu [int]: a cpu number to allocate for samtools. By default, the value is set to 10.\n")
+
 ####################################################
 #Function allowing to create output folder.
 #Input : take output path
@@ -526,59 +545,67 @@ def SampleCountingFrag(bamFile,nameCountFilePath,dictIntervalTree,intervalBed,pr
         if p1.returncode != 0:
             logger.error('the "Samtools sort" command encountered an error. error status : %s',p1.returncode)
             sys.exit()
-        p1.terminate() #stops the process (deletes the list of temporary files)
         p2.terminate()
 
 ##############################################################################################################
 ######################################### Script Body ########################################################
 ##############################################################################################################
 ###################################
-def main(argv):
+def main():
     ##########################################
     # A) ARGV parameters definition
-    intervalFile = ''
-    bamOrigFolder=''
-    outputFile =''
-    processTmpDir=''
+    # default setting ARGV 
+    cpu=10 
+    processTmpDirPath="/tmp"
 
     try:
-        opts, args = getopt.getopt(argv,"h:i:b:o:t:",["help","intervalFile=","bamfolder=","outputfile=","tmpfolder="])
-    except getopt.GetoptError:
-        print('python3.6 STEP_1_CollectReadCounts_DECONA2New.py -i <intervalFile> -b <bamfolder> -o <outputfile> -t <tmpfolder>')
-        sys.exit(2)
+        opts,args = getopt.gnu_getopt(sys.argv[1:],'hi:b:o:t:c:',
+        ["help","intervalFile=","bamFile=","outputfile=","tmpfolder=","cpu="])
+        if not opts:
+            sys.stderr.write("ERROR : No options supplied. Please follow the instructions.\n\n")
+            usage()
+            sys.exit()   
+    except getopt.GetoptError as e:
+        sys.stderr.write("ERROR : "+e.msg+". Please follow the instructions.\n\n")  
+        usage()
+        sys.exit()
+
+    argvNumber=0 # past options counter 
     for opt, value in opts:
-        if opt == '-h':
-            print("COMMAND SUMMARY:"
-            +"\n This script performs READ counts using the bedtools software from exome sequencing data."
-            +"\n"
-            +"\n USAGE:"
-            +"\n python3.6 STEP_1_CollectReadCounts_DECONA2New.py -i <intervalfile> -b <bamfolder> -o <outputfile> -t <tmpfolder>"
-            +"\n"
-            +"\n OPTIONS:"
-            +"\n	-i : A bed file obtained in STEP0. Please indicate the full path.(4 columns : CHR, START, END, TranscriptID_ExonNumber)"
-            +"\n	-b : The path to the folder containing the BAM files."
-            +"\n	-o : The path where create the new output file for the current analysis."
-            +"\n	-t : The path to the temporary folder containing the samtools results ")
-            sys.exit()
-        elif opt in ("-i", "--intervalFile"):
-            intervalFile=value
-        elif opt in ("-b", "--bamfolder"):
-            bamOrigFolder=value
-        elif opt in ("-o", "--outputfile"):
-            outputFile=value
-        elif opt in ("-t","--tmpfolder"):
-            processTmpDir=value
-            
+            #variables association with user parameters (ARGV)
+            if opt in ('-h', '--help'):
+                usage()
+                sys.exit(2)
+            elif opt in ("-i", "--intervalFile"):
+                intervalFilePath =value
+                argvNumber+=1
+            elif opt in ("-b", "--bamFile"):
+                bamFilePath=value
+                argvNumber+=1
+            elif opt in ("-o", "--outputfile"):
+                outputFilePath=value
+                argvNumber+=1
+            elif opt in ("-t","--tmpfolder"):
+                processTmpDirPath=value
+            elif opt in ("-c","--cpu"):
+                cpu=value
+
+    if argvNumber<3: 
+        sys.stderr.write("ERROR : One or more imposed options were not provided. Please follow the instructions.\n\n")  
+        usage()
+        sys.exit()
+
     #Check that all the arguments are present.
-    logger.info('Intervals bed file path is %s', intervalFile)
-    logger.info('BAM folder path is %s', bamOrigFolder)
-    logger.info('Output file path is %s ', outputFile)
-    logger.info('Temporary folder path is %s ', processTmpDir)
+    logger.info("Intervals bed file path is %s", intervalFilePath)
+    logger.info("BAM folder path is %s", bamFilePath)
+    logger.info("Output file path is %s", outputFilePath)
+    logger.info("Temporary folder path is %s", processTmpDirPath)
+    logger.info("CPU number is %s", cpu)
 
     #####################################################
     # A) Setting up the analysis tree.
         # 1) Creation of the DataToProcess folder if not existing.
-    DataToProcessPath=outputFile+"DataToProcess"
+    DataToProcessPath=outputFilePath+"DataToProcess"
     CreateFolder(DataToProcessPath)
         # 2) Creation of the ReadCount folder if not existing.
     RCPath=DataToProcessPath+"/ReadCount"
@@ -590,16 +617,16 @@ def main(argv):
     #####################################################
     # B)Bam files list extraction
     #This list contains the path to each bam.
-    if not os.path.isdir(bamOrigFolder):
-        logger.error("Bam folder doesn't exist %s",bamOrigFolder)
+    if not os.path.isdir(bamFilePath):
+        logger.error("Bam folder doesn't exist %s",bamFilePath)
         sys.exit()
     
-    samples=fnmatch.filter(os.listdir(bamOrigFolder), '*.bam')
+    samples=fnmatch.filter(os.listdir(bamFilePath), '*.bam')
 
     #####################################################
     # C) Canonical transcript bed, existence check    
     # Bed file load and Sanity Check : If the file does not have the expected format, the process ends.
-    intervalBed=BedParseAndSanityCheck(intervalFile)
+    intervalBed=BedParseAndSanityCheck( intervalFilePath)
 
     ############################################
     # D]  Creating interval trees for each chromosome
@@ -609,18 +636,18 @@ def main(argv):
     # E) Definition of a loop for each sample allowing the BAM files symlinks and the reads counting.
     for S in samples:
         sampleName=S.replace(".bam","")
-        bamFile=os.path.join(bamOrigFolder,S)
+        bamFile=os.path.join(bamFilePath,S)
         logger.info('Sample being processed : %s', sampleName)
 
         #output TSV name definition
         nameCountFilePath=os.path.join(RCPathOutput,sampleName+".tsv")
-        validSanity=SanityCheckPreExistingTSV(nameCountFilePath,intervalFile,intervalBed)
+        validSanity=SanityCheckPreExistingTSV(nameCountFilePath, intervalFilePath,intervalBed)
         print(sampleName,"pre-existing correct count file :",validSanity)
 
         if validSanity:
             continue
         else:
-            SampleCountingFrag(bamFile,nameCountFilePath,dictIntervalTree,intervalBed,processTmpDir,num_cores)
+            SampleCountingFrag(bamFile,nameCountFilePath,dictIntervalTree,intervalBed,processTmpDirPath,num_cores)
                 
 
 if __name__ =='__main__':
