@@ -17,14 +17,6 @@ from ncls import NCLS # generating interval trees (cf : https://github.com/bioco
 import subprocess #spawn new processes, connect to their input/output/error pipes, and obtain their return codes.
 import tempfile #manages the creation and deletion of temporary folders/files
 
-# 2) Python Parallelization modules
-import multiprocessing
-from joblib import Parallel, delayed #parallelization characteristics works with the multiprocessing module.
-num_cores=20 #CPU number definition to use during parallelization.
-#Next Line define a CPUs minimum number to use for the process.
-#Must be greater than the cores number defined below.
-os.environ['NUMEXPR_NUM_THREADS'] = '10'
-
 #####################################################################################################
 ################################ Logging Definition #################################################
 #####################################################################################################
@@ -71,7 +63,7 @@ def usage():
 ####################################################
 #Function allowing to create output folder.
 #Input : take output path
-#create outdir if it doesn't exist, die on failure
+#Output : outdir if it doesn't exist, die on failure
 def CreateFolder(outdir):
     if not os.path.isdir(outdir):
         try:
@@ -81,72 +73,84 @@ def CreateFolder(outdir):
             sys.exit()
   
 ####################################################
-#Canonical transcripts sanity check.
-#This function is useful for the bed file of canonical transcripts.
-#It allows to check that the input file is clean.
-
-#Input:
-#-the path to the table under test.
-# It is divided into several steps:
-#-Step I): check that the loaded table contains 4 columns + name addition.
-#-Step II): Column content verification
-#   -- CHR : must start with "chr" and contain 25 different chromosomes (if less or more return warnings). The column must be in object format for processing.
-#   -- START , END : must be in int64 format and not contain null value (necessary for comparison steps after calling CNVs)
-#   -- TranscriptID_ExonNumber : all lines must start with ENST and end with an integer for exonNumber. The column must be in object format for processing.
-
-#Output: This function returns a dataframe 
-
-def BedParseAndSanityCheck(PathBedToCheck):
-    bedname=os.path.basename(PathBedToCheck)
+#Exon intervals file parsing and preparing.
+# Input : bedFile == a bed file (with path), possibly gzipped, containing exon definitions
+#         formatted as CHR START END EXON_ID
+#
+# Output : returns the data as a pandas dataframe with column headers CHR START END EXON_ID,
+#          and where:
+# - a 10bp padding is added to exon coordinates (ie -10 for START and +10 for END)
+# - exons are sorted by CHR, then START, then END, then EXON_ID
+def processBed(PathBedToCheck):
+    bedname=os.path.basename(PathBedToCheck)#simplifies messages in stderr
     if not os.path.isfile(PathBedToCheck):
-        logger.error("exon interval file %s doesn't exist ",bedname)
+        logger.error("Exon intervals file %s doesn't exist.",bedname)
         sys.exit()
     BedToCheck=pd.read_table(PathBedToCheck,header=None,sep="\t")
     #####################
-    #I): check that the loaded table contains 4 columns + columns renaming.
+    #I): Sanity Check
     #####################
     if len(BedToCheck.columns) == 4:
         logger.info("%s contains 4 columns.",bedname)
-        BedToCheck.columns=["CHR","START","END","TranscriptID_ExonNumber"]
-        #######################
-        #II) : Sanity Check
+        BedToCheck.columns=["CHR","START","END","EXON_ID"]
         #######################
         #CHR column
-        if (len(BedToCheck[BedToCheck.CHR.str.startswith('chr')])==len(BedToCheck)) and (BedToCheck["CHR"].dtype=="O"):
-            if len(BedToCheck["CHR"].unique())==25:
-                logger.info("The CHR column has a correct format.")
+        if (BedToCheck["CHR"].dtype=="O"): # Check 'O' (Python) objects
+            if not BedToCheck["CHR"].str.startswith('chr').all: # "chr" addition
+                BedToCheck['CHR_NUM'] =BedToCheck['CHR']
+                BedToCheck["CHR"]="chr"+BedToCheck["CHR"].astype(str)
             else:
-                logger.warning("The canonical transcript file does not contain all the chromosomes = %s (Normally 24+chrM).", len(BedToCheck["CHR"].unique()))
+                BedToCheck['CHR_NUM'] =BedToCheck['CHR']
+                BedToCheck['CHR_NUM'].replace(regex=r'^chr(\w+)$', value=r'\1', inplace=True)
         else:
             logger.error("The 'CHR' column doesn't have an adequate format. Please check it."
-                        +"\n The column must be a python object and each row must start with 'chr'.")
+                        +"\n The column must be a python object")
             sys.exit()
         #######################
         #Start and End column
         if (BedToCheck["START"].dtype=="int64") and (BedToCheck["END"].dtype=="int64"):
-            logger.info("The 'START' 'END' columns have a correct format.")
             if (len(BedToCheck[BedToCheck.START<=0])>0) or (len(BedToCheck[BedToCheck.END<=0])>0):
                 logger.error("Presence of outliers in the START and END columns. Values <=0.")
                 sys.exit()
         else:
-            logger.error("One or both of the 'START' and 'END' columns are not in the correct format. Please check."
+            logger.error("One or both of the 'START' and 'END' columns are not in the correct format. Please check it."
                         +"\n The columns must contain integers.")
             sys.exit()
-
         #######################
         #transcript_id_exon_number column
-        if (len(BedToCheck[BedToCheck["TranscriptID_ExonNumber"].str.contains(r"^ENST.*_[0-9]{1,3}$")])==len(BedToCheck)) and (BedToCheck["CHR"].dtype=="O"):
-            logger.info("The 'TranscriptID_ExonNumber' column has a correct format.")
-        else:
-            logger.error("The 'TranscriptID_ExonNumber' column doesn't have an adequate format. Please check it."
-                        +"\n The column must be a python object and each row must start with 'ENST'.")
+        if not (BedToCheck["EXON_ID"].dtype=="O"):
+            logger.error("The 'EXON_ID' column doesn't have an adequate format. Please check it."
+                        +"\n The column must be a python object.")
             sys.exit()
     else:
         logger.error("BedToCheck doesn't contains 4 columns:"
-                     +"\n CHR, START, END, TranscriptID_ExonNumber."
+                     +"\n CHR, START, END, EXON_ID."
                      +"\n Please check the file before launching the script.")
         sys.exit()
+    #####################
+    #II): Preparation
+    #####################
+    # pad coordinates with +-10bp
+    BedToCheck['START'] -= 10
+    BedToCheck['END'] += 10
 
+    # replace X Y M by len(unique(CHR))+1,+2,+3 (if present)
+    BedToCheck["CHR_NUM"]=BedToCheck["CHR_NUM"].replace(
+        {'X':len(BedToCheck['CHR_NUM'].unique())+1,
+        "Y": len(BedToCheck['CHR_NUM'].unique())+2,
+        "M":len(BedToCheck['CHR_NUM'].unique())+3,
+        "MT":len(BedToCheck['CHR_NUM'].unique())+3})
+        
+    # convert type of CHR_NUM to int and catch any errors
+    try:
+        BedToCheck['CHR_NUM'] = BedToCheck['CHR_NUM'].astype(int)
+    except Exception as e:
+        logger.error("error converting CHR_NUM to int: %s", e)
+        sys.exit(1)
+    # sort by CHR_NUM, then START, then END, then EXON_ID
+    BedToCheck= BedToCheck.sort_values(by=['CHR_NUM','START','END','EXON_ID'])
+    # delete the temp column, and return result
+    BedToCheck.drop(['CHR_NUM'], axis=1, inplace=True)    
     return(BedToCheck)
     
 
