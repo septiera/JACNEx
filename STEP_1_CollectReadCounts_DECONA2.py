@@ -1,7 +1,14 @@
 #############################################################################################################
 ######################################## STEP1 Collect Read Count DECONA2 ###################################
 #############################################################################################################
-
+"""
+"   1.Exonic intervals file parsing and preparing.\n"+
+"   2.Interval trees initialisation (with ncls python module).\n"+
+"   3.New Patients identification for analysis.\n"+
+"   4.Sorting .bam by QNAME (with samtools sort).\n"+
+"   5.Filtering tmpsort.sam (with samtools view).\n"+
+"   6.Fragment counting and results sanity check.\n"+
+"""
 #############################################################################################################
 ################################ Loading of the modules required for processing #############################
 #############################################################################################################
@@ -41,16 +48,11 @@ logger.addHandler(stderr)
 ################################ Functions ##########################################################
 #####################################################################################################
 def usage():
-    print("COMMAND SUMMARY:\n"+
-"Fragments counting for exonic intervals(.bed) using paired-end alignment file(.bam):\n"+
-"   1.Exonic intervals file parsing and preparing.\n"+
-"   2.Interval trees initialisation (with ncls python module).\n"+
-"   3.New Patients identification for analysis.\n"+
-"   4.Sorting .bam by QNAME (with samtools sort).\n"+
-"   5.Filtering tmpsort.sam (with samtools view).\n"+
-"   6.Fragment counting and results sanity check.\n"+
+    sys.stderr.write("\nCOMMAND SUMMARY:\n"+
+"Given a BED of exons and one or more BAM files, count the number of sequenced fragments\n"+
+"from each BAM that overlap each exon.\n"+
 "Script will print to stdout a new countFile in TSV format, copying the data from the pre-existing\n"+
-"countFile if provided and adding columns with counts for the new BAMs/samples..\n\n"
+"countFile if provided and adding columns with counts for the new BAM(s).\n\n"
 "OPTIONS:\n"+
 "   -i or --bam [str]: a bam file or a bam list (with path)\n"+
 "   -b or --bed [str]: a bed file (with path), possibly gzipped, containing exon definitions \n"+
@@ -536,99 +538,110 @@ def SampleCountingFrag(bamFile,dictIntervalTree,intervalBed,processTmpDir, num_t
 ##############################################################################################################
 ###################################
 def main():
+    scriptName=os.path.basename(sys.argv[0])
     ##########################################
-    # A) ARGV parameters definition
+    # A) Getopt user argument (ARGV) recovery
+    bams=""
+    bamsFrom=""
+    bedFile=""
     # default setting ARGV 
-    jobs=10 
-    tmpDirPath="/tmp"
-    countFilePath=""
+    countFile=""
+    tmpDir="/tmp/"
+    threads=10 
 
     try:
-        opts,args = getopt.gnu_getopt(sys.argv[1:],'hi:b:c:t:j:',
-        ["help","bam=","bed=","counts=","tmp=","jobs="])
-        if not opts:
-            sys.stderr.write("ERROR : No options supplied. Please follow the instructions.\n\n")
-            usage()
-            sys.exit()   
+        opts,args = getopt.gnu_getopt(sys.argv[1:],'h',
+        ["help","bams=","bams-from=","bed=","counts=","tmp=","threads="])
     except getopt.GetoptError as e:
-        sys.stderr.write("ERROR : "+e.msg+". Please follow the instructions.\n\n")  
+        sys.stderr.write("ERROR : "+e.msg+".\n")  
         usage()
-        sys.exit()
+        sys.exit(1)
 
     for opt, value in opts:
-            #variables association with user parameters (ARGV)
-            if opt in ('-h', '--help'):
-                usage()
-                sys.exit(2)
-            elif opt in ("-i", "--bam"):
-                bamFilePath=value
-                if not os.path.isfile(bamFilePath):
-                    logger.error("Path to the bamfile %s doesn't exist ",bamFilePath)
-            elif opt in ("-b", "--bed"):
-                bedFilePath =value
-                if not os.path.isfile(bedFilePath):
-                    logger.error("Path to the bedfile %s doesn't exist ",bedFilePath)
-            elif opt in ("-c","--counts"):
-                countFilePath=value
-                if not os.path.isfile(countFilePath):
-                    logger.warning("Path to the countfile %s doesn't exist ",countFilePath) #optionnal args
-            elif opt in ("-t","--tmp"):
-                tmpDirPath=value
-                if not os.path.isdir(tmpDirPath):
-                    logger.error("Path to the tmp directory %s doesn't exist ",tmpDirPath)
-            elif opt in ("-j","--jobs"):
-                jobs=value
-                if not type(jobs)=="int":
-                    logger.error("Threads number %s is not in [int] format.",jobs)    
-
-    #Check that all the arguments are present.
-    logger.debug("BAM folder path is %s", bamFilePath)
-    logger.debug("Intervals bed file path is %s", bedFilePath)
-    logger.debug("Old fragment count file path is %s", countFilePath)
-    logger.debug("Temporary folder path is %s", tmpDirPath)
-    logger.debug("Threads number used is %s", jobs)
+        #variables association with user parameters (ARGV)
+        if opt in ('-h', '--help'):
+            usage()
+            sys.exit(0)
+        elif opt in ("--bams"):
+            bams=value     
+        elif opt in ("--bams-from"):
+            bamsFrom=value
+        elif opt in ("--bed"):
+            bedFile =value
+        elif opt in ("-c","--counts"):
+            countFile=value
+        elif opt in ("--tmp"):
+            tmpDir=value
+        elif opt in ("--threads"):
+            threads=value
+        else:
+            sys.stderr.write("ERROR : Programming error. Unhandled option %s.\n", opt)
+            sys.exit(1)
 
     #####################################################
-    # A) Output folder creation
-    ####################################################
-    outputFolder="DECONA2_FragCountResults_"+now
-    try:
-        os.mkdir(outputFolder)
-    except OSError as error:
-        logger.error("Creation of the directory %s failed : %s", outputFolder, error.strerror)
-        sys.exit()
-    #Change the current working directory:
-    os.chdir(outputFolder)
+    # B) Checking that the mandatory parameters are present
+    if (bams=="" and bamsFrom=="") or (bams!="" and bamsFrom!=""):
+        sys.stderr.write("ERROR : You must use either --bams or --bams-from but not both.\n")
+        usage()
+        sys.exit(1)
+    if bedFile=="":
+        sys.stderr.write("ERROR : You must use --bedFile.\n")
+        usage()
+        sys.exit(1)
+
+    #####################################################
+    # C) Checking that the parameters actually exist and processing
+    processBam=[]
+    if bams!="":
+        processBam=bams.split(",")
+    
+    if bamsFrom!="":
+        if not os.path.isfile(bamsFrom):
+            sys.stderr.write("ERROR : BamFrom file %s doesn't exist. Try %s --help.\n",bamsFrom,scriptName)
+            sys.exit(1)
+        else:
+            bamListFile=open(bamsFrom,"r")
+            for line in bamListFile:
+                line = line.rstrip('\n')
+                processBam.append(line)
+    #Check all bam exist
+    for b in processBam:
+        if not os.path.isfile(b):
+            sys.stderr.write("ERROR : BAM %s doesn't exist. Try %s --help.\n",b,scriptName)
+            sys.exit(1)
+
+    if (countFile!="") and (not os.path.isfile(countFile)):
+        sys.stderr.write("ERROR : Countfile %s doesn't exist. Try %s --help.\n",countFile,scriptName) 
+        sys.exit(1)
+
+    if not os.path.isdir(tmpDir):
+        sys.stderr.write("ERROR : Tmp directory %s doesn't exist. Try %s --help.\n",tmpDir,scriptName)
+        sys.exit(1)
+
+    if (not type(threads)=="int") and (threads>0):
+        sys.stderr.write("ERROR : Threads number %s is not in [int] format and must be positive."+
+        "Try %s --help.\n",threads,scriptName) 
+        sys.exit(1)   
 
     ######################################################
-    # B) Parsing exonic intervals bed
-    exonInterval=processBed(bedFilePath)
+    # D) Parsing exonic intervals bed
+    exonInterval=processBed(bedFile)
     exonInterval.to_csv(("ExonsIntervals_processBed_"+now),sep="\t", index=False, header=None)
 
     ######################################################
-    # C) Creating interval trees for each chromosome
+    # E) Creating interval trees for each chromosome
     dictIntervalTree=IntervalTreeDictCreation(exonInterval)
 
     ############################################
-    # D) Parsing old counts file (.tsv) if exist else new count Dataframe creation 
-    if os.path.isfile(countFilePath):
-        counts=parseCountFile(countFilePath)
+    # F) Parsing old counts file (.tsv) if exist else new count Dataframe creation 
+    if os.path.isfile(countFile):
+        counts=parseCountFile(countFile)
     else:
         counts=exonInterval
-    #####################################################
-    # E) process bam files 
-    if not ".bam" in bamFilePath: 
-        bamList=[]
-        bamListFile=open(bamFilePath,"r")
-        for line in bamListFile:
-            line = line.rstrip('\n')
-            bamList.append(line)
-    else:
-        bamList=list(bamFilePath)
 
     #####################################################
-    # F) Definition of a loop for each BAM files and the reads counting.
-    for S in bamList:
+    # G) Definition of a loop for each BAM files and the reads counting.
+    for S in processBam:
         sampleName=os.path.basename(S)
         sampleName=sampleName.replace(".bam","")
         logger.info('Sample being processed : %s', sampleName)
@@ -637,11 +650,10 @@ def main():
             logger.info('Sample %s has already been analysed.', sampleName)
             continue
         else:
-            FragVec=SampleCountingFrag(S,dictIntervalTree,exonInterval,tmpDirPath,jobs)
+            FragVec=SampleCountingFrag(S,dictIntervalTree,exonInterval,tmpDir,threads)
             counts[sampleName]=FragVec
 
-    sampleNumber=len(counts.columns[4:])
-    counts.to_csv("FragmentsCounts_DECONA2_"+sampleNumber+"samples_"+now+".tsv",sep="\t", index=False)  
+    counts.to_csv(sys.stdout(),sep="\t", index=False)  
 
 if __name__ =='__main__':
-    main(sys.argv[1:])
+    main()
