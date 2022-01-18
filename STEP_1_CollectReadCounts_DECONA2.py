@@ -10,12 +10,17 @@ import sys #Path
 import getopt
 import logging
 import os
+from numpy.lib.shape_base import tile
 import pandas as pd #read,make,treat Dataframe object
 import re  # regular expressions
 import fnmatch
 from ncls import NCLS # generating interval trees (cf : https://github.com/biocore-ntnu/ncls)
 import subprocess #spawn new processes, connect to their input/output/error pipes, and obtain their return codes.
 import tempfile #manages the creation and deletion of temporary folders/files
+
+#Definition of the scripts'execution date (allows to annotate the output files to track them over time) 
+import time
+now=time.strftime("%y%m%d")
 
 #####################################################################################################
 ################################ Logging Definition #################################################
@@ -49,29 +54,17 @@ def usage():
 "Script will print to stdout a new countFile in TSV format, copying the data from the pre-existing\n"+
 "countFile if provided and adding columns with counts for the new BAMs/samples..\n\n"
 "OPTIONS:\n"+
-"   -i or --intervalFile [str]: a bed file (with path), possibly gzipped, containing exon definitions \n"+
+"   -i or --bam [str]: a bam file or a bam list (with path)\n"+
+"   -b or --bed [str]: a bed file (with path), possibly gzipped, containing exon definitions \n"+
 "                               formatted as CHR START END EXON_ID\n"+
-"   -b or --bamFile [str]: a bam file or a bam list (with path)\n"+
-"   -o or --outputfile [str]: a output file (with path)\n"+
-"   -p or --precountfile [str] optional: a pre-parsed count file (with path), old fragment count file  \n"+
+"   -c or --counts [str] optional: a pre-parsed count file (with path), old fragment count file  \n"+
 "                                        to be completed if new patient(s) is(are) added. \n"
-"   -t or --tmpfolder [str] optional: a temporary folder (with path),allows to save temporary files \n"+
+"   -t or --tmp [str] optional: a temporary folder (with path),allows to save temporary files \n"+
 "                                     from samtools sort. By default, this is placed in '/tmp'.\n"+
 "                                     Tip: place the storage preferably in RAM.\n"+
-"   -c or --cpu [int] optional: a cpu number to allocate for samtools. By default, the value is set to 10.\n")
+"   -j or --jobs [int] optional: number of threads to allocate for samtools. By default, the value is set to 10.\n")
 
-####################################################
-#Function allowing to create output folder.
-#Input : take output path
-#Output : outdir if it doesn't exist, die on failure
-def CreateFolder(outdir):
-    if not os.path.isdir(outdir):
-        try:
-            os.mkdir(outdir)
-        except OSError as error:
-            logger.error("Creation of the directory %s failed : %s", outdir, error.strerror)
-            sys.exit()
-  
+
 ####################################################
 #Exon intervals file parsing and preparing.
 # Input : bedFile == a bed file (with path), possibly gzipped, containing exon definitions
@@ -95,16 +88,16 @@ def processBed(PathBedToCheck):
         BedToCheck.columns=["CHR","START","END","EXON_ID"]
         #######################
         #CHR column
-        if (BedToCheck["CHR"].dtype=="O"): # Check 'O' (Python) objects
-            if not BedToCheck["CHR"].str.startswith('chr').all: # "chr" addition
+        if (BedToCheck["CHR"].dtype=="O"): # Check the python object is a str
+            if not BedToCheck["CHR"].str.startswith('chr').all: 
                 BedToCheck['CHR_NUM'] =BedToCheck['CHR']
                 BedToCheck["CHR"]="chr"+BedToCheck["CHR"].astype(str)
             else:
                 BedToCheck['CHR_NUM'] =BedToCheck['CHR']
                 BedToCheck['CHR_NUM'].replace(regex=r'^chr(\w+)$', value=r'\1', inplace=True)
         else:
-            logger.error("The 'CHR' column doesn't have an adequate format. Please check it."
-                        +"\n The column must be a python object")
+            logger.error("The 'CHR' column doesn't have an adequate format. Please check it.\n"
+                        +"The column must be a python object [str]")
             sys.exit()
         #######################
         #Start and End column
@@ -113,19 +106,19 @@ def processBed(PathBedToCheck):
                 logger.error("Presence of outliers in the START and END columns. Values <=0.")
                 sys.exit()
         else:
-            logger.error("One or both of the 'START' and 'END' columns are not in the correct format. Please check it."
-                        +"\n The columns must contain integers.")
+            logger.error("One or both of the 'START' and 'END' columns are not in the correct format. Please check it.\n"
+                        +"The columns must contain integers.")
             sys.exit()
         #######################
         #transcript_id_exon_number column
         if not (BedToCheck["EXON_ID"].dtype=="O"):
-            logger.error("The 'EXON_ID' column doesn't have an adequate format. Please check it."
-                        +"\n The column must be a python object.")
+            logger.error("The 'EXON_ID' column doesn't have an adequate format. Please check it.\n"
+                        +"The column must be a python object.")
             sys.exit()
     else:
-        logger.error("BedToCheck doesn't contains 4 columns:"
-                     +"\n CHR, START, END, EXON_ID."
-                     +"\n Please check the file before launching the script.")
+        logger.error("BedToCheck doesn't contains 4 columns:\n"
+                     +"CHR, START, END, EXON_ID.\n"
+                     +"Please check the file before launching the script.")
         sys.exit()
     #####################
     #II): Preparation
@@ -140,19 +133,18 @@ def processBed(PathBedToCheck):
         "Y": len(BedToCheck['CHR_NUM'].unique())+2,
         "M":len(BedToCheck['CHR_NUM'].unique())+3,
         "MT":len(BedToCheck['CHR_NUM'].unique())+3})
-        
+
     # convert type of CHR_NUM to int and catch any errors
     try:
         BedToCheck['CHR_NUM'] = BedToCheck['CHR_NUM'].astype(int)
     except Exception as e:
-        logger.error("error converting CHR_NUM to int: %s", e)
+        logger.error("Converting CHR_NUM to int: %s", e)
         sys.exit(1)
     # sort by CHR_NUM, then START, then END, then EXON_ID
-    BedToCheck= BedToCheck.sort_values(by=['CHR_NUM','START','END','EXON_ID'])
+    exons= BedToCheck.sort_values(by=['CHR_NUM','START','END','EXON_ID'])
     # delete the temp column, and return result
-    BedToCheck.drop(['CHR_NUM'], axis=1, inplace=True)    
-    return(BedToCheck)
-    
+    exons.drop(['CHR_NUM'], axis=1, inplace=True)    
+    return(exons)
 
 ####################################################
 #This function uses the ncls module to create interval trees
@@ -167,6 +159,42 @@ def IntervalTreeDictCreation(BedIntervalFile):
         DictIntervalTree[processChr]=ncls
     return(DictIntervalTree)
 
+#################################################
+# parseCountFile:
+#Input:
+# - countFile is a tsv file (with path), including column titles, as
+#   specified previously
+# - exons is a dataframe holding exon definitions, padded and sorted,
+#   as returned by processBed
+#
+# -> Parse countFile into a dataframe (will be returned)
+# -> Check that the first 4 columns are identical to exons,
+#    otherwise die with an error.
+# -> check that the samples counts columns are not empty(>15000000 frag counts)
+# 
+# Output:
+# - returns the Frag count results as a pandas dataframe with column headers CHR START END EXON_ID,sampleName(n)
+# - list of samples to be reanalysed
+# - list of samples with correct count (to be deleted from the process).
+def parseCountFile(countFile, exons):
+    try:
+        counts=pd.read_table(countFile,sep="\t")
+    except Exception as e:
+        logger.error("Parsing provided countFile %s: %s", countFile, e)
+        sys.exit(1)
+
+    if (os.path.isfile(counts)) and (len(counts)==len(exons)): #Sanity Check
+        #Columns comparisons
+        if not ((counts[0].equals(exons['CHR'])) and 
+                (counts[1].equals(exons['START'])) and 
+                (counts[2].equals(exons['END'])) and 
+                (counts[3].equals(exons['EXON_ID']))):
+            logger.error("Old counts file %s does not have the same columns as the exonic interval file.\n"+
+            "Transcriptome version has probably changed.\n"+
+            "In this case the whole samples set re-analysis must be done.\n"+
+            "Do not set the -p option.",countFile)
+    return(counts)
+
 ####################################################
 #This function retrieves the alignements length
 #The input is a string in the CIGAR form
@@ -179,56 +207,12 @@ def ExtractAliLength(CIGARAlign):
     return(length)
 
 ####################################################
-#This function checks the presence of a results file for the sample being processed and performs an integrity check.
-#If the file does not exist or the integrity of the old file is not validated, the count will be performed.
-#Otherwise the process will be skipped for that sample.
-#Inputs: 
-#- access path to the tsv
-#- panda dataframe containing all genomic exons positions 
-#Output: a Boolean variable
-
-def SanityCheckPreExistingTSV(countFilePath,BedIntervalFilePath,BedIntervalFile):
-    tsvFileName=os.path.basename(countFilePath)
-    bedFileName=os.path.basename(BedIntervalFilePath)
-    validSanity=False #Boolean: True=analysis/reanalysis; False=no analysis
-    numberExons=len(BedIntervalFile)
-    if (os.path.isfile(countFilePath)) and (sum(1 for _ in open(countFilePath))==numberExons): #file exists and has the same lines number as the exonic interval file
-        logger.info("File %s already exists and has the same lines number as the bed file %s (%s) ",tsvFileName,bedFileName,numberExons)
-        count=pd.read_table(countFilePath,header=None,sep="\t")
-        #Columns comparisons
-        if ((count[0].equals(BedIntervalFile['CHR'])) 
-            and (count[1].equals(BedIntervalFile['START'])) 
-            and (count[2].equals(BedIntervalFile['END'])) 
-            and (count[3].equals(BedIntervalFile['TranscriptID_ExonNumber'])) 
-            and (count[4].sum()>15000000)):
-            logger.warning("Fragment count file %s has the same columns as the reference bed %s and the count column is non-zero.",tsvFileName,bedFileName)
-            validSanity=True# Bam re-analysis is not effective.
-        else:
-            logger.warning("The fragment count file %s does not have the same columns as the reference bed or does not have enough fragment count. "
-                     +"\n This will cause the previous file deletion and a new analysis are performed.",tsvFileName)
-            try:
-                os.remove(countFilePath)
-            except OSError as error:
-                logger.error("File deletion has encountered an error %s %s", tsvFileName, error.strerror)
-                sys.exit()
-            
-    elif os.path.isfile(countFilePath): #Be careful when updating the bed if there is no change in the output directory, all the files are replaced.
-        logger.warning("File %s already exists but it's truncated. This involves replacing the corrupted file.",tsvFileName)
-        try:
-            os.remove(countFilePath)
-        except OSError as error:
-            logger.error("File deletion has encountered an error %s %s", tsvFileName, error.strerror)
-            sys.exit()
-    
-    return(validSanity)
-
-####################################################
 #This function identifies the fragments for each Qname
 #When the fragment(s) are identified and it(they) overlap interest interval=> increment count for this intervals.
 
 #Inputs:
-#-2 strings: qname and chr
-#-4 lists for R and F strand positions (start and end)
+#- qname and chr variable [str]
+#-4 lists for R and F strand positions (start and end) [int]
 #-a bit variable informing about the read pair integrity (two bits : 01 First read was seen , 10 Second read was seen)
 #-the dictionary containing the interval trees for each chromosome
 #-list containing the fragment counts which will be completed/increment (final results)
@@ -338,7 +322,7 @@ def Qname2ExonCount(qnameString,chromString,startFList,endFList,startRList,endRL
 
 #Output: tsv files formatted as follows (no row or column index, 5 columns => CHR, START, END, ENSTID_Exon, FragCount)
 
-def SampleCountingFrag(bamFile,nameCountFilePath,dictIntervalTree,intervalBed,processTmpDir,num_cores):
+def SampleCountingFrag(bamFile,sampleName,dictIntervalTree,intervalBed,processTmpDir,num_cores):
     with tempfile.TemporaryDirectory(dir=processTmpDir) as SampleTmpDir:
         numberExons=len(intervalBed)
         logger.info('Sample BAM being processed : %s', bamFile)
@@ -524,9 +508,11 @@ def SampleCountingFrag(bamFile,nameCountFilePath,dictIntervalTree,intervalBed,pr
             sys.exit()
         #################################################################################################
         #X] Saving the tsv file
+        if sampleName in counts.columns():
+
         SampleTsv=intervalBed
         SampleTsv['FragCount']=vecExonCount
-        SampleTsv.to_csv(os.path.join(nameCountFilePath),sep="\t", index=False, header=None)
+        SampleTsv.to_csv(os.path.join(sampleName),sep="\t", index=False, header=None)
 
         p1.communicate() #allows to wait for the process end to return the following status error
         if p1.returncode != 0:
@@ -546,8 +532,8 @@ def main():
     processTmpDirPath="/tmp"
 
     try:
-        opts,args = getopt.gnu_getopt(sys.argv[1:],'hi:b:o:p:t:c:',
-        ["help","intervalFile=","bamFile=","outputfile=","precountfile=","tmpfolder=","cpu="])
+        opts,args = getopt.gnu_getopt(sys.argv[1:],'hi:b:c:t:j:',
+        ["help","bam=","bed=","counts=","tmp=","jobs="])
         if not opts:
             sys.stderr.write("ERROR : No options supplied. Please follow the instructions.\n\n")
             usage()
@@ -557,52 +543,53 @@ def main():
         usage()
         sys.exit()
 
-    argvNumber=0 # past options counter 
     for opt, value in opts:
             #variables association with user parameters (ARGV)
             if opt in ('-h', '--help'):
                 usage()
                 sys.exit(2)
-            elif opt in ("-i", "--intervalFile"):
-                intervalFilePath =value
-                argvNumber+=1
-            elif opt in ("-b", "--bamFile"):
+            elif opt in ("-i", "--bam"):
                 bamFilePath=value
-                argvNumber+=1
-            elif opt in ("-o", "--outputfile"):
-                outputFilePath=value
-                argvNumber+=1
-            elif opt in ("-p","--precountfile"):
-                preCountFilePath=value
-            elif opt in ("-t","--tmpfolder"):
-                processTmpDirPath=value
-            elif opt in ("-c","--cpu"):
+            elif opt in ("-b", "--bed"):
+                bedFilePath =value
+            elif opt in ("-c","--counts"):
+                countFilePath=value
+            elif opt in ("-t","--tmp"):
+                tmpDirPath=value
+            elif opt in ("-j","--jobs"):
                 cpu=value
 
-    if argvNumber<3: 
-        sys.stderr.write("ERROR : One or more imposed options were not provided. Please follow the instructions.\n\n")  
-        usage()
-        sys.exit()
-
     #Check that all the arguments are present.
-    logger.info("Intervals bed file path is %s", intervalFilePath)
-    logger.info("BAM folder path is %s", bamFilePath)
-    logger.info("Output file path is %s", outputFilePath)
-    logger.info("Old fragment count file path is %s", preCountFilePath)
-    logger.info("Temporary folder path is %s", processTmpDirPath)
-    logger.info("CPU number used is %s", cpu)
+    logger.debug("BAM folder path is %s", bamFilePath)
+    logger.debug("Intervals bed file path is %s", bedFilePath)
+    logger.debug("Old fragment count file path is %s", countFilePath)
+    logger.debug("Temporary folder path is %s", tmpDirPath)
+    logger.debug("CPU number used is %s", cpu)
 
     #####################################################
-    # A) Setting up the analysis tree.
-        # 1) Creation of the DataToProcess folder if not existing.
-    DataToProcessPath=outputFilePath+"DataToProcess"
-    CreateFolder(DataToProcessPath)
-        # 2) Creation of the ReadCount folder if not existing.
-    RCPath=DataToProcessPath+"/ReadCount"
-    CreateFolder(RCPath)
-        # 3) Creation of the Bedtools folder if not existing.
-    RCPathOutput=RCPath+"/DECONA2"
-    CreateFolder(RCPathOutput)
+    # A) Output folder creation
+    ####################################################
+    outputFolder="DECONA2_FragCountResults_"+now
+    try:
+        os.mkdir(outputFolder)
+    except OSError as error:
+        logger.error("Creation of the directory %s failed : %s", outputFolder, error.strerror)
+        sys.exit()
+    #Change the current working directory:
+    os.chdir(outputFolder)
+
+    ######################################################
+    # B) Parsing exonic intervals bed
+    exonInterval=processBed(bedFilePath)
+    exonInterval.to_csv(("ExonsIntervals_processBed_"+now),sep="\t", index=False, header=None)
+
+    ######################################################
+    # C) Creating interval trees for each chromosome
+    dictIntervalTree=IntervalTreeDictCreation(exonInterval)
+
+    ############################################
+    # D] Parsing old counts file (.tsv)
+
 
     #####################################################
     # B)Bam files list extraction
@@ -616,14 +603,18 @@ def main():
     #####################################################
     # C) Canonical transcript bed, existence check    
     # Bed file load and Sanity Check : If the file does not have the expected format, the process ends.
-    intervalBed=BedParseAndSanityCheck( intervalFilePath)
-
+    exonInterval=processBed(intervalFilePath)
+    
     ############################################
     # D]  Creating interval trees for each chromosome
-    dictIntervalTree=IntervalTreeDictCreation(intervalBed)
+    dictIntervalTree=IntervalTreeDictCreation(exonInterval)
+
+    ############################################
+    # E] Old count file analysis if available
+
 
     #####################################################
-    # E) Definition of a loop for each sample allowing the BAM files symlinks and the reads counting.
+    # F) Definition of a loop for each sample allowing the BAM files symlinks and the reads counting.
     for S in samples:
         sampleName=S.replace(".bam","")
         bamFile=os.path.join(bamFilePath,S)
