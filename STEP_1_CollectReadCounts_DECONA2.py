@@ -10,7 +10,7 @@ import sys #Path
 import getopt
 import logging
 import os
-from numpy.lib.shape_base import tile
+from numpy.lib.shape_base import column_stack, tile
 import pandas as pd #read,make,treat Dataframe object
 import re  # regular expressions
 import fnmatch
@@ -183,16 +183,31 @@ def parseCountFile(countFile, exons):
         logger.error("Parsing provided countFile %s: %s", countFile, e)
         sys.exit(1)
 
-    if (os.path.isfile(counts)) and (len(counts)==len(exons)): #Sanity Check
-        #Columns comparisons
+    if (len(counts)==len(exons)): # lines number comparison  
         if not ((counts[0].equals(exons['CHR'])) and 
                 (counts[1].equals(exons['START'])) and 
                 (counts[2].equals(exons['END'])) and 
-                (counts[3].equals(exons['EXON_ID']))):
+                (counts[3].equals(exons['EXON_ID']))): #Columns comparisons
             logger.error("Old counts file %s does not have the same columns as the exonic interval file.\n"+
             "Transcriptome version has probably changed.\n"+
             "In this case the whole samples set re-analysis must be done.\n"+
             "Do not set the -p option.",countFile)
+            sys.exit(1)
+        else: 
+            namesSampleToCheck=[]
+            for columnIndex in range(4,len(counts.columns)):
+                if not counts[columnIndex].dtypes=="int64":
+                    namesSampleToCheck.append(counts[columnIndex].columns)
+            if len(namesSampleToCheck)>0:
+                logger.error("Columns in %s, sample(s) %s are not in [int] format.\n"+
+                "Please check and correct these before trying again.", countFile,(",".join(namesSampleToCheck)))
+                sys.exit(1)
+    else:
+        logger.error("Old counts file %s does not have the same lines number as the exonic interval file.\n"+
+        "Transcriptome version has probably changed.\n"+
+        "In this case the whole samples set re-analysis must be done.\n"+
+        "Do not set the -p option.",countFile)
+        sys.exit(1)
     return(counts)
 
 ####################################################
@@ -306,7 +321,7 @@ def Qname2ExonCount(qnameString,chromString,startFList,endFList,startRList,endRL
 ####################################################
 #This function allows samples to be processed for fragment counting.
 #It uses several other functions such as: ExtractAliLength and Qname2ExonCount.
-#Inputs:
+#Input:
 #-the full path to the bam file
 #-the path with the name of the output file (fragment count file)
 #-the dictionary of exonic interval trees 
@@ -528,8 +543,9 @@ def main():
     ##########################################
     # A) ARGV parameters definition
     # default setting ARGV 
-    cpu=10 
-    processTmpDirPath="/tmp"
+    jobs=10 
+    tmpDirPath="/tmp"
+    countFilePath=""
 
     try:
         opts,args = getopt.gnu_getopt(sys.argv[1:],'hi:b:c:t:j:',
@@ -550,21 +566,31 @@ def main():
                 sys.exit(2)
             elif opt in ("-i", "--bam"):
                 bamFilePath=value
+                if not os.path.isfile(bamFilePath):
+                    logger.error("Path to the bamfile %s doesn't exist ",bamFilePath)
             elif opt in ("-b", "--bed"):
                 bedFilePath =value
+                if not os.path.isfile(bedFilePath):
+                    logger.error("Path to the bedfile %s doesn't exist ",bedFilePath)
             elif opt in ("-c","--counts"):
                 countFilePath=value
+                if not os.path.isfile(countFilePath):
+                    logger.warning("Path to the countfile %s doesn't exist ",countFilePath) #optionnal args
             elif opt in ("-t","--tmp"):
                 tmpDirPath=value
+                if not os.path.isdir(tmpDirPath):
+                    logger.error("Path to the tmp directory %s doesn't exist ",tmpDirPath)
             elif opt in ("-j","--jobs"):
-                cpu=value
+                jobs=value
+                if not type(jobs)=="int":
+                    logger.error("Threads number %s is not in [int] format.",jobs)    
 
     #Check that all the arguments are present.
     logger.debug("BAM folder path is %s", bamFilePath)
     logger.debug("Intervals bed file path is %s", bedFilePath)
     logger.debug("Old fragment count file path is %s", countFilePath)
     logger.debug("Temporary folder path is %s", tmpDirPath)
-    logger.debug("CPU number used is %s", cpu)
+    logger.debug("Threads number used is %s", jobs)
 
     #####################################################
     # A) Output folder creation
@@ -588,34 +614,26 @@ def main():
     dictIntervalTree=IntervalTreeDictCreation(exonInterval)
 
     ############################################
-    # D] Parsing old counts file (.tsv)
-
+    # D) Parsing old counts file (.tsv)
+    if os.path.isfile(countFilePath):
+        counts=parseCountFile(countFilePath)
 
     #####################################################
-    # B)Bam files list extraction
-    #This list contains the path to each bam.
-    if not os.path.isdir(bamFilePath):
-        logger.error("Bam folder doesn't exist %s",bamFilePath)
-        sys.exit()
-    
+    # E) process bam files 
+    if not ".bam" in bamFilePath: 
+        bamList=[]
+        bamListFile=open(bamFilePath,"r")
+        for line in bamListFile:
+            line = line.rstrip('\n')
+            bamList.append(line)
+    else:
+        bamList=bamFilePath
+
     samples=fnmatch.filter(os.listdir(bamFilePath), '*.bam')
 
     #####################################################
-    # C) Canonical transcript bed, existence check    
-    # Bed file load and Sanity Check : If the file does not have the expected format, the process ends.
-    exonInterval=processBed(intervalFilePath)
-    
-    ############################################
-    # D]  Creating interval trees for each chromosome
-    dictIntervalTree=IntervalTreeDictCreation(exonInterval)
-
-    ############################################
-    # E] Old count file analysis if available
-
-
-    #####################################################
-    # F) Definition of a loop for each sample allowing the BAM files symlinks and the reads counting.
-    for S in samples:
+    # F) Definition of a loop for each BAM files and the reads counting.
+    for S in bamList:
         sampleName=S.replace(".bam","")
         bamFile=os.path.join(bamFilePath,S)
         logger.info('Sample being processed : %s', sampleName)
