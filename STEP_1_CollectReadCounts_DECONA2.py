@@ -10,10 +10,8 @@ import sys #Path
 import getopt
 import logging
 import os
-from numpy.lib.shape_base import column_stack, tile
 import pandas as pd #read,make,treat Dataframe object
 import re  # regular expressions
-import fnmatch
 from ncls import NCLS # generating interval trees (cf : https://github.com/biocore-ntnu/ncls)
 import subprocess #spawn new processes, connect to their input/output/error pipes, and obtain their return codes.
 import tempfile #manages the creation and deletion of temporary folders/files
@@ -330,14 +328,17 @@ def Qname2ExonCount(qnameString,chromString,startFList,endFList,startRList,endRL
 #-the number of cpu allocated for processing (used for samtools commands)
 
 #Temporary variables created:
-#It uses samtools commands to filter reads and sort them in Qnames order (.sam file generated in a temporary file).
+#It uses samtools commands to filter reads and sort them in Qnames order (.sam file 
+# generated in a temporary file).
 #It creates a list of fragment count results for each line index of the bed file.
-#It also creates a dictionary containing all the counts for each condition imposed to obtain a fragment count. 
-#This dictionary is used as a control in order not to miss any condition not envisaged (number of Qname processed must be the same at the end of the process).
+#It also creates a dictionary containing all the counts for each condition imposed
+#  to obtain a fragment count. 
+#This dictionary is used as a control in order not to miss any condition not envisaged 
+# (number of Qname processed must be the same at the end of the process).
 
-#Output: tsv files formatted as follows (no row or column index, 5 columns => CHR, START, END, ENSTID_Exon, FragCount)
+#Output: a vector containing the fragment counts sorted according to the indexes of the bed file
 
-def SampleCountingFrag(bamFile,sampleName,dictIntervalTree,intervalBed,processTmpDir,num_cores):
+def SampleCountingFrag(bamFile,dictIntervalTree,intervalBed,processTmpDir, num_threads):
     with tempfile.TemporaryDirectory(dir=processTmpDir) as SampleTmpDir:
         numberExons=len(intervalBed)
         logger.info('Sample BAM being processed : %s', bamFile)
@@ -349,7 +350,7 @@ def SampleCountingFrag(bamFile,sampleName,dictIntervalTree,intervalBed,processTm
         # -@ allows the process to be split across multiple cores.
         # -T is used to store the process temporary files in the ram memory.
         # -O indicates the stdout result must be in sam format.
-        cmd1 ="samtools sort -n "+bamFile+" -@ "+str(num_cores)+" -T "+SampleTmpDir+" -O sam"
+        cmd1 ="samtools sort -n "+bamFile+" -@ "+str(num_threads)+" -T "+SampleTmpDir+" -O sam"
 
         # Using samtools view, the following flag filters can be performed with the -F option:
         #   -4 0x4 Read Unmapped
@@ -359,7 +360,7 @@ def SampleCountingFrag(bamFile,sampleName,dictIntervalTree,intervalBed,processTm
         # Total Flag decimal = 1796
         # The command also integrates a filtering on the mapping quality here fixed at 20 (-q option).
         # By default the stdout is in sam format
-        cmd2 ="samtools view -F 1796 -q 20 -@ "+str(num_cores)
+        cmd2 ="samtools view -F 1796 -q 20 -@ "+str(num_threads)
         # Orders execution
         p1 = subprocess.Popen(cmd1.split(),stdout=subprocess.PIPE,bufsize=1,encoding='ascii')
         p2 = subprocess.Popen(cmd2.split(), stdin=p1.stdout,stdout=subprocess.PIPE,bufsize=1,encoding='ascii')
@@ -491,6 +492,11 @@ def SampleCountingFrag(bamFile,sampleName,dictIntervalTree,intervalBed,processTm
                 continue
             # else this ali agrees with previous alis for qname -> NOOP
 
+        p1.communicate() #allows to wait for the process end to return the following status error
+        if p1.returncode != 0:
+            logger.error('the "Samtools sort" command encountered an error. error status : %s',p1.returncode)
+            sys.exit()
+        p2.terminate()
 
         #################################################################################################
         #VI]  Process last Qname
@@ -522,18 +528,8 @@ def SampleCountingFrag(bamFile,sampleName,dictIntervalTree,intervalBed,processTm
             logger.error("Nb total Qname : %s. Nb Qname overlap target interval %s",NBTotalQname,sum(vecExonCount))
             sys.exit()
         #################################################################################################
-        #X] Saving the tsv file
-        if sampleName in counts.columns():
-
-        SampleTsv=intervalBed
-        SampleTsv['FragCount']=vecExonCount
-        SampleTsv.to_csv(os.path.join(sampleName),sep="\t", index=False, header=None)
-
-        p1.communicate() #allows to wait for the process end to return the following status error
-        if p1.returncode != 0:
-            logger.error('the "Samtools sort" command encountered an error. error status : %s',p1.returncode)
-            sys.exit()
-        p2.terminate()
+        #X] Extract results
+        return(vecExonCount)     
 
 ##############################################################################################################
 ######################################### Script Body ########################################################
@@ -614,10 +610,11 @@ def main():
     dictIntervalTree=IntervalTreeDictCreation(exonInterval)
 
     ############################################
-    # D) Parsing old counts file (.tsv)
+    # D) Parsing old counts file (.tsv) if exist else new count Dataframe creation 
     if os.path.isfile(countFilePath):
         counts=parseCountFile(countFilePath)
-
+    else:
+        counts=exonInterval
     #####################################################
     # E) process bam files 
     if not ".bam" in bamFilePath: 
@@ -627,27 +624,24 @@ def main():
             line = line.rstrip('\n')
             bamList.append(line)
     else:
-        bamList=bamFilePath
-
-    samples=fnmatch.filter(os.listdir(bamFilePath), '*.bam')
+        bamList=list(bamFilePath)
 
     #####################################################
     # F) Definition of a loop for each BAM files and the reads counting.
     for S in bamList:
-        sampleName=S.replace(".bam","")
-        bamFile=os.path.join(bamFilePath,S)
+        sampleName=os.path.basename(S)
+        sampleName=sampleName.replace(".bam","")
         logger.info('Sample being processed : %s', sampleName)
 
-        #output TSV name definition
-        nameCountFilePath=os.path.join(RCPathOutput,sampleName+".tsv")
-        validSanity=SanityCheckPreExistingTSV(nameCountFilePath, intervalFilePath,intervalBed)
-        print(sampleName,"pre-existing correct count file :",validSanity)
-
-        if validSanity:
+        if sampleName in list(counts.columns[4:]):
+            logger.info('Sample %s has already been analysed.', sampleName)
             continue
         else:
-            SampleCountingFrag(bamFile,nameCountFilePath,dictIntervalTree,intervalBed,processTmpDirPath,num_cores)
-                
+            FragVec=SampleCountingFrag(S,dictIntervalTree,exonInterval,tmpDirPath,jobs)
+            counts[sampleName]=FragVec
+
+    sampleNumber=len(counts.columns[4:])
+    counts.to_csv("FragmentsCounts_DECONA2_"+sampleNumber+"samples_"+now+".tsv",sep="\t", index=False)  
 
 if __name__ =='__main__':
     main(sys.argv[1:])
