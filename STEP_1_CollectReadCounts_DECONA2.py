@@ -109,7 +109,6 @@ def processBed(PathBedToCheck):
     #I): Sanity Check
     #####################
     if len(BedToCheck.columns) == 4:
-        logger.info("%s contains 4 columns.",bedname)
         BedToCheck.columns=["CHR","START","END","EXON_ID"]
         #######################
         #CHR column
@@ -207,31 +206,44 @@ def parseCountFile(countFile, exons):
     except Exception as e:
         logger.error("Parsing provided countFile %s: %s", countFile, e)
         sys.exit(1)
-
     if (len(counts)==len(exons)): # lines number comparison  
-        if not ((counts[0].equals(exons['CHR'])) and 
-                (counts[1].equals(exons['START'])) and 
-                (counts[2].equals(exons['END'])) and 
-                (counts[3].equals(exons['EXON_ID']))): #Columns comparisons
-            logger.error("Old counts file %s does not have the same columns as the exonic interval file.\n"+
-            "Transcriptome version has probably changed.\n"+
-            "In this case the whole samples set re-analysis must be done.\n"+
-            "Do not set the -p option.",countFile)
+        #Type Check 
+        if not (counts.dtypes["CHR"]=="O" and counts.dtypes["EXON_ID"]=="O"):
+            logger.error("One or both of the 'CHR' and 'EXON_ID' columns are not in the correct format. Please check it.\n"
+                        +"The column must be a python object [str]")
+            sys.exit(1)
+        elif not (counts.dtypes["START"]=="int64" and counts.dtypes["END"]=="int64"):
+            logger.error("One or both of the 'START' and 'END' columns are not in the correct format. Please check it.\n"
+                        +"The columns must contain integers.")
+            sys.exit(1)
+        #Check if data are identical
+        elif not (counts['CHR'].isin(exons['CHR']).value_counts())[True]==len(exons):
+            logger.error("'CHR' column in counts dataframe isn't identical to those in the exonic interval file. Please check it.")
+            sys.exit(1)
+        elif not (counts['START'].isin(exons['START']).value_counts())[True]==len(exons):
+            logger.error("'START' column in counts dataframe isn't identical to those in the exonic interval file. Please check it.")
+            sys.exit(1)
+        elif not (counts['END'].isin(exons['END']).value_counts())[True]==len(exons):
+            logger.error("END column in counts dataframe isn't identical to those in the exonic interval file. Please check it.")
+            sys.exit(1)
+        elif not (counts['EXON_ID'].isin(exons['EXON_ID']).value_counts())[True]==len(exons):
+            logger.error("'EXON_ID' column in counts dataframe isn't identical to those in the exonic interval file. Please check it.")
             sys.exit(1)
         else: 
+            #check that the old sample data is in [int] format.
             namesSampleToCheck=[]
-            for columnIndex in range(4,len(counts.columns)):
-                if not counts[columnIndex].dtypes=="int64":
-                    namesSampleToCheck.append(counts[columnIndex].columns)
+            for columnIndex in range(5,len(counts.columns)):
+                if not counts.iloc[:,columnIndex].dtypes=="int64":
+                    namesSampleToCheck.append(counts.iloc[:,columnIndex].columns)
             if len(namesSampleToCheck)>0:
                 logger.error("Columns in %s, sample(s) %s are not in [int] format.\n"+
                 "Please check and correct these before trying again.", countFile,(",".join(namesSampleToCheck)))
                 sys.exit(1)
     else:
-        logger.error("Old counts file %s does not have the same lines number as the exonic interval file.\n"+
+        logger.error("Old counts file %s doesn't have the same lines number as the exonic interval file.\n"+
         "Transcriptome version has probably changed.\n"+
         "In this case the whole samples set re-analysis must be done.\n"+
-        "Do not set the -p option.",countFile)
+        "Do not set the --counts option.",countFile)
         sys.exit(1)
     return(counts)
 
@@ -260,8 +272,6 @@ def parseCountFile(countFile, exons):
 def SampleCountingFrag(bamFile,dictIntervalTree,intervalBed,processTmpDir, num_threads):
     with tempfile.TemporaryDirectory(dir=processTmpDir) as SampleTmpDir:
         numberExons=len(intervalBed)
-        logger.info('Sample BAM being processed : %s', bamFile)
-
         ############################################
         # I] Pretreatments on the sample bam.
         # Samtools commands line :
@@ -648,7 +658,6 @@ def main():
     ######################################################
     # D) Parsing exonic intervals bed
     exonInterval=processBed(bedFile)
-    exonInterval.to_csv(("ExonsIntervals_processBed_"+now),sep="\t", index=False, header=None)
 
     ######################################################
     # E) Creating interval trees for each chromosome
@@ -657,7 +666,7 @@ def main():
     ############################################
     # F) Parsing old counts file (.tsv) if exist else new count Dataframe creation 
     if os.path.isfile(countFile):
-        counts=parseCountFile(countFile)
+        counts=parseCountFile(countFile,exonInterval)
     else:
         counts=exonInterval
 
