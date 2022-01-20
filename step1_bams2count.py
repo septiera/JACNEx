@@ -36,10 +36,47 @@ import pandas as pd # dataFrame in processBed
 import re
 
 
+###################################
+# set up logger - loggers 
+logger=logging.getLogger(os.path.basename(sys.argv[0]))
+logger.setLevel(logging.DEBUG)
+# create console handler for STDERR
+stderr = logging.StreamHandler(sys.stderr)
+stderr.setLevel(logging.DEBUG)
+#create formatter
+formatter = logging.Formatter('%(asctime)s %(levelname)s %(name)s: %(message)s',
+                              '%Y-%m-%d %H:%M:%S')
+#add formatter to stderr handler
+stderr.setFormatter(formatter)
+#add stderr handler to logger
+logger.addHandler(stderr)
+
 
 #############################################################################
 ### subs
 #############################################################################
+
+#################################################
+# USAGE
+def usage():
+    scriptName=os.path.basename(sys.argv[0])
+    sys.stderr.write("\n"+sciptName+":\n"+
+"Given a BED of exons and one or more BAM files, count the number of sequenced fragments\n"+
+"from each BAM that overlap each exon.\n"+
+"Script will print to stdout a countFile in TSV format, copying the data from the pre-existing\n"+ 
+"countFile if provided and adding columns with counts for the new BAM(s).\n\n"+
+"OPTIONS:\n"+
+"   --bams [str]: one or more BAM files, comma-separated\n"+
+"   --bams-from=FILE : read list of BAM files from FILE\n"
+"   --bed [str]: a bed file, possibly gzipped, containing exon definitions \n"+
+"                formatted as CHR START END EXON_ID\n"+
+"   -c or --counts [str] optional: a pre-parsed count file (with path), old fragment count file  \n"+
+"                                  to be completed if new patient(s) is(are) added. \n"
+"   --tmp [str] optional: a temporary folder (with path),allows to save temporary files \n"+
+"                         from samtools sort. By default, this is placed in '/tmp'.\n"+
+"                         Tip: place the storage preferably in RAM.\n"+
+"   --threads [int] optional: number of threads to allocate for samtools.\n"+
+"                             By default, the value is set to 10.\n\n")
 
 #################################################
 # processBed:
@@ -117,21 +154,6 @@ def parseCountFile(countFile, exons, logger):
 
 
 def main(argv):
-    ###################################
-    # set up logger
-    logger=logging.getLogger(os.path.basename(sys.argv[0]))
-    logger.setLevel(logging.DEBUG)
-    # create console handler for STDERR
-    stderr = logging.StreamHandler(sys.stderr)
-    stderr.setLevel(logging.DEBUG)
-    #create formatter
-    formatter = logging.Formatter('%(asctime)s %(levelname)s %(name)s: %(message)s',
-                                  '%Y-%m-%d %H:%M:%S')
-    #add formatter to stderr handler
-    stderr.setFormatter(formatter)
-    #add stderr handler to logger
-    logger.addHandler(stderr)
-
     ###################################
     # USAGE
     
