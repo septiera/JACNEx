@@ -683,8 +683,8 @@ def main():
         else:
             FragVec=SampleCountingFrag(S,dictIntervalTree,exonInterval,tmpDir,threads)
             counts[sampleName]=FragVec
-
-    counts.to_csv(sys.stdout,sep="\t", index=False)  
+            counts.to_csv(sys.stdout,sep="\t", index=False)
+      
 
 if __name__ =='__main__':
     main()
