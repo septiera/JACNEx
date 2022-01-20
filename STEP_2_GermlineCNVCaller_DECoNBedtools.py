@@ -22,13 +22,26 @@
 # The segmentation is performed using a hidden Markov chain model.
 # The output results have a format identical to the basic DECON/ExomDepth format. 
 # It corresponds to a .tsv table containing all the CNVs called for the samples set considered.
+# The output file has 15 columns:
+    # sample : sample name (str)
+    # correlation : average correlation between the target sample and the control sample set (The controls are samples of the data set, not real controls). (float)
+    # N.Comp : control samples number used (int)
+    # start.p + end.p : index corresponding to the line of exons affected by the CNV in the bed file (int)
+    # type : cnv type ("duplication" or "deletion" str)
+    # nexons : number of exons affected by the cnv (int)
+    # start + end :  CNV genomic locations (WARN: deduced from the affected exons intervals so no precise breakpoints)
+    # chromosome : without "chr" before (str)
+    # id : "chr:start-end" , chr correspond to "chr"+str (str)
+    # BF : Bayesian factor (float)
+    # reads_expected : average of reads covering the interval for all control samples (int)
+    # reads_observed : reads observed in the target patient for the interval 
+    # reads_ratio : reads_observed/reads_expected (float)
 
 #############################################################################################################
 ################################ Loading of the modules required for processing #############################
 #############################################################################################################
 import sys #path
 import pandas as pd #read,make,treat Dataframe object
-import numpy #help in processing matrices or tabular data
 import os
 import getopt 
 import time # system date 
@@ -69,7 +82,7 @@ def CreateFolder(outdir):
             sys.exit()
         
 ##############################################################################################################
-############### Script Body
+######################################### Script Body ########################################################
 ##############################################################################################################
 
 def main(argv):
