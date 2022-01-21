@@ -10,7 +10,7 @@
 #   D) Parsing exonic intervals bed
 #       "processBed" function used to check the integrity of the file, padding the intervals
 #        +-10 bp, sorting the positions on the 4 columns (1:CHR,2:START,3:END,4:Exon_ID)
-#   E) Creating interval trees for each chromosome
+#   E) Creating an interval tree for each chromosome
 #       "intervalTreeDictCreation" function used from the ncls module, creation of a dictionary :
 #        key = chromosome , value : interval_tree
 #   F) Parsing old counts file (.tsv) if exist else new count Dataframe creation 
@@ -90,49 +90,52 @@ def usage():
 # - a 10bp padding is added to exon coordinates (ie -10 for START and +10 for END)
 # - exons are sorted by CHR, then START, then END, then EXON_ID
 def processBed(PathBedToCheck):
-    bedname=os.path.basename(PathBedToCheck)#simplifies messages in stderr
+    bedname=os.path.basename(PathBedToCheck)
     if not os.path.isfile(PathBedToCheck):
-        logger.error("Exon intervals file %s doesn't exist.\n",bedname)
+        logger.error("BED file %s doesn't exist.\n", PathBedToCheck)
         sys.exit()
-    BedToCheck=pd.read_table(PathBedToCheck,header=None,sep="\t")
-    #####################
+    try:
+        BedToCheck=pd.read_table(PathBedToCheck,header=None,sep="\t")
+        # compression == 'infer' by default => auto-works whether bedFile is gzipped or not
+    except Exception as e:
+        logger.error("error parsing BED file %s: %s", bedname, e)
+        sys.exit(1)
+   #####################
     #I): Sanity Check
     #####################
-    if len(BedToCheck.columns) == 4:
-        BedToCheck.columns=["CHR","START","END","EXON_ID"]
-        #######################
-        #CHR column
-        if (BedToCheck["CHR"].dtype=="O"): # Check the python object is a str
-            if not BedToCheck["CHR"].str.startswith('chr').all: 
-                BedToCheck['CHR_NUM'] =BedToCheck['CHR']
-                BedToCheck["CHR"]="chr"+BedToCheck["CHR"].astype(str)
-            else:
-                BedToCheck['CHR_NUM'] =BedToCheck['CHR']
-                BedToCheck['CHR_NUM'].replace(regex=r'^chr(\w+)$', value=r'\1', inplace=True)
+    if len(BedToCheck.columns) != 4:
+        logger.error("BED file %s should be a 4-column TSV (CHR, START, END, EXON_ID) but it has %i columns\n",
+                     bedname, len(BedToCheck.columns))
+        sys.exit()
+    BedToCheck.columns=["CHR","START","END","EXON_ID"]
+    #######################
+    #CHR column
+    if (BedToCheck["CHR"].dtype=="O"): # CHR is a str
+        if BedToCheck["CHR"].str.startswith('chr').all:
+            BedToCheck['CHR_NUM'] = BedToCheck['CHR'].replace(regex=r'^chr(\w+)$', value=r'\1')
         else:
-            logger.error("The 'CHR' column doesn't have an adequate format. Please check it.\n"+
-            "The column must be a python object [str].\n")
-            sys.exit()
-        #######################
-        #Start and End column
-        if (BedToCheck["START"].dtype=="int64") and (BedToCheck["END"].dtype=="int64"):
-            if (len(BedToCheck[BedToCheck.START<=0])>0) or (len(BedToCheck[BedToCheck.END<=0])>0):
-                logger.error("Presence of outliers in the START and END columns. Values <=0.")
-                sys.exit()
-        else:
-            logger.error("'START' and/or 'END' columns are not ints")
-            sys.exit()
-        #######################
-        #transcript_id_exon_number column
-        if not (BedToCheck["EXON_ID"].dtype=="O"):
-            logger.error("The 'EXON_ID' column doesn't have an adequate format. Please check it.\n"+
-            "The column must be a python object.\n")
+            BedToCheck['CHR_NUM']=BedToCheck['CHR']
+    else:
+        logger.error("In BED file %s, first column 'CHR' should be a string but pandas sees it as %s\n",
+                     bedname, BedToCheck["CHR"].dtype)
+        sys.exit()
+    #######################
+    #Start and End column
+    if (BedToCheck["START"].dtype=="int") and (BedToCheck["END"].dtype=="int"):
+        if (len(BedToCheck[BedToCheck.START<0])>0) or (len(BedToCheck[BedToCheck.END<0])>0):
+            logger.error("In BED file %s, columns 2 and/or 3 contain negative values", bedname)
             sys.exit()
     else:
-        logger.error("BedToCheck doesn't contains 4 columns:\n"+
-        "CHR, START, END, EXON_ID.\n"+
-        "Please check the file before launching the script.\n")
+        logger.error("In BED file %s, columns 2-3 'START'-'END' should be ints but pandas sees them as %s - %s\n",
+                     bedname, BedToCheck["START"].dtype, BedToCheck["END"].dtype)
         sys.exit()
+    #######################
+    #transcript_id_exon_number column
+    if not (BedToCheck["EXON_ID"].dtype=="O"):
+        logger.error("In BED file %s, 4th column 'EXON_ID' should be a string but pandas sees it as %s\n",
+                     bedname, BedToCheck["EXON_ID"].dtype)
+        sys.exit()
+
     #####################
     #II): Preparation
     #####################
@@ -140,18 +143,20 @@ def processBed(PathBedToCheck):
     BedToCheck['START'] -= 10
     BedToCheck['END'] += 10
 
-    # replace X Y M by len(unique(CHR))+1,+2,+3 (if present)
+    # replace X Y M/MT (if present) by max(CHR)+1,+2,+3
+    # maxChr must be the max among the int values in CHR_NUM column...
+    maxChr = int(pd.to_numeric(BedToCheck['CHR_NUM'],errors="coerce").max(skipna=True))
     BedToCheck["CHR_NUM"]=BedToCheck["CHR_NUM"].replace(
-        {'X':len(BedToCheck['CHR_NUM'].unique())+1,
-        "Y": len(BedToCheck['CHR_NUM'].unique())+2,
-        "M":len(BedToCheck['CHR_NUM'].unique())+3,
-        "MT":len(BedToCheck['CHR_NUM'].unique())+3})
+        {'X': maxChr+1,
+         'Y': maxChr+2,
+         'M': maxChr+3,
+         'MT': maxChr+3})
 
     # convert type of CHR_NUM to int and catch any errors
     try:
         BedToCheck['CHR_NUM'] = BedToCheck['CHR_NUM'].astype(int)
     except Exception as e:
-        logger.error("Converting CHR_NUM to int: %s", e)
+        logger.error("While parsing BED file, failed converting CHR_NUM to int: %s", e)
         sys.exit(1)
     # sort by CHR_NUM, then START, then END, then EXON_ID
     exons= BedToCheck.sort_values(by=['CHR_NUM','START','END','EXON_ID'])
@@ -200,7 +205,7 @@ def parseCountFile(countFile, exons):
             logger.error("One or both of the 'CHR' and 'EXON_ID' columns are not in the correct format. Please check it.\n"
                         +"The column must be a python object [str]")
             sys.exit(1)
-        elif not (counts.dtypes["START"]=="int64" and counts.dtypes["END"]=="int64"):
+        elif not (counts.dtypes["START"]=="int" and counts.dtypes["END"]=="int"):
             logger.error("One or both of the 'START' and 'END' columns are not in the correct format. Please check it.\n"
                         +"The columns must contain integers.")
             sys.exit(1)
@@ -221,7 +226,7 @@ def parseCountFile(countFile, exons):
             #check that the old samples columns data is in [int] format.
             namesSampleToCheck=[]
             for columnIndex in range(5,len(counts.columns)):
-                if not counts.iloc[:,columnIndex].dtypes=="int64":
+                if not counts.iloc[:,columnIndex].dtypes=="int":
                     namesSampleToCheck.append(counts.iloc[:,columnIndex].columns)
             if len(namesSampleToCheck)>0:
                 logger.error("Columns in %s, sample(s) %s are not in [int] format.\n"+
@@ -626,14 +631,14 @@ def main():
     
     if bamsFrom!="":
         if not os.path.isfile(bamsFrom):
-            print("ERROR : BamFrom file "+bamsFrom+" doesn't exist. Try "+scriptName+" --help.\n",file=sys.stderr)
+            print("ERROR : bams-from file "+bamsFrom+" doesn't exist. Try "+scriptName+" --help.\n",file=sys.stderr)
             sys.exit(1)
         else:
             bamListFile=open(bamsFrom,"r")
             for line in bamListFile:
                 line = line.rstrip('\n')
                 processBam.append(line)
-    #Check all bam exist
+    #Check that all bams exist
     for b in processBam:
         if not os.path.isfile(b):
             print("ERROR : BAM "+b+" doesn't exist. Try "+scriptName+" --help.\n",file=sys.stderr)
