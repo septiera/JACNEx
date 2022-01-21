@@ -21,7 +21,7 @@
 #           -allows to sort alignments by BAM QNAME and to filter them on specific flags (see conditions in the script).
 #            Realisation by samtool v1.9 (using htslib 1.9)
 #           -also extracts the information for each unique QNAME. The information on the end position and the length of
-#           the alignments are not present the "ExtractAliLength" function retrieves them.
+#           the alignments are not present the "AliLengthOnRef" function retrieves them.
 #           -the Qname informations is sent to the "Qname2ExonCount" function to perform the fragment count. 
 #           -A check of the results is also performed.
 #   This step completes the count dataframe.
@@ -243,7 +243,6 @@ def parseCountFile(countFile, exons):
 ####################################################
 # SampleCountingFrag :
 #This function allows samples to be processed for fragment counting.
-#It uses several other functions such as: ExtractAliLength and Qname2ExonCount.
 #Input:
 #   -the full path to the bam file
 #   -the dictionary of exonic interval trees 
@@ -383,7 +382,7 @@ def SampleCountingFrag(bamFile,dictIntervalTree,intervalBed,processTmpDir, num_t
             currentStart=int(align[3])
             #Calculation of the CIGAR dependent 'end' position
             currentCigar=align[5]
-            currentAliLength=ExtractAliLength(currentCigar)
+            currentAliLength=AliLengthOnRef(currentCigar)
             currentEnd=currentStart+currentAliLength-1
             if currentStrand=="F":
                 qstartF.append(currentStart)
@@ -460,15 +459,17 @@ def SampleCountingFrag(bamFile,dictIntervalTree,intervalBed,processTmpDir, num_t
     
 
 ####################################################
-# ExtractAliLength :
-#This function retrieves the alignements length
-#Input : a string in the CIGAR form
-#Output : an int
-def ExtractAliLength(CIGARAlign):
+# AliLengthOnRef :
+#Input : a CIGAR string
+#Output : span of the alignment on the reference sequence, ie number of bases
+# consumed by the alignment on the reference
+def AliLengthOnRef(CIGARAlign):
     length=0
+    # only count CIGAR operations that consume the reference sequence, see CIGAR definition 
+    # in SAM spec available here: https://samtools.github.io/hts-specs/
     match = re.findall(r"(\d+)[MDN=X]",CIGARAlign)
-    for Op in match:
-        length+=int(Op)
+    for op in match:
+        length+=int(op)
     return(length)
 
 ####################################################
@@ -478,7 +479,7 @@ def ExtractAliLength(CIGARAlign):
 # => increment count for this intervals.
 #Inputs:
 #   -chr variable [str]
-#   -4 lists for R and F strand positions (start and end) [int]
+#   -4 lists for F and R strand positions (start and end) [int]
 #   -a bit variable informing about the read pair integrity 
 #   (two bits : 01 First read was seen , 10 Second read was seen)
 #   -the dictionary containing the interval trees for each chromosome
