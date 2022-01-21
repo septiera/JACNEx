@@ -130,8 +130,7 @@ def processBed(PathBedToCheck):
                 logger.error("Presence of outliers in the START and END columns. Values <=0.")
                 sys.exit()
         else:
-            logger.error("One or both of the 'START' and 'END' columns are not in the correct format. Please check it.\n"
-                        +"The columns must contain integers.")
+            logger.error("'START' and/or 'END' columns are not ints")
             sys.exit()
         #######################
         #transcript_id_exon_number column
