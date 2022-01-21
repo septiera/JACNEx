@@ -1,17 +1,11 @@
 #############################################################################################################
 ######################################## STEP1 Collect Read Count DECONA2 ###################################
 #############################################################################################################
-#RESUME:
-#Given a BED of exons and one or more BAM files, count the number of sequenced fragments
-#from each BAM that overlap each exon.
-#Script will print to stdout a new countFile in TSV format, copying the data from the 
-#pre-existing countFile if provided and adding columns with counts for the new BAM(s).
-
 #STEPS:
 #   A) Getopt user argument (ARGV) recovery
-#   B) Checking that the mandatory parameters are present
+#   B) Checking that the mandatory parameters are presents
 #   C) Checking that the parameters actually exist and processing
-#       processing concerns the creation of a list containing the bams paths
+#       concerns the creation of a list containing the bams paths
 #       based on the selection of either --bams or --bams-from arguments.
 #   D) Parsing exonic intervals bed
 #       "processBed" function used to check the integrity of the file, padding the intervals
@@ -24,13 +18,14 @@
 #        generated bed file. It also allows to check if the pre-existing counts are in a correct format.
 #   G) Definition of a loop for each BAM files and the reads counting.
 #       "SampleCountingFrag" function : 
-#       -allows to sort alignments by BAM QNAME and to filter them on specific flags (see conditions in the script).
-#        Realisation by samtool v1.9 (using htslib 1.9)
-#       -also extracts the information for each unique QNAME. The information on the end position and the length of
-#       the alignments are not present the "ExtractAliLength" function retrieves them.
-#       -the Qname informations is sent to the "Qname2ExonCount" function to perform the fragment count. 
-#       -A check of the results is also performed.
-#   This step completes the count dataframe and saves it once all samples have been analysed. 
+#           -allows to sort alignments by BAM QNAME and to filter them on specific flags (see conditions in the script).
+#            Realisation by samtool v1.9 (using htslib 1.9)
+#           -also extracts the information for each unique QNAME. The information on the end position and the length of
+#           the alignments are not present the "ExtractAliLength" function retrieves them.
+#           -the Qname informations is sent to the "Qname2ExonCount" function to perform the fragment count. 
+#           -A check of the results is also performed.
+#   This step completes the count dataframe.
+#   Once all samples have been processed, this dataframe is saved.
 
 #############################################################################################################
 ################################ Loading of the modules required for processing #############################
@@ -45,10 +40,6 @@ import re  # regular expressions
 from ncls import NCLS # generating interval trees (cf : https://github.com/biocore-ntnu/ncls)
 import subprocess #spawn new processes, connect to their input/output/error pipes, and obtain their return codes.
 import tempfile #manages the creation and deletion of temporary folders/files
-
-#Definition of the scripts'execution date (allows to annotate the output files to track them over time) 
-import time
-now=time.strftime("%y%m%d")
 
 #####################################################################################################
 ################################ Logging Definition #################################################
@@ -81,14 +72,13 @@ def usage():
 "   --bams-from [str] : a text file where each line contains the path to a BAM.\n"
 "   --bed [str]: a bed file (with path), possibly gzipped, containing exon definitions \n"+
 "                formatted as CHR START END EXON_ID\n"+
-"   -c or --counts [str] optional: a pre-parsed count file (with path), old fragment count file  \n"+
+"   --counts [str] optional: a pre-parsed count file (with path), old fragment count file  \n"+
 "                                  to be completed if new patient(s) is(are) added. \n"
 "   --tmp [str] optional: a temporary folder (with path),allows to save temporary files \n"+
 "                         from samtools sort. By default, this is placed in '/tmp'.\n"+
 "                         Tip: place the storage preferably in RAM.\n"+
 "   --threads [int] optional: number of threads to allocate for samtools.\n"+
 "                             By default, the value is set to 10.\n\n")
-
 
 ####################################################
 #Exon intervals file parsing and preparing.
@@ -102,7 +92,7 @@ def usage():
 def processBed(PathBedToCheck):
     bedname=os.path.basename(PathBedToCheck)#simplifies messages in stderr
     if not os.path.isfile(PathBedToCheck):
-        logger.error("Exon intervals file %s doesn't exist.",bedname)
+        logger.error("Exon intervals file %s doesn't exist.\n",bedname)
         sys.exit()
     BedToCheck=pd.read_table(PathBedToCheck,header=None,sep="\t")
     #####################
@@ -120,8 +110,8 @@ def processBed(PathBedToCheck):
                 BedToCheck['CHR_NUM'] =BedToCheck['CHR']
                 BedToCheck['CHR_NUM'].replace(regex=r'^chr(\w+)$', value=r'\1', inplace=True)
         else:
-            logger.error("The 'CHR' column doesn't have an adequate format. Please check it.\n"
-                        +"The column must be a python object [str]")
+            logger.error("The 'CHR' column doesn't have an adequate format. Please check it.\n"+
+            "The column must be a python object [str].\n")
             sys.exit()
         #######################
         #Start and End column
@@ -130,19 +120,19 @@ def processBed(PathBedToCheck):
                 logger.error("Presence of outliers in the START and END columns. Values <=0.")
                 sys.exit()
         else:
-            logger.error("One or both of the 'START' and 'END' columns are not in the correct format. Please check it.\n"
-                        +"The columns must contain integers.")
+            logger.error("One or both of the 'START' and 'END' columns are not in the correct format. Please check it.\n"+
+            "The columns must contain integers.\n")
             sys.exit()
         #######################
         #transcript_id_exon_number column
         if not (BedToCheck["EXON_ID"].dtype=="O"):
-            logger.error("The 'EXON_ID' column doesn't have an adequate format. Please check it.\n"
-                        +"The column must be a python object.")
+            logger.error("The 'EXON_ID' column doesn't have an adequate format. Please check it.\n"+
+            "The column must be a python object.\n")
             sys.exit()
     else:
-        logger.error("BedToCheck doesn't contains 4 columns:\n"
-                     +"CHR, START, END, EXON_ID.\n"
-                     +"Please check the file before launching the script.")
+        logger.error("BedToCheck doesn't contains 4 columns:\n"+
+        "CHR, START, END, EXON_ID.\n"+
+        "Please check the file before launching the script.\n")
         sys.exit()
     #####################
     #II): Preparation
@@ -186,20 +176,19 @@ def intervalTreeDictCreation(BedIntervalFile):
 #################################################
 # parseCountFile:
 #Input:
-# - countFile is a tsv file (with path), including column titles, as
-#   specified previously
-# - exons is a dataframe holding exon definitions, padded and sorted,
-#   as returned by processBed
+#   - countFile is a tsv file (with path), including column titles, as
+#     specified previously
+#   - exons is a dataframe holding exon definitions, padded and sorted,
+#     as returned by processBed
 #
-# -> Parse countFile into a dataframe (will be returned)
-# -> Check that the first 4 columns are identical to exons,
+#-> Parse countFile into a dataframe (will be returned)
+#-> Check that the first 4 columns are identical to exons,
 #    otherwise die with an error.
-# -> check that the samples counts columns are not empty(>15000000 frag counts)
+#-> check that the samples counts columns are [int] type.
 # 
-# Output:
-# - returns the Frag count results as a pandas dataframe with column headers CHR START END EXON_ID,sampleName(n)
-# - list of samples to be reanalysed
-# - list of samples with correct count (to be deleted from the process).
+#Output: returns the Frag count results as a pandas dataframe with column 
+# headers CHR START END EXON_ID,sampleName*n
+
 def parseCountFile(countFile, exons):
     try:
         counts=pd.read_table(countFile,sep="\t")
@@ -230,7 +219,7 @@ def parseCountFile(countFile, exons):
             logger.error("'EXON_ID' column in counts dataframe isn't identical to those in the exonic interval file. Please check it.")
             sys.exit(1)
         else: 
-            #check that the old sample data is in [int] format.
+            #check that the old samples columns data is in [int] format.
             namesSampleToCheck=[]
             for columnIndex in range(5,len(counts.columns)):
                 if not counts.iloc[:,columnIndex].dtypes=="int64":
@@ -248,26 +237,17 @@ def parseCountFile(countFile, exons):
     return(counts)
 
 ####################################################
+# SampleCountingFrag :
 #This function allows samples to be processed for fragment counting.
 #It uses several other functions such as: ExtractAliLength and Qname2ExonCount.
 #Input:
-#-the full path to the bam file
-#-the path with the name of the output file (fragment count file)
-#-the dictionary of exonic interval trees 
-#-a dataframe of the exonic intervals (for output)
-#-the path to the temporary file
-#-the number of cpu allocated for processing (used for samtools commands)
+#   -the full path to the bam file
+#   -the dictionary of exonic interval trees 
+#   -a dataframe of the exonic intervals (for output)
+#   -the path to the temporary file
+#   -the number of cpu allocated for processing (used for samtools commands)
 
-#Temporary variables created:
-#It uses samtools commands to filter reads and sort them in Qnames order (.sam file 
-# generated in a temporary file).
-#It creates a list of fragment count results for each line index of the bed file.
-#It also creates a dictionary containing all the counts for each condition imposed
-#  to obtain a fragment count. 
-#This dictionary is used as a control in order not to miss any condition not envisaged 
-# (number of Qname processed must be the same at the end of the process).
-
-#Output: a vector containing the fragment counts sorted according to the indexes of the bed file
+#Output: a vector containing the fragment counts sorted according to the  bed file indexes.
 
 def SampleCountingFrag(bamFile,dictIntervalTree,intervalBed,processTmpDir, num_threads):
     with tempfile.TemporaryDirectory(dir=processTmpDir) as SampleTmpDir:
@@ -421,18 +401,26 @@ def SampleCountingFrag(bamFile,dictIntervalTree,intervalBed,processTmpDir, num_t
                 continue
             # else this ali agrees with previous alis for qname -> NOOP
 
-        p1.communicate() #allows to wait for the process end to return the following status error
-        if p1.returncode != 0:
-            logger.error('the "Samtools sort" command encountered an error. error status : %s',p1.returncode)
-            sys.exit()
-        p2.terminate()
-
         #################################################################################################
         #VI]  Process last Qname
         Qname2ExonCount(qname,qchrom,qstartF,qendF,qstartR,qendR,qReads,dictIntervalTree,vecExonCount,dictStatCount)
 
+        ##################################################################################################
+        # VII] Check that the samtools commands have been carried out correctly
+        p1.wait() #Waits for a child process to terminate. Changes the returncode attribute and returns it.
+        try:
+            p1.returncode == 0
+        except ValueError as e:
+            logger.error('the "Samtools sort" command encountered an error %s. error status : %s',e,p1.returncode)
+
+        p2.wait()
+        try:
+            p2.returncode == 0
+        except ValueError as e:
+            logger.error('the "Samtools view" command encountered an error. error status : %s',e,p2.returncode)
+
         #################################################################################################
-        #VII] Process Monitoring
+        #VIII] Process Monitoring
         NBTotalQname=(dictStatCount["QNAliOnDiffChrSkip"]+
                       dictStatCount["QNSameReadDiffStrandSkip"]+
                       dictStatCount["QNSingleReadSkip"]+
@@ -447,21 +435,28 @@ def SampleCountingFrag(bamFile,dictIntervalTree,intervalBed,processTmpDir, num_t
                       dictStatCount["QNAli2F&2R_F1&R1_F2&R2_NotOverlapSkip"]+
                       dictStatCount["QNAliUnsuitableCombination_aliRorF>3Skip"])
 
+        #################################################################################################
         #IX]Fragment count good progress control 
         #the last qname is not taken into account in the loop, hence the +1
-        if (NBTotalQname==(dictStatCount["QNProcessed"])+1) and (sum(vecExonCount)==dictStatCount["FragOverlapOnTargetInterval"]):
+        try:
+            NBTotalQname==(dictStatCount["QNProcessed"])+1
+            sum(vecExonCount)==dictStatCount["FragOverlapOnTargetInterval"]
             logger.info("CONTROL : all the qnames of %s were seen in the different conditions.",bamFile)
-        else:
+        except ValueError as e:
             statslist=dictStatCount.items()
             logger.error("Not all of %s's qnames were seen in the different conditions!!! Please check stats results below %s",bamFile,statslist)
             logger.error("Nb total Qname : %s. Nb Qname overlap target interval %s",NBTotalQname,sum(vecExonCount))
-            sys.exit()
+            vecExonCount=""
+
         #################################################################################################
         #X] Extract results
         return(vecExonCount)     
+    
+
 ####################################################
+# ExtractAliLength :
 #This function retrieves the alignements length
-#The input is a string in the CIGAR form
+#Input : a string in the CIGAR form
 #Output : an int
 def ExtractAliLength(CIGARAlign):
     length=0
@@ -471,20 +466,23 @@ def ExtractAliLength(CIGARAlign):
     return(length)
 
 ####################################################
+# Qname2ExonCount :
 #This function identifies the fragments for each Qname
-#When the fragment(s) are identified and it(they) overlap interest interval=> increment count for this intervals.
-
+#When the fragment(s) are identified and it(they) overlap interest interval
+# => increment count for this intervals.
 #Inputs:
-#- qname and chr variable [str]
-#-4 lists for R and F strand positions (start and end) [int]
-#-a bit variable informing about the read pair integrity (two bits : 01 First read was seen , 10 Second read was seen)
-#-the dictionary containing the interval trees for each chromosome
-#-list containing the fragment counts which will be completed/increment (final results)
-#-the dictionary to check the results at the process end.
+#   -chr variable [str]
+#   -4 lists for R and F strand positions (start and end) [int]
+#   -a bit variable informing about the read pair integrity 
+#   (two bits : 01 First read was seen , 10 Second read was seen)
+#   -the dictionary containing the interval trees for each chromosome
+#   -list containing the fragment counts which will be completed/increment (final results)
+#   -the dictionary to check the results at the process end.
 
-#There is no output object, we just want to complete the fragment counts list by interest intervals.
+#There is no output object, we just want to complete the fragment counts list by 
+# interest intervals and complete the results control dictionary .
 
-def Qname2ExonCount(qnameString,chromString,startFList,endFList,startRList,endRList,readsBit,dictIntervalTree,vecExonCount,dictStatCount): # treatment on each Qname
+def Qname2ExonCount(chromString,startFList,endFList,startRList,endRList,readsBit,dictIntervalTree,vecExonCount,dictStatCount): # treatment on each Qname
     Frag=[] #fragment(s) intervals
     #####################################################################
     ###I) DIFFERENTS CONDITIONS ESTABLISHMENT : for fragment detection
@@ -497,9 +495,6 @@ def Qname2ExonCount(qnameString,chromString,startFList,endFList,startRList,endRL
 
     elif (1<len(startFList+startRList)<=3): # only 1 or 2 ali on each strand but not 2 on each
         dictStatCount["QNNbAliR&FBetween1-3"]+=1
-        if len(startFList)==0:
-            logger.error(qnameString,chromString,"\n",startFList,endFList,"\n",startRList,endRList,readsBit)
-            sys.exit()
         if max(startFList)<min(endRList):# alignments are not back-to-back
             GapLength=min(startRList)-max(endFList)# gap length between the two alignments (negative if overlapping)
             if (GapLength<=1000):
@@ -601,7 +596,7 @@ def main():
             bamsFrom=value
         elif opt in ("--bed"):
             bedFile =value
-        elif opt in ("-c","--counts"):
+        elif opt in ("--counts"):
             countFile=value
         elif opt in ("--tmp"):
             tmpDir=value
@@ -612,13 +607,13 @@ def main():
             sys.exit(1)
 
     #####################################################
-    # B) Checking that the mandatory parameters are present
+    # B) Checking that the mandatory parameters are presents
     if (bams=="" and bamsFrom=="") or (bams!="" and bamsFrom!=""):
-        sys.stderr.write("ERROR : You must use either --bams or --bams-from but not both.\n",file=sys.stderr)
+        print("ERROR : You must use either --bams or --bams-from but not both.\n",file=sys.stderr)
         usage()
         sys.exit(1)
     if bedFile=="":
-        sys.stderr.write("ERROR : You must use --bedFile.\n",file=sys.stderr)
+        print("ERROR : You must use --bedFile.\n",file=sys.stderr)
         usage()
         sys.exit(1)
 
@@ -630,7 +625,7 @@ def main():
     
     if bamsFrom!="":
         if not os.path.isfile(bamsFrom):
-            sys.stderr.write("ERROR : BamFrom file "+bamsFrom+" doesn't exist. Try "+scriptName+" --help.\n",file=sys.stderr)
+            print("ERROR : BamFrom file "+bamsFrom+" doesn't exist. Try "+scriptName+" --help.\n",file=sys.stderr)
             sys.exit(1)
         else:
             bamListFile=open(bamsFrom,"r")
@@ -640,11 +635,11 @@ def main():
     #Check all bam exist
     for b in processBam:
         if not os.path.isfile(b):
-            sys.stderr.write("ERROR : BAM "+b+" doesn't exist. Try "+scriptName+" --help.\n",file=sys.stderr)
+            print("ERROR : BAM "+b+" doesn't exist. Try "+scriptName+" --help.\n",file=sys.stderr)
             sys.exit(1)
 
     if (countFile!="") and (not os.path.isfile(countFile)):
-        sys.stderr.write("ERROR : Countfile "+countFile+" doesn't exist. Try "+scriptName+" --help.\n",file=sys.stderr) 
+        print("ERROR : Countfile "+countFile+" doesn't exist. Try "+scriptName+" --help.\n",file=sys.stderr) 
         sys.exit(1)
 
     if not os.path.isdir(tmpDir):
@@ -682,8 +677,14 @@ def main():
             continue
         else:
             FragVec=SampleCountingFrag(S,dictIntervalTree,exonInterval,tmpDir,threads)
-            counts[sampleName]=FragVec
-            counts.to_csv(sys.stdout,sep="\t", index=False)
+            if FragVec!="":
+                counts[sampleName]=FragVec
+            else:
+                logger.error("Sample %s encountered an error during the fragment counting,\n"+
+                "which is excluded from the results file.\n", sampleName)
+                continue
+
+    counts.to_csv(sys.stdout,sep="\t", index=False, mode='a')
       
 
 if __name__ =='__main__':
