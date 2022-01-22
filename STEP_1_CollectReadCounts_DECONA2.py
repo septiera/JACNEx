@@ -313,8 +313,13 @@ def SampleCountingFrag(bamFile,dictIntervalTree,intervalBed,processTmpDir, num_t
         qendR=[]
         qendF=[]
         qReads=0 # two bits : 01 First read was seen , 10 Second read was seen
+        # qFirstOnForward==1 if the first-in-pair read of this qname is on the
+        # forward reference strand, 0 if it's on the reverse strand, -1 if we don't yet know
         qFirstOnForward=-1
-        qBad=False #current Qname contains ali on differents chromosomes (by default set to false)
+        # qBad==True if qname contains alignments on differents chromosomes,
+        # or if some of it's alis disagree regarding the strand on which the
+        # first/last read-in-pair aligns
+        qBad=False
 
         ############################################
         # IV] Regular expression definition
