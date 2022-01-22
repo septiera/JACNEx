@@ -95,7 +95,7 @@ def processBed(PathBedToCheck):
         logger.error("BED file %s doesn't exist.\n", PathBedToCheck)
         sys.exit()
     try:
-        BedToCheck=pd.read_table(PathBedToCheck,header=None,sep="\t")
+        BedToCheck=pd.read_table(PathBedToCheck, header=None, sep="\t")
         # compression == 'infer' by default => auto-works whether bedFile is gzipped or not
     except Exception as e:
         logger.error("error parsing BED file %s: %s", bedname, e)
@@ -134,6 +134,10 @@ def processBed(PathBedToCheck):
     if not (BedToCheck["EXON_ID"].dtype=="O"):
         logger.error("In BED file %s, 4th column 'EXON_ID' should be a string but pandas sees it as %s\n",
                      bedname, BedToCheck["EXON_ID"].dtype)
+        sys.exit()
+    # EXON_IDs must be unique
+    if len(BedToCheck["EXON_ID"].unique()) != len(BedToCheck["EXON_ID"]):
+        logger.error("In BED file %s, each line must have a unique EXON_ID (4th column)\n", bedname)
         sys.exit()
 
     #####################
