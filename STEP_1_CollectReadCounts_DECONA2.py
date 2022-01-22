@@ -250,7 +250,8 @@ def parseCountFile(countFile, exons):
 #   -the path to the temporary file
 #   -the number of cpu allocated for processing (used for samtools commands)
 
-#Output: a vector containing the fragment counts sorted according to the  bed file indexes.
+#Output: a vector containing the fragment counts sorted according to the  bed file indexes
+# Raises an exception if something goes wrong
 
 def SampleCountingFrag(bamFile,dictIntervalTree,intervalBed,processTmpDir, num_threads):
     with tempfile.TemporaryDirectory(dir=processTmpDir) as SampleTmpDir:
@@ -342,7 +343,7 @@ def SampleCountingFrag(bamFile,dictIntervalTree,intervalBed,processTmpDir, num_t
             if (qname!=align[0]) and (qname!=""):  # align[0] is the qname
                 dictStatCount["QNProcessed"]+=1
                 if not qBad:
-                    Qname2ExonCount(qname,qchrom,qstartF,qendF,qstartR,qendR,qReads,dictIntervalTree,vecExonCount,
+                    Qname2ExonCount(qchrom,qstartF,qendF,qstartR,qendR,qReads,dictIntervalTree,vecExonCount,
                                     dictStatCount)
                 qchrom=""
                 qname=""
@@ -414,25 +415,22 @@ def SampleCountingFrag(bamFile,dictIntervalTree,intervalBed,processTmpDir, num_t
         #VI]  Process last Qname
         dictStatCount["QNProcessed"]+=1
         if not qBad:
-            Qname2ExonCount(qname,qchrom,qstartF,qendF,qstartR,qendR,qReads,dictIntervalTree,vecExonCount,
-                                    dictStatCount)
+            Qname2ExonCount(qchrom,qstartF,qendF,qstartR,qendR,qReads,dictIntervalTree,vecExonCount,
+                            dictStatCount)
 
         ##################################################################################################
         # VII] wait for samtools to finish cleanly and check return codes
-        p1.wait()
-        try:
-            p1.returncode == 0
-        except ValueError as e:
-            logger.error('the "Samtools sort" command encountered an error %s. error status : %s',e,p1.returncode)
+        if (p1.wait() != 0):
+            logger.error("in SampleCountingFrag, while processing %s, the 'samtools sort' subprocess returned %s",
+                         bamFile, p1.returncode)
+            raise Exception
+        if (p2.wait() != 0):
+            logger.error("in SampleCountingFrag, while processing %s, the 'samtools view' subprocess returned %s",
+                         bamFile, p2.returncode)
+            raise Exception
 
-        p2.wait()
-        try:
-            p2.returncode == 0
-        except ValueError as e:
-            logger.error('the "Samtools view" command encountered an error. error status : %s',e,p2.returncode)
-
-        #################################################################################################
-        #VIII] Process Monitoring
+        ##################################################################################################
+        #VIII] sanity checks
         NBTotalQname=(dictStatCount["QNAliOnDiffChrSkip"]+
                       dictStatCount["QNSameReadDiffStrandSkip"]+
                       dictStatCount["QNSingleReadSkip"]+
@@ -446,22 +444,15 @@ def SampleCountingFrag(bamFile,dictIntervalTree,intervalBed,processTmpDir, num_t
                       dictStatCount["QNAli2F&2R_SA"]+
                       dictStatCount["QNAli2F&2R_F1&R1_F2&R2_NotOverlapSkip"]+
                       dictStatCount["QNAliUnsuitableCombination_aliRorF>3Skip"])
-
-        #################################################################################################
-        #IX]Fragment count good progress control 
-        try:
-            NBTotalQname==(dictStatCount["QNProcessed"])
-            sum(vecExonCount)==dictStatCount["FragOverlapOnTargetInterval"]
-            logger.info("CONTROL : all the qnames of %s were seen in the different conditions.",bamFile)
-        except ValueError as e:
+        if ((NBTotalQname != dictStatCount["QNProcessed"]) or 
+            (sum(vecExonCount) != dictStatCount["FragOverlapOnTargetInterval"])):
             statslist=dictStatCount.items()
-            logger.error("Not all of %s's qnames were seen in the different conditions!!! Please check stats "+
-                         "results below %s",bamFile,statslist)
-            logger.error("Nb total Qname : %s. Nb Qname overlap target interval %s",NBTotalQname,sum(vecExonCount))
-            vecExonCount=""
+            logger.error("Not all of %s's qnames were processed! BUG in code, FIXME! Stats: %s\n"+
+                         "Nb total Qname : %s. Nb Qname overlaping exons: %s\n",
+                         bamFile,statslist,NBTotalQname,sum(vecExonCount))
+            raise Exception("Sanity checks failed for "+bamFile+", likely bug in code needs fixing")
 
-        #################################################################################################
-        #X] Extract results
+        # AOK, return counts
         return(vecExonCount)     
     
 
@@ -687,18 +678,17 @@ def main():
         logger.info('Sample being processed : %s', sampleName)
 
         if sampleName in list(counts.columns[4:]):
-            logger.info('Sample %s has already been analysed.', sampleName)
+            logger.info('Sample %s already present in counts file, skipping it\n', sampleName)
             continue
         else:
-            FragVec=SampleCountingFrag(S,dictIntervalTree,exonInterval,tmpDir,threads)
-            if FragVec!="":
-                counts[sampleName]=FragVec
-            else:
-                logger.error("Sample %s encountered an error during the fragment counting,\n"+
-                "which is excluded from the results file.\n", sampleName)
+            try:
+                FragVec = SampleCountingFrag(S,dictIntervalTree,exonInterval,tmpDir,threads)
+            except:
+                logger.warning("Failed to count fragments for sample %s, skipping it\n", sampleName)
                 continue
+            counts[sampleName]=FragVec
 
-    counts.to_csv(sys.stdout,sep="\t", index=False, mode='a')
+    counts.to_csv(sys.stdout,sep="\t", index=False)
       
 
 if __name__ =='__main__':
