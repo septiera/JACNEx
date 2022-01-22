@@ -279,7 +279,7 @@ def SampleCountingFrag(bamFile,dictIntervalTree,intervalBed,processTmpDir, num_t
 
         # III] Outpout variables initialization
         #list containing the fragment counts for the exons.
-        vecExonCount=[0]*numberExons #The indexes correspond to the exon order in the "intervalBed".
+        vecExonCount=[0]*numberExons #The indexes correspond to the exon order in intervalBed
 
         #Process control : skip mention corresponds to the Qnames removal for fragments counts
         #Aligments = alignements count, QN= qnames counts , Frag= fragments counts
@@ -407,11 +407,14 @@ def SampleCountingFrag(bamFile,dictIntervalTree,intervalBed,processTmpDir, num_t
 
         #################################################################################################
         #VI]  Process last Qname
-        Qname2ExonCount(qname,qchrom,qstartF,qendF,qstartR,qendR,qReads,dictIntervalTree,vecExonCount,dictStatCount)
+        dictStatCount["QNProcessed"]+=1
+        if not qBad:
+            Qname2ExonCount(qname,qchrom,qstartF,qendF,qstartR,qendR,qReads,dictIntervalTree,vecExonCount,
+                                    dictStatCount)
 
         ##################################################################################################
-        # VII] Check that the samtools commands have been carried out correctly
-        p1.wait() #Waits for a child process to terminate. Changes the returncode attribute and returns it.
+        # VII] wait for samtools to finish cleanly and check return codes
+        p1.wait()
         try:
             p1.returncode == 0
         except ValueError as e:
@@ -441,9 +444,8 @@ def SampleCountingFrag(bamFile,dictIntervalTree,intervalBed,processTmpDir, num_t
 
         #################################################################################################
         #IX]Fragment count good progress control 
-        #the last qname is not taken into account in the loop, hence the +1
         try:
-            NBTotalQname==(dictStatCount["QNProcessed"])+1
+            NBTotalQname==(dictStatCount["QNProcessed"])
             sum(vecExonCount)==dictStatCount["FragOverlapOnTargetInterval"]
             logger.info("CONTROL : all the qnames of %s were seen in the different conditions.",bamFile)
         except ValueError as e:
