@@ -242,45 +242,43 @@ def parseCountFile(countFile, exons):
 
 ####################################################
 # SampleCountingFrag :
-#This function allows samples to be processed for fragment counting.
-#Input:
-#   -the full path to the bam file
-#   -the dictionary of exonic interval trees 
-#   -a dataframe of the exonic intervals (for output)
-#   -the path to the temporary file
-#   -the number of cpu allocated for processing (used for samtools commands)
-
-#Output: a vector containing the fragment counts sorted according to the  bed file indexes
+# Count the fragments in bamFile that overlap each exon described in dictIntervalTree.
+# Arguments:
+#   - a bam file (with path)
+#   - the dictionary of exonic interval trees 
+#   - the total number of exons
+#   - a tmp dir with fast RW access and enough space for samtools sort
+#   - the number of cpu threads that samtools can use
+#
+# Returns a vector containing the fragment counts, in the same order as in the bed
+# file used to create the interval trees.
 # Raises an exception if something goes wrong
-
-def SampleCountingFrag(bamFile,dictIntervalTree,intervalBed,processTmpDir, num_threads):
+def SampleCountingFrag(bamFile, dictIntervalTree, nbOfExons, processTmpDir, num_threads):
     with tempfile.TemporaryDirectory(dir=processTmpDir) as SampleTmpDir:
-        numberExons=len(intervalBed)
         ############################################
-        # I] Pretreatments on the sample bam.
-        # Samtools commands line :
-        # The bam should be sorted by Qname to facilitate the fragments counting (-n option).
-        # -@ allows the process to be split across multiple cores.
-        # -T is used to store the process temporary files in the ram memory.
-        # -O indicates the stdout result must be in sam format.
+        # I] preprocessing:
+        # Our algorithm needs to parse the alignements sorted by qname,
+        # "samtools sort -n" allows this
         cmd1 ="samtools sort -n "+bamFile+" -@ "+str(num_threads)+" -T "+SampleTmpDir+" -O sam"
-
-        # Using samtools view, the following flag filters can be performed with the -F option:
-        #   -4 0x4 Read Unmapped
-        #   -256 0x80 not primary alignment
-        #   -512 0x200 Read fails platform/vendor quality checks
-        #   -1024 0x400 Read is PCR or optical duplicate
+        p1 = subprocess.Popen(cmd1.split(), stdout=subprocess.PIPE)
+        
+        # We can also immediately filter out poorly mapped (low MAPQ) or low quality
+        # reads (based on the SAM flags) with samtools view:
+        # -q sets the minimum mapping quality;
+        # -F excludes alignements where any of the specified bits is set, we want to filter out:
+        #   4 0x4 Read Unmapped
+        #   256 0x80 not primary alignment
+        #   512 0x200 Read fails platform/vendor quality checks
+        #   1024 0x400 Read is PCR or optical duplicate
         # Total Flag decimal = 1796
-        # The command also integrates a filtering on the mapping quality here fixed at 20 (-q option).
-        # By default the stdout is in sam format
-        cmd2 ="samtools view -F 1796 -q 20 -@ "+str(num_threads)
-        # Orders execution
-        p1 = subprocess.Popen(cmd1.split(),stdout=subprocess.PIPE,bufsize=1,encoding='ascii')
-        p2 = subprocess.Popen(cmd2.split(), stdin=p1.stdout,stdout=subprocess.PIPE,bufsize=1,encoding='ascii')
+        # For more details on FLAGs read the SAM spec: http://samtools.github.io/hts-specs/
+        cmd2 ="samtools view -q 20 -F 1796"
+        p2 = subprocess.Popen(cmd2.split(), stdin=p1.stdout, stdout=subprocess.PIPE, universal_newlines=True)
 
-        # III] Outpout variables initialization
-        #list containing the fragment counts for the exons.
-        vecExonCount=[0]*numberExons #The indexes correspond to the exon order in intervalBed
+        # III] initialization
+        # list containing the number of fragments overlapping each exon, indexes
+        # correspond to the labels in the intervalTree
+        vecExonCount=[0]*nbOfExons
 
         #Process control : skip mention corresponds to the Qnames removal for fragments counts
         #Aligments = alignements count, QN= qnames counts , Frag= fragments counts
@@ -423,11 +421,11 @@ def SampleCountingFrag(bamFile,dictIntervalTree,intervalBed,processTmpDir, num_t
         if (p1.wait() != 0):
             logger.error("in SampleCountingFrag, while processing %s, the 'samtools sort' subprocess returned %s",
                          bamFile, p1.returncode)
-            raise Exception
+            raise Exception("samtools-sort failed")
         if (p2.wait() != 0):
             logger.error("in SampleCountingFrag, while processing %s, the 'samtools view' subprocess returned %s",
                          bamFile, p2.returncode)
-            raise Exception
+            raise Exception("samtools-view failed")
 
         ##################################################################################################
         #VIII] sanity checks
@@ -450,7 +448,7 @@ def SampleCountingFrag(bamFile,dictIntervalTree,intervalBed,processTmpDir, num_t
             logger.error("Not all of %s's qnames were processed! BUG in code, FIXME! Stats: %s\n"+
                          "Nb total Qname : %s. Nb Qname overlaping exons: %s\n",
                          bamFile,statslist,NBTotalQname,sum(vecExonCount))
-            raise Exception("Sanity checks failed for "+bamFile+", likely bug in code needs fixing")
+            raise Exception("sanity-check failed")
 
         # AOK, return counts
         return(vecExonCount)     
@@ -658,6 +656,7 @@ def main():
     ######################################################
     # D) Parsing exonic intervals bed
     exonInterval=processBed(bedFile)
+    nbOfExons=len(exonInterval)
 
     ######################################################
     # E) Creating interval trees for each chromosome
@@ -682,9 +681,10 @@ def main():
             continue
         else:
             try:
-                FragVec = SampleCountingFrag(S,dictIntervalTree,exonInterval,tmpDir,threads)
-            except:
-                logger.warning("Failed to count fragments for sample %s, skipping it\n", sampleName)
+                FragVec = SampleCountingFrag(S,dictIntervalTree,nbOfExons,tmpDir,threads)
+            except Exception as e:
+                logger.warning("Failed to count fragments for sample %s, skipping it - exception: %s\n",
+                               sampleName, e)
                 continue
             counts[sampleName]=FragVec
 
