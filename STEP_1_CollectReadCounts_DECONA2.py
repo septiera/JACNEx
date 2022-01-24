@@ -334,7 +334,7 @@ def SampleCountingFrag(bamFile,dictIntervalTree,intervalBed,processTmpDir, num_t
             if (qname!=align[0]) and (qname!=""):  # align[0] is the qname
                 dictStatCount["QNProcessed"]+=1
                 if not qBad:
-                    Qname2ExonCount(qname,qchrom,qstartF,qendF,qstartR,qendR,qReads,dictIntervalTree,vecExonCount,dictStatCount)
+                    Qname2ExonCount(qchrom,qstartF,qendF,qstartR,qendR,qReads,dictIntervalTree,vecExonCount,dictStatCount)
                 qchrom=""
                 qname=""
                 qstartR=[]
@@ -403,7 +403,7 @@ def SampleCountingFrag(bamFile,dictIntervalTree,intervalBed,processTmpDir, num_t
 
         #################################################################################################
         #VI]  Process last Qname
-        Qname2ExonCount(qname,qchrom,qstartF,qendF,qstartR,qendR,qReads,dictIntervalTree,vecExonCount,dictStatCount)
+        Qname2ExonCount(qchrom,qstartF,qendF,qstartR,qendR,qReads,dictIntervalTree,vecExonCount,dictStatCount)
 
         ##################################################################################################
         # VII] Check that the samtools commands have been carried out correctly
