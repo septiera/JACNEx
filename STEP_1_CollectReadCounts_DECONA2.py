@@ -37,7 +37,8 @@ import logging
 import os
 import pandas as pd # dataframe objects
 import re
-from ncls import NCLS # generating interval trees (cf : https://github.com/biocore-ntnu/ncls)
+# nested containment lists, similar to interval trees but faster (https://github.com/biocore-ntnu/ncls)
+from ncls import NCLS
 import subprocess # run samtools
 import tempfile
 
@@ -151,17 +152,18 @@ def processBed(PathBedToCheck):
     return(exons)
 
 ####################################################
-#This function uses the ncls module to create interval trees
-#Input : bed file with exon interval
-#Output: dictionary(hash): key=chr, values=interval_tree
-def intervalTreeDictCreation(BedIntervalFile):
-    DictIntervalTree={}
-    listCHR=list(BedIntervalFile.CHR.unique())
-    for processChr in listCHR:
-        intervalProcessChr=BedIntervalFile.loc[BedIntervalFile["CHR"]==processChr]
-        ncls = NCLS(intervalProcessChr["START"].astype(int),intervalProcessChr["END"].astype(int),intervalProcessChr.index)
-        DictIntervalTree[processChr]=ncls
-    return(DictIntervalTree)
+#Create nested containment lists (similar to interval trees but faster), one per
+# chromosome, storing the exons
+#Input : dataframe of exons, as returned by processBed
+#Output: dictionary(hash): key=chr, value=NCL
+def exonDictCreation(exons):
+    exonDict={}
+    listCHR=list(exons.CHR.unique())
+    for chr in listCHR:
+        exonsOnChr=exons.loc[exons["CHR"]==chr]
+        ncls = NCLS(exonsOnChr["START"], exonsOnChr["END"], exonsOnChr.index)
+        exonDict[chr]=ncls
+    return(exonDict)
 
 #################################################
 # parseCountFile:
@@ -228,18 +230,18 @@ def parseCountFile(countFile, exons):
 
 ####################################################
 # SampleCountingFrag :
-# Count the fragments in bamFile that overlap each exon described in dictIntervalTree.
+# Count the fragments in bamFile that overlap each exon described in exonDict.
 # Arguments:
 #   - a bam file (with path)
-#   - the dictionary of exonic interval trees 
+#   - the dictionary of exon NCLs
 #   - the total number of exons
 #   - a tmp dir with fast RW access and enough space for samtools sort
 #   - the number of cpu threads that samtools can use
 #
 # Returns a vector containing the fragment counts, in the same order as in the bed
-# file used to create the interval trees.
+# file used to create the NCLs.
 # Raises an exception if something goes wrong
-def SampleCountingFrag(bamFile, dictIntervalTree, nbOfExons, processTmpDir, num_threads):
+def SampleCountingFrag(bamFile, exonDict, nbOfExons, processTmpDir, num_threads):
     with tempfile.TemporaryDirectory(dir=processTmpDir) as SampleTmpDir:
         ############################################
         # I] preprocessing:
@@ -263,7 +265,7 @@ def SampleCountingFrag(bamFile, dictIntervalTree, nbOfExons, processTmpDir, num_
 
         # III] initialization
         # list containing the number of fragments overlapping each exon, indexes
-        # correspond to the labels in the intervalTree
+        # correspond to the labels in the NCL
         vecExonCount=[0]*nbOfExons
 
         #Process control : skip mention corresponds to the Qnames removal for fragments counts
@@ -327,7 +329,7 @@ def SampleCountingFrag(bamFile, dictIntervalTree, nbOfExons, processTmpDir, num_
             if (qname!=align[0]) and (qname!=""):  # align[0] is the qname
                 dictStatCount["QNProcessed"]+=1
                 if not qBad:
-                    Qname2ExonCount(qchrom,qstartF,qendF,qstartR,qendR,qReads,dictIntervalTree,vecExonCount,
+                    Qname2ExonCount(qchrom,qstartF,qendF,qstartR,qendR,qReads,exonDict,vecExonCount,
                                     dictStatCount)
                 qchrom=""
                 qname=""
@@ -399,7 +401,7 @@ def SampleCountingFrag(bamFile, dictIntervalTree, nbOfExons, processTmpDir, num_
         #VI]  Process last Qname
         dictStatCount["QNProcessed"]+=1
         if not qBad:
-            Qname2ExonCount(qchrom,qstartF,qendF,qstartR,qendR,qReads,dictIntervalTree,vecExonCount,
+            Qname2ExonCount(qchrom,qstartF,qendF,qstartR,qendR,qReads,exonDict,vecExonCount,
                             dictStatCount)
 
         ##################################################################################################
@@ -464,14 +466,14 @@ def AliLengthOnRef(CIGARAlign):
 #   -4 lists for F and R strand positions (start and end) [int]
 #   -a bit variable informing about the read pair integrity 
 #   (two bits : 01 First read was seen , 10 Second read was seen)
-#   -the dictionary containing the interval trees for each chromosome
+#   -the dictionary containing the NCLs for each chromosome
 #   -list containing the fragment counts which will be completed/increment (final results)
 #   -the dictionary to check the results at the process end.
 
 #There is no output object, we just want to complete the fragment counts list by 
 # interest intervals and complete the results control dictionary .
 
-def Qname2ExonCount(chromString,startFList,endFList,startRList,endRList,readsBit,dictIntervalTree,vecExonCount,dictStatCount): # treatment on each Qname
+def Qname2ExonCount(chromString,startFList,endFList,startRList,endRList,readsBit,exonDict,vecExonCount,dictStatCount):
     Frag=[] #fragment(s) intervals
     #####################################################################
     ###I) DIFFERENTS CONDITIONS ESTABLISHMENT : for fragment detection
@@ -531,11 +533,11 @@ def Qname2ExonCount(chromString,startFList,endFList,startRList,endRList,readsBit
     #####################################################################
     ###II)- FRAGMENT COUNTING FOR EXONIC REGIONS
     #####################################################################
-    #Retrieving the corresponding interval tree
-    RefIntervalTree=dictIntervalTree[chromString]
+    #Retrieving the corresponding NCL
+    RefNCL=exonDict[chromString]
 
     for idx in list(range(0,(int(len(Frag)/2)))):
-        SelectInterval=RefIntervalTree.find_overlap(Frag[2*idx],Frag[2*idx+1])
+        SelectInterval=RefNCL.find_overlap(Frag[2*idx],Frag[2*idx+1])
         # how many overlapping intervals did we find
         overlaps=0
         for interval in SelectInterval:
@@ -647,24 +649,24 @@ ARGUMENTS:
 
     ######################################################
     # D) Parsing exonic intervals bed
-    exonInterval=processBed(bedFile)
-    nbOfExons=len(exonInterval)
+    exons=processBed(bedFile)
+    nbOfExons=len(exons)
 
     ######################################################
-    # E) Creating interval trees for each chromosome
-    dictIntervalTree=intervalTreeDictCreation(exonInterval)
+    # E) Creating NCLs for each chromosome
+    exonDict=exonDictCreation(exons)
 
     ############################################
-    # F) Parsing old counts file (.tsv) if exist else new count Dataframe creation 
-    if os.path.isfile(countFile):
-        counts=parseCountFile(countFile,exonInterval)
+    # F) Parsing old counts file (.tsv) if provided, else make a new dataframe
+    if (countFile!=""):
+        counts=parseCountFile(countFile,exons)
     else:
-        counts=exonInterval
+        counts=exons
 
     #####################################################
-    # G) Definition of a loop for each BAM files and the reads counting.
-    for S in bamsToProcess:
-        sampleName=os.path.basename(S)
+    # G) Process each BAM
+    for bam in bamsToProcess:
+        sampleName=os.path.basename(bam)
         sampleName=sampleName.replace(".bam","")
         logger.info('Sample being processed : %s', sampleName)
 
@@ -673,7 +675,7 @@ ARGUMENTS:
             continue
         else:
             try:
-                FragVec = SampleCountingFrag(S,dictIntervalTree,nbOfExons,tmpDir,threads)
+                FragVec = SampleCountingFrag(bam, exonDict, nbOfExons, tmpDir, threads)
             except Exception as e:
                 logger.warning("Failed to count fragments for sample %s, skipping it - exception: %s\n",
                                sampleName, e)
