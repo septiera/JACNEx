@@ -458,21 +458,20 @@ def AliLengthOnRef(CIGARAlign):
 
 ####################################################
 # Qname2ExonCount :
-#This function identifies the fragments for each Qname
-#When the fragment(s) are identified and it(they) overlap interest interval
-# => increment count for this intervals.
-#Inputs:
+# Given data representing all alignments for a single qname:
+# - apply QC filters to ignore aberrant or unusual alignments / qnames;
+# - identify the genomic positions that are putatively covered by the sequenced fragment,
+#   either actually covered by a sequencing read or closely flanked by a pair of mate reads;
+# - identify exons overlapped by the fragment, and increment their count.
+# Inputs:
 #   -chr variable [str]
 #   -4 lists for F and R strand positions (start and end) [int]
 #   -a bit variable informing about the read pair integrity 
 #   (two bits : 01 First read was seen , 10 Second read was seen)
 #   -the dictionary containing the NCLs for each chromosome
-#   -list containing the fragment counts which will be completed/increment (final results)
-#   -the dictionary to check the results at the process end.
-
-#There is no output object, we just want to complete the fragment counts list by 
-# interest intervals and complete the results control dictionary .
-
+#   -list of fragment counts for each exon, appropriate counts will be incremented
+#   -dictionary of sanity-checking counters
+# Nothing is returned, this function just updates vecExonCount and dictStatCount
 def Qname2ExonCount(chromString,startFList,endFList,startRList,endRList,readsBit,exonDict,vecExonCount,dictStatCount):
     Frag=[] #fragment(s) intervals
     #####################################################################
