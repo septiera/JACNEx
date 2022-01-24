@@ -17,7 +17,7 @@
 #       "parseCountFile" function used to check the integrity of the file against the previously
 #        generated bed file. It also allows to check if the pre-existing counts are in a correct format.
 #   G) Definition of a loop for each BAM files and the reads counting.
-#       "SampleCountingFrag" function : 
+#       "countFrags" function : 
 #           -allows to sort alignments by BAM QNAME and to filter them on specific flags (see conditions in the script).
 #            Realisation by samtool v1.9 (using htslib 1.9)
 #           -also extracts the information for each unique QNAME. The information on the end position and the length of
@@ -156,7 +156,7 @@ def processBed(PathBedToCheck):
 # chromosome, storing the exons
 #Input : dataframe of exons, as returned by processBed
 #Output: dictionary(hash): key=chr, value=NCL
-def exonDictCreation(exons):
+def createExonDict(exons):
     exonDict={}
     listCHR=list(exons.CHR.unique())
     for chr in listCHR:
@@ -229,7 +229,7 @@ def parseCountFile(countFile, exons):
     return(counts)
 
 ####################################################
-# SampleCountingFrag :
+# countFrags :
 # Count the fragments in bamFile that overlap each exon described in exonDict.
 # Arguments:
 #   - a bam file (with path)
@@ -241,7 +241,7 @@ def parseCountFile(countFile, exons):
 # Returns a vector containing the fragment counts, in the same order as in the bed
 # file used to create the NCLs.
 # Raises an exception if something goes wrong
-def SampleCountingFrag(bamFile, exonDict, nbOfExons, processTmpDir, num_threads):
+def countFrags(bamFile, exonDict, nbOfExons, processTmpDir, num_threads):
     with tempfile.TemporaryDirectory(dir=processTmpDir) as SampleTmpDir:
         ############################################
         # I] preprocessing:
@@ -407,11 +407,11 @@ def SampleCountingFrag(bamFile, exonDict, nbOfExons, processTmpDir, num_threads)
         ##################################################################################################
         # VII] wait for samtools to finish cleanly and check return codes
         if (p1.wait() != 0):
-            logger.error("in SampleCountingFrag, while processing %s, the 'samtools sort' subprocess returned %s",
+            logger.error("in countFrags, while processing %s, the 'samtools sort' subprocess returned %s",
                          bamFile, p1.returncode)
             raise Exception("samtools-sort failed")
         if (p2.wait() != 0):
-            logger.error("in SampleCountingFrag, while processing %s, the 'samtools view' subprocess returned %s",
+            logger.error("in countFrags, while processing %s, the 'samtools view' subprocess returned %s",
                          bamFile, p2.returncode)
             raise Exception("samtools-view failed")
 
@@ -654,7 +654,7 @@ ARGUMENTS:
 
     ######################################################
     # E) Creating NCLs for each chromosome
-    exonDict=exonDictCreation(exons)
+    exonDict=createExonDict(exons)
 
     ############################################
     # F) Parsing old counts file (.tsv) if provided, else make a new dataframe
@@ -675,7 +675,7 @@ ARGUMENTS:
             continue
         else:
             try:
-                FragVec = SampleCountingFrag(bam, exonDict, nbOfExons, tmpDir, threads)
+                FragVec = countFrags(bam, exonDict, nbOfExons, tmpDir, threads)
             except Exception as e:
                 logger.warning("Failed to count fragments for sample %s, skipping it - exception: %s\n",
                                sampleName, e)
