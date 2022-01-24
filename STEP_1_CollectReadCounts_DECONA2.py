@@ -35,11 +35,11 @@ import sys
 import getopt
 import logging
 import os
-import pandas as pd #read,make,treat Dataframe object
-import re  # regular expressions
+import pandas as pd # dataframe objects
+import re
 from ncls import NCLS # generating interval trees (cf : https://github.com/biocore-ntnu/ncls)
-import subprocess #spawn new processes, connect to their input/output/error pipes, and obtain their return codes.
-import tempfile #manages the creation and deletion of temporary folders/files
+import subprocess # run samtools
+import tempfile
 
 #####################################################################################################
 ################################ Logging Definition #################################################
@@ -61,24 +61,6 @@ logger.addHandler(stderr)
 #####################################################################################################
 ################################ Functions ##########################################################
 #####################################################################################################
-def usage():
-    sys.stderr.write("\nCOMMAND SUMMARY:\n"+
-"Given a BED of exons and one or more BAM files, count the number of sequenced fragments\n"+
-"from each BAM that overlap each exon.\n"+
-"Script will print to stdout a new countFile in TSV format, copying the data from the pre-existing\n"+ 
-"countFile if provided and adding columns with counts for the new BAM(s).\n\n"+
-"OPTIONS:\n"+
-"   --bams [str]: a BAM file or a BAMs list (with path)\n"+
-"   --bams-from [str] : a text file where each line contains the path to a BAM.\n"
-"   --bed [str]: a bed file (with path), possibly gzipped, containing exon definitions \n"+
-"                formatted as CHR START END EXON_ID\n"+
-"   --counts [str] optional: a pre-parsed count file (with path), old fragment count file  \n"+
-"                                  to be completed if new patient(s) is(are) added. \n"
-"   --tmp [str] optional: a temporary folder (with path),allows to save temporary files \n"+
-"                         from samtools sort. By default, this is placed in '/tmp'.\n"+
-"                         Tip: place the storage preferably in RAM.\n"+
-"   --threads [int] optional: number of threads to allocate for samtools.\n"+
-"                             By default, the value is set to 10.\n\n")
 
 ####################################################
 #Exon intervals file parsing and preparing.
@@ -93,7 +75,7 @@ def processBed(PathBedToCheck):
     bedname=os.path.basename(PathBedToCheck)
     if not os.path.isfile(PathBedToCheck):
         logger.error("BED file %s doesn't exist.\n", PathBedToCheck)
-        sys.exit()
+        sys.exit(1)
     try:
         BedToCheck=pd.read_table(PathBedToCheck, header=None, sep="\t")
         # compression == 'infer' by default => auto-works whether bedFile is gzipped or not
@@ -106,7 +88,7 @@ def processBed(PathBedToCheck):
     if len(BedToCheck.columns) != 4:
         logger.error("BED file %s should be a 4-column TSV (CHR, START, END, EXON_ID) but it has %i columns\n",
                      bedname, len(BedToCheck.columns))
-        sys.exit()
+        sys.exit(1)
     BedToCheck.columns=["CHR","START","END","EXON_ID"]
     #######################
     #CHR column
@@ -118,30 +100,30 @@ def processBed(PathBedToCheck):
     else:
         logger.error("In BED file %s, first column 'CHR' should be a string but pandas sees it as %s\n",
                      bedname, BedToCheck["CHR"].dtype)
-        sys.exit()
+        sys.exit(1)
     #######################
     #Start and End column
     if (BedToCheck["START"].dtype=="int") and (BedToCheck["END"].dtype=="int"):
         if (len(BedToCheck[BedToCheck.START<0])>0) or (len(BedToCheck[BedToCheck.END<0])>0):
             logger.error("In BED file %s, columns 2 and/or 3 contain negative values", bedname)
-            sys.exit()
+            sys.exit(1)
     else:
         logger.error("In BED file %s, columns 2-3 'START'-'END' should be ints but pandas sees them as %s - %s\n",
                      bedname, BedToCheck["START"].dtype, BedToCheck["END"].dtype)
-        sys.exit()
+        sys.exit(1)
     #######################
     #transcript_id_exon_number column
     if not (BedToCheck["EXON_ID"].dtype=="O"):
         logger.error("In BED file %s, 4th column 'EXON_ID' should be a string but pandas sees it as %s\n",
                      bedname, BedToCheck["EXON_ID"].dtype)
-        sys.exit()
+        sys.exit(1)
     # EXON_IDs must be unique
     if len(BedToCheck["EXON_ID"].unique()) != len(BedToCheck["EXON_ID"]):
         logger.error("In BED file %s, each line must have a unique EXON_ID (4th column)\n", bedname)
-        sys.exit()
+        sys.exit(1)
 
     #####################
-    #II): Preparation
+    #II): Padding and sorting
     #####################
     # pad coordinates with +-10bp
     BedToCheck['START'] -= 10
@@ -571,7 +553,6 @@ def Qname2ExonCount(chromString,startFList,endFList,startRList,endRList,readsBit
 ##############################################################################################################
 ######################################### Script Body ########################################################
 ##############################################################################################################
-###################################
 def main():
     scriptName=os.path.basename(sys.argv[0])
     ##########################################
@@ -584,18 +565,33 @@ def main():
     tmpDir="/tmp/"
     threads=10 
 
+    usage = """\nCOMMAND SUMMARY:
+Given a BED of exons and one or more BAM files, count the number of sequenced fragments
+from each BAM that overlap each exon (+- 10bp padding).
+Results are printed to stdout in TSV format: first 4 columns hold the exon definitions after
+padding, subsequent columns (one per BAM) hold the counts. If a pre-existing counts file produced
+by this program with the same BED is provided (with --counts), its content is copied and counting
+is only performed for the new BAM(s).
+ARGUMENTS:
+   --bams [str]: comma-separated list of BAM files
+   --bams-from [str]: text file listing BAM files, one per line
+   --bed [str]: BED file, possibly gzipped, containing exon definitions (format: 4-column 
+                headerless tab-separated file, columns contain CHR START END EXON_ID)
+   --counts [str] optional: pre-existing counts file produced by this program, content will be copied
+   --tmp [str]: pre-existing dir for temp files, faster is better (eg tmpfs), default: """+tmpDir+"""
+   --threads [int]: number of threads to allocate for samtools sort (default: """+str(threads)+"\n"
+
+    
     try:
         opts,args = getopt.gnu_getopt(sys.argv[1:],'h',
         ["help","bams=","bams-from=","bed=","counts=","tmp=","threads="])
     except getopt.GetoptError as e:
-        print("ERROR : "+e.msg+".\n",file=sys.stderr)  
-        usage()
-        sys.exit(1)
+        sys.exit("ERROR : "+e.msg+".\n"+usage)
 
     for opt, value in opts:
         #variables association with user parameters (ARGV)
         if opt in ('-h', '--help'):
-            usage()
+            sys.stderr.write(usage)
             sys.exit(0)
         elif opt in ("--bams"):
             bams=value     
@@ -610,53 +606,45 @@ def main():
         elif opt in ("--threads"):
             threads=int(value)
         else:
-            print("ERROR : Programming error. Unhandled option "+opt+".\n",file=sys.stderr)
-            sys.exit(1)
+            sys.exit("ERROR : Programming error. Unhandled option "+opt+".\n")
 
     #####################################################
     # B) Checking that the mandatory parameters are presents
     if (bams=="" and bamsFrom=="") or (bams!="" and bamsFrom!=""):
-        print("ERROR : You must use either --bams or --bams-from but not both.\n",file=sys.stderr)
-        usage()
-        sys.exit(1)
+        sys.exit("ERROR : You must use either --bams or --bams-from but not both.\n"+usage)
     if bedFile=="":
-        print("ERROR : You must use --bedFile.\n",file=sys.stderr)
-        usage()
-        sys.exit(1)
+        sys.exit("ERROR : You must use --bedFile.\n"+usage)
 
     #####################################################
     # C) Checking that the parameters actually exist and processing
-    processBam=[]
+    bamsToProcess=[]
     if bams!="":
-        processBam=bams.split(",")
+        bamsToProcess=bams.split(",")
     
-    if bamsFrom!="":
+    elif bamsFrom!="":
         if not os.path.isfile(bamsFrom):
-            print("ERROR : bams-from file "+bamsFrom+" doesn't exist. Try "+scriptName+" --help.\n",file=sys.stderr)
-            sys.exit(1)
+            sys.exit("ERROR : bams-from file "+bamsFrom+" doesn't exist. Try "+scriptName+" --help.\n")
         else:
             bamListFile=open(bamsFrom,"r")
             for line in bamListFile:
                 line = line.rstrip('\n')
-                processBam.append(line)
+                bamsToProcess.append(line)
+    else:
+        sys.exit("ERROR : bams and bamsFile both empty, IMPOSSIBLE")
     #Check that all bams exist
-    for b in processBam:
+    for b in bamsToProcess:
         if not os.path.isfile(b):
-            print("ERROR : BAM "+b+" doesn't exist. Try "+scriptName+" --help.\n",file=sys.stderr)
-            sys.exit(1)
+            sys.exit("ERROR : BAM "+b+" doesn't exist. Try "+scriptName+" --help.\n")
 
     if (countFile!="") and (not os.path.isfile(countFile)):
-        print("ERROR : Countfile "+countFile+" doesn't exist. Try "+scriptName+" --help.\n",file=sys.stderr) 
-        sys.exit(1)
+        sys.exit("ERROR : countFile "+countFile+" doesn't exist. Try "+scriptName+" --help.\n") 
 
     if not os.path.isdir(tmpDir):
-        print("ERROR : Tmp directory "+tmpDir+" doesn't exist. Try "+scriptName+" --help.\n",file=sys.stderr)
-        sys.exit(1)
+        sys.exit("ERROR : tmp directory "+tmpDir+" doesn't exist. Try "+scriptName+" --help.\n")
 
     if (threads<=0):
-        print("ERROR : Threads number "+str(threads)+" is insufficient or negative.\n"+
-        "Try "+scriptName+" --help.\n", file=sys.stderr) 
-        sys.exit(1)  
+        sys.exit("ERROR : number of threads "+str(threads)+" must be positive. Try "+scriptName+" --help.\n")
+
     ######################################################
     # D) Parsing exonic intervals bed
     exonInterval=processBed(bedFile)
@@ -675,7 +663,7 @@ def main():
 
     #####################################################
     # G) Definition of a loop for each BAM files and the reads counting.
-    for S in processBam:
+    for S in bamsToProcess:
         sampleName=os.path.basename(S)
         sampleName=sampleName.replace(".bam","")
         logger.info('Sample being processed : %s', sampleName)
