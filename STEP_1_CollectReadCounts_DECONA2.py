@@ -93,28 +93,27 @@ def processBed(bedFile):
     exons.columns=["CHR","START","END","EXON_ID"]
     #######################
     #CHR column
-    if (exons["CHR"].dtype=="O"): # CHR is a str
-        if exons["CHR"].str.startswith('chr').all:
-            exons['CHR_NUM'] = exons['CHR'].replace(regex=r'^chr(\w+)$', value=r'\1')
-        else:
-            exons['CHR_NUM']=exons['CHR']
-    else:
+    if (exons["CHR"].dtype!="O"):
         logger.error("In BED file %s, first column 'CHR' should be a string but pandas sees it as %s\n",
                      bedname, exons["CHR"].dtype)
         sys.exit(1)
-    #######################
-    #Start and End column
-    if (exons["START"].dtype==int) and (exons["END"].dtype==int):
-        if (len(exons[exons.START<0])>0) or (len(exons[exons.END<0])>0):
-            logger.error("In BED file %s, columns 2 and/or 3 contain negative values", bedname)
-            sys.exit(1)
+    # create CHR_NUM column for sorting: we want ints so we remove chr prefix if present
+    if exons["CHR"].str.startswith('chr').all:
+        exons['CHR_NUM'] = exons['CHR'].replace(regex=r'^chr(\w+)$', value=r'\1')
     else:
+        exons['CHR_NUM']=exons['CHR']
+    #######################
+    #START and END columns
+    if (exons["START"].dtype!=int) or (exons["END"].dtype!=int):
         logger.error("In BED file %s, columns 2-3 'START'-'END' should be ints but pandas sees them as %s - %s\n",
                      bedname, exons["START"].dtype, exons["END"].dtype)
         sys.exit(1)
+    if (exons.START < 0).any() or (exons.END < 0).any():
+        logger.error("In BED file %s, columns 2 and/or 3 contain negative values", bedname)
+        sys.exit(1)
     #######################
     #transcript_id_exon_number column
-    if not (exons["EXON_ID"].dtype=="O"):
+    if (exons["EXON_ID"].dtype!="O"):
         logger.error("In BED file %s, 4th column 'EXON_ID' should be a string but pandas sees it as %s\n",
                      bedname, exons["EXON_ID"].dtype)
         sys.exit(1)
