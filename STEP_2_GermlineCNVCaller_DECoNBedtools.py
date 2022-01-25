@@ -21,11 +21,12 @@
 # The segmentation is performed using a hidden Markov chain model.
 # The output results have a format identical to the basic DECON/ExomDepth format. 
 # It corresponds to a .tsv table containing all the CNVs called for the samples set considered.
-# The output file has 15 columns:
+# The output file has 16 columns:
     # sample : sample name (str)
     # correlation : average correlation between the target sample and the control sample set 
     #               (The controls are samples of the data set, not real controls). (float)
     # N.Comp : control samples number used (int)
+    # SampN.Comp : control samples names used (str)
     # start.p + end.p : index corresponding to the line of exons affected by the CNV in the 
     #                   bed file (int)
     # type : cnv type ("duplication" or "deletion" str)
@@ -78,10 +79,58 @@ def usage():
 "for a minimum of 20 samples, the CNVs can be called.\n"+
 "Call algorithm : beta-binomial. \n"+
 "Segmentation : hidden Markov chain model. \n\n"+
+"The script will print on stdout folder :\n"+
+"   -a new call file in TSV format, modifies the data from the pre-existing file\n"+
+"    if it is provided.\n"+
+"   -a new text tab-delimited file, modifies the data from the pre-existing file\n"+
+"    if it is provided.\n"+
 "OPTIONS:\n"+
-"    -c or --counts [str] optional: a .tsv count file (with path), contains 4 columns (CHR,START,END,EXON-ID)\n"+
-"                                   corresponding to the target interval informations.\n"+
-"                                   Each subsequent column is the counting for one sample of the set.\n\n"
+"    --counts [str] : a .tsv count file (with path), contains 4 columns (CHR,START,END,EXON-ID)\n"+
+"                     corresponding to the target interval informations.\n"+
+"    --outputcalls [str] : a new CNV calling file (with path).\n"
+"    --outputcontrols [str] : a new tab-delimited text file (with path)\n"+
+"                     Each subsequent column is the counting for one sample of the set (colnames=sampleNames).\n\n"
+"    --calls [str] optional : a pre-parsed call file (with path), old cnv call lines are completed or\n"+
+"                            re-parsed if one or more new patients are added.\n"
+"    --controls [str] optional :  a tab-delimited text file (with path)\n"+
+"                                column 1: name of the sample to be processed,\n"+
+"                                column 2: comma-delimited list of control sample names.\n\n")
+
+#################################################
+# parseCountFile :
+#Input:
+# - countFile is a tsv file (with path), including column titles, as
+#   specified previously
+#
+# -> Parse countFile into a dataframe (will be returned)
+# -> Check that the first 4 columns are identical to exons,
+#    otherwise die with an error.
+# -> check that the samples counts columns are [int] type.
+
+def parseCountFile(countFile):
+    try:
+        counts=pd.read_table(countFile,sep="\t")
+    except Exception as e:
+        logger.error("Parsing provided countFile %s: %s", countFile, e)
+        sys.exit(1)
+
+    if not (counts.dtypes["CHR"]=="O" and counts.dtypes["EXON_ID"]=="O"):
+        logger.error("One or both of the 'CHR' and 'EXON_ID' columns are not in the correct format. Please check it.\n"
+                    +"The column must be a python object [str]")
+        sys.exit(1)
+    elif not (counts.dtypes["START"]=="int64" and counts.dtypes["END"]=="int64"):
+        logger.error("One or both of the 'START' and 'END' columns are not in the correct format. Please check it.\n"
+                    +"The columns must contain integers.")
+    else: 
+        #check that the old sample data is in [int] format.
+        namesSampleToCheck=[]
+        for columnIndex in range(5,len(counts.columns)):
+            if not counts.iloc[:,columnIndex].dtypes=="int64":
+                namesSampleToCheck.append(counts.iloc[:,columnIndex].columns)
+        if len(namesSampleToCheck)>0:
+            logger.error("Columns in %s, sample(s) %s are not in [int] format.\n"+
+            "Please check and correct these before trying again.", countFile,(",".join(namesSampleToCheck)))
+            sys.exit(1)
 
 ##############################################################################################################
 ######################################### Script Body ########################################################
@@ -91,9 +140,14 @@ def main():
     ##########################################
     # A) Getopt user argument (ARGV) recovery
     countFile=""
+    NEWcallFile=""
+    NEWcontrolFile=""
+    # default setting ARGV 
+    OLDcallFile=""
+    OLDcontrolFile=""
 
     try:
-        opts,args = getopt.gnu_getopt(sys.argv[1:],'h', ["help","counts="])
+        opts,args = getopt.gnu_getopt(sys.argv[1:],'h', ["help","counts=","calls=","controls=","outputcalls=","outputcontrols="])
     except getopt.GetoptError as e:
         print("ERROR : "+e.msg+".\n",file=sys.stderr)  
         usage()
@@ -104,37 +158,89 @@ def main():
         if opt in ('-h', '--help'):
             usage()
             sys.exit(0)
-        elif opt in ("-c","--counts"):
+        elif opt in ("--counts"):
             countFile=value
+        elif opt in ("--outputcalls"):
+            NEWcallFile=value
+        elif opt in ("--outputcontrols"):
+            NEWcontrolFile=value
+        elif opt in ("--calls"):
+            OLDcallFile=value
+        elif opt in ("--controls"):
+            OLDcontrolFile=value
         else:
             print("ERROR : Programming error. Unhandled option "+opt+".\n",file=sys.stderr)
             sys.exit(1)
 
     #####################################################
-    # B) Checking that the parameter actually exist 
-    if (countFile!="") and (not os.path.isfile(countFile)):
-        sys.stderr.write("ERROR : Countfile "+countFile+" doesn't exist. Try "+scriptName+" --help.\n",file=sys.stderr) 
+    # B) Checking that the mandatory parameter is present
+    if countFile=="":
+        print("ERROR :You must use --counts.\n",file=sys.stderr)
+        usage()
+        sys.exit(1)
+
+    if (NEWcallFile==""):
+        print("ERROR :You must use --outputcalls.\n",file=sys.stderr)
+        usage()
+        sys.exit(1)
+
+    if (NEWcontrolFile==""):
+        print("ERROR :You must use --outputcontrols.\n",file=sys.stderr)
+        usage()
+        sys.exit(1)
+
+    #####################################################
+    # C) Check that the optional arguments are entered together.
+    if (OLDcallFile!="" and OLDcontrolFile=="") or (OLDcallFile=="" and OLDcontrolFile!=""):
+        print("ERROR :If one of the optional arguments is entered the second is required.\n",file=sys.stderr)
+        usage()
+        sys.exit(1)
+
+    #####################################################
+    # D) Checking that the parameters actually exists
+    if not os.path.isfile(countFile):
+        print("ERROR : Countfile "+countFile+" doesn't exist. Try "+scriptName+" --help.\n",file=sys.stderr) 
+        sys.exit(1)
+    if os.path.isfile(NEWcallFile):
+        print("ERROR : new Callfile "+NEWcallFile+" already exist. Try "+scriptName+" --help.\n",file=sys.stderr) 
+        sys.exit(1) 
+    if os.path.isfile(NEWcontrolFile):
+        print("ERROR : new Callfile "+NEWcontrolFile+" already exist. Try "+scriptName+" --help.\n",file=sys.stderr) 
+        sys.exit(1)
+
+    if (OLDcallFile!="") and (not os.path.isfile(OLDcallFile)):
+        print("ERROR : CallFile "+OLDcallFile+" doesn't exist. Try "+scriptName+" --help.\n",file=sys.stderr) 
+        sys.exit(1)
+    if (OLDcontrolFile!="") and (not os.path.isfile(OLDcontrolFile)):
+        print("ERROR : CallFile "+OLDcontrolFile+" doesn't exist. Try "+scriptName+" --help.\n",file=sys.stderr) 
         sys.exit(1)
 
     #####################################################
     # C) CountFile Sanity Check 
-    if (countFile!="") and (not os.path.isfile(countFile)):
-        sys.stderr.write("ERROR : Countfile "+countFile+" doesn't exist. Try "+scriptName+" --help.\n",file=sys.stderr) 
-        sys.exit(1)
-
+    parseCountFile(countFile)
 
     #####################################################
     # D) Use of the R script for calling
-    DECoNCommand="Rscript /home/septiera/InfertilityCohort_Analysis/Scripts/Rscript/AdaptDECON_CallingCNV_BedtoolsRes.R "+readCountFolder+" "+intervalFile+" "+outputFolderPath
-    logger.info("DECoN modified COMMAND: %s", DECoNCommand)
-    returned_value = os.system(DECoNCommand)
-    if returned_value == 0:
-        logger.info("Command Line DECoN modified  MakeCNVCalls works well")
+    if OLDcontrolFile=="":
+        DECoNCommand="Rscript /Rscript/AdaptDECON_CallingCNV_BedtoolsRes.R "+countFile+" "+NEWcallFile+" "+NEWcontrolFile+""
+        logger.info("DECoN modified COMMAND: %s", DECoNCommand)
+        returned_value = os.system(DECoNCommand)
+        if returned_value == 0:
+            logger.info("Command Line DECoN modified MakeCNVCalls works well")
+        else:
+            logger.error("Command Line DECoN modified MakeCNVCalls don't work, error status = %s", returned_value)
+            sys.exit()
     else:
-        logger.error("Command Line DECoN modified MakeCNVCalls don't work, error status = %s", returned_value)
-        sys.exit()
-					
+        DECoNCommand="Rscript /Rscript/AdaptDECON_CallingCNV_BedtoolsRes.R "+countFile+" "+NEWcallFile+" "+NEWcontrolFile+" "+OLDcallFile+" "+OLDcontrolFile+""
+        logger.info("DECoN modified COMMAND: %s", DECoNCommand)
+        returned_value = os.system(DECoNCommand)
+        if returned_value == 0:
+            logger.info("Command Line DECoN modified MakeCNVCalls works well")
+        else:
+            logger.error("Command Line DECoN modified MakeCNVCalls don't work, error status = %s", returned_value)
+            sys.exit()			
+
 if __name__ =='__main__':
-    main(sys.argv[1:])
+    main()
 
 
