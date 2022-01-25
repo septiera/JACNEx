@@ -262,14 +262,11 @@ def countFrags(bamFile, exonDict, nbOfExons, processTmpDir, num_threads):
         #   data for new qname.
 
         # Accumulators: 
-        qchrom=""
-        qname=""
+        # QNAME and CHR
+        qname, qchrom = "", ""
         # START and END coordinates on the genome of each alignment for this qname,
         # aligning on the Forward or Reverse genomic strands
-        qstartF=[]
-        qstartR=[]
-        qendF=[]
-        qendR=[]
+        qstartF, qstartR, qendF, qendR = [], [], [], []
         # qFirstOnForward==1 if the first-in-pair read of this qname is on the
         # forward reference strand, 0 if it's on the reverse strand, -1 if we don't yet know
         qFirstOnForward=-1
@@ -279,8 +276,8 @@ def countFrags(bamFile, exonDict, nbOfExons, processTmpDir, num_threads):
         qBad=False
 
         ############################################
-        # IV] Regular expression definition
-        mainChr=re.compile("^chr[\dXYM]\d?$")
+        # IV] Regular expression to identify alignments on the main chromosomes (no ALTs etc)
+        mainChr=re.compile("^(chr[\dXYM]\d?)|([\dXYM]\d?)$")
         ############################################
         # V] Function Main loop
         #Browse the file sorted on the qnames and having undergone the appropriate filters
@@ -300,12 +297,8 @@ def countFrags(bamFile, exonDict, nbOfExons, processTmpDir, num_threads):
                 dictStatCount["QnameInBAM"]+=1
                 if not qBad:
                     Qname2ExonCount(qchrom,qstartF,qendF,qstartR,qendR,exonDict,vecExonCount,dictStatCount)
-                qchrom=""
-                qname=""
-                qstartR=[]
-                qstartF=[]
-                qendR=[]
-                qendF=[]
+                qname, qchrom = "", ""
+                qstartF, qstartR, qendF, qendR = [], [], [], []
                 qFirstOnForward=-1
                 qBad=False
             elif qBad: #same qname as previous ali but we know it's bad -> skip
