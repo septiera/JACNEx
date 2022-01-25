@@ -223,7 +223,7 @@ def countFrags(bamFile, exonDict, nbOfExons, processTmpDir, num_threads):
         cmd1 ="samtools sort -n "+bamFile+" -@ "+str(num_threads)+" -T "+SampleTmpDir+" -O sam"
         p1 = subprocess.Popen(cmd1.split(), stdout=subprocess.PIPE)
         
-        # We can also immediately filter out poorly mapped (low MAPQ) or low quality
+        # We can immediately filter out poorly mapped (low MAPQ) or low quality
         # reads (based on the SAM flags) with samtools view:
         # -q sets the minimum mapping quality;
         # -F excludes alignements where any of the specified bits is set, we want to filter out:
@@ -244,22 +244,32 @@ def countFrags(bamFile, exonDict, nbOfExons, processTmpDir, num_threads):
         #Process control : skip mention corresponds to the Qnames removal for fragments counts
         #Aligments = alignements count, QN= qnames counts , Frag= fragments counts
         keys=["AlignmentsInBam",
-            "AlignmentsOnMainChr",
-            "QnameInBAM",
-            "QnameProcessed",
-            "FragOverlapOnTargetInterval", # equal to the sum of VecExonCount results
-            "QNNoOverlapOnTargetIntervalSkip",
-            "QNOverlapOnTargetInterval"]
+              "AlignmentsOnMainChr",
+              "QnameInBAM",
+              "QnameProcessed",
+              "FragOverlapOnTargetInterval", # equal to the sum of VecExonCount results
+              "QNNoOverlapOnTargetIntervalSkip",
+              "QNOverlapOnTargetInterval"]
         dictStatCount={ i : 0 for i in keys }
 
-        #Variables to be processed for each Qname's alignment.
-        qchrom="" # unique
-        qname="" # unique
-        qstartR=[] #complete list if same Qname and same strand.
+        # We need to process all alignments for a given qname simultaneously
+        # => ALGORITHM:
+        # parse alignements from BAM,
+        # if qname didn't change -> just apply some QC and if AOK store the
+        #   data we need in accumulators,
+        # if the qname changed -> process accumulated data for the previous
+        #   qname (with Qname2ExonCount), then reset accumulators and store
+        #   data for new qname.
+
+        # Accumulators: 
+        qchrom=""
+        qname=""
+        # START and END coordinates on the genome of each alignment for this qname,
+        # aligning on the Forward or Reverse genomic strands
         qstartF=[]
-        qendR=[]
+        qstartR=[]
         qendF=[]
-        qReads=0 # two bits : 01 First read was seen , 10 Second read was seen
+        qendR=[]
         # qFirstOnForward==1 if the first-in-pair read of this qname is on the
         # forward reference strand, 0 if it's on the reverse strand, -1 if we don't yet know
         qFirstOnForward=-1
@@ -289,15 +299,13 @@ def countFrags(bamFile, exonDict, nbOfExons, processTmpDir, num_threads):
             if (qname!=align[0]) and (qname!=""):  # align[0] is the qname
                 dictStatCount["QnameInBAM"]+=1
                 if not qBad:
-                    Qname2ExonCount(qchrom,qstartF,qendF,qstartR,qendR,qReads,exonDict,vecExonCount,
-                                    dictStatCount)
+                    Qname2ExonCount(qchrom,qstartF,qendF,qstartR,qendR,exonDict,vecExonCount,dictStatCount)
                 qchrom=""
                 qname=""
                 qstartR=[]
                 qstartF=[]
                 qendR=[]
                 qendF=[]
-                qReads=0
                 qFirstOnForward=-1
                 qBad=False
             elif qBad: #same qname as previous ali but we know it's bad -> skip
@@ -324,11 +332,6 @@ def countFrags(bamFile, exonDict, nbOfExons, processTmpDir, num_threads):
             currentStrand="F"
             if currentFlag&16 :
                 currentStrand="R"
-            #flag 64 the alignment is first in pair, otherwise 128
-            if currentFlag&64:
-                qReads|=1
-            else:
-                qReads|=2
 
             #Processing for the positions lists for ali R and F
             currentStart=int(align[3])
@@ -346,6 +349,7 @@ def countFrags(bamFile, exonDict, nbOfExons, processTmpDir, num_threads):
             # currentFirstOnForward==1 if according to this ali, the first-in-pair read is on
             # the forward strand, 0 otherwise
             currentFirstOnForward=0
+            #flag 64 the alignment is first in pair, otherwise 128
             if ((currentFlag&64) and (currentStrand=="F")) or ((currentFlag&128) and (currentStrand=="R")) :
                 currentFirstOnForward=1
             if qFirstOnForward==-1:
@@ -361,8 +365,7 @@ def countFrags(bamFile, exonDict, nbOfExons, processTmpDir, num_threads):
         #VI]  Process last Qname
         dictStatCount["QnameInBAM"]+=1
         if not qBad:
-            Qname2ExonCount(qchrom,qstartF,qendF,qstartR,qendR,qReads,exonDict,vecExonCount,
-                            dictStatCount)
+            Qname2ExonCount(qchrom,qstartF,qendF,qstartR,qendR,exonDict,vecExonCount,dictStatCount)
 
         ##################################################################################################
         # VII] wait for samtools to finish cleanly and check return codes
@@ -413,20 +416,18 @@ def AliLengthOnRef(CIGARAlign):
 # Inputs:
 #   -chr variable [str]
 #   -4 lists for F and R strand positions (start and end) [int]
-#   -a bit variable informing about the read pair integrity 
-#   (two bits : 01 First read was seen , 10 Second read was seen)
 #   -the dictionary containing the NCLs for each chromosome
 #   -list of fragment counts for each exon, appropriate counts will be incremented
 #   -dictionary of sanity-checking counters
 # Nothing is returned, this function just updates vecExonCount and dictStatCount
-def Qname2ExonCount(chromString,startFList,endFList,startRList,endRList,readsBit,exonDict,vecExonCount,dictStatCount):
+def Qname2ExonCount(chromString,startFList,endFList,startRList,endRList,exonDict,vecExonCount,dictStatCount):
     Frag=[] #fragment(s) intervals
     #####################################################################
     ###I) DIFFERENTS CONDITIONS ESTABLISHMENT : for fragment detection
     #####################################################################
     ########################
     #-Removing Qnames containing only one read (possibly split into several alignments, mostly due to MAPQ filtering)
-    if readsBit!=3:
+    if (len(startFList)==0) or (len(startRList)==0):
         dictStatCount["QnameProcessed"]+=1
         return
 
