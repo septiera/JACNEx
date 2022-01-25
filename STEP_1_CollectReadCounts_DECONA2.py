@@ -52,7 +52,7 @@ logger.setLevel(logging.DEBUG)
 stderr = logging.StreamHandler(sys.stderr)
 stderr.setLevel(logging.DEBUG)
 #create formatter
-formatter = logging.Formatter('%(asctime)s %(levelname)s %(name)s: %(message)s',
+formatter = logging.Formatter('%(asctime)s %(levelname)s %(name)s %(funcName)s(): %(message)s',
                                 '%Y-%m-%d %H:%M:%S')
 #add formatter to stderr handler
 stderr.setFormatter(formatter)
@@ -72,13 +72,13 @@ logger.addHandler(stderr)
 #          and where:
 # - a 10bp padding is added to exon coordinates (ie -10 for START and +10 for END)
 # - exons are sorted by CHR, then START, then END, then EXON_ID
-def processBed(PathBedToCheck):
-    bedname=os.path.basename(PathBedToCheck)
-    if not os.path.isfile(PathBedToCheck):
-        logger.error("BED file %s doesn't exist.\n", PathBedToCheck)
+def processBed(bedFile):
+    bedname=os.path.basename(bedFile)
+    if not os.path.isfile(bedFile):
+        logger.error("BED file %s doesn't exist.\n", bedFile)
         sys.exit(1)
     try:
-        BedToCheck=pd.read_table(PathBedToCheck, header=None, sep="\t")
+        exons=pd.read_table(bedFile, header=None, sep="\t")
         # compression == 'infer' by default => auto-works whether bedFile is gzipped or not
     except Exception as e:
         logger.error("error parsing BED file %s: %s", bedname, e)
@@ -86,67 +86,67 @@ def processBed(PathBedToCheck):
    #####################
     #I): Sanity Check
     #####################
-    if len(BedToCheck.columns) != 4:
+    if len(exons.columns) != 4:
         logger.error("BED file %s should be a 4-column TSV (CHR, START, END, EXON_ID) but it has %i columns\n",
-                     bedname, len(BedToCheck.columns))
+                     bedname, len(exons.columns))
         sys.exit(1)
-    BedToCheck.columns=["CHR","START","END","EXON_ID"]
+    exons.columns=["CHR","START","END","EXON_ID"]
     #######################
     #CHR column
-    if (BedToCheck["CHR"].dtype=="O"): # CHR is a str
-        if BedToCheck["CHR"].str.startswith('chr').all:
-            BedToCheck['CHR_NUM'] = BedToCheck['CHR'].replace(regex=r'^chr(\w+)$', value=r'\1')
+    if (exons["CHR"].dtype=="O"): # CHR is a str
+        if exons["CHR"].str.startswith('chr').all:
+            exons['CHR_NUM'] = exons['CHR'].replace(regex=r'^chr(\w+)$', value=r'\1')
         else:
-            BedToCheck['CHR_NUM']=BedToCheck['CHR']
+            exons['CHR_NUM']=exons['CHR']
     else:
         logger.error("In BED file %s, first column 'CHR' should be a string but pandas sees it as %s\n",
-                     bedname, BedToCheck["CHR"].dtype)
+                     bedname, exons["CHR"].dtype)
         sys.exit(1)
     #######################
     #Start and End column
-    if (BedToCheck["START"].dtype=="int") and (BedToCheck["END"].dtype=="int"):
-        if (len(BedToCheck[BedToCheck.START<0])>0) or (len(BedToCheck[BedToCheck.END<0])>0):
+    if (exons["START"].dtype==int) and (exons["END"].dtype==int):
+        if (len(exons[exons.START<0])>0) or (len(exons[exons.END<0])>0):
             logger.error("In BED file %s, columns 2 and/or 3 contain negative values", bedname)
             sys.exit(1)
     else:
         logger.error("In BED file %s, columns 2-3 'START'-'END' should be ints but pandas sees them as %s - %s\n",
-                     bedname, BedToCheck["START"].dtype, BedToCheck["END"].dtype)
+                     bedname, exons["START"].dtype, exons["END"].dtype)
         sys.exit(1)
     #######################
     #transcript_id_exon_number column
-    if not (BedToCheck["EXON_ID"].dtype=="O"):
+    if not (exons["EXON_ID"].dtype=="O"):
         logger.error("In BED file %s, 4th column 'EXON_ID' should be a string but pandas sees it as %s\n",
-                     bedname, BedToCheck["EXON_ID"].dtype)
+                     bedname, exons["EXON_ID"].dtype)
         sys.exit(1)
     # EXON_IDs must be unique
-    if len(BedToCheck["EXON_ID"].unique()) != len(BedToCheck["EXON_ID"]):
+    if len(exons["EXON_ID"].unique()) != len(exons["EXON_ID"]):
         logger.error("In BED file %s, each line must have a unique EXON_ID (4th column)\n", bedname)
         sys.exit(1)
-
+    
     #####################
     #II): Padding and sorting
     #####################
     # pad coordinates with +-10bp
-    BedToCheck['START'] -= 10
-    BedToCheck['END'] += 10
-
+    exons['START'] -= 10
+    exons['END'] += 10
+    
     # replace X Y M/MT (if present) by max(CHR)+1,+2,+3
     # maxChr must be the max among the int values in CHR_NUM column...
-    maxChr = int(pd.to_numeric(BedToCheck['CHR_NUM'],errors="coerce").max(skipna=True))
-    BedToCheck["CHR_NUM"]=BedToCheck["CHR_NUM"].replace(
+    maxChr = int(pd.to_numeric(exons['CHR_NUM'],errors="coerce").max(skipna=True))
+    exons["CHR_NUM"]=exons["CHR_NUM"].replace(
         {'X': maxChr+1,
          'Y': maxChr+2,
          'M': maxChr+3,
          'MT': maxChr+3})
-
+    
     # convert type of CHR_NUM to int and catch any errors
     try:
-        BedToCheck['CHR_NUM'] = BedToCheck['CHR_NUM'].astype(int)
+        exons['CHR_NUM'] = exons['CHR_NUM'].astype(int)
     except Exception as e:
         logger.error("While parsing BED file, failed converting CHR_NUM to int: %s", e)
         sys.exit(1)
     # sort by CHR_NUM, then START, then END, then EXON_ID
-    exons= BedToCheck.sort_values(by=['CHR_NUM','START','END','EXON_ID'])
+    exons.sort_values(by=['CHR_NUM','START','END','EXON_ID'], inplace=True, ignore_index=True)
     # delete the temp column, and return result
     exons.drop(['CHR_NUM'], axis=1, inplace=True)    
     return(exons)
@@ -169,7 +169,7 @@ def createExonDict(exons):
 # parseCountFile:
 #Input:
 #   - countFile is a tsv file (with path), including column titles, as
-#     specified previously
+#     produced by this program
 #   - exons is a dataframe holding exon definitions, padded and sorted,
 #     as returned by processBed
 #
@@ -187,45 +187,19 @@ def parseCountFile(countFile, exons):
     except Exception as e:
         logger.error("Parsing provided countFile %s: %s", countFile, e)
         sys.exit(1)
-    if (len(counts)==len(exons)): # lines number comparison  
-        #Type Check 
-        if not (counts.dtypes["CHR"]=="O" and counts.dtypes["EXON_ID"]=="O"):
-            logger.error("One or both of the 'CHR' and 'EXON_ID' columns are not in the correct format. Please check it.\n"
-                        +"The column must be a python object [str]")
-            sys.exit(1)
-        elif not (counts.dtypes["START"]=="int" and counts.dtypes["END"]=="int"):
-            logger.error("One or both of the 'START' and 'END' columns are not in the correct format. Please check it.\n"
-                        +"The columns must contain integers.")
-            sys.exit(1)
-        #Check if data are identical
-        elif not (counts['CHR'].isin(exons['CHR']).value_counts())[True]==len(exons):
-            logger.error("'CHR' column in counts dataframe isn't identical to those in the exonic interval file. Please check it.")
-            sys.exit(1)
-        elif not (counts['START'].isin(exons['START']).value_counts())[True]==len(exons):
-            logger.error("'START' column in counts dataframe isn't identical to those in the exonic interval file. Please check it.")
-            sys.exit(1)
-        elif not (counts['END'].isin(exons['END']).value_counts())[True]==len(exons):
-            logger.error("END column in counts dataframe isn't identical to those in the exonic interval file. Please check it.")
-            sys.exit(1)
-        elif not (counts['EXON_ID'].isin(exons['EXON_ID']).value_counts())[True]==len(exons):
-            logger.error("'EXON_ID' column in counts dataframe isn't identical to those in the exonic interval file. Please check it.")
-            sys.exit(1)
-        else: 
-            #check that the old samples columns data is in [int] format.
-            namesSampleToCheck=[]
-            for columnIndex in range(5,len(counts.columns)):
-                if not counts.iloc[:,columnIndex].dtypes=="int":
-                    namesSampleToCheck.append(counts.iloc[:,columnIndex].columns)
-            if len(namesSampleToCheck)>0:
-                logger.error("Columns in %s, sample(s) %s are not in [int] format.\n"+
-                "Please check and correct these before trying again.", countFile,(",".join(namesSampleToCheck)))
-                sys.exit(1)
-    else:
-        logger.error("Old counts file %s doesn't have the same lines number as the exonic interval file.\n"+
-        "Transcriptome version has probably changed.\n"+
-        "In this case the whole samples set re-analysis must be done.\n"+
-        "Do not set the --counts option.",countFile)
+    #Check if data are identical: this checks geometry, column dtypes, and values
+    if not (counts.iloc[:,0:4].equals(exons)):
+        logger.error("first 4 columns in countFile %s differ from the BED (after padding and sorting),"+
+                     "if you updated your transcript set (BED) you cannot re-use the previous countFile,\n"+
+                     "in this case you must re-analyze all samples (ie don't use --counts)", countFile)
         sys.exit(1)
+    #check that the count columns are ints
+    for columnIndex in range(4,len(counts.columns)):
+        if not counts.dtypes[columnIndex]==int:
+            # just die: this shouldn't happen if countFile was made by us
+            logger.error("in countFile %s, column for sample %s is not all ints\n",
+                         countFile, counts.columns[columnIndex]);
+            sys.exit(1)
     return(counts)
 
 ####################################################
@@ -554,7 +528,7 @@ ARGUMENTS:
                 headerless tab-separated file, columns contain CHR START END EXON_ID)
    --counts [str] optional: pre-existing counts file produced by this program, content will be copied
    --tmp [str]: pre-existing dir for temp files, faster is better (eg tmpfs), default: """+tmpDir+"""
-   --threads [int]: number of threads to allocate for samtools sort (default: """+str(threads)+"\n"
+   --threads [int]: number of threads to allocate for samtools sort, default: """+str(threads)+"\n"
 
     
     try:
