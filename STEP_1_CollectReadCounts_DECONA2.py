@@ -12,7 +12,7 @@
 #        +-10 bp, sorting the positions on the 4 columns (1:CHR,2:START,3:END,4:Exon_ID)
 #   E) Creating NCL for each chromosome
 #       "exonDict" function used from the ncls module, creation of a dictionary :
-#        key = chromosome , value : interval_tree
+#        key = chromosome , value : NCL object
 #   F) Parsing old counts file (.tsv) if exist else new count Dataframe creation 
 #       "parseCountFile" function used to check the integrity of the file against the previously
 #        generated bed file. It also allows to check if the pre-existing counts are in a correct format.
@@ -272,21 +272,8 @@ def countFrags(bamFile, exonDict, nbOfExons, processTmpDir, num_threads):
         #Aligments = alignements count, QN= qnames counts , Frag= fragments counts
         keys=["AlignmentsInBam",
             "AlignmentsOnMainChr",
-            "QNProcessed",  #sum of all folowing keys => control
-            "QNAliOnDiffChrSkip",
-            "QNSameReadDiffStrandSkip",
-            "QNSingleReadSkip",
-            "QNNbAliR&FBetween1-3", #sum of the following 7 keys => control
-            "QN1F&1R",
-            "QN2F&1R_2FOverlapSkip",
-            "QN2F&1R_SA",
-            "QN1F&2R_2ROverlapSkip",
-            "QN1F&2R_SA",
-            "QNAliGapLength>1000bpSkip",
-            "QNAliBackToBackSkip",
-            "QNAli2F&2R_SA", #sum of the following 2 keys => control
-            "QNAli2F&2R_F1&R1_F2&R2_NotOverlapSkip",
-            "QNAliUnsuitableCombination_aliRorF>3Skip",
+            "QnameInBAM",
+            "QnameProcessed",
             "FragOverlapOnTargetInterval", # equal to the sum of VecExonCount results
             "QNNoOverlapOnTargetIntervalSkip",
             "QNOverlapOnTargetInterval"]
@@ -327,7 +314,7 @@ def countFrags(bamFile, exonDict, nbOfExons, processTmpDir, num_threads):
             #################################################################################################
             #B] If we are done with previous qname: process it and reset accumulators
             if (qname!=align[0]) and (qname!=""):  # align[0] is the qname
-                dictStatCount["QNProcessed"]+=1
+                dictStatCount["QnameInBAM"]+=1
                 if not qBad:
                     Qname2ExonCount(qchrom,qstartF,qendF,qstartR,qendR,qReads,exonDict,vecExonCount,
                                     dictStatCount)
@@ -354,7 +341,7 @@ def countFrags(bamFile, exonDict, nbOfExons, processTmpDir, num_threads):
                 qchrom=align[2]
             elif qchrom!=align[2]:
                 qBad=True
-                dictStatCount["QNAliOnDiffChrSkip"]+=1
+                dictStatCount["QnameProcessed"]+=1
                 continue
             # else same chrom, don't modify qchrom
 
@@ -393,13 +380,13 @@ def countFrags(bamFile, exonDict, nbOfExons, processTmpDir, num_threads):
                 qFirstOnForward=currentFirstOnForward
             elif qFirstOnForward!=currentFirstOnForward:
                 qBad=True
-                dictStatCount["QNSameReadDiffStrandSkip"]+=1
+                dictStatCount["QnameProcessed"]+=1
                 continue
             # else this ali agrees with previous alis for qname -> NOOP
 
         #################################################################################################
         #VI]  Process last Qname
-        dictStatCount["QNProcessed"]+=1
+        dictStatCount["QnameInBAM"]+=1
         if not qBad:
             Qname2ExonCount(qchrom,qstartF,qendF,qstartR,qendR,qReads,exonDict,vecExonCount,
                             dictStatCount)
@@ -417,25 +404,12 @@ def countFrags(bamFile, exonDict, nbOfExons, processTmpDir, num_threads):
 
         ##################################################################################################
         #VIII] sanity checks
-        NBTotalQname=(dictStatCount["QNAliOnDiffChrSkip"]+
-                      dictStatCount["QNSameReadDiffStrandSkip"]+
-                      dictStatCount["QNSingleReadSkip"]+
-                      dictStatCount["QN1F&1R"]+
-                      dictStatCount["QN2F&1R_2FOverlapSkip"]+
-                      dictStatCount["QN2F&1R_SA"]+
-                      dictStatCount["QN1F&2R_2ROverlapSkip"]+
-                      dictStatCount["QN1F&2R_SA"]+
-                      dictStatCount["QNAliGapLength>1000bpSkip"]+
-                      dictStatCount["QNAliBackToBackSkip"]+
-                      dictStatCount["QNAli2F&2R_SA"]+
-                      dictStatCount["QNAli2F&2R_F1&R1_F2&R2_NotOverlapSkip"]+
-                      dictStatCount["QNAliUnsuitableCombination_aliRorF>3Skip"])
-        if ((NBTotalQname != dictStatCount["QNProcessed"]) or 
+        if ((dictStatCount["QnameProcessed"]!= dictStatCount["QnameInBAM"]) or 
             (sum(vecExonCount) != dictStatCount["FragOverlapOnTargetInterval"])):
             statslist=dictStatCount.items()
             logger.error("Not all of %s's qnames were processed! BUG in code, FIXME! Stats: %s\n"+
-                         "Nb total Qname : %s. Nb Qname overlaping exons: %s\n",
-                         bamFile,statslist,NBTotalQname,sum(vecExonCount))
+                         "Nb Qname overlaping exons: %s\n",
+                         bamFile,statslist,sum(vecExonCount))
             raise Exception("sanity-check failed")
 
         # AOK, return counts
@@ -480,7 +454,7 @@ def Qname2ExonCount(chromString,startFList,endFList,startRList,endRList,readsBit
     ########################
     #-Removing Qnames containing only one read (possibly split into several alignments, mostly due to MAPQ filtering)
     if readsBit!=3:
-        dictStatCount["QNSingleReadSkip"]+=1
+        dictStatCount["QnameProcessed"]+=1
         return
 
     elif (1<len(startFList+startRList)<=3): # only 1 or 2 ali on each strand but not 2 on each
@@ -489,29 +463,29 @@ def Qname2ExonCount(chromString,startFList,endFList,startRList,endRList,readsBit
             GapLength=min(startRList)-max(endFList)# gap length between the two alignments (negative if overlapping)
             if (GapLength<=1000):
                 if (len(startFList)==1) and (len(startRList)==1):# one ali on each strand, whether SA or not doesn't matter
-                    dictStatCount["QN1F&1R"]+=1
+                    dictStatCount["QnameProcessed"]+=1
                     Frag=[min(startFList[0],startRList[0]),max(endFList[0],endRList[0])]
                 elif (len(startFList)==2) and (len(startRList)==1):
                     if (min(startFList)<max(endFList)) and (min(endFList)>max(startFList)):
-                        dictStatCount["QN2F&1R_2FOverlapSkip"]+=1
+                        dictStatCount["QnameProcessed"]+=1
                         return # Qname deletion if the ali on the same strand overlap (SV ?!)
                     else:
-                        dictStatCount["QN2F&1R_SA"]+=1
+                        dictStatCount["QnameProcessed"]+=1
                         Frag=[min(startFList[0],max(startRList)),max(endFList[0],max(endRList)),
                               min(startFList),min(endFList)]
                 elif (len(startFList)==1) and (len(startRList)==2):
                     if (min(startRList)<max(endRList)) and (min(endRList)>max(startRList)):
-                        dictStatCount["QN1F&2R_2ROverlapSkip"]+=1
+                        dictStatCount["QnameProcessed"]+=1
                         return # Qname deletion if the ali on the same strand overlap (SV ?!)
                     else:
-                        dictStatCount["QN1F&2R_SA"]+=1
+                        dictStatCount["QnameProcessed"]+=1
                         Frag=[min(startFList[0],min(startRList)),max(endFList[0],min(endRList)),
                               max(startRList),max(endRList)]
             else: # Skipped Qname, GapLength too large, big del !?
-                dictStatCount["QNAliGapLength>1000bpSkip"]+=1 # TODO extract the associated Qnames for breakpoint detection.
+                dictStatCount["QnameProcessed"]+=1 # TODO extract the associated Qnames for breakpoint detection.
                 return
         else: # Skipped Qname, ali back-to-back (SV, dup ?!)
-            dictStatCount["QNAliBackToBackSkip"]+=1
+            dictStatCount["QnameProcessed"]+=1
             return
 
     elif(len(startFList)==2) and (len(startRList)==2): # only 2F and 2 R combinations
@@ -522,12 +496,12 @@ def Qname2ExonCount(chromString,startFList,endFList,startRList,endRList,readsBit
                    max(min(endFList),min(endRList)),
                    min(max(startFList),max(startRList)),
                    max(max(endFList),max(endRList))]
-            dictStatCount["QNAli2F&2R_SA"]+=1
+            dictStatCount["QnameProcessed"]+=1
         else: # The alignments describe SVs that are too close => Skipped Qname
-            dictStatCount["QNAli2F&2R_F1&R1_F2&R2_NotOverlapSkip"]+=1
+            dictStatCount["QnameProcessed"]+=1
             return
     else: # At least 3 alignments on one strand => Skipped Qname
-        dictStatCount["QNAliUnsuitableCombination_aliRorF>3Skip"]+=1
+        dictStatCount["QnameProcessed"]+=1
         return
     #####################################################################
     ###II)- FRAGMENT COUNTING FOR EXONIC REGIONS
