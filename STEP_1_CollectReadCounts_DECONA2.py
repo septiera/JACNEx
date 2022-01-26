@@ -277,7 +277,7 @@ def countFrags(bamFile, exonDict, nbOfExons, processTmpDir, num_threads):
 
         ############################################
         # IV] Regular expression to identify alignments on the main chromosomes (no ALTs etc)
-        mainChr=re.compile("^(chr[\dXYM][\dT]?)|([\dXYM][\dT]?)$")
+        mainChr=re.compile("^(chr[\dXYM][\dT]?)$|([\dXYM][\dT]?)$")
         ############################################
         # V] Function Main loop
         #Browse the file sorted on the qnames and having undergone the appropriate filters
@@ -425,7 +425,6 @@ def Qname2ExonCount(chromString,startFList,endFList,startRList,endRList,exonDict
         return
 
     elif (1<len(startFList+startRList)<=3): # only 1 or 2 ali on each strand but not 2 on each
-        dictStatCount["QNNbAliR&FBetween1-3"]+=1
         if max(startFList)<min(endRList):# alignments are not back-to-back
             GapLength=min(startRList)-max(endFList)# gap length between the two alignments (negative if overlapping)
             if (GapLength<=1000):
