@@ -277,7 +277,7 @@ def countFrags(bamFile, exonDict, nbOfExons, processTmpDir, num_threads):
 
         ############################################
         # IV] Regular expression to identify alignments on the main chromosomes (no ALTs etc)
-        mainChr=re.compile("^(chr[\dXYM]\d?)|([\dXYM]\d?)$")
+        mainChr=re.compile("^(chr[\dXYM][\dT]?)|([\dXYM][\dT]?)$")
         ############################################
         # V] Function Main loop
         #Browse the file sorted on the qnames and having undergone the appropriate filters
