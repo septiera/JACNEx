@@ -215,9 +215,36 @@ def parseCountFile(countFile, exons):
 # file used to create the NCLs.
 # Raises an exception if something goes wrong
 def countFrags(bamFile, exonDict, nbOfExons, processTmpDir, num_threads):
+    # We need to process all alignments for a given qname simultaneously
+    # => ALGORITHM:
+    # parse alignements from BAM, sorted by qname;
+    # if qname didn't change -> just apply some QC and if AOK store the
+    #   data we need in accumulators,
+    # if the qname changed -> process accumulated data for the previous
+    #   qname (with Qname2ExonCount), then reset accumulators and store
+    #   data for new qname.
+
+    # Result that will be returned: list containing the number of fragments
+    # overlapping each exon, indexes correspond to the labels in the NCL
+    vecExonCount=[0]*nbOfExons
+
+    # Accumulators: 
+    # QNAME and CHR
+    qname, qchrom = "", ""
+    # START and END coordinates on the genome of each alignment for this qname,
+    # aligning on the Forward or Reverse genomic strands
+    qstartF, qstartR, qendF, qendR = [], [], [], []
+    # qFirstOnForward==1 if the first-in-pair read of this qname is on the
+    # forward reference strand, -1 if it's on the reverse strand, 0 if we don't yet know
+    qFirstOnForward=0
+    # qBad==True if qname contains alignments on differents chromosomes,
+    # or if some of it's alis disagree regarding the strand on which the
+    # first/last read-in-pair aligns
+    qBad=False
+
     with tempfile.TemporaryDirectory(dir=processTmpDir) as SampleTmpDir:
         ############################################
-        # I] preprocessing:
+        # Preprocessing:
         # Our algorithm needs to parse the alignements sorted by qname,
         # "samtools sort -n" allows this
         cmd1 ="samtools sort -n "+bamFile+" -@ "+str(num_threads)+" -T "+SampleTmpDir+" -O sam"
@@ -236,47 +263,12 @@ def countFrags(bamFile, exonDict, nbOfExons, processTmpDir, num_threads):
         cmd2 ="samtools view -q 20 -F 1796"
         p2 = subprocess.Popen(cmd2.split(), stdin=p1.stdout, stdout=subprocess.PIPE, universal_newlines=True)
 
-        # III] initialization
-        # list containing the number of fragments overlapping each exon, indexes
-        # correspond to the labels in the NCL
-        vecExonCount=[0]*nbOfExons
-
-        # Counters for sanity-checking: TODO document each key, or choose 
-        # clearer key names? or just get rid of this, it was a debugging 
-        # tool and is maybe no longer useful?
-        keys=["FragOverlapOnTargetInterval", # equal to the sum of VecExonCount results
-              "QNNoOverlapOnTargetIntervalSkip",
-              "QNOverlapOnTargetInterval"]
-        dictStatCount={ i : 0 for i in keys }
-
-        # We need to process all alignments for a given qname simultaneously
-        # => ALGORITHM:
-        # parse alignements from BAM (sorted by qname by cmd1&cmd2 above);
-        # if qname didn't change -> just apply some QC and if AOK store the
-        #   data we need in accumulators,
-        # if the qname changed -> process accumulated data for the previous
-        #   qname (with Qname2ExonCount), then reset accumulators and store
-        #   data for new qname.
-
-        # Accumulators: 
-        # QNAME and CHR
-        qname, qchrom = "", ""
-        # START and END coordinates on the genome of each alignment for this qname,
-        # aligning on the Forward or Reverse genomic strands
-        qstartF, qstartR, qendF, qendR = [], [], [], []
-        # qFirstOnForward==1 if the first-in-pair read of this qname is on the
-        # forward reference strand, -1 if it's on the reverse strand, 0 if we don't yet know
-        qFirstOnForward=0
-        # qBad==True if qname contains alignments on differents chromosomes,
-        # or if some of it's alis disagree regarding the strand on which the
-        # first/last read-in-pair aligns
-        qBad=False
-
         ############################################
-        # IV] Regular expression to identify alignments on the main chromosomes (no ALTs etc)
+        # Regular expression to identify alignments on the main chromosomes (no ALTs etc)
         mainChr=re.compile("^chr[\dXYM][\dT]?$|^[\dXYM][\dT]?$")
+
         ############################################
-        # V] Function Main loop: parse each alignment
+        # Main loop: parse each alignment
         for line in p2.stdout:
             line=line.rstrip('\r\n')
             align=line.split('\t')
@@ -286,7 +278,7 @@ def countFrags(bamFile, exonDict, nbOfExons, processTmpDir, num_threads):
                 continue
 
             #################################################################################################
-            #B] If we are done with previous qname: process it and reset accumulators
+            # If we are done with previous qname: process it and reset accumulators
             if (qname!=align[0]) and (qname!=""):  # align[0] is the qname
                 if not qBad:
                     Qname2ExonCount(qchrom,qstartF,qendF,qstartR,qendR,exonDict,vecExonCount,dictStatCount)
@@ -298,8 +290,8 @@ def countFrags(bamFile, exonDict, nbOfExons, processTmpDir, num_threads):
                 continue
 
             #################################################################################################
-            #C] Either we're in the same qname and it's not bad, or we changed qname -> in both
-            # cases update accumulators with current line
+            # Either we're in the same qname and it's not bad, or we changed qname
+            # -> in both cases update accumulators with current line
             if qname=="" :
                 qname=align[0]
 
@@ -347,12 +339,13 @@ def countFrags(bamFile, exonDict, nbOfExons, processTmpDir, num_threads):
                 qendR.append(currentEnd)
 
         #################################################################################################
-        #VI]  Process last Qname
+        # Done reading lines from BAM
+
+        # process last Qname
         if not qBad:
             Qname2ExonCount(qchrom,qstartF,qendF,qstartR,qendR,exonDict,vecExonCount,dictStatCount)
 
-        ##################################################################################################
-        # VII] wait for samtools to finish cleanly and check return codes
+        # wait for samtools to finish cleanly and check return codes
         if (p1.wait() != 0):
             logger.error("in countFrags, while processing %s, the 'samtools sort' subprocess returned %s",
                          bamFile, p1.returncode)
@@ -361,16 +354,7 @@ def countFrags(bamFile, exonDict, nbOfExons, processTmpDir, num_threads):
             logger.error("in countFrags, while processing %s, the 'samtools view' subprocess returned %s",
                          bamFile, p2.returncode)
             raise Exception("samtools-view failed")
-
-        ##################################################################################################
-        #VIII] sanity checks
-        if (sum(vecExonCount) != dictStatCount["FragOverlapOnTargetInterval"]):
-            statslist=dictStatCount.items()
-            logger.error("Not all of %s's qnames were processed! BUG in code, FIXME! Stats: %s\n"+
-                         "Nb Qname overlaping exons: %s\n",
-                         bamFile,statslist,sum(vecExonCount))
-            raise Exception("sanity-check failed")
-
+        
         # AOK, return counts
         return(vecExonCount)     
     
