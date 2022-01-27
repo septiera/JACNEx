@@ -188,8 +188,8 @@ def parseCountFile(countFile, exons):
         sys.exit(1)
     #Check if data are identical: this checks geometry, column dtypes, and values
     if not (counts.iloc[:,0:4].equals(exons)):
-        logger.error("first 4 columns in countFile %s differ from the BED (after padding and sorting),"+
-                     "if you updated your transcript set (BED) you cannot re-use the previous countFile,\n"+
+        logger.error("first 4 columns in countFile %s differ from the BED (after padding and sorting), "+
+                     "if you updated your transcript set (BED) you cannot re-use the previous countFile, "+
                      "in this case you must re-analyze all samples (ie don't use --counts)", countFile)
         sys.exit(1)
     #check that the count columns are ints
@@ -241,20 +241,17 @@ def countFrags(bamFile, exonDict, nbOfExons, processTmpDir, num_threads):
         # correspond to the labels in the NCL
         vecExonCount=[0]*nbOfExons
 
-        #Process control : skip mention corresponds to the Qnames removal for fragments counts
-        #Aligments = alignements count, QN= qnames counts , Frag= fragments counts
-        keys=["AlignmentsInBam",
-              "AlignmentsOnMainChr",
-              "QnameInBAM",
-              "QnameProcessed",
-              "FragOverlapOnTargetInterval", # equal to the sum of VecExonCount results
+        # Counters for sanity-checking: TODO document each key, or choose 
+        # clearer key names? or just get rid of this, it was a debugging 
+        # tool and is maybe no longer useful?
+        keys=["FragOverlapOnTargetInterval", # equal to the sum of VecExonCount results
               "QNNoOverlapOnTargetIntervalSkip",
               "QNOverlapOnTargetInterval"]
         dictStatCount={ i : 0 for i in keys }
 
         # We need to process all alignments for a given qname simultaneously
         # => ALGORITHM:
-        # parse alignements from BAM,
+        # parse alignements from BAM (sorted by qname by cmd1&cmd2 above);
         # if qname didn't change -> just apply some QC and if AOK store the
         #   data we need in accumulators,
         # if the qname changed -> process accumulated data for the previous
@@ -268,8 +265,8 @@ def countFrags(bamFile, exonDict, nbOfExons, processTmpDir, num_threads):
         # aligning on the Forward or Reverse genomic strands
         qstartF, qstartR, qendF, qendR = [], [], [], []
         # qFirstOnForward==1 if the first-in-pair read of this qname is on the
-        # forward reference strand, 0 if it's on the reverse strand, -1 if we don't yet know
-        qFirstOnForward=-1
+        # forward reference strand, -1 if it's on the reverse strand, 0 if we don't yet know
+        qFirstOnForward=0
         # qBad==True if qname contains alignments on differents chromosomes,
         # or if some of it's alis disagree regarding the strand on which the
         # first/last read-in-pair aligns
@@ -279,27 +276,23 @@ def countFrags(bamFile, exonDict, nbOfExons, processTmpDir, num_threads):
         # IV] Regular expression to identify alignments on the main chromosomes (no ALTs etc)
         mainChr=re.compile("^chr[\dXYM][\dT]?$|^[\dXYM][\dT]?$")
         ############################################
-        # V] Function Main loop
-        #Browse the file sorted on the qnames and having undergone the appropriate filters
+        # V] Function Main loop: parse each alignment
         for line in p2.stdout:
             line=line.rstrip('\r\n')
             align=line.split('\t')
-            dictStatCount["AlignmentsInBam"]+=1
 
-            #################################################################################################
-            #A] Selection of information for the current alignment only if it is on main chr
-            if not mainChr.match(align[2]): continue #TODO make this work for different naming conventions
-            dictStatCount["AlignmentsOnMainChr"]+=1 #Only alignments on the main chromosomes are treated
+            # skip ali if not on main chr
+            if not mainChr.match(align[2]): 
+                continue
 
             #################################################################################################
             #B] If we are done with previous qname: process it and reset accumulators
             if (qname!=align[0]) and (qname!=""):  # align[0] is the qname
-                dictStatCount["QnameInBAM"]+=1
                 if not qBad:
                     Qname2ExonCount(qchrom,qstartF,qendF,qstartR,qendR,exonDict,vecExonCount,dictStatCount)
                 qname, qchrom = "", ""
                 qstartF, qstartR, qendF, qendR = [], [], [], []
-                qFirstOnForward=-1
+                qFirstOnForward=0
                 qBad=False
             elif qBad: #same qname as previous ali but we know it's bad -> skip
                 continue
@@ -315,7 +308,6 @@ def countFrags(bamFile, exonDict, nbOfExons, processTmpDir, num_threads):
                 qchrom=align[2]
             elif qchrom!=align[2]:
                 qBad=True
-                dictStatCount["QnameProcessed"]+=1
                 continue
             # else same chrom, don't modify qchrom
 
@@ -326,9 +318,24 @@ def countFrags(bamFile, exonDict, nbOfExons, processTmpDir, num_threads):
             if currentFlag&16 :
                 currentStrand="R"
 
-            #Processing for the positions lists for ali R and F
+            # currentFirstOnForward==1 if according to this ali, the first-in-pair
+            # read is on the forward strand, -1 otherwise
+            currentFirstOnForward=-1
+            #flag 64 the alignment is first in pair, otherwise 128
+            if (((currentFlag&64) and (currentStrand=="F")) or 
+                ((currentFlag&128) and (currentStrand=="R"))) :
+                currentFirstOnForward=1
+            if qFirstOnForward==0:
+                # first ali for this qname
+                qFirstOnForward=currentFirstOnForward
+            elif qFirstOnForward!=currentFirstOnForward:
+                qBad=True
+                continue
+            # else this ali agrees with previous alis for qname -> NOOP
+
+            # START and END coordinates of current alignment
             currentStart=int(align[3])
-            #Calculation of the CIGAR dependent 'end' position
+            # END depends on CIGAR
             currentCigar=align[5]
             currentAliLength=AliLengthOnRef(currentCigar)
             currentEnd=currentStart+currentAliLength-1
@@ -339,24 +346,8 @@ def countFrags(bamFile, exonDict, nbOfExons, processTmpDir, num_threads):
                 qstartR.append(currentStart)
                 qendR.append(currentEnd)
 
-            # currentFirstOnForward==1 if according to this ali, the first-in-pair read is on
-            # the forward strand, 0 otherwise
-            currentFirstOnForward=0
-            #flag 64 the alignment is first in pair, otherwise 128
-            if ((currentFlag&64) and (currentStrand=="F")) or ((currentFlag&128) and (currentStrand=="R")) :
-                currentFirstOnForward=1
-            if qFirstOnForward==-1:
-                # first ali for this qname
-                qFirstOnForward=currentFirstOnForward
-            elif qFirstOnForward!=currentFirstOnForward:
-                qBad=True
-                dictStatCount["QnameProcessed"]+=1
-                continue
-            # else this ali agrees with previous alis for qname -> NOOP
-
         #################################################################################################
         #VI]  Process last Qname
-        dictStatCount["QnameInBAM"]+=1
         if not qBad:
             Qname2ExonCount(qchrom,qstartF,qendF,qstartR,qendR,exonDict,vecExonCount,dictStatCount)
 
@@ -373,8 +364,7 @@ def countFrags(bamFile, exonDict, nbOfExons, processTmpDir, num_threads):
 
         ##################################################################################################
         #VIII] sanity checks
-        if ((dictStatCount["QnameProcessed"]!= dictStatCount["QnameInBAM"]) or 
-            (sum(vecExonCount) != dictStatCount["FragOverlapOnTargetInterval"])):
+        if (sum(vecExonCount) != dictStatCount["FragOverlapOnTargetInterval"]):
             statslist=dictStatCount.items()
             logger.error("Not all of %s's qnames were processed! BUG in code, FIXME! Stats: %s\n"+
                          "Nb Qname overlaping exons: %s\n",
