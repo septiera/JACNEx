@@ -2,32 +2,17 @@
 
 
 The pipeline enables germline Copy Number Variations (CNVs) to be called from human exome sequencing data.<br>
-The input data of this pipeline are Binary Alignment Maps (BAM) and Browser Extensible Data (BED) containing the intervals associated with the canonical transcripts.<br>
+The input data of this pipeline are Binary Alignment Maps (BAM) and Browser Extensible Data (BED) containing the intervals<br>
+associated with the canonical transcripts.
 For more information how obtaining the different files see https://github.com/ntm/grexome-TIMC-Primary<br>
 
 ### EXAMPLE USAGE:
 
-* STEP 0 : Interval bed creation <br>
+* STEP 1 : Counting step  <br>
+ * Bedtools (reads counting)<br>
 
-This step consists in creating an interval file in the bed format.<br>
-It performs a verification of the input bed file, performs a padding +-10pb and sorts the data in genomic order.<br>
-It is necessary to respect the format of the reference genome name for pipeline interoperability at each new process started.<br>
-```
-BED="canonicalTranscripts.bed.gz"
-GENOMEV="GRCH38_vXXX"
-OUTPUT="~/Scripts/"
-/bin/time -v ~/FolderContainsScript/python3.6 STEP_0_IntervalList.py -b $BED -n $GENOMEV -o $OUTPUT 2> ./.err
-```
-
-* STEP 1 : Counting reads  <br>
- * Bedtools Process<br>
-
-This step uses the bam files to record the number of reads overlapping the intervals present in the bed file created in step 0.<br>
-It will create a new folder for storing the results. <br>
-This script uses Bedtoolsv2.29.1 and its multibamCov program.<br>
-It is executed in parallel to reduce the process time.<br>
-Warning: the number of cpu used for parallelization is optimized.<br>
-If the number of cpu is increased manually within the script it can lead to waiting times increasing the global process time.<br>
+This step uses the bam files to record the reads number overlapping the intervals present in a bed file (not padded).<br>
+This script uses Bedtoolsv2.26.0 and its multicov program.<br>
 The script provides a read count file for each sample analyzed (tsv files).<br>
 
 ```
@@ -37,33 +22,51 @@ OUTPUT="~/SelectOutputFolder/"
 /bin/time -v ~/FolderContainsScript/python3.6 STEP_1_CollectReadCounts_Bedtools.py -i $INTERVAL -b $BAM -o $OUTPUT 2> ./.err
 ```
 
- * DECONA2 Process
+ * Customized fragments counting
 
-This script allows to perform both a fragmentation count and an unmatched reads count to take into account the splits reads that pollute DECON results. <br>
-The outputs of this script are identical to those of bedtools, i.e. tsv containing 5 columns (chrom, start, end, ENST_ExonNb, Count).<br>
-The files are thus directly usable by the next pre-modified step.<br>
+This script allows to perform a fragment count. <br>
+It also uses bam as input, and samtools v1.9 (using htslib 1.9) to sort and filter them.
+The bed used is padded by +-10bp (to possibly capture uncovered exons, but catchable by fragment counting)
+The outputs of this script are identical to those of bedtools, i.e. tsv containing 5 first columns (CHR, START, END, EXON_ID),<br>
+following columns are the count results for each sample.<br>
+The files are thus directly usable by the next step.<br>
+It is possible to complete the counts when adding new patients.<br>
 
 ```
-INTERVAL="~/STEP0_GRCH38_vXXX_Padding10pb_NBexons_Date.bed"
-BAM="~/BAMs/"
-OUTPUT="~/SelectOutputFolder/"
-TMPFOLDER="~/tmpDir/"
-/bin/time -v ~/FolderContainsScript/python3.6 STEP_1_CollectReadCounts_DECONA2.py -i $INTERVAL -b $BAM -o $OUTPUT -t $TMPFOLDER 2> ./.err
-```
+# mandatory parameters
+BAM="sample1.bam,sample2.bam"
+BED="EnsemblCanonicalTranscripts.bed.gz"
+TMP="/tmp/"
+OUT="FragCount.tsv"
+ERR="step1.err"
+# optionnal parameters
+COUNT="OldFragCount.tsv"
+# execution
+python3 STEP_1_CollectReadCounts_DECONA2.py --bams $BAM --bed $BED --counts $COUNT --tmp $TMP --threads 20 > $OUT 2> $ERR 
 
+```
 
 * STEP 2 : CNV Calling<br>
 
 This step performs the CNV calling.<br>
-However it uses the DECON/ExomeDepth script in R modified to allow inserting different inputs (tsv instead of Rdata).<br>
-It has also been modified by adding a sanity check of the input files.<br>
-The R script does not have the part allowing to generate the plots anymore.<br>
-The output file is in tsv format and contains the complete CNV calling results for all samples.<br>
+However it uses the ExomeDepth(v1.1.15) script in R .<br>
+The calling is based on the betabinomial and the segmentation on the HMM (hidden markov model)<br>
+The input file is .tsv counting reads(bedtools) or fragments(customized counting).<br>
+There are two output files: one for the calling results and the other for keeping track of the reference sets used in the process.<br>
+In this script there is also the calling check when a new sample is added to the cohort.<br>
+
 ```
-INTERVAL="~/STEP0_GRCH38_v104_Padding10pb_NBexons_Date.bed"
-READF="~/Bedtools/"
-OUTPUT="~/SelectOutputFolder/"
-/bin/time -v ~/FolderContainsScript/python3.6 STEP_2_GermlineCNVCaller_DECoNBedtools.py -i $BED -r $READF -o $OUTPUT 2> ./.err
+# mandatory parameters
+COUNT="FragCount.tsv"
+OUTC="CallingResults_ExomeDepth.tsv"
+OUTR="RefSet_ExomeDepth.tsv"
+ERR="step2_CNVcall.err"
+# optionnal parameters
+OLDC="OldCallingResults_ExomeDepth.tsv"
+OLDR="OldRefSet_ExomeDepth.tsv"
+# execution
+python3 STEP_2_GermlineCNVCaller_DECoNBedtools.py --counts $COUNT --outputcalls $OUTC --outputrefs $OUTR --calls $OLDC --refs $OLDR 2> $ERR
+
 ```
 
 * STEP 3 : VCF Formatting<br>
