@@ -277,11 +277,11 @@ def countFrags(bamFile, exonDict, nbOfExons, processTmpDir, num_threads):
             if not mainChr.match(align[2]): 
                 continue
 
-            #################################################################################################
+            ######################################################################
             # If we are done with previous qname: process it and reset accumulators
             if (qname!=align[0]) and (qname!=""):  # align[0] is the qname
                 if not qBad:
-                    Qname2ExonCount(qchrom,qstartF,qendF,qstartR,qendR,exonDict,vecExonCount,dictStatCount)
+                    Qname2ExonCount(qchrom,qstartF,qendF,qstartR,qendR,exonDict,vecExonCount)
                 qname, qchrom = "", ""
                 qstartF, qstartR, qendF, qendR = [], [], [], []
                 qFirstOnForward=0
@@ -289,7 +289,7 @@ def countFrags(bamFile, exonDict, nbOfExons, processTmpDir, num_threads):
             elif qBad: #same qname as previous ali but we know it's bad -> skip
                 continue
 
-            #################################################################################################
+            ######################################################################
             # Either we're in the same qname and it's not bad, or we changed qname
             # -> in both cases update accumulators with current line
             if qname=="" :
@@ -343,7 +343,7 @@ def countFrags(bamFile, exonDict, nbOfExons, processTmpDir, num_threads):
 
         # process last Qname
         if not qBad:
-            Qname2ExonCount(qchrom,qstartF,qendF,qstartR,qendR,exonDict,vecExonCount,dictStatCount)
+            Qname2ExonCount(qchrom,qstartF,qendF,qstartR,qendR,exonDict,vecExonCount)
 
         # wait for samtools to finish cleanly and check return codes
         if (p1.wait() != 0):
@@ -381,89 +381,86 @@ def AliLengthOnRef(CIGARAlign):
 #   either actually covered by a sequencing read or closely flanked by a pair of mate reads;
 # - identify exons overlapped by the fragment, and increment their count.
 # Inputs:
-#   -chr variable [str]
-#   -4 lists for F and R strand positions (start and end) [int]
+#   -chr [str]
+#   -4 lists of ints for F and R strand positions (start and end)
 #   -the dictionary containing the NCLs for each chromosome
 #   -list of fragment counts for each exon, appropriate counts will be incremented
-#   -dictionary of sanity-checking counters
-# Nothing is returned, this function just updates vecExonCount and dictStatCount
-def Qname2ExonCount(chromString,startFList,endFList,startRList,endRList,exonDict,vecExonCount,dictStatCount):
-    Frag=[] #fragment(s) intervals
-    #####################################################################
-    ###I) DIFFERENTS CONDITIONS ESTABLISHMENT : for fragment detection
-    #####################################################################
-    ########################
-    #-Removing Qnames containing only one read (possibly split into several alignments, mostly due to MAPQ filtering)
+# Nothing is returned, this function just updates vecExonCount
+def Qname2ExonCount(chromString,startFList,endFList,startRList,endRList,exonDict,vecExonCount):
+    #######################################################
+    # apply QC filters
+    #######################################################
+    # skip Qnames that don't have alignments on both strands
     if (len(startFList)==0) or (len(startRList)==0):
-        dictStatCount["QnameProcessed"]+=1
+        return
+    # skip Qnames that have at least 3 alignments on a strand
+    if (len(startFList)>2) or (len(startRList)>2):
         return
 
-    elif (1<len(startFList+startRList)<=3): # only 1 or 2 ali on each strand but not 2 on each
-        if max(startFList)<min(endRList):# alignments are not back-to-back
-            GapLength=min(startRList)-max(endFList)# gap length between the two alignments (negative if overlapping)
-            if (GapLength<=1000):
-                if (len(startFList)==1) and (len(startRList)==1):# one ali on each strand, whether SA or not doesn't matter
-                    dictStatCount["QnameProcessed"]+=1
-                    Frag=[min(startFList[0],startRList[0]),max(endFList[0],endRList[0])]
-                elif (len(startFList)==2) and (len(startRList)==1):
-                    if (min(startFList)<max(endFList)) and (min(endFList)>max(startFList)):
-                        dictStatCount["QnameProcessed"]+=1
-                        return # Qname deletion if the ali on the same strand overlap (SV ?!)
-                    else:
-                        dictStatCount["QnameProcessed"]+=1
-                        Frag=[min(startFList[0],max(startRList)),max(endFList[0],max(endRList)),
-                              min(startFList),min(endFList)]
-                elif (len(startFList)==1) and (len(startRList)==2):
-                    if (min(startRList)<max(endRList)) and (min(endRList)>max(startRList)):
-                        dictStatCount["QnameProcessed"]+=1
-                        return # Qname deletion if the ali on the same strand overlap (SV ?!)
-                    else:
-                        dictStatCount["QnameProcessed"]+=1
-                        Frag=[min(startFList[0],min(startRList)),max(endFList[0],min(endRList)),
-                              max(startRList),max(endRList)]
-            else: # Skipped Qname, GapLength too large, big del !?
-                dictStatCount["QnameProcessed"]+=1 # TODO extract the associated Qnames for breakpoint detection.
-                return
-        else: # Skipped Qname, ali back-to-back (SV, dup ?!)
-            dictStatCount["QnameProcessed"]+=1
+    # if we have 2 alis on one strand, make sure they don't overlap
+    if (len(startFList)==2) and (min(endFList) > max(startFList)):
+        return
+    if (len(startRList)==2) and (min(endRList) > max(startRList)):
+        return
+
+    # gap length between the two reads (negative if overlapping)
+    GapLength=min(startRList)-max(endFList)
+    # CAVEAT: hard-coded cutoff here, could be a problem if the sequencing
+    # library fragments are often longer than maxGapBetweenReads+2*readLength
+    maxGapBetweenReads = 1000
+    if (GapLength > maxGapBetweenReads):
+        # large gap between forward and reverse reads, could be a DEL but
+        # we don't have reads spanning it -> insufficient evidence, skip qname
+        return
+
+    if (2 <= len(startFList+startRList) <= 3): # 1F1R or 2F1R or 1F2R
+        if max(startFList) > min(endRList):
+            # alignments are back-to-back (SV? Dup? alignment error?)
+            return
+    else: #2F2R
+        if (min(startFList) > min(endRList)) or (min(endFList) < min(startRList)):
+            # leftmost F and R alignments are back-to-back, or they don't
+            # overlap - but what could explain this? aberrant
+            return
+        elif (max(startFList) > max(endRList)) or (max(endFList) < max(startRList)):
+            # rightmost F and R alignments are back-to-back or don't overlap
             return
 
-    elif(len(startFList)==2) and (len(startRList)==2): # only 2F and 2 R combinations
-        #Only one possibility to generate fragments in this case
-        if ( (min(startFList)<min(endRList)) and (min(endFList)>min(startRList)) and
-             (max(startFList)<max(endRList)) and (max(endFList)>max(startRList)) ):
-            Frag=[min(min(startFList),min(startRList)),
-                   max(min(endFList),min(endRList)),
-                   min(max(startFList),max(startRList)),
-                   max(max(endFList),max(endRList))]
-            dictStatCount["QnameProcessed"]+=1
-        else: # The alignments describe SVs that are too close => Skipped Qname
-            dictStatCount["QnameProcessed"]+=1
-            return
-    else: # At least 3 alignments on one strand => Skipped Qname
-        dictStatCount["QnameProcessed"]+=1
-        return
-    #####################################################################
-    ###II)- FRAGMENT COUNTING FOR EXONIC REGIONS
-    #####################################################################
-    #Retrieving the corresponding NCL
+    #######################################################
+    # identify genomic regions covered by the fragment
+    #######################################################
+    # Frag: one or two genomic intervals covered by this fragment, 
+    # as a list of (pairs of) ints: start1,end1[,start2,end2]
+    # There is usually one interval, but if the fragment spans a DEL
+    # there can be 2
+    Frag=[]
+
+    if (len(startFList)==1) and (len(startRList)==1):
+        Frag=[min(startFList + startRList), max(endFList + endRList)]
+
+    elif (len(startFList)==2) and (len(startRList)==1):
+        Frag=[min(startFList), min(endFList),
+              min(max(startFList),startRList[0]), max(endFList + endRList)]
+
+    elif (len(startFList)==1) and (len(startRList)==2):
+        Frag=[min(startFList + startRList), max(endFList[0],min(endRList)),
+              max(startRList), max(endRList)]
+
+    elif(len(startFList)==2) and (len(startRList)==2):
+        Frag=[min(startFList + startRList), max(min(endFList),min(endRList)),
+              min(max(startFList),max(startRList)), max(endFList + endRList)]
+
+    #######################################################
+    # find exons overlapped by the fragment and increment counters
+    #######################################################
+    #Retrieve the corresponding NCL
     RefNCL=exonDict[chromString]
-
-    for idx in list(range(0,(int(len(Frag)/2)))):
-        SelectInterval=RefNCL.find_overlap(Frag[2*idx],Frag[2*idx+1])
-        # how many overlapping intervals did we find
-        overlaps=0
-        for interval in SelectInterval:
-            indexIntervalRef=int(interval[2])
-            vecExonCount[indexIntervalRef]+=1
-            dictStatCount["FragOverlapOnTargetInterval"]+=1
-            overlaps += 1
-
-        if overlaps==0:
-            dictStatCount["QNNoOverlapOnTargetIntervalSkip"]+=1
-            return #if the frag does not overlap a target interval => Skip
-        else:
-            dictStatCount["QNOverlapOnTargetInterval"]+=1
+    for idx in range(len(Frag) // 2):
+        overlappedExons = RefNCL.find_overlap(Frag[2*idx],Frag[2*idx+1])
+        for exon in overlappedExons:
+            exonIndex = int(exon[2])
+            vecExonCount[exonIndex] += 1
+ 
 
 ##############################################################################################################
 ######################################### Script Body ########################################################
