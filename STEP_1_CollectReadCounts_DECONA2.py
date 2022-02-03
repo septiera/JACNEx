@@ -397,11 +397,15 @@ def Qname2ExonCount(chromString,startFList,endFList,startRList,endRList,exonDict
     if (len(startFList)>2) or (len(startRList)>2):
         return
 
-    # if we have 2 alis on one strand, make sure they don't overlap
+    # if we have 2 alis on one strand and they overlap: merge them
+    # (there could be a short DUP, not trying to detect this but we still
+    # cover this genomic region with this qname)
     if (len(startFList)==2) and (min(endFList) > max(startFList)):
-        return
+        startFList = [min(startFList)]
+        endFList = [max(endFList)]
     if (len(startRList)==2) and (min(endRList) > max(startRList)):
-        return
+        startRList = [min(startRList)]
+        endRList = [max(endRList)]
 
     # gap length between the two reads (negative if overlapping)
     GapLength=min(startRList)-max(endFList)
