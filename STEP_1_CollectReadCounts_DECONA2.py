@@ -407,6 +407,27 @@ def Qname2ExonCount(chromString,startFList,endFList,startRList,endRList,exonDict
         startRList = [min(startRList)]
         endRList = [max(endRList)]
 
+    # if we have 2 alis on one strand (eg F) and one ali on the other (R),
+    # keep only the F ali that overlaps or is closest to the R ali
+    # 2F 1R
+    if (len(startFList)==2) and (len(startRList)==1):
+        if abs(startRList[0] - endFList[0]) < abs(startRList[0] - endFList[1]):
+            startFList = [startFList[0]]
+            endFList = [endFList[0]]
+        else:
+            startFList = [startFList[1]]
+            endFList = [endFList[1]]
+    # 1F 2R
+    if (len(startFList)==1) and (len(startRList)==2):
+        if abs(startRList[0] - endFList[0]) < abs(startRList[1] - endFList[0]):
+            startRList = [startRList[0]]
+            endRList = [endRList[0]]
+        else:
+            startRList = [startRList[1]]
+            endRList = [endRList[1]]
+
+    assert (len(startFList+startRList) !=3) # 2F1R or 1F2R now impossible
+
     # gap length between the two reads (negative if overlapping)
     GapLength=min(startRList)-max(endFList)
     # CAVEAT: hard-coded cutoff here, could be a problem if the sequencing
@@ -417,8 +438,8 @@ def Qname2ExonCount(chromString,startFList,endFList,startRList,endRList,exonDict
         # we don't have reads spanning it -> insufficient evidence, skip qname
         return
 
-    if (2 <= len(startFList+startRList) <= 3): # 1F1R or 2F1R or 1F2R
-        if max(startFList) > min(endRList):
+    if (len(startFList+startRList)==2): # 1F1R
+        if startFList[0] > endRList[0]:
             # alignments are back-to-back (SV? Dup? alignment error?)
             return
     else: #2F2R
