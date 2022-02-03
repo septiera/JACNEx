@@ -459,11 +459,18 @@ def Qname2ExonCount(chromString,startFList,endFList,startRList,endRList,exonDict
     #######################################################
     #Retrieve the corresponding NCL
     RefNCL=exonDict[chromString]
+    # we want to increment vecExonCount at most once per exon, even if
+    # we have two intervals and they both overlap the same exon
+    exonsSeen = []
     for idx in range(len(Frag) // 2):
         overlappedExons = RefNCL.find_overlap(Frag[2*idx],Frag[2*idx+1])
         for exon in overlappedExons:
             exonIndex = int(exon[2])
-            vecExonCount[exonIndex] += 1
+            if (exonIndex in exonsSeen):
+                continue
+            else:
+                exonsSeen.append(exonIndex)
+                vecExonCount[exonIndex] += 1
  
 
 ##############################################################################################################
