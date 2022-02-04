@@ -407,27 +407,6 @@ def Qname2ExonCount(chromString,startFList,endFList,startRList,endRList,exonDict
         startRList = [min(startRList)]
         endRList = [max(endRList)]
 
-    # if we have 2 alis on one strand (eg F) and one ali on the other (R),
-    # keep only the F ali that overlaps or is closest to the R ali
-    # 2F 1R
-    if (len(startFList)==2) and (len(startRList)==1):
-        if abs(startRList[0] - endFList[0]) < abs(startRList[0] - endFList[1]):
-            startFList = [startFList[0]]
-            endFList = [endFList[0]]
-        else:
-            startFList = [startFList[1]]
-            endFList = [endFList[1]]
-    # 1F 2R
-    if (len(startFList)==1) and (len(startRList)==2):
-        if abs(startRList[0] - endFList[0]) < abs(startRList[1] - endFList[0]):
-            startRList = [startRList[0]]
-            endRList = [endRList[0]]
-        else:
-            startRList = [startRList[1]]
-            endRList = [endRList[1]]
-
-    assert (len(startFList+startRList) !=3) # 2F1R or 1F2R now impossible
-
     # gap length between the two reads (negative if overlapping)
     GapLength=min(startRList)-max(endFList)
     # CAVEAT: hard-coded cutoff here, could be a problem if the sequencing
@@ -463,13 +442,33 @@ def Qname2ExonCount(chromString,startFList,endFList,startRList,endRList,exonDict
     if (len(startFList)==1) and (len(startRList)==1):
         Frag=[min(startFList + startRList), max(endFList + endRList)]
 
-    elif (len(startFList)==2) and (len(startRList)==1):
-        Frag=[min(startFList), min(endFList),
-              min(max(startFList),startRList[0]), max(endFList + endRList)]
+    elif (len(startFList)==2) and (len(startRList)==1): #2F1R
+        if (startRList[0]-max(endFList)<=maxGapBetweenReads):#first read F close to read R
+            if GapLength <0: #second read F overlap read R
+                #two frag counted for the qname (1F, 2F+1R)
+                Frag=[min(startFList), min(endFList),
+                    min(max(startFList),startRList[0]), max(max(endFList),endRList[0])]
+            else:    
+                #three frag counted for the qname (1F, 2F, 1R)
+                Frag=[min(startFList), min(endFList),
+                    max(startFList), max(endFList),
+                    startRList[0],endRList[0]]
 
-    elif (len(startFList)==1) and (len(startRList)==2):
-        Frag=[min(startFList + startRList), max(endFList[0],min(endRList)),
-              max(startRList), max(endRList)]
+        else: #discard first read F as not close to read R (2F,1R)
+            #One frag counted for the qname
+            Frag=[min(max(startFList),startRList[0]), max(endFList[0],max(endRList))]
+
+    elif (len(startFList)==1) and (len(startRList)==2):#1F2R
+        if ((max(startRList)-endFList[0])<=maxGapBetweenReads):
+            if GapLength <0: 
+                Frag=[min(startFList[0],min(startRList)), min(endRList[0],min(endFList)),
+                    max(startRList), max(endRList)]
+            else:    
+                Frag=[startFList[0],endFList[0],
+                min(startRList), min(endRList),
+                max(startRList), max(endRList)]          
+        else: 
+            Frag=[min(startFList[0],min(startRList)), max(endFList[0],min(endRList))]
 
     elif(len(startFList)==2) and (len(startRList)==2):
         Frag=[min(startFList + startRList), max(min(endFList),min(endRList)),
