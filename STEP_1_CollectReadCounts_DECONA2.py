@@ -397,11 +397,36 @@ def Qname2ExonCount(chromString,startFList,endFList,startRList,endRList,exonDict
     if (len(startFList)>2) or (len(startRList)>2):
         return
 
-    # if we have 2 alis on one strand, make sure they don't overlap
+    # if we have 2 alis on one strand and they overlap: merge them
+    # (there could be a short DUP, not trying to detect this but we still
+    # cover this genomic region with this qname)
     if (len(startFList)==2) and (min(endFList) > max(startFList)):
-        return
+        startFList = [min(startFList)]
+        endFList = [max(endFList)]
     if (len(startRList)==2) and (min(endRList) > max(startRList)):
-        return
+        startRList = [min(startRList)]
+        endRList = [max(endRList)]
+
+    # if we have 2 alis on one strand (eg F) and one ali on the other (R),
+    # keep only the F ali that overlaps or is closest to the R ali
+    # 2F 1R
+    if (len(startFList)==2) and (len(startRList)==1):
+        if abs(startRList[0] - endFList[0]) < abs(startRList[0] - endFList[1]):
+            startFList = [startFList[0]]
+            endFList = [endFList[0]]
+        else:
+            startFList = [startFList[1]]
+            endFList = [endFList[1]]
+    # 1F 2R
+    if (len(startFList)==1) and (len(startRList)==2):
+        if abs(startRList[0] - endFList[0]) < abs(startRList[1] - endFList[0]):
+            startRList = [startRList[0]]
+            endRList = [endRList[0]]
+        else:
+            startRList = [startRList[1]]
+            endRList = [endRList[1]]
+
+    assert (len(startFList+startRList) !=3) # 2F1R or 1F2R now impossible
 
     # gap length between the two reads (negative if overlapping)
     GapLength=min(startRList)-max(endFList)
@@ -413,8 +438,8 @@ def Qname2ExonCount(chromString,startFList,endFList,startRList,endRList,exonDict
         # we don't have reads spanning it -> insufficient evidence, skip qname
         return
 
-    if (2 <= len(startFList+startRList) <= 3): # 1F1R or 2F1R or 1F2R
-        if max(startFList) > min(endRList):
+    if (len(startFList+startRList)==2): # 1F1R
+        if startFList[0] > endRList[0]:
             # alignments are back-to-back (SV? Dup? alignment error?)
             return
     else: #2F2R
@@ -455,11 +480,18 @@ def Qname2ExonCount(chromString,startFList,endFList,startRList,endRList,exonDict
     #######################################################
     #Retrieve the corresponding NCL
     RefNCL=exonDict[chromString]
+    # we want to increment vecExonCount at most once per exon, even if
+    # we have two intervals and they both overlap the same exon
+    exonsSeen = []
     for idx in range(len(Frag) // 2):
         overlappedExons = RefNCL.find_overlap(Frag[2*idx],Frag[2*idx+1])
         for exon in overlappedExons:
             exonIndex = int(exon[2])
-            vecExonCount[exonIndex] += 1
+            if (exonIndex in exonsSeen):
+                continue
+            else:
+                exonsSeen.append(exonIndex)
+                vecExonCount[exonIndex] += 1
  
 
 ##############################################################################################################
