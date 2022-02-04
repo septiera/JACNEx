@@ -417,8 +417,8 @@ def Qname2ExonCount(chromString,startFList,endFList,startRList,endRList,exonDict
         # we don't have reads spanning it -> insufficient evidence, skip qname
         return
 
-    if (len(startFList+startRList)==2): # 1F1R
-        if startFList[0] > endRList[0]:
+    if (2 <= len(startFList+startRList) <= 3): # 1F1R or 2F1R or 1F2R
+        if max(startFList) > min(endRList):
             # alignments are back-to-back (SV? Dup? alignment error?)
             return
     else: #2F2R
@@ -436,14 +436,14 @@ def Qname2ExonCount(chromString,startFList,endFList,startRList,endRList,exonDict
     # Frag: one or two genomic intervals covered by this fragment, 
     # as a list of (pairs of) ints: start1,end1[,start2,end2]
     # There is usually one interval, but if the fragment spans a DEL
-    # there can be 2
+    # there can be 3
     Frag=[]
 
     if (len(startFList)==1) and (len(startRList)==1):
         Frag=[min(startFList + startRList), max(endFList + endRList)]
 
     elif (len(startFList)==2) and (len(startRList)==1): #2F1R
-        if (startRList[0]-max(endFList)<=maxGapBetweenReads):#first read F close to read R
+        if (startRList[0]-min(endFList)<=maxGapBetweenReads):#first read F close to read R
             if GapLength <0: #second read F overlap read R
                 #two frag counted for the qname (1F, 2F+1R)
                 Frag=[min(startFList), min(endFList),
@@ -453,7 +453,6 @@ def Qname2ExonCount(chromString,startFList,endFList,startRList,endRList,exonDict
                 Frag=[min(startFList), min(endFList),
                     max(startFList), max(endFList),
                     startRList[0],endRList[0]]
-
         else: #discard first read F as not close to read R (2F,1R)
             #One frag counted for the qname
             Frag=[min(max(startFList),startRList[0]), max(endFList[0],max(endRList))]
