@@ -16,10 +16,15 @@ This script uses Bedtoolsv2.26.0 and its multicov program.<br>
 The script provides a read count file for each sample analyzed (tsv files).<br>
 
 ```
-INTERVAL="~/STEP0_GRCH38_vXXX_Padding10pb_NBexons_Date.bed"
-BAM="~/BAMs/"
-OUTPUT="~/SelectOutputFolder/"
-/bin/time -v ~/FolderContainsScript/python3.6 STEP_1_CollectReadCounts_Bedtools.py -i $INTERVAL -b $BAM -o $OUTPUT 2> ./.err
+BAM="sample1.bam,sample2.bam"
+BED="EnsemblCanonicalTranscripts.bed.gz"
+OUT="FragCount.tsv"
+ERR="step1.err"
+# optionnal parameters
+COUNT="OldFragCount.tsv"
+# execution
+python3 STEP_1_CollectReadCounts_Bedtools.py --bams $BAM --bed $BED --counts $COUNT > $OUT 2> $ERR 
+
 ```
 
  * Customized fragments counting
@@ -85,27 +90,27 @@ To launch the different stages of the pipeline it is necessary to be located in 
 
 ### DEPENDENCIES:
 It is necessary that all the software used are present. <br>
-DECON: <br>
+DECON (v1.0.2): <br>
 ```
 git clone https://github.com/RahmanTeam/DECoN
 ```
+ExomeDepth (v1.1.15):
+```
+git clone https://github.com/vplagnol/ExomeDepth
+```
 Bedtools 2:<br>
 ```
-wget https://github.com/arq5x/bedtools2/releases/download/v2.29.1/bedtools-2.29.1.tar.gz
-tar -zxvf bedtools-2.29.1.tar.gz
+wget https://github.com/arq5x/bedtools2/releases/download/v2.26.0/bedtools-2.26.0.tar.gz
+tar -zxvf bedtools-2.26.0.tar.gz
 cd bedtools2
 make
 ```
 It is also necessary to have python version 3.6.
 As well as the following modules:
 ```
-pip3 install --user logging=0.5.1.2
-pip3 install --user pandas=1.1.5
-pip3 install --user numpy=1.19.5
-pip3 install --user re=2.2.1
-pip3 install --user fnmatch #no version
-pip3 install --user ncls #no version
-pip3 install --user multiprocessing #no version
-pip3 install --user joblib #no version
+python3 -m venv ~/pythonEnv36
+pip3 install ncls pandas notebook
 
+pandas version 1.1.5
+ncls version 0.0.63
 ```
