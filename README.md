@@ -76,7 +76,7 @@ python3 STEP_2_GermlineCNVCaller_DECoNBedtools.py --counts $COUNT --outputcalls 
 
 * STEP 3 : VCF Formatting<br>
 
-This step allows the conversion of CNV calling results into vcfv4.3 format that can be interpreted by the VEP software (annotation of structural variants) <br>
+This step allows the conversion of CNV calling results into vcf 4.3 format that can be interpreted by the VEP software (annotation of structural variants) <br>
 The Bayes Factor(BF) parameter is user selectable. It will be necessary to perform a first filtering of the CNV. <br>
 ```
 CALL="~/Results_BedtoolsCallingCNVExomeDepth_Date.tsv"

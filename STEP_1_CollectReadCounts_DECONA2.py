@@ -407,21 +407,26 @@ def Qname2ExonCount(chromString,startFList,endFList,startRList,endRList,exonDict
         startRList = [min(startRList)]
         endRList = [max(endRList)]
 
-    # gap length between the two reads (negative if overlapping)
-    GapLength=min(startRList)-max(endFList)
-    # CAVEAT: hard-coded cutoff here, could be a problem if the sequencing
-    # library fragments are often longer than maxGapBetweenReads+2*readLength
-    maxGapBetweenReads = 1000
-    if (GapLength > maxGapBetweenReads):
-        # large gap between forward and reverse reads, could be a DEL but
-        # we don't have reads spanning it -> insufficient evidence, skip qname
-        return
+    # if we have 2 alis on one strand (eg F) and one ali on the other (R),
+    # discard the rightmost F ali if it is back-to-back with the R ali
+    # 2F 1R
+    if (len(startFList)==2) and (len(startRList)==1):
+        if max(startFList) > endRList[0]:
+            startFList = [min(startFList)]
+            endFList = [min(endFList)]
+    # 1F 2R
+    if (len(startFList)==1) and (len(startRList)==2):
+        if min(endRList) < startFList[0]:
+            startRList = [max(startRList)]
+            endRList = [max(endRList)]
 
-    if (2 <= len(startFList+startRList) <= 3): # 1F1R or 2F1R or 1F2R
-        if max(startFList) > min(endRList):
+    if (len(startFList+startRList)==2): # 1F1R
+        if startFList[0] > endRList[0]:
             # alignments are back-to-back (SV? Dup? alignment error?)
             return
-    else: #2F2R
+    # elif (len(startFList+startRList)==3)
+    # 1F2R and 2F1R have either become 1F1R, or they can't have any back-to-back pair
+    elif (len(startFList+startRList)==4): #2F2R
         if (min(startFList) > min(endRList)) or (min(endFList) < min(startRList)):
             # leftmost F and R alignments are back-to-back, or they don't
             # overlap - but what could explain this? aberrant
@@ -430,46 +435,75 @@ def Qname2ExonCount(chromString,startFList,endFList,startRList,endRList,exonDict
             # rightmost F and R alignments are back-to-back or don't overlap
             return
 
+    # Examine gap length between the two reads (negative if overlapping)
+    # CAVEAT: hard-coded cutoff here, could be a problem if the sequencing
+    # library fragments are often longer than maxGapBetweenReads+2*readLength
+    maxGapBetweenReads = 1000
+    if (len(startFList+startRList)==2): # 1F1R
+        if (startRList[0] - endFList[0] > maxGapBetweenReads):
+            # large gap between forward and reverse reads, could be a DEL but
+            # we don't have reads spanning it -> insufficient evidence, skip qname
+            return
+    elif (len(startFList+startRList)==3): # 2F1R or 1F2R
+        if (min(startRList)-max(endFList) > maxGapBetweenReads):
+            # eg 2F1R: the R ali is too far from the rightmost F ali, so
+            # a fortiori it is too far from the leftmost F ali => ignore qname
+            return
+        elif (max(startRList)-min(endFList) > maxGapBetweenReads):
+            # eg 2F1R: the R ali is too far from the leftmost F ali => ignore this F ali
+            if (len(startFList)==2): #2F1R
+                startFList = [max(startFList)]
+                endFList = [max(endFList)]
+            else: #1F2R
+                startRList = [min(startRList)]
+                endRList = [min(endRList)]
+                 
     #######################################################
     # identify genomic regions covered by the fragment
     #######################################################
-    # Frag: one or two genomic intervals covered by this fragment, 
-    # as a list of (pairs of) ints: start1,end1[,start2,end2]
-    # There is usually one interval, but if the fragment spans a DEL
-    # there can be 3
+    # Frag: genomic intervals covered by this fragment, 
+    # as a list of (pairs of) ints: start1,end1[,start2,end2...]
+    # There is usually one (1F1R overlapping) or 2 intervals (1F1R not 
+    # overlapping) , but if the fragment spans a DEL there can be up to 3
     Frag=[]
-
+    # algo: merge F-R pairs of alis only if they overlap
     if (len(startFList)==1) and (len(startRList)==1):
-        Frag=[min(startFList + startRList), max(endFList + endRList)]
+        if (startRList[0] - endFList[0] < 0): # overlap => merge
+            Frag=[min(startFList + startRList), max(endFList + endRList)]
+        else:
+            Frag=[startFList[0], endFList[0], startRList[0], endRList[0]]
 
     elif (len(startFList)==2) and (len(startRList)==1): #2F1R
-        if (startRList[0]-min(endFList)<=maxGapBetweenReads):#first read F close to read R
-            if GapLength <0: #second read F overlap read R
-                #two frag counted for the qname (1F, 2F+1R)
-                Frag=[min(startFList), min(endFList),
-                    min(max(startFList),startRList[0]), max(max(endFList),endRList[0])]
-            else:    
-                #three frag counted for the qname (1F, 2F, 1R)
-                Frag=[min(startFList), min(endFList),
-                    max(startFList), max(endFList),
-                    startRList[0],endRList[0]]
-        else: #discard first read F as not close to read R (2F,1R)
-            #One frag counted for the qname
-            Frag=[min(max(startFList),startRList[0]), max(endFList[0],max(endRList))]
+        if (startRList[0] < min(endFList)): 
+            # leftmost F ali overlaps R ali => merge into a single interval (because we know
+            # that the rightmost F ali overlaps the R ali
+            Frag = [min(startRList + startFList), max(endRList + endFList)]
+        else:
+            # leftmost F ali is an interval by itself
+            Frag = [min(startFList),min(endFList)]
+            if (startRList[0] < max(endFList)):
+                # rightmost F ali overlaps R ali => merge
+                Frag = Frag + [min(max(startFList),startRList[0]), max(endFList + endRList)]
+            else:
+                # no overlap, add 2 more intervals
+                Frag = Frag + [max(startFList), max(endFList), startRList[0], endRList[0]]
 
-    elif (len(startFList)==1) and (len(startRList)==2):#1F2R
-        if ((max(startRList)-endFList[0])<=maxGapBetweenReads):
-            if GapLength <0: 
-                Frag=[min(startFList[0],min(startRList)), min(endRList[0],min(endFList)),
-                    max(startRList), max(endRList)]
-            else:    
-                Frag=[startFList[0],endFList[0],
-                min(startRList), min(endRList),
-                max(startRList), max(endRList)]          
-        else: 
-            Frag=[min(startFList[0],min(startRList)), max(endFList[0],min(endRList))]
+    elif (len(startFList)==1) and (len(startRList)==2): #1F2R
+        if (max(startRList) < endFList[0]): 
+            # rightmost R ali overlaps F ali => merge into a single interval
+            Frag = [min(startRList + startFList), max(endRList + endFList)]
+        else:
+            # rightmost R ali is an interval by itself
+            Frag = [max(startRList),max(endRList)]
+            if (min(startRList) < endFList[0]):
+                # leftmost R ali overlaps F ali => merge
+                Frag = Frag + [min(startFList + startRList), max(min(endRList),endFList[0])]
+            else:
+                # no overlap, add 2 more intervals
+                Frag = Frag + [min(startRList), min(endRList), startFList[0], endFList[0]]
 
-    elif(len(startFList)==2) and (len(startRList)==2):
+    elif(len(startFList)==2) and (len(startRList)==2): #2F2R
+        # we already checked that each pair of F-R alis overlaps
         Frag=[min(startFList + startRList), max(min(endFList),min(endRList)),
               min(max(startFList),max(startRList)), max(endFList + endRList)]
 
