@@ -30,12 +30,13 @@
 #############################################################################################################
 ################################ Loading of the modules required for processing #############################
 #############################################################################################################
-# 1) Python Modules
+# Python Modules
 import sys
 import getopt
 import logging
 import os
-import pandas as pd # dataframe objects
+import numpy as np # numpy array objects
+import numpy.lib.recfunctions as rfn #binds two numpy array by columns
 import re
 # nested containment lists, similar to interval trees but faster (https://github.com/biocore-ntnu/ncls)
 from ncls import NCLS
@@ -68,99 +69,154 @@ logger.addHandler(stderr)
 # Input : bedFile == a bed file (with path), possibly gzipped, containing exon definitions
 #         formatted as CHR START END EXON_ID
 #
-# Output : returns the data as a pandas dataframe with column headers CHR START END EXON_ID,
+# Output : returns the data as a numpy.array with columns are called CHR START END EXON_ID,
 #          and where:
 # - a 10bp padding is added to exon coordinates (ie -10 for START and +10 for END)
 # - exons are sorted by CHR, then START, then END, then EXON_ID
 def processBed(bedFile):
     bedname=os.path.basename(bedFile)
     if not os.path.isfile(bedFile):
-        logger.error("BED file %s doesn't exist.\n", bedFile)
+        logger.error("BED file %s doesn't exist.\n",bedFile)
         sys.exit(1)
     try:
-        exons=pd.read_table(bedFile, header=None, sep="\t")
-        # compression == 'infer' by default => auto-works whether bedFile is gzipped or not
+        exons=np.genfromtxt(bedFile,
+                            dtype=None,
+                            encoding=None,
+                            names=('CHR','START','END',"EXON_ID"))
+        # File directly read as an numpy array (ndarray)
+        # compression == 'infer' by default => auto-works whether bedFile is gzipped, bgzipped or not
+        # np.genfromtxt check if all columns (x4) have the same length
+
     except Exception as e:
         logger.error("error parsing BED file %s: %s", bedname, e)
         sys.exit(1)
-   #####################
-    #I): Sanity Check
-    #####################
-    if len(exons.columns) != 4:
-        logger.error("BED file %s should be a 4-column TSV (CHR, START, END, EXON_ID) but it has %i columns\n",
-                     bedname, len(exons.columns))
-        sys.exit(1)
-    exons.columns=["CHR","START","END","EXON_ID"]
-    #######################
-    #CHR column
-    if (exons["CHR"].dtype!="O"):
-        logger.error("In BED file %s, first column 'CHR' should be a string but pandas sees it as %s\n",
-                     bedname, exons["CHR"].dtype)
-        sys.exit(1)
-    # create CHR_NUM column for sorting: we want ints so we remove chr prefix if present
-    if exons["CHR"].str.startswith('chr').all:
-        exons['CHR_NUM'] = exons['CHR'].replace(regex=r'^chr(\w+)$', value=r'\1')
-    else:
-        exons['CHR_NUM']=exons['CHR']
-    #######################
-    #START and END columns
-    if (exons["START"].dtype!=int) or (exons["END"].dtype!=int):
-        logger.error("In BED file %s, columns 2-3 'START'-'END' should be ints but pandas sees them as %s - %s\n",
-                     bedname, exons["START"].dtype, exons["END"].dtype)
-        sys.exit(1)
-    if (exons.START < 0).any() or (exons.END < 0).any():
-        logger.error("In BED file %s, columns 2 and/or 3 contain negative values", bedname)
-        sys.exit(1)
-    #######################
-    #transcript_id_exon_number column
-    if (exons["EXON_ID"].dtype!="O"):
-        logger.error("In BED file %s, 4th column 'EXON_ID' should be a string but pandas sees it as %s\n",
-                     bedname, exons["EXON_ID"].dtype)
-        sys.exit(1)
-    # EXON_IDs must be unique
-    if len(exons["EXON_ID"].unique()) != len(exons["EXON_ID"]):
-        logger.error("In BED file %s, each line must have a unique EXON_ID (4th column)\n", bedname)
-        sys.exit(1)
+
+    ###############################
+    ##### Sanity Check
+    ###############################   
+    if not np.issubdtype(exons["CHR"].dtype, np.str_): #data type numpy void 
+        logger.error("In BED file %s, first column 'CHR' should be a string but numpy sees them as %s\n",
+                     bedname,exons["CHR"].dtype)
+        sys.exit(1)   
     
-    #####################
-    #II): Padding and sorting
-    #####################
-    # pad coordinates with +-10bp
-    exons['START'] -= 10
-    exons['END'] += 10
-    
-    # replace X Y M/MT (if present) by max(CHR)+1,+2,+3
-    # maxChr must be the max among the int values in CHR_NUM column...
-    maxChr = int(pd.to_numeric(exons['CHR_NUM'],errors="coerce").max(skipna=True))
-    exons["CHR_NUM"]=exons["CHR_NUM"].replace(
-        {'X': maxChr+1,
-         'Y': maxChr+2,
-         'M': maxChr+3,
-         'MT': maxChr+3})
-    
-    # convert type of CHR_NUM to int and catch any errors
-    try:
-        exons['CHR_NUM'] = exons['CHR_NUM'].astype(int)
-    except Exception as e:
-        logger.error("While parsing BED file, failed converting CHR_NUM to int: %s", e)
+    if (exons["START"].dtype!=int) or (exons["END"].dtype!=int) :
+        logger.error("In BED file %s,columns 2-3 'START'-'END' should be ints but numpy sees them as %s - %s\n",
+                     bedname,exons["START"].dtype,exons["END"].dtype)
         sys.exit(1)
+        
+    if not np.issubdtype(exons["EXON_ID"].dtype, np.str_):    
+        logger.error("In BED file %s,4th column 'EXON_ID' should be a string but numpy sees them as %s\n",
+                     bedname,exons["EXON_ID"].dtype)
+        sys.exit(1)    
+   
+    #################
+    ### Temporary variables creation
+    #################
+    #empty array to be completed, containing 5 columns : CHR, START, END, EXON_ID and CHR_NUM
+    #CHR_NUM must be int type necessary for the sorting step.
+    dt=np.dtype({'names':('CHR','START','END','EXON_ID','CHR_NUM'),
+                 'formats':(exons["CHR"].dtype,int,int,exons["EXON_ID"].dtype,int)})
+    ProcessArray=np.empty(len(exons), dtype=dt)
+    
+    #dictionary helps to create the CHR_NUM column containing only int (e.g key ="chr2" => value =2)
+    translateCHRDict={}
+
+    #dictionary containing all non-numeric chr (e.g key ='Y' => value ='chrY')
+    remainingCHRs={}
+
+    #maxChr must be the max among the int values in CHR column, stripping "chr" if present
+    maxCHR=0
+
+    #dictionary checking that the EXON_ID are unique(e.g key =EXON_ID  value =1) 
+    exonIDDict={}
+
+    for line in range(len(exons)):        
+        #############################
+        ##### Fill in the first 4 columns 
+        #############################
+        #CHR column copy
+        ProcessArray[line]["CHR"]=exons[line]["CHR"] 
+                
+        ###########
+        #START and END columns copy and padding  
+        if (exons[line]["START"] < 0) or (exons[line]["END"] < 0):
+            logger.error("In BED file %s, columns 2 and/or 3 contain negative values for line : ", bedname, line)
+            sys.exit(1)
+            
+        ProcessArray["START"][line]=exons["START"][line]-10
+        ProcessArray["END"][line]=exons["END"][line]+10
+        
+        ###########
+        #EXON_ID column copy and check that each term is unique
+        currentID=exons[line]["EXON_ID"]
+        if (currentID in exonIDDict):
+            logger.error("In BED file %s, each line must have a unique EXON_ID (4th column).\n"+ 
+                          "Not the case for line : %s\n", bedname, line)
+            sys.exit(1)
+        else:
+            ProcessArray[line]["EXON_ID"]=currentID
+            exonIDDict[currentID]=1
+
+        #############################
+        ##### CHR_NUM preparation
+        #############################
+        #we want ints so we remove chr prefix from CHR column if present
+        currentCHR=exons[line]["CHR"]
+        currentCHRNum=currentCHR.replace("chr","",1)
+          
+        if re.match(r'\d+', currentCHRNum): #numerical chromosomes identification and int conversion
+            currentCHRNum=int(currentCHRNum)
+            translateCHRDict[currentCHR]=currentCHRNum
+            if maxCHR<currentCHRNum:
+                maxCHR=currentCHRNum
+        else:
+            #non-numeric chromosomes remain in str format        
+            remainingCHRs[currentCHRNum]=currentCHR
+            
+    ###############
+    #### Non-numerical chromosome conversion in int
+    ###############
+    #replace str chromosome (e.g X,Y,M, MT) by maxCHR+1,+2,+3 in translateCHRDict        
+    increment=1 
+    for chr in ["X","Y","M", "MT"]:
+        if chr in remainingCHRs:
+            translateCHRDict[remainingCHRs[chr]]=maxCHR+increment
+            increment+=1
+            del remainingCHRs[chr]
+
+    for key in sorted(remainingCHRs): #any other chr non numeric X,Y,M,MT
+        translateCHRDict[remainingCHRs[key]]=maxCHR+increment
+        increment+=1    
+
+    ############### 
+    #### Fill in the last column CHR_NUM
+    ###############
+    for line in range(len(ProcessArray)):
+        ProcessArray[line]["CHR_NUM"]=translateCHRDict[ProcessArray[line]["CHR"]]
+
+    ############### 
+    #### Sorting and recovery of the first four columns
+    ###############    
     # sort by CHR_NUM, then START, then END, then EXON_ID
-    exons.sort_values(by=['CHR_NUM','START','END','EXON_ID'], inplace=True, ignore_index=True)
-    # delete the temp column, and return result
-    exons.drop(['CHR_NUM'], axis=1, inplace=True)    
+    exonsSort=np.sort(ProcessArray,order=['CHR_NUM','START','END','EXON_ID'])
+
+    # delete the tmp column, and return result
+    exons=exonsSort[["CHR","START","END","EXON_ID"]]
     return(exons)
+
 
 ####################################################
 #Create nested containment lists (similar to interval trees but faster), one per
 # chromosome, storing the exons
-#Input : dataframe of exons, as returned by processBed
+#Input : numpy array of exons, as returned by processBed
 #Output: dictionary(hash): key=chr, value=NCL
 def createExonDict(exons):
     exonDict={}
-    listCHR=list(exons.CHR.unique())
+    listCHR=np.unique(exons["CHR"])
     for chr in listCHR:
-        exonsOnChr=exons.loc[exons["CHR"]==chr]
-        ncls = NCLS(exonsOnChr["START"], exonsOnChr["END"], exonsOnChr.index)
+        index=np.where(np.in1d(exons["CHR"],chr))[0]
+        exonsOnChr=exons[index]
+        ncls = NCLS(exonsOnChr["START"], exonsOnChr["END"], index)
         exonDict[chr]=ncls
     return(exonDict)
 
@@ -169,52 +225,85 @@ def createExonDict(exons):
 #Input:
 #   - countFile is a tsv file (with path), including column titles, as
 #     produced by this program
-#   - exons is a dataframe holding exon definitions, padded and sorted,
+#   - exons is a numpy.array holding exon definitions, padded and sorted,
 #     as returned by processBed
+#   - countsArray is an empty int numpy array (dim=NbExons*NbsampleToProcess)
+#     It's created by the main process
 #
-#-> Parse countFile into a dataframe (will be returned)
-#-> Check that the first 4 columns are identical to exons,
+#-> Open countFile 
+#-> Extract the first header line to create the associated columns indexes vector(1D array)
+#-> Change values for indexes corresponding to samples pre-analyzed (value = countsArray column index) 
+#-> Loop on the countFile lines:
+#   -> Check that the countFile first 4 columns are identical to exons,
 #    otherwise die with an error.
-#-> check that the samples counts columns are [int] type.
-# 
-#Output: returns the Frag count results as a pandas dataframe with column 
-# headers CHR START END EXON_ID,sampleName*n
+#   -> Fill in countsArrays columns from the pre-analyzed sample data (value = fragment count)
 
-def parseCountFile(countFile, exons):
+def parseCountFile(countFile, exons,countsArray):
     try:
-        counts=pd.read_table(countFile,sep="\t")
+        counts=open(countFile,"r")
     except Exception as e:
-        logger.error("Parsing provided countFile %s: %s", countFile, e)
+        logger.error("Opening provided countFile %s: %s", countFile, e)
         sys.exit(1)
-    #Check if data are identical: this checks geometry, column dtypes, and values
-    if not (counts.iloc[:,0:4].equals(exons)):
-        logger.error("first 4 columns in countFile %s differ from the BED (after padding and sorting), "+
-                     "if you updated your transcript set (BED) you cannot re-use the previous countFile, "+
-                     "in this case you must re-analyze all samples (ie don't use --counts)", countFile)
-        sys.exit(1)
-    #check that the count columns are ints
-    for columnIndex in range(4,len(counts.columns)):
-        if not counts.dtypes[columnIndex]==int:
-            # just die: this shouldn't happen if countFile was made by us
-            logger.error("in countFile %s, column for sample %s is not all ints\n",
-                         countFile, counts.columns[columnIndex]);
+
+    columnNameCounts=counts.readline().rstrip().rsplit("\t") #keep headers
+    
+    #Samples correspondences vector : countFile vs countsArray
+    #size vector = countFile columns number, so the indexes correspond to those of the table.
+    #Its values is :
+    #   -1 for the columns "CHR", "START", "END", "EXON_ID"
+    #   -1 the sample are not in countsArray 
+    #   countsArray index when the sample has been pre-analyzed
+    vector=np.array([-1]*len(columnNameCounts))
+
+    for indOldCount in range(0,len(columnNameCounts)):
+        for indNewCount in range(0,len(countsArray.dtype.names)):
+            if columnNameCounts[indOldCount]==countsArray.dtype.names[indNewCount]:
+                vector[indOldCount]=indNewCount
+
+    indexLine = 0            
+    for line in counts:
+        splitLine=line.rstrip().rsplit("\t")
+
+        ######################
+        ####### Comparison with exons columns
+        ######################
+        if splitLine[0]!=exons[indexLine]["CHR"]:
+            logger.error("Colonne 'CHR' non identique entre le fichier de comptage ancien et le bed à la ligne (%s)\n",
+                         indexLine)
             sys.exit(1)
-    return(counts)
+
+        if (int(splitLine[1])!=exons[indexLine]["START"]) or (int(splitLine[2])!=exons[indexLine]["END"]): 
+            logger.error("Colonnes 'START' ou 'END' non identique entre le fichier de comptage ancien et le bed à la ligne (%s)\n",
+                         indexLine)
+            sys.exit(1)
+
+        if splitLine[3]!=exons[indexLine]["EXON_ID"]:
+            logger.error("Colonne 'EXON_ID' non identique entre le fichier de comptage ancien et le bed à la ligne (%s)\n",
+                         indexLine)
+            sys.exit(1)
+
+        #####################
+        ###### Fill countsArray with old fragment count data
+        #####################
+        for indVec in range(0,len(vector)):
+            if vector[indVec]!=-1:
+                countsArray[indexLine][vector[indVec]]=splitLine[indVec]
+
+        indexLine+=1
 
 ####################################################
 # countFrags :
 # Count the fragments in bamFile that overlap each exon described in exonDict.
 # Arguments:
+#   - sample identifier [str]
 #   - a bam file (with path)
 #   - the dictionary of exon NCLs
-#   - the total number of exons
 #   - a tmp dir with fast RW access and enough space for samtools sort
 #   - the number of cpu threads that samtools can use
+#   - the numpy array to fill in with count data
 #
-# Returns a vector containing the fragment counts, in the same order as in the bed
-# file used to create the NCLs.
 # Raises an exception if something goes wrong
-def countFrags(bamFile, exonDict, nbOfExons, processTmpDir, num_threads):
+def countFrags(sampleName,bamFile, exonDict,processTmpDir, num_threads,countsArray):
     # We need to process all alignments for a given qname simultaneously
     # => ALGORITHM:
     # parse alignements from BAM, sorted by qname;
@@ -223,10 +312,6 @@ def countFrags(bamFile, exonDict, nbOfExons, processTmpDir, num_threads):
     # if the qname changed -> process accumulated data for the previous
     #   qname (with Qname2ExonCount), then reset accumulators and store
     #   data for new qname.
-
-    # Result that will be returned: list containing the number of fragments
-    # overlapping each exon, indexes correspond to the labels in the NCL
-    vecExonCount=[0]*nbOfExons
 
     # Accumulators: 
     # QNAME and CHR
@@ -281,7 +366,7 @@ def countFrags(bamFile, exonDict, nbOfExons, processTmpDir, num_threads):
             # If we are done with previous qname: process it and reset accumulators
             if (qname!=align[0]) and (qname!=""):  # align[0] is the qname
                 if not qBad:
-                    Qname2ExonCount(qchrom,qstartF,qendF,qstartR,qendR,exonDict,vecExonCount)
+                    Qname2ExonCount(sampleName,qchrom,qstartF,qendF,qstartR,qendR,exonDict,countsArray)
                 qname, qchrom = "", ""
                 qstartF, qstartR, qendF, qendR = [], [], [], []
                 qFirstOnForward=0
@@ -343,7 +428,7 @@ def countFrags(bamFile, exonDict, nbOfExons, processTmpDir, num_threads):
 
         # process last Qname
         if not qBad:
-            Qname2ExonCount(qchrom,qstartF,qendF,qstartR,qendR,exonDict,vecExonCount)
+            Qname2ExonCount(sampleName,qchrom,qstartF,qendF,qstartR,qendR,exonDict,countsArray)
 
         # wait for samtools to finish cleanly and check return codes
         if (p1.wait() != 0):
@@ -354,9 +439,7 @@ def countFrags(bamFile, exonDict, nbOfExons, processTmpDir, num_threads):
             logger.error("in countFrags, while processing %s, the 'samtools view' subprocess returned %s",
                          bamFile, p2.returncode)
             raise Exception("samtools-view failed")
-        
-        # AOK, return counts
-        return(vecExonCount)     
+ 
     
 
 ####################################################
@@ -381,12 +464,13 @@ def AliLengthOnRef(CIGARAlign):
 #   either actually covered by a sequencing read or closely flanked by a pair of mate reads;
 # - identify exons overlapped by the fragment, and increment their count.
 # Inputs:
+#   -sample identifier [str]
 #   -chr [str]
 #   -4 lists of ints for F and R strand positions (start and end)
 #   -the dictionary containing the NCLs for each chromosome
-#   -list of fragment counts for each exon, appropriate counts will be incremented
-# Nothing is returned, this function just updates vecExonCount
-def Qname2ExonCount(chromString,startFList,endFList,startRList,endRList,exonDict,vecExonCount):
+#   -the numpy array to fill in with count data, appropriate counts will be incremented
+# Nothing is returned, this function just updates countsArray
+def Qname2ExonCount(sampleName,chromString,startFList,endFList,startRList,endRList,exonDict,countsArray):
     #######################################################
     # apply QC filters
     #######################################################
@@ -523,8 +607,7 @@ def Qname2ExonCount(chromString,startFList,endFList,startRList,endRList,exonDict
                 continue
             else:
                 exonsSeen.append(exonIndex)
-                vecExonCount[exonIndex] += 1
- 
+                countsArray[sampleName][exonIndex] += 1
 
 ##############################################################################################################
 ######################################### Script Body ########################################################
@@ -624,39 +707,60 @@ ARGUMENTS:
     ######################################################
     # D) Parsing exonic intervals bed
     exons=processBed(bedFile)
-    nbOfExons=len(exons)
 
     ######################################################
     # E) Creating NCLs for each chromosome
     exonDict=createExonDict(exons)
 
     ############################################
-    # F) Parsing old counts file (.tsv) if provided, else make a new dataframe
-    if (countFile!=""):
-        counts=parseCountFile(countFile,exons)
-    else:
-        counts=exons
+    # F) Creating a numpy array to contain the counts results (new and old counts)
+    sampleNameList=[] #
+    for bam in bamsToProcess:
+        sampleName=os.path.basename(bam)
+        sampleName=sampleName.replace(".bam","")
+        sampleNameList.append(sampleName)
 
+    dt=np.dtype({'names':sampleNameList,
+                 'formats': [np.int_]*len(sampleNameList)})
+    countsArray=np.zeros(len(exons), dtype=dt) 
+
+    ############################################
+    # G) Parsing old counts file (.tsv) if provided
+    if (countFile!=""):
+        parseCountFile(countFile,exons,countsArray)
+    
     #####################################################
-    # G) Process each BAM
+    # H) Process each BAM
+    sampleNameList=[] 
     for bam in bamsToProcess:
         sampleName=os.path.basename(bam)
         sampleName=sampleName.replace(".bam","")
         logger.info('Sample being processed : %s', sampleName)
-
-        if sampleName in list(counts.columns[4:]):
+        if np.sum(countsArray[sampleName])>0:
             logger.info('Sample %s already present in counts file, skipping it\n', sampleName)
             continue
         else:
             try:
-                FragVec = countFrags(bam, exonDict, nbOfExons, tmpDir, threads)
+                countFrags(sampleName,bam, exonDict, tmpDir, threads,countsArray)
             except Exception as e:
                 logger.warning("Failed to count fragments for sample %s, skipping it - exception: %s\n",
-                               sampleName, e)
+                            sampleName, e)
                 continue
-            counts[sampleName]=FragVec
+    
+    #####################################################
+    # I) Link bed and fragment count arrays
+    countsArrays=[exons,countsArray]
+    countsArrays=rfn.merge_arrays(countsArrays, flatten = True, usemask = False)
 
-    counts.to_csv(sys.stdout,sep="\t", index=False)
+    #####################################################
+    # J) Save the final array
+    columnName=countsArrays.dtype.names
+    formatFile= "\t".join(["%s","%i","%i","%s"]+["%i"]*(len(columnName)-4))
+    np.savetxt(sys.stdout, 
+            countsArrays, 
+            header='\t'.join(columnName),
+            fmt=formatFile,
+            comments='')
       
 
 if __name__ =='__main__':
