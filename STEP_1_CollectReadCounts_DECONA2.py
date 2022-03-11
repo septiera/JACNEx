@@ -82,13 +82,10 @@ def processBed(bedFile):
         exons=np.genfromtxt(bedFile,
                             dtype=None,
                             encoding=None,
-                            names=('CHR','START','END',"EXON_ID"))
-        # File directly read as an numpy array (ndarray)
+                            names=('CHR','START','END','EXON_ID'))
         # compression == 'infer' by default => auto-works whether bedFile is gzipped, bgzipped or not
-        # np.genfromtxt check if all columns (x4) have the same length
-
     except Exception as e:
-        logger.error("error parsing BED file %s: %s", bedname, e)
+        logger.error("error parsing BED file %s: %s", bedFile, e)
         sys.exit(1)
 
     ###############################
@@ -110,89 +107,93 @@ def processBed(bedFile):
         sys.exit(1)    
    
     #################
-    ### Temporary variables creation
+    ### Create temp array for padding and sorting 
     #################
-    #empty array to be completed, containing 5 columns : CHR, START, END, EXON_ID and CHR_NUM
-    #CHR_NUM must be int type necessary for the sorting step.
+    # 5 columns : CHR, START, END, EXON_ID and CHR_NUM, CHR_NUM is an
+    # int version of CHR (for sorting)
     dt=np.dtype({'names':('CHR','START','END','EXON_ID','CHR_NUM'),
                  'formats':(exons["CHR"].dtype,int,int,exons["EXON_ID"].dtype,int)})
     ProcessArray=np.empty(len(exons), dtype=dt)
     
-    #dictionary helps to create the CHR_NUM column containing only int (e.g key ="chr2" => value =2)
+    # CHR -> CHR_NUM dictionary
     translateCHRDict={}
 
-    #dictionary containing all non-numeric chr (e.g key ='Y' => value ='chrY')
+    # temp dict containing all non-numeric chrs, value is CHR and key is
+    # the CHR stripped of 'chr' if present (e.g 'Y'->'chrY')
     remainingCHRs={}
 
-    #maxChr must be the max among the int values in CHR column, stripping "chr" if present
+    #maxChr: max int value in CHR column (after stripping 'chr' if present)
     maxCHR=0
 
-    #dictionary checking that the EXON_ID are unique(e.g key =EXON_ID  value =1) 
+    #dictionary checking that the EXON_ID are unique(key='EXON_ID', value=1) 
     exonIDDict={}
 
     for line in range(len(exons)):        
         #############################
         ##### Fill in the first 4 columns 
         #############################
-        #CHR column copy
+        #CHR column: copy
         ProcessArray[line]["CHR"]=exons[line]["CHR"] 
-                
-        ###########
-        #START and END columns copy and padding  
-        if (exons[line]["START"] < 0) or (exons[line]["END"] < 0):
-            logger.error("In BED file %s, columns 2 and/or 3 contain negative values for line : ", bedname, line)
-            sys.exit(1)
-            
-        ProcessArray["START"][line]=exons["START"][line]-10
-        ProcessArray["END"][line]=exons["END"][line]+10
         
         ###########
-        #EXON_ID column copy and check that each term is unique
-        currentID=exons[line]["EXON_ID"]
+        #START and END columns: pad
+        if (exons[line]["START"] < 0) or (exons[line]["END"] < 0):
+            logger.error("In BED file %s, columns 2 and/or 3 contain negative values in line : ", bedname, line)
+            sys.exit(1)
+            
+        ProcessArray[line]["START"] = exons[line]["START"] - 10
+        # never negative
+        if ProcessArray[line]["START"] < 0:
+            ProcessArray[line]["START"] = 0
+        ProcessArray[line]["END"] = exons[line]["END"] + 10
+        
+        ###########
+        #EXON_ID column: copy and check that each ID is unique
+        currentID = exons[line]["EXON_ID"]
         if (currentID in exonIDDict):
-            logger.error("In BED file %s, each line must have a unique EXON_ID (4th column).\n"+ 
-                          "Not the case for line : %s\n", bedname, line)
+            logger.error("In BED file %s, EXON_ID (4th column) %s is not unique\n", bedname, currentID)
             sys.exit(1)
         else:
-            ProcessArray[line]["EXON_ID"]=currentID
-            exonIDDict[currentID]=1
+            ProcessArray[line]["EXON_ID"] = currentID
+            exonIDDict[currentID] = 1
 
         #############################
         ##### CHR_NUM preparation
         #############################
         #we want ints so we remove chr prefix from CHR column if present
-        currentCHR=exons[line]["CHR"]
-        currentCHRNum=currentCHR.replace("chr","",1)
+        currentCHR = exons[line]["CHR"]
+        currentCHRNum = currentCHR.replace("chr","",1)
           
-        if re.match(r'\d+', currentCHRNum): #numerical chromosomes identification and int conversion
+        if currentCHRNum.isdigit():
             currentCHRNum=int(currentCHRNum)
-            translateCHRDict[currentCHR]=currentCHRNum
+            translateCHRDict[currentCHR] = currentCHRNum
             if maxCHR<currentCHRNum:
                 maxCHR=currentCHRNum
         else:
-            #non-numeric chromosomes remain in str format        
+            #non-numeric chromosome: save in remainingChRs for later
             remainingCHRs[currentCHRNum]=currentCHR
             
     ###############
-    #### Non-numerical chromosome conversion in int
+    #### Non-numerical chromosome conversion to int
     ###############
-    #replace str chromosome (e.g X,Y,M, MT) by maxCHR+1,+2,+3 in translateCHRDict        
-    increment=1 
-    for chr in ["X","Y","M", "MT"]:
+    #replace non-numerical chromosomes by maxCHR+1, maxCHR+2 etc
+    increment=1
+    # first deal with X, Y, M/MT in that order
+    for chr in ["X","Y","M","MT"]:
         if chr in remainingCHRs:
-            translateCHRDict[remainingCHRs[chr]]=maxCHR+increment
+            translateCHRDict[remainingCHRs[chr]] = maxCHR+increment
             increment+=1
             del remainingCHRs[chr]
-
-    for key in sorted(remainingCHRs): #any other chr non numeric X,Y,M,MT
-        translateCHRDict[remainingCHRs[key]]=maxCHR+increment
-        increment+=1    
-
+    # now deal with any other non-numeric CHRs, in alphabetical order
+    for key in sorted(remainingCHRs):
+        translateCHRDict[remainingCHRs[key]] = maxCHR+increment
+        increment+=1
+        
     ############### 
-    #### Fill in the last column CHR_NUM
+    #### finally we can fill CHR_NUM column
     ###############
     for line in range(len(ProcessArray)):
-        ProcessArray[line]["CHR_NUM"]=translateCHRDict[ProcessArray[line]["CHR"]]
+        ProcessArray[line]["CHR_NUM"] = translateCHRDict[ProcessArray[line]["CHR"]]
 
     ############### 
     #### Sorting and recovery of the first four columns
