@@ -75,7 +75,7 @@ logger.addHandler(stderr)
 def processBed(bedFile):
     bedname=os.path.basename(bedFile)
     if not os.path.isfile(bedFile):
-        logger.error("BED file %s doesn't exist.\n",bedFile)
+        logger.error("BED file %s doesn't exist",bedFile)
         sys.exit(1)
     try:
         exons=np.genfromtxt(bedFile,
@@ -91,17 +91,17 @@ def processBed(bedFile):
     ##### Sanity Check
     ###############################   
     if not np.issubdtype(exons["CHR"].dtype, np.str_): #data type numpy void 
-        logger.error("In BED file %s, first column 'CHR' should be a string but numpy sees them as %s\n",
+        logger.error("In BED file %s, first column 'CHR' should be a string but numpy sees them as %s",
                      bedname,exons["CHR"].dtype)
         sys.exit(1)   
     
     if (exons["START"].dtype!=int) or (exons["END"].dtype!=int) :
-        logger.error("In BED file %s,columns 2-3 'START'-'END' should be ints but numpy sees them as %s - %s\n",
+        logger.error("In BED file %s,columns 2-3 'START'-'END' should be ints but numpy sees them as %s - %s",
                      bedname,exons["START"].dtype,exons["END"].dtype)
         sys.exit(1)
         
     if not np.issubdtype(exons["EXON_ID"].dtype, np.str_):    
-        logger.error("In BED file %s,4th column 'EXON_ID' should be a string but numpy sees them as %s\n",
+        logger.error("In BED file %s,4th column 'EXON_ID' should be a string but numpy sees them as %s",
                      bedname,exons["EXON_ID"].dtype)
         sys.exit(1)    
    
@@ -150,7 +150,7 @@ def processBed(bedFile):
         #EXON_ID column: copy and check that each ID is unique
         currentID = exons[line]["EXON_ID"]
         if (currentID in exonIDDict):
-            logger.error("In BED file %s, EXON_ID (4th column) %s is not unique\n", bedname, currentID)
+            logger.error("In BED file %s, EXON_ID (4th column) %s is not unique", bedname, currentID)
             sys.exit(1)
         else:
             ProcessArray[line]["EXON_ID"] = currentID
@@ -268,18 +268,15 @@ def parseCountFile(countFile, exons,countsArray):
         ####### Comparison with exons columns
         ######################
         if splitLine[0]!=exons[indexLine]["CHR"]:
-            logger.error("Colonne 'CHR' non identique entre le fichier de comptage ancien et le bed à la ligne (%s)\n",
-                         indexLine)
+            logger.error("'CHR' column differs between BED file and previous countsFile at line %i", indexLine)
             sys.exit(1)
 
         if (int(splitLine[1])!=exons[indexLine]["START"]) or (int(splitLine[2])!=exons[indexLine]["END"]): 
-            logger.error("Colonnes 'START' ou 'END' non identique entre le fichier de comptage ancien et le bed à la ligne (%s)\n",
-                         indexLine)
+            logger.error("'START' or 'END' values differ between BED file and previous countsFile at line %i", indexLine)
             sys.exit(1)
 
         if splitLine[3]!=exons[indexLine]["EXON_ID"]:
-            logger.error("Colonne 'EXON_ID' non identique entre le fichier de comptage ancien et le bed à la ligne (%s)\n",
-                         indexLine)
+            logger.error("'EXON_ID' column differs between BED file and previous countsFile at line %i", indexLine)
             sys.exit(1)
 
         #####################
@@ -677,10 +674,14 @@ ARGUMENTS:
 
     #####################################################
     # C) Checking that the parameters actually exist and processing
+    # bamsTmp is user-supplied and may have dupes
+    bamsTmp=[]
+    # bamsNoDupe: tmp dictionary for removing dupes if any: key==bam, value==1
+    bamsNoDupe = {}
+    # bamsToProcess, with any dupes removed
     bamsToProcess=[]
     if bams!="":
-        bamsToProcess=bams.split(",")
-    
+        bamsTmp=bams.split(",")
     elif bamsFrom!="":
         if not os.path.isfile(bamsFrom):
             sys.exit("ERROR : bams-from file "+bamsFrom+" doesn't exist. Try "+scriptName+" --help.\n")
@@ -688,13 +689,19 @@ ARGUMENTS:
             bamListFile=open(bamsFrom,"r")
             for line in bamListFile:
                 line = line.rstrip('\n')
-                bamsToProcess.append(line)
+                bamsTmp.append(line)
     else:
         sys.exit("ERROR : bams and bamsFile both empty, IMPOSSIBLE")
-    #Check that all bams exist
+
+    # Check that all bams exist and that there aren't any duplicates
     for b in bamsToProcess:
         if not os.path.isfile(b):
             sys.exit("ERROR : BAM "+b+" doesn't exist. Try "+scriptName+" --help.\n")
+        elif b in bamsNoDupe:
+            logger.warning("BAM "+b+" specified twice, ignoring the dupe")
+        else:
+            bamsNoDupe[b]=1
+            bamsToProcess.append(b)
 
     if (countFile!="") and (not os.path.isfile(countFile)):
         sys.exit("ERROR : countFile "+countFile+" doesn't exist. Try "+scriptName+" --help.\n") 
@@ -743,14 +750,14 @@ ARGUMENTS:
         sampleName=sampleName.replace(".bam","")
         logger.info('Sample being processed : %s', sampleName)
         if np.sum(countsArray[sampleName])>0:
-            logger.info('Sample %s already present in counts file, skipping it\n', sampleName)
+            logger.info('Sample %s already present in counts file, skipping it', sampleName)
             continue
         else:
             try:
                 logger.debug("starting countFrags(%s)", sampleName)
                 countFrags(sampleName, bam, exonDict, tmpDir, threads,countsArray)
             except Exception as e:
-                logger.warning("Failed to count fragments for sample %s, skipping it - exception: %s\n",
+                logger.warning("Failed to count fragments for sample %s, skipping it - exception: %s",
                                sampleName, e)
                 continue
 
