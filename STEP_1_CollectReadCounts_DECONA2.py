@@ -36,7 +36,6 @@ import getopt
 import logging
 import os
 import numpy as np # numpy array objects
-import numpy.lib.recfunctions as rfn #binds two numpy array by columns
 import re
 # nested containment lists, similar to interval trees but faster (https://github.com/biocore-ntnu/ncls)
 from ncls import NCLS
@@ -615,6 +614,7 @@ def Qname2ExonCount(sampleName,chromString,startFList,endFList,startRList,endRLi
 ##############################################################################################################
 def main():
     scriptName=os.path.basename(sys.argv[0])
+    logger.debug("Entering main()")
     ##########################################
     # A) Getopt user argument (ARGV) recovery
     bams=""
@@ -707,15 +707,18 @@ ARGUMENTS:
 
     ######################################################
     # D) Parsing exonic intervals bed
+    logger.debug("starting processBed()")
     exons=processBed(bedFile)
 
     ######################################################
     # E) Creating NCLs for each chromosome
+    logger.debug("starting createExonDict()")
     exonDict=createExonDict(exons)
 
     ############################################
     # F) Creating a numpy array to contain the counts results (new and old counts)
-    sampleNameList=[] #
+    logger.debug("creating empty countsArray")
+    sampleNameList=[]
     for bam in bamsToProcess:
         sampleName=os.path.basename(bam)
         sampleName=sampleName.replace(".bam","")
@@ -728,10 +731,12 @@ ARGUMENTS:
     ############################################
     # G) Parsing old counts file (.tsv) if provided
     if (countFile!=""):
+        logger.debug("starting parsCountFile()")
         parseCountFile(countFile,exons,countsArray)
     
     #####################################################
     # H) Process each BAM
+    logger.debug("starting to process each new BAM")
     sampleNameList=[] 
     for bam in bamsToProcess:
         sampleName=os.path.basename(bam)
@@ -742,26 +747,23 @@ ARGUMENTS:
             continue
         else:
             try:
-                countFrags(sampleName,bam, exonDict, tmpDir, threads,countsArray)
+                logger.debug("starting countFrags(%s)", sampleName)
+                countFrags(sampleName, bam, exonDict, tmpDir, threads,countsArray)
             except Exception as e:
                 logger.warning("Failed to count fragments for sample %s, skipping it - exception: %s\n",
-                            sampleName, e)
+                               sampleName, e)
                 continue
-    
-    #####################################################
-    # I) Link bed and fragment count arrays
-    countsArrays=[exons,countsArray]
-    countsArrays=rfn.merge_arrays(countsArrays, flatten = True, usemask = False)
 
     #####################################################
-    # J) Save the final array
-    columnName=countsArrays.dtype.names
-    formatFile= "\t".join(["%s","%i","%i","%s"]+["%i"]*(len(columnName)-4))
-    np.savetxt(sys.stdout, 
-            countsArrays, 
-            header='\t'.join(columnName),
-            fmt=formatFile,
-            comments='')
+    # J) Print exon defs + counts to stdout
+    logger.debug("printing results to stdout")
+    toPrint = "\t".join(exons.dtype.names + countsArray.dtype.names)
+    print(toPrint)
+    for line in range(len(exons)):
+        toPrint = "\t".join(map(str,exons[line]))
+        toPrint += "\t" + "\t".join(map(str,countsArray[line]))
+        print(toPrint)
+    logger.debug("ALL DONE")
       
 
 if __name__ =='__main__':
