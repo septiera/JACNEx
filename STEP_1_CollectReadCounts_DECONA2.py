@@ -351,8 +351,11 @@ def countFrags(sampleName,bamFile, exonDict,processTmpDir, num_threads,countsArr
 
         ############################################
         # Main loop: parse each alignment
-        logger.debug("countFrags(%s) finished samtools-sort, starting to parse alignments", sampleName)
+        debugFirst=0
         for line in p2.stdout:
+            if debugFirst==0:
+                logger.debug("finished samtools-sort, starting to process")
+                debugFirst=1
             line=line.rstrip('\r\n')
             align=line.split('\t')
 
@@ -678,7 +681,7 @@ ARGUMENTS:
     # bamsTmp is user-supplied and may have dupes
     bamsTmp=[]
     # bamsNoDupe: tmp dictionary for removing dupes if any: key==bam, value==1
-    bamsNoDupe = {}
+    bamsNoDupe={}
     # bamsToProcess, with any dupes removed
     bamsToProcess=[]
     if bams!="":
@@ -695,7 +698,7 @@ ARGUMENTS:
         sys.exit("ERROR : bams and bamsFile both empty, IMPOSSIBLE")
 
     # Check that all bams exist and that there aren't any duplicates
-    for b in bamsToProcess:
+    for b in bamsTmp:
         if not os.path.isfile(b):
             sys.exit("ERROR : BAM "+b+" doesn't exist. Try "+scriptName+" --help.\n")
         elif b in bamsNoDupe:
@@ -739,7 +742,7 @@ ARGUMENTS:
     ############################################
     # G) Parsing old counts file (.tsv) if provided
     if (countFile!=""):
-        logger.debug("starting parsCountFile()")
+        logger.debug("starting parseCountFile()")
         parseCountFile(countFile,exons,countsArray)
     
     #####################################################
