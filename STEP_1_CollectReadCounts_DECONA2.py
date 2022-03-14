@@ -9,7 +9,7 @@
 #       based on the selection of either --bams or --bams-from arguments.
 #   D) Parsing exonic intervals bed
 #       "processBed" function used to check the integrity of the file, padding the intervals
-#        +-10 bp, sorting the positions on the 4 columns (1:CHR,2:START,3:END,4:Exon_ID)
+#        +-10 bp (currently), sorting the positions on the 4 columns (1:CHR,2:START,3:END,4:Exon_ID)
 #   E) Creating NCL for each chromosome
 #       "exonDict" function used from the ncls module, creation of a dictionary :
 #        key = chromosome , value : NCL object
@@ -68,11 +68,12 @@ logger.addHandler(stderr)
 # Input : bedFile == a bed file (with path), possibly gzipped, containing exon definitions
 #         formatted as CHR START END EXON_ID
 #
-# Output : returns the data as a numpy.array with columns are called CHR START END EXON_ID,
-#          and where:
-# - a 10bp padding is added to exon coordinates (ie -10 for START and +10 for END)
+# Output : returns a numpy structured array with columns CHR START END EXON_ID, and where:
+# - a padding is added to exon coordinates (ie -padding for START and +padding for END, current padding=10bp)
 # - exons are sorted by CHR, then START, then END, then EXON_ID
 def processBed(bedFile):
+    # number of bps used to pad the exon coordinates
+    padding=10
     bedname=os.path.basename(bedFile)
     if not os.path.isfile(bedFile):
         logger.error("BED file %s doesn't exist",bedFile)
@@ -100,7 +101,7 @@ def processBed(bedFile):
                      bedname,exons["START"].dtype,exons["END"].dtype)
         sys.exit(1)
         
-    if not np.issubdtype(exons["EXON_ID"].dtype, np.str_):    
+    if not np.issubdtype(exons["EXON_ID"].dtype, np.str_):
         logger.error("In BED file %s,4th column 'EXON_ID' should be a string but numpy sees them as %s",
                      bedname,exons["EXON_ID"].dtype)
         sys.exit(1)    
@@ -140,11 +141,11 @@ def processBed(bedFile):
             logger.error("In BED file %s, columns 2 and/or 3 contain negative values in line : ", bedname, line)
             sys.exit(1)
             
-        ProcessArray[line]["START"] = exons[line]["START"] - 10
+        ProcessArray[line]["START"] = exons[line]["START"] - padding
         # never negative
         if ProcessArray[line]["START"] < 0:
             ProcessArray[line]["START"] = 0
-        ProcessArray[line]["END"] = exons[line]["END"] + 10
+        ProcessArray[line]["END"] = exons[line]["END"] + padding
         
         ###########
         #EXON_ID column: copy and check that each ID is unique
@@ -238,7 +239,7 @@ def createExonDict(exons):
 #    otherwise die with an error.
 #   -> Fill in countsArrays columns from the pre-analyzed sample data (value = fragment count)
 
-def parseCountFile(countFile, exons,countsArray):
+def parseCountFile(countFile,exons,countsArray):
     try:
         counts=open(countFile,"r")
     except Exception as e:
@@ -300,7 +301,7 @@ def parseCountFile(countFile, exons,countsArray):
 #   - the numpy array to fill in with count data
 #
 # Raises an exception if something goes wrong
-def countFrags(sampleName,bamFile, exonDict,processTmpDir, num_threads,countsArray):
+def countFrags(sampleName,bamFile,exonDict,tmpDir,num_threads,countsArray):
     # We need to process all alignments for a given qname simultaneously
     # => ALGORITHM:
     # parse alignements from BAM, sorted by qname;
@@ -324,7 +325,7 @@ def countFrags(sampleName,bamFile, exonDict,processTmpDir, num_threads,countsArr
     # first/last read-in-pair aligns
     qBad=False
 
-    with tempfile.TemporaryDirectory(dir=processTmpDir) as SampleTmpDir:
+    with tempfile.TemporaryDirectory(dir=tmpDir) as SampleTmpDir:
         ############################################
         # Preprocessing:
         # Our algorithm needs to parse the alignements sorted by qname,
@@ -351,11 +352,7 @@ def countFrags(sampleName,bamFile, exonDict,processTmpDir, num_threads,countsArr
 
         ############################################
         # Main loop: parse each alignment
-        debugFirst=0
         for line in p2.stdout:
-            if debugFirst==0:
-                logger.debug("finished samtools-sort, starting to process")
-                debugFirst=1
             line=line.rstrip('\r\n')
             align=line.split('\t')
 
@@ -628,7 +625,7 @@ def main():
 
     usage = """\nCOMMAND SUMMARY:
 Given a BED of exons and one or more BAM files, count the number of sequenced fragments
-from each BAM that overlap each exon (+- 10bp padding).
+from each BAM that overlap each exon (+- padding).
 Results are printed to stdout in TSV format: first 4 columns hold the exon definitions after
 padding and sorting, subsequent columns (one per BAM) hold the counts.
 If a pre-existing counts file produced by this program with the same BED is provided (with --counts),
