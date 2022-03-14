@@ -351,6 +351,7 @@ def countFrags(sampleName,bamFile, exonDict,processTmpDir, num_threads,countsArr
 
         ############################################
         # Main loop: parse each alignment
+        logger.debug("countFrags(%s) finished samtools-sort, starting to parse alignments", sampleName)
         for line in p2.stdout:
             line=line.rstrip('\r\n')
             align=line.split('\t')
@@ -626,9 +627,9 @@ def main():
 Given a BED of exons and one or more BAM files, count the number of sequenced fragments
 from each BAM that overlap each exon (+- 10bp padding).
 Results are printed to stdout in TSV format: first 4 columns hold the exon definitions after
-padding, subsequent columns (one per BAM) hold the counts. If a pre-existing counts file produced
-by this program with the same BED is provided (with --counts), its content is copied and counting
-is only performed for the new BAM(s).
+padding and sorting, subsequent columns (one per BAM) hold the counts.
+If a pre-existing counts file produced by this program with the same BED is provided (with --counts),
+its content is copied and counting is only performed for the new BAM(s).
 ARGUMENTS:
    --bams [str]: comma-separated list of BAM files
    --bams-from [str]: text file listing BAM files, one per line
