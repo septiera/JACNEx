@@ -240,48 +240,52 @@ def parseCountsFile(countsFile,exons,countsArray):
         logger.error("Opening provided countsFile %s: %s", countsFile, e)
         sys.exit(1)
 
-    columnNameCounts=counts.readline().rstrip().rsplit("\t") #keep headers
-    
-    #Samples correspondences vector : countsFile vs countsArray
-    #size vector = countsFile columns number, so the indexes correspond to those of the table.
-    #Its values is :
-    #   -1 for the columns "CHR", "START", "END", "EXON_ID"
-    #   -1 the sample are not in countsArray 
-    #   countsArray index when the sample has been pre-analyzed
-    vector=np.array([-1]*len(columnNameCounts))
+    ######################
+    # parse header from (old) countsFile
+    oldHeader = counts.readline().rstrip().rsplit("\t")
 
-    for indOldCount in range(0,len(columnNameCounts)):
-        for indNewCount in range(0,len(countsArray.dtype.names)):
-            if columnNameCounts[indOldCount]==countsArray.dtype.names[indNewCount]:
-                vector[indOldCount]=indNewCount
+    # fill old2new to identify countsArray samples that are already in countsFile:
+    # old2new is a vector, same size as oldHeader, value old2new[old] is:
+    # the index of sample oldHeader[old] in countsArray (if present);
+    # -1 otherwise, ie if oldHeader[old] is one of the exon definition columns "CHR",
+    #    "START", "END", "EXON_ID" or if it's a sample absent from countsArray
+    old2new = np.array([-1]*len(oldHeader))
 
-    indexLine = 0            
+    for oldIndex in range(len(oldHeader)):
+        for newIndex in range(len(countsArray.dtype.names)):
+            if oldHeader[oldIndex] == countsArray.dtype.names[newIndex]:
+                old2new[oldIndex] = newIndex
+                break
+
+    ######################
+    # parse data lines from countsFile
+    lineIndex = 0            
     for line in counts:
         splitLine=line.rstrip().rsplit("\t")
 
         ######################
         ####### Comparison with exons columns
         ######################
-        if splitLine[0]!=exons[indexLine]["CHR"]:
-            logger.error("'CHR' column differs between BED file and previous countsFile at line %i", indexLine)
+        if splitLine[0]!=exons[lineIndex]["CHR"]:
+            logger.error("'CHR' column differs between BED file and previous countsFile at line %i", lineIndex)
             sys.exit(1)
 
-        if (int(splitLine[1])!=exons[indexLine]["START"]) or (int(splitLine[2])!=exons[indexLine]["END"]): 
-            logger.error("'START' or 'END' values differ between BED file and previous countsFile at line %i", indexLine)
+        if (int(splitLine[1])!=exons[lineIndex]["START"]) or (int(splitLine[2])!=exons[lineIndex]["END"]): 
+            logger.error("'START' or 'END' values differ between BED file and previous countsFile at line %i", lineIndex)
             sys.exit(1)
 
-        if splitLine[3]!=exons[indexLine]["EXON_ID"]:
-            logger.error("'EXON_ID' column differs between BED file and previous countsFile at line %i", indexLine)
+        if splitLine[3]!=exons[lineIndex]["EXON_ID"]:
+            logger.error("'EXON_ID' column differs between BED file and previous countsFile at line %i", lineIndex)
             sys.exit(1)
 
         #####################
         ###### Fill countsArray with old fragment count data
         #####################
-        for indVec in range(0,len(vector)):
-            if vector[indVec]!=-1:
-                countsArray[indexLine][vector[indVec]]=splitLine[indVec]
+        for oldIndex in range(len(old2new)):
+            if old2new[oldIndex]!=-1:
+                countsArray[lineIndex][old2new[oldIndex]] = int(splitLine[oldIndex])
 
-        indexLine+=1
+        lineIndex+=1
 
 ####################################################
 # countFrags :
