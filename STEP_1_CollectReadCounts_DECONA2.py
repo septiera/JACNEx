@@ -225,12 +225,14 @@ def createExonDict(exons):
 #     produced by this program
 #   - exons is a numpy.array holding exon definitions, padded and sorted,
 #     as returned by processBed
-#   - countsArray is an empty int numpy array (dim=NbExons*NbsampleToProcess)
+#   - SOIs is a list of strings: the sample names of interest
+#   - countsArray is an empty int numpy array (dim=NbExons*NbSOIs)
 #
 # -> make sure countsFile was produced with the same BED as exons, else die;
-# -> for any sample present in both countsFile and countsArray, fill the countsArray column
-#    by copying data from countsFile
-def parseCountsFile(countsFile,exons,countsArray):
+# -> for any sample present in both countsFile and SOIs, fill the sample's
+#    column in countsArray by copying data from countsFile, and set
+#    countsFilled[sample] to True
+def parseCountsFile(countsFile,exons,SOIs,countsArray,countsFilled):
     try:
         counts=open(countsFile,"r")
     except Exception as e:
@@ -241,17 +243,17 @@ def parseCountsFile(countsFile,exons,countsArray):
     # parse header from (old) countsFile
     oldHeader = counts.readline().rstrip().rsplit("\t")
 
-    # fill old2new to identify countsArray samples that are already in countsFile:
+    # fill old2new to identify samples of interest that are already in countsFile:
     # old2new is a vector, same size as oldHeader, value old2new[old] is:
-    # the index of sample oldHeader[old] in countsArray (if present);
+    # the index of sample oldHeader[old] in SOIs (if present);
     # -1 otherwise, ie if oldHeader[old] is one of the exon definition columns "CHR",
-    #    "START", "END", "EXON_ID" or if it's a sample absent from countsArray
+    #    "START", "END", "EXON_ID" or if it's a sample absent from SOIs
     old2new = np.array([-1]*len(oldHeader))
-
     for oldIndex in range(len(oldHeader)):
-        for newIndex in range(len(countsArray.dtype.names)):
-            if oldHeader[oldIndex] == countsArray.dtype.names[newIndex]:
+        for newIndex in range(len(SOIs)):
+            if oldHeader[oldIndex] == SOIs[newIndex]:
                 old2new[oldIndex] = newIndex
+                countsFilled[newIndex] = True
                 break
 
     ######################
@@ -260,43 +262,36 @@ def parseCountsFile(countsFile,exons,countsArray):
     for line in counts:
         splitLine=line.rstrip().rsplit("\t")
 
-        ######################
-        ####### Comparison with exons columns
-        ######################
-        if splitLine[0]!=exons[lineIndex]["CHR"]:
-            logger.error("'CHR' column differs between BED file and previous countsFile at line %i", lineIndex)
+        ####### Compare exon definitions
+        if ((splitLine[0]!=exons[lineIndex]["CHR"]) or
+            (int(splitLine[1])!=exons[lineIndex]["START"]) or 
+            (int(splitLine[2])!=exons[lineIndex]["END"]) or
+            (splitLine[3]!=exons[lineIndex]["EXON_ID"])) :
+            logger.error("exon definitions disagree between previous countsFile %s and the provided BED file "+
+                         "(after padding and sorting) at line index %i. If the BED file changed, a previous "+
+                         "countsFile cannot be re-used: all counts must be recalculated from scratch", lineIndex)
             sys.exit(1)
 
-        if (int(splitLine[1])!=exons[lineIndex]["START"]) or (int(splitLine[2])!=exons[lineIndex]["END"]): 
-            logger.error("'START' or 'END' values differ between BED file and previous countsFile at line %i", lineIndex)
-            sys.exit(1)
-
-        if splitLine[3]!=exons[lineIndex]["EXON_ID"]:
-            logger.error("'EXON_ID' column differs between BED file and previous countsFile at line %i", lineIndex)
-            sys.exit(1)
-
-        #####################
-        ###### Fill countsArray with old fragment count data
-        #####################
+        ###### Fill countsArray with old count data
         for oldIndex in range(len(old2new)):
             if old2new[oldIndex]!=-1:
                 countsArray[lineIndex][old2new[oldIndex]] = int(splitLine[oldIndex])
-
+        ###### next line
         lineIndex+=1
 
 ####################################################
 # countFrags :
 # Count the fragments in bamFile that overlap each exon described in exonDict.
 # Arguments:
-#   - sample identifier [str]
 #   - a bam file (with path)
 #   - the dictionary of exon NCLs
 #   - a tmp dir with fast RW access and enough space for samtools sort
 #   - the number of cpu threads that samtools can use
 #   - the numpy array to fill in with count data
+#   - the column index (in countsArray) corresponding to bamFile
 #
 # Raises an exception if something goes wrong
-def countFrags(sampleName,bamFile,exonDict,tmpDir,num_threads,countsArray):
+def countFrags(bamFile,exonDict,tmpDir,num_threads,countsArray,sampleIndex):
     # We need to process all alignments for a given qname simultaneously
     # => ALGORITHM:
     # parse alignements from BAM, sorted by qname;
@@ -358,7 +353,7 @@ def countFrags(sampleName,bamFile,exonDict,tmpDir,num_threads,countsArray):
             # If we are done with previous qname: process it and reset accumulators
             if (qname!=align[0]) and (qname!=""):  # align[0] is the qname
                 if not qBad:
-                    Qname2ExonCount(sampleName,qchrom,qstartF,qendF,qstartR,qendR,exonDict,countsArray)
+                    Qname2ExonCount(qchrom,qstartF,qendF,qstartR,qendR,exonDict,countsArray,sampleIndex)
                 qname, qchrom = "", ""
                 qstartF, qstartR, qendF, qendR = [], [], [], []
                 qFirstOnForward=0
@@ -420,7 +415,7 @@ def countFrags(sampleName,bamFile,exonDict,tmpDir,num_threads,countsArray):
 
         # process last Qname
         if not qBad:
-            Qname2ExonCount(sampleName,qchrom,qstartF,qendF,qstartR,qendR,exonDict,countsArray)
+            Qname2ExonCount(qchrom,qstartF,qendF,qstartR,qendR,exonDict,countsArray,sampleIndex)
 
         # wait for samtools to finish cleanly and check return codes
         if (p1.wait() != 0):
@@ -456,13 +451,13 @@ def AliLengthOnRef(CIGARAlign):
 #   either actually covered by a sequencing read or closely flanked by a pair of mate reads;
 # - identify exons overlapped by the fragment, and increment their count.
 # Inputs:
-#   -sample identifier [str]
 #   -chr [str]
 #   -4 lists of ints for F and R strand positions (start and end)
 #   -the dictionary containing the NCLs for each chromosome
-#   -the numpy array to fill in with count data, appropriate counts will be incremented
+#   -the numpy array to fill, counts in column sampleIndex will be incremented
+#   -the column index in countsArray corresponding to the current sample
 # Nothing is returned, this function just updates countsArray
-def Qname2ExonCount(sampleName,chromString,startFList,endFList,startRList,endRList,exonDict,countsArray):
+def Qname2ExonCount(chromString,startFList,endFList,startRList,endRList,exonDict,countsArray,sampleIndex):
     #######################################################
     # apply QC filters
     #######################################################
@@ -599,7 +594,7 @@ def Qname2ExonCount(sampleName,chromString,startFList,endFList,startRList,endRLi
                 continue
             else:
                 exonsSeen.append(exonIndex)
-                countsArray[sampleName][exonIndex] += 1
+                countsArray[exonIndex][sampleIndex] += 1
 
 ######################################################################################################
 ######################################## Main ########################################################
@@ -718,41 +713,43 @@ ARGUMENTS:
     exons=processBed(bedFile)
     exonDict=createExonDict(exons)
 
-    # create a numpy array to store the counts
-    dt=np.dtype({'names':sampleNames,
-                 'formats': [np.int_]*len(sampleNames)})
-    countsArray=np.zeros(len(exons), dtype=dt) 
+    # numpy array to store the counts, Fortran order should be faster for us
+    countsArray = np.zeros((len(exons),len(sampleNames)), dtype=int, order='F')
+    # countsFilled: same size and order as sampleNames, value will be set 
+    # to True iff counts were filled from countsFile
+    countsFilled = np.array([False]*len(sampleNames))
 
     # fill countsArray with pre-calculated counts if countsFile was provided
     if (countsFile!=""):
-        parseCountsFile(countsFile,exons,countsArray)
-    
+        parseCountsFile(countsFile,exons,sampleNames,countsArray,countsFilled)
+
     #####################################################
     # Process each BAM
     for bamIndex in range(len(bamsToProcess)):
         bam = bamsToProcess[bamIndex]
         sampleName = sampleNames[bamIndex]
         logger.info('Processing sample %s', sampleName)
-        if np.sum(countsArray[sampleName])>0:
-            logger.info('Sample %s already present in counts file, skipping it', sampleName)
+        if countsFilled[bamIndex]:
+            logger.info('Sample %s already filled from countsFile, skipping it', sampleName)
             continue
         else:
             try:
-                countFrags(sampleName, bam, exonDict, tmpDir, threads, countsArray)
+                countFrags(bam, exonDict, tmpDir, threads, countsArray, bamIndex)
             except Exception as e:
                 logger.warning("Failed to count fragments for sample %s, skipping it - exception: %s",
                                sampleName, e)
-                # TODO: remove column for sampleName from countsArray, otherwise we will
-                # print erroneous counts for it
+                # TODO: mark column bamIndex for removal from countsArray, otherwise we will
+                # print erroneous counts for it - but don't remove befire we are finished 
+                # processing all BAMs,, because we are looping on bamIndex!
                 continue
 
     #####################################################
     # Print exon defs + counts to stdout
-    toPrint = "\t".join(exons.dtype.names + countsArray.dtype.names)
+    toPrint = "\t".join(exons.dtype.names)+"\t"+"\t".join(sampleNames)
     print(toPrint)
-    for line in range(len(exons)):
-        toPrint = "\t".join(map(str,exons[line]))
-        toPrint += "\t" + "\t".join(map(str,countsArray[line]))
+    for exonIndex in range(len(exons)):
+        toPrint = "\t".join(map(str,exons[exonIndex]))
+        toPrint += "\t" + "\t".join(map(str,countsArray[exonIndex]))
         print(toPrint)
     logger.info("ALL DONE")
 
