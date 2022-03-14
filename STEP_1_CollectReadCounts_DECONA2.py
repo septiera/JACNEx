@@ -14,7 +14,7 @@
 #       "exonDict" function used from the ncls module, creation of a dictionary :
 #        key = chromosome , value : NCL object
 #   F) Parsing old counts file (.tsv) if exist else new count Dataframe creation 
-#       "parseCountFile" function used to check the integrity of the file against the previously
+#       "parseCountsFile" function used to check the integrity of the file against the previously
 #        generated bed file. It also allows to check if the pre-existing counts are in a correct format.
 #   G) Definition of a loop for each BAM files and the reads counting.
 #       "countFrags" function : 
@@ -222,34 +222,28 @@ def createExonDict(exons):
     return(exonDict)
 
 #################################################
-# parseCountFile:
-#Input:
-#   - countFile is a tsv file (with path), including column titles, as
+# parseCountsFile:
+# Input:
+#   - countsFile is a tsv file (with path), including column titles, as
 #     produced by this program
 #   - exons is a numpy.array holding exon definitions, padded and sorted,
 #     as returned by processBed
 #   - countsArray is an empty int numpy array (dim=NbExons*NbsampleToProcess)
-#     It's created by the main process
 #
-#-> Open countFile 
-#-> Extract the first header line to create the associated columns indexes vector(1D array)
-#-> Change values for indexes corresponding to samples pre-analyzed (value = countsArray column index) 
-#-> Loop on the countFile lines:
-#   -> Check that the countFile first 4 columns are identical to exons,
-#    otherwise die with an error.
-#   -> Fill in countsArrays columns from the pre-analyzed sample data (value = fragment count)
-
-def parseCountFile(countFile,exons,countsArray):
+# -> make sure countsFile was produced with the same BED as exons, else die;
+# -> for any sample present in both countsFile and countsArray, fill the countsArray column
+#    by copying data from countsFile
+def parseCountsFile(countsFile,exons,countsArray):
     try:
-        counts=open(countFile,"r")
+        counts=open(countsFile,"r")
     except Exception as e:
-        logger.error("Opening provided countFile %s: %s", countFile, e)
+        logger.error("Opening provided countsFile %s: %s", countsFile, e)
         sys.exit(1)
 
     columnNameCounts=counts.readline().rstrip().rsplit("\t") #keep headers
     
-    #Samples correspondences vector : countFile vs countsArray
-    #size vector = countFile columns number, so the indexes correspond to those of the table.
+    #Samples correspondences vector : countsFile vs countsArray
+    #size vector = countsFile columns number, so the indexes correspond to those of the table.
     #Its values is :
     #   -1 for the columns "CHR", "START", "END", "EXON_ID"
     #   -1 the sample are not in countsArray 
@@ -619,7 +613,7 @@ def main():
     bamsFrom=""
     bedFile=""
     # default setting ARGV 
-    countFile=""
+    countsFile=""
     tmpDir="/tmp/"
     threads=10 
 
@@ -658,7 +652,7 @@ ARGUMENTS:
         elif opt in ("--bed"):
             bedFile =value
         elif opt in ("--counts"):
-            countFile=value
+            countsFile=value
         elif opt in ("--tmp"):
             tmpDir=value
         elif opt in ("--threads"):
@@ -704,8 +698,8 @@ ARGUMENTS:
             bamsNoDupe[b]=1
             bamsToProcess.append(b)
 
-    if (countFile!="") and (not os.path.isfile(countFile)):
-        sys.exit("ERROR : countFile "+countFile+" doesn't exist. Try "+scriptName+" --help.\n") 
+    if (countsFile!="") and (not os.path.isfile(countsFile)):
+        sys.exit("ERROR : countsFile "+countsFile+" doesn't exist. Try "+scriptName+" --help.\n") 
 
     if not os.path.isdir(tmpDir):
         sys.exit("ERROR : tmp directory "+tmpDir+" doesn't exist. Try "+scriptName+" --help.\n")
@@ -738,9 +732,9 @@ ARGUMENTS:
 
     ############################################
     # G) Parsing old counts file (.tsv) if provided
-    if (countFile!=""):
-        logger.debug("starting parseCountFile()")
-        parseCountFile(countFile,exons,countsArray)
+    if (countsFile!=""):
+        logger.debug("starting parseCountsFile()")
+        parseCountsFile(countsFile,exons,countsArray)
     
     #####################################################
     # H) Process each BAM
