@@ -75,9 +75,6 @@ def processBed(bedFile):
     # number of bps used to pad the exon coordinates
     padding=10
     bedname=os.path.basename(bedFile)
-    if not os.path.isfile(bedFile):
-        logger.error("BED file %s doesn't exist",bedFile)
-        sys.exit(1)
     try:
         exons=np.genfromtxt(bedFile,
                             dtype=None,
@@ -162,7 +159,7 @@ def processBed(bedFile):
         #############################
         #we want ints so we remove chr prefix from CHR column if present
         currentCHR = exons[line]["CHR"]
-        currentCHRNum = currentCHR.replace("chr","",1)
+        currentCHRNum = re.sub("^chr","",currentCHR)
           
         if currentCHRNum.isdigit():
             currentCHRNum=int(currentCHRNum)
@@ -351,8 +348,7 @@ def countFrags(sampleName,bamFile,exonDict,tmpDir,num_threads,countsArray):
         ############################################
         # Main loop: parse each alignment
         for line in p2.stdout:
-            line=line.rstrip('\r\n')
-            align=line.split('\t')
+            align=line.rstrip().split('\t')
 
             # skip ali if not on main chr
             if not mainChr.match(align[2]): 
@@ -605,18 +601,19 @@ def Qname2ExonCount(sampleName,chromString,startFList,endFList,startRList,endRLi
                 exonsSeen.append(exonIndex)
                 countsArray[sampleName][exonIndex] += 1
 
-##############################################################################################################
-######################################### Script Body ########################################################
-##############################################################################################################
+######################################################################################################
+######################################## Main ########################################################
+######################################################################################################
 def main():
     scriptName=os.path.basename(sys.argv[0])
-    logger.debug("Entering main()")
+    logger.info("starting to work")
     ##########################################
-    # A) Getopt user argument (ARGV) recovery
+    # parse user-provided arguments
+    # mandatory args
     bams=""
     bamsFrom=""
     bedFile=""
-    # default setting ARGV 
+    # optional args with default values
     countsFile=""
     tmpDir="/tmp/"
     threads=10 
@@ -645,132 +642,120 @@ ARGUMENTS:
         sys.exit("ERROR : "+e.msg+".\n"+usage)
 
     for opt, value in opts:
-        #variables association with user parameters (ARGV)
+        # sanity-check and store arguments
         if opt in ('-h', '--help'):
             sys.stderr.write(usage)
             sys.exit(0)
         elif opt in ("--bams"):
-            bams=value     
+            bams=value
+            # bams is checked later, along with bamsFrom content
         elif opt in ("--bams-from"):
             bamsFrom=value
+            if not os.path.isfile(bamsFrom):
+                sys.exit("ERROR : bams-from file "+bamsFrom+" doesn't exist. Try "+scriptName+" --help.\n")
         elif opt in ("--bed"):
-            bedFile =value
+            bedFile=value
+            if not os.path.isfile(bedFile):
+                sys.exit("ERROR : bedFile "+bedFile+" doesn't exist. Try "+scriptName+" --help.\n")
         elif opt in ("--counts"):
             countsFile=value
+            if not os.path.isfile(countsFile):
+                sys.exit("ERROR : countsFile "+countsFile+" doesn't exist. Try "+scriptName+" --help.\n") 
         elif opt in ("--tmp"):
             tmpDir=value
+            if not os.path.isdir(tmpDir):
+                sys.exit("ERROR : tmp directory "+tmpDir+" doesn't exist. Try "+scriptName+" --help.\n")
         elif opt in ("--threads"):
             threads=int(value)
+            if (threads<=0):
+                sys.exit("ERROR : threads "+str(threads)+" must be a positive int. Try "+scriptName+" --help.\n")
         else:
-            sys.exit("ERROR : Programming error. Unhandled option "+opt+".\n")
+            sys.exit("ERROR : unhandled option "+opt+".\n")
 
     #####################################################
-    # B) Checking that the mandatory parameters are presents
+    # Check that the mandatory parameters are present
     if (bams=="" and bamsFrom=="") or (bams!="" and bamsFrom!=""):
         sys.exit("ERROR : You must use either --bams or --bams-from but not both.\n"+usage)
     if bedFile=="":
         sys.exit("ERROR : You must use --bedFile.\n"+usage)
 
     #####################################################
-    # C) Checking that the parameters actually exist and processing
+    # Check and clean up the provided list of BAMs
     # bamsTmp is user-supplied and may have dupes
     bamsTmp=[]
     # bamsNoDupe: tmp dictionary for removing dupes if any: key==bam, value==1
     bamsNoDupe={}
     # bamsToProcess, with any dupes removed
     bamsToProcess=[]
-    if bams!="":
+    # sample names stripped of path and .bam extension, same order as in bamsToProcess 
+    sampleNames=[]
+
+    if bams != "":
         bamsTmp=bams.split(",")
-    elif bamsFrom!="":
-        if not os.path.isfile(bamsFrom):
-            sys.exit("ERROR : bams-from file "+bamsFrom+" doesn't exist. Try "+scriptName+" --help.\n")
-        else:
-            bamListFile=open(bamsFrom,"r")
-            for line in bamListFile:
-                line = line.rstrip('\n')
-                bamsTmp.append(line)
     else:
-        sys.exit("ERROR : bams and bamsFile both empty, IMPOSSIBLE")
+        bamsList = open(bamsFrom,"r")
+        for bam in bamsList:
+            bam = bam.rstrip()
+            bamsTmp.append(bam)
 
-    # Check that all bams exist and that there aren't any duplicates
-    for b in bamsTmp:
-        if not os.path.isfile(b):
-            sys.exit("ERROR : BAM "+b+" doesn't exist. Try "+scriptName+" --help.\n")
-        elif b in bamsNoDupe:
-            logger.warning("BAM "+b+" specified twice, ignoring the dupe")
+    # Check that all bams exist and remove any duplicates
+    for bam in bamsTmp:
+        if not os.path.isfile(bam):
+            sys.exit("ERROR : BAM "+bam+" doesn't exist. Try "+scriptName+" --help.\n")
+        elif bam in bamsNoDupe:
+            logger.warning("BAM "+bam+" specified twice, ignoring the dupe")
         else:
-            bamsNoDupe[b]=1
-            bamsToProcess.append(b)
+            bamsNoDupe[bam]=1
+            bamsToProcess.append(bam)
+            sampleName=os.path.basename(bam)
+            sampleName=re.sub(".bam$","",sampleName)
+            sampleNames.append(sampleName)
 
-    if (countsFile!="") and (not os.path.isfile(countsFile)):
-        sys.exit("ERROR : countsFile "+countsFile+" doesn't exist. Try "+scriptName+" --help.\n") 
-
-    if not os.path.isdir(tmpDir):
-        sys.exit("ERROR : tmp directory "+tmpDir+" doesn't exist. Try "+scriptName+" --help.\n")
-
-    if (threads<=0):
-        sys.exit("ERROR : number of threads "+str(threads)+" must be positive. Try "+scriptName+" --help.\n")
 
     ######################################################
-    # D) Parsing exonic intervals bed
-    logger.debug("starting processBed()")
+    # Preparation:
+    # parse exons from BED and create an NCL for each chrom
     exons=processBed(bedFile)
-
-    ######################################################
-    # E) Creating NCLs for each chromosome
-    logger.debug("starting createExonDict()")
     exonDict=createExonDict(exons)
 
-    ############################################
-    # F) Creating a numpy array to contain the counts results (new and old counts)
-    logger.debug("creating empty countsArray")
-    sampleNameList=[]
-    for bam in bamsToProcess:
-        sampleName=os.path.basename(bam)
-        sampleName=sampleName.replace(".bam","")
-        sampleNameList.append(sampleName)
-
-    dt=np.dtype({'names':sampleNameList,
-                 'formats': [np.int_]*len(sampleNameList)})
+    # create a numpy array to store the counts
+    dt=np.dtype({'names':sampleNames,
+                 'formats': [np.int_]*len(sampleNames)})
     countsArray=np.zeros(len(exons), dtype=dt) 
 
-    ############################################
-    # G) Parsing old counts file (.tsv) if provided
+    # fill countsArray with pre-calculated counts if countsFile was provided
     if (countsFile!=""):
-        logger.debug("starting parseCountsFile()")
         parseCountsFile(countsFile,exons,countsArray)
     
     #####################################################
-    # H) Process each BAM
-    logger.debug("starting to process each new BAM")
-    sampleNameList=[] 
-    for bam in bamsToProcess:
-        sampleName=os.path.basename(bam)
-        sampleName=sampleName.replace(".bam","")
-        logger.info('Sample being processed : %s', sampleName)
+    # Process each BAM
+    for bamIndex in range(len(bamsToProcess)):
+        bam = bamsToProcess[bamIndex]
+        sampleName = sampleNames[bamIndex]
+        logger.info('Processing sample %s', sampleName)
         if np.sum(countsArray[sampleName])>0:
             logger.info('Sample %s already present in counts file, skipping it', sampleName)
             continue
         else:
             try:
-                logger.debug("starting countFrags(%s)", sampleName)
-                countFrags(sampleName, bam, exonDict, tmpDir, threads,countsArray)
+                countFrags(sampleName, bam, exonDict, tmpDir, threads, countsArray)
             except Exception as e:
                 logger.warning("Failed to count fragments for sample %s, skipping it - exception: %s",
                                sampleName, e)
+                # TODO: remove column for sampleName from countsArray, otherwise we will
+                # print erroneous counts for it
                 continue
 
     #####################################################
-    # J) Print exon defs + counts to stdout
-    logger.debug("printing results to stdout")
+    # Print exon defs + counts to stdout
     toPrint = "\t".join(exons.dtype.names + countsArray.dtype.names)
     print(toPrint)
     for line in range(len(exons)):
         toPrint = "\t".join(map(str,exons[line]))
         toPrint += "\t" + "\t".join(map(str,countsArray[line]))
         print(toPrint)
-    logger.debug("ALL DONE")
-      
+    logger.info("ALL DONE")
+
 
 if __name__ =='__main__':
     main()
