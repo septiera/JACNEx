@@ -1,41 +1,17 @@
-#############################################################################################################
-######################################## STEP1 Collect Read Count DECONA2 ###################################
-#############################################################################################################
-#STEPS:
-#   A) Getopt user argument (ARGV) recovery
-#   B) Checking that the mandatory parameters are presents
-#   C) Checking that the parameters actually exist and processing
-#       concerns the creation of a list containing the bams paths
-#       based on the selection of either --bams or --bams-from arguments.
-#   D) Parsing exonic intervals bed
-#       "processBed" function used to check the integrity of the file, padding the intervals
-#        +-10 bp (currently), sorting the positions on the 4 columns (1:CHR,2:START,3:END,4:Exon_ID)
-#   E) Creating NCL for each chromosome
-#       "exonDict" function used from the ncls module, creation of a dictionary :
-#        key = chromosome , value : NCL object
-#   F) Parsing old counts file (.tsv) if exist else new count Dataframe creation 
-#       "parseCountsFile" function used to check the integrity of the file against the previously
-#        generated bed file. It also allows to check if the pre-existing counts are in a correct format.
-#   G) Definition of a loop for each BAM files and the reads counting.
-#       "countFrags" function : 
-#           -allows to sort alignments by BAM QNAME and to filter them on specific flags (see conditions in the script).
-#            Realisation by samtool v1.9 (using htslib 1.9)
-#           -also extracts the information for each unique QNAME. The information on the end position and the length of
-#           the alignments are not present the "AliLengthOnRef" function retrieves them.
-#           -the Qname informations is sent to the "Qname2ExonCount" function to perform the fragment count. 
-#           -A check of the results is also performed.
-#   This step completes the count dataframe.
-#   Once all samples have been processed, this dataframe is saved.
+###############################################################################################
+######################################## STEP1 Collect Read Count DECONA2 #####################
+###############################################################################################
+# Given a BED of exons and one or more BAM files, count the number of sequenced fragments
+# from each BAM that overlap each exon (+- padding).
+# Print results to stdout. 
+# See usage for details.
+###############################################################################################
 
-#############################################################################################################
-################################ Loading of the modules required for processing #############################
-#############################################################################################################
-# Python Modules
 import sys
 import getopt
 import logging
 import os
-import numpy as np # numpy array objects
+import numpy as np # numpy arrays
 import re
 # nested containment lists, similar to interval trees but faster (https://github.com/biocore-ntnu/ncls)
 from ncls import NCLS
@@ -135,7 +111,8 @@ def processBed(bedFile):
         ###########
         #START and END columns: pad
         if (exons[line]["START"] < 0) or (exons[line]["END"] < 0):
-            logger.error("In BED file %s, columns 2 and/or 3 contain negative values in line : ", bedname, line)
+            logger.error("In BED file %s, columns 2 and/or 3 contain negative values in line : ", 
+                         bedname, line)
             sys.exit(1)
             
         ProcessArray[line]["START"] = exons[line]["START"] - padding
