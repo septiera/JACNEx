@@ -690,8 +690,8 @@ ARGUMENTS:
     exons=processBed(bedFile)
     exonDict=createExonDict(exons)
 
-    # numpy array to store the counts, Fortran order should be faster for us
-    countsArray = np.zeros((len(exons),len(sampleNames)), dtype=int, order='F')
+    # countsArray[exonIndex][sampleIndex] will store the corresponding count
+    countsArray = np.zeros((len(exons),len(sampleNames)), dtype=int)
     # countsFilled: same size and order as sampleNames, value will be set 
     # to True iff counts were filled from countsFile
     countsFilled = np.array([False]*len(sampleNames))
@@ -702,6 +702,10 @@ ARGUMENTS:
 
     #####################################################
     # Process each BAM
+    # if countFrags fails for any BAMs, we have to remember their indexes
+    # and only expunge them at the end, after exiting the for bamIndex loop
+    # -> save their indexes in failedBams
+    failedBams = []
     for bamIndex in range(len(bamsToProcess)):
         bam = bamsToProcess[bamIndex]
         sampleName = sampleNames[bamIndex]
@@ -715,10 +719,12 @@ ARGUMENTS:
             except Exception as e:
                 logger.warning("Failed to count fragments for sample %s, skipping it - exception: %s",
                                sampleName, e)
-                # TODO: mark column bamIndex for removal from countsArray, otherwise we will
-                # print erroneous counts for it - but don't remove befire we are finished 
-                # processing all BAMs,, because we are looping on bamIndex!
+                failedBams.append(bamIndex)
                 continue
+    # now expunge samples for which countFrags failed
+    for failedI in reversed(failedBams):
+        del(sampleNames[failedI])
+        countsArray = np.delete(countsArray,failedI,1)
 
     #####################################################
     # Print exon defs + counts to stdout
