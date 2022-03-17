@@ -17,6 +17,7 @@ import re
 from ncls import NCLS
 import subprocess # run samtools
 import tempfile
+import time
 
 #####################################################################################################
 ################################ Logging Definition #################################################
@@ -579,6 +580,7 @@ def Qname2ExonCount(chromString,startFList,endFList,startRList,endRList,exonDict
 def main():
     scriptName=os.path.basename(sys.argv[0])
     logger.info("starting to work")
+    startTime = time.time()
     ##########################################
     # parse user-provided arguments
     # mandatory args
@@ -689,6 +691,9 @@ ARGUMENTS:
     # parse exons from BED and create an NCL for each chrom
     exons=processBed(bedFile)
     exonDict=createExonDict(exons)
+    thisTime = time.time()
+    logger.debug("Done pre-processing BED, in %.2f s", thisTime-startTime)
+    startTime = thisTime
 
     # countsArray[exonIndex][sampleIndex] will store the corresponding count
     countsArray = np.zeros((len(exons),len(sampleNames)), dtype=int)
@@ -699,6 +704,9 @@ ARGUMENTS:
     # fill countsArray with pre-calculated counts if countsFile was provided
     if (countsFile!=""):
         parseCountsFile(countsFile,exons,sampleNames,countsArray,countsFilled)
+        thisTime = time.time()
+        logger.debug("Done parsing old countsFile, in %.2f s", thisTime-startTime)
+        startTime = thisTime
 
     #####################################################
     # Process each BAM
@@ -716,6 +724,9 @@ ARGUMENTS:
         else:
             try:
                 countFrags(bam, exonDict, tmpDir, threads, countsArray, bamIndex)
+                thisTime = time.time()
+                logger.debug("Done processing BAM for %s, in %.2f s", sampleName, thisTime-startTime)
+                startTime = thisTime
             except Exception as e:
                 logger.warning("Failed to count fragments for sample %s, skipping it - exception: %s",
                                sampleName, e)
@@ -734,6 +745,8 @@ ARGUMENTS:
         toPrint = "\t".join(map(str,exons[exonIndex]))
         toPrint += "\t" + "\t".join(map(str,countsArray[exonIndex]))
         print(toPrint)
+    thisTime = time.time()
+    logger.debug("Done printing results, in %.2f s", thisTime-startTime)
     logger.info("ALL DONE")
 
 
