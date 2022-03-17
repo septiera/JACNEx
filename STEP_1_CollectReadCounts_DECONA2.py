@@ -681,8 +681,11 @@ ARGUMENTS:
     logger.debug("Done pre-processing BED, in %.2f s", thisTime-startTime)
     startTime = thisTime
 
-    # countsArray[exonIndex][sampleIndex] will store the corresponding count
-    countsArray = np.zeros((len(exons),len(sampleNames)), dtype=int)
+    # countsArray[exonIndex][sampleIndex] will store the corresponding count.
+    # order=F should improve performance, since we fill the array one column at a time.
+    # dtype=uint32 should also be faster and totally sufficient to store the counts,
+    # but in my tests it is MUCH slower than dtype=int !
+    countsArray = np.zeros((len(exons),len(sampleNames)),dtype=int, order='F')
     # countsFilled: same size and order as sampleNames, value will be set 
     # to True iff counts were filled from countsFile
     countsFilled = np.array([False]*len(sampleNames))
