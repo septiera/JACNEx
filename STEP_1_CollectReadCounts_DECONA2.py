@@ -17,6 +17,7 @@ import re
 from ncls import NCLS
 import subprocess # run samtools
 import tempfile
+import gzip
 import time
 
 #####################################################################################################
@@ -45,155 +46,140 @@ logger.addHandler(stderr)
 # Input : bedFile == a bed file (with path), possibly gzipped, containing exon definitions
 #         formatted as CHR START END EXON_ID
 #
-# Output : returns a numpy structured array with columns CHR START END EXON_ID, and where:
-# - a padding is added to exon coordinates (ie -padding for START and +padding for END, current padding=10bp)
+# Output : returns a list of [numberOfExons] lists of 4 scalars (types: str,int,int,str)
+# containing CHR,START,END,EXON_ID, and where:
+# - a padding is added to exon coordinates (ie -padding for START and +padding for END,
+#   current padding=10bp)
 # - exons are sorted by CHR, then START, then END, then EXON_ID
 def processBed(bedFile):
     # number of bps used to pad the exon coordinates
     padding=10
-    bedname=os.path.basename(bedFile)
-    try:
-        exons=np.genfromtxt(bedFile,
-                            dtype=None,
-                            encoding=None,
-                            names=('CHR','START','END','EXON_ID'))
-        # compression == 'infer' by default => auto-works whether bedFile is gzipped, bgzipped or not
-    except Exception as e:
-        logger.error("error parsing BED file %s: %s", bedFile, e)
-        sys.exit(1)
 
-    ###############################
-    ##### Sanity Check
-    ###############################   
-    if not np.issubdtype(exons["CHR"].dtype, np.str_): #data type numpy void 
-        logger.error("In BED file %s, first column 'CHR' should be a string but numpy sees them as %s",
-                     bedname,exons["CHR"].dtype)
-        sys.exit(1)   
+    # list of exons to be returned
+    exons=[]
     
-    if (exons["START"].dtype!=int) or (exons["END"].dtype!=int) :
-        logger.error("In BED file %s,columns 2-3 'START'-'END' should be ints but numpy sees them as %s - %s",
-                     bedname,exons["START"].dtype,exons["END"].dtype)
-        sys.exit(1)
-        
-    if not np.issubdtype(exons["EXON_ID"].dtype, np.str_):
-        logger.error("In BED file %s,4th column 'EXON_ID' should be a string but numpy sees them as %s",
-                     bedname,exons["EXON_ID"].dtype)
-        sys.exit(1)    
-   
-    #################
-    ### Create temp array for padding and sorting 
-    #################
-    # 5 columns : CHR, START, END, EXON_ID and CHR_NUM, CHR_NUM is an
-    # int version of CHR (for sorting)
-    dt=np.dtype({'names':('CHR','START','END','EXON_ID','CHR_NUM'),
-                 'formats':(exons["CHR"].dtype,int,int,exons["EXON_ID"].dtype,int)})
-    ProcessArray=np.empty(len(exons), dtype=dt)
-    
-    # CHR -> CHR_NUM dictionary
+    # we'll need a numerical version of CHR but we must read the whole file
+    # beforehand => fill a CHR -> CHR_NUM dictionary
     translateCHRDict={}
-
-    # temp dict containing all non-numeric chrs, value is CHR and key is
-    # the CHR stripped of 'chr' if present (e.g 'Y'->'chrY')
+    # temp dict containing all non-numeric chrs, key is the CHR stripped of 'chr' if
+    # present and value is the CHR (e.g 'Y'->'chrY')
     remainingCHRs={}
-
-    #maxChr: max int value in CHR column (after stripping 'chr' if present)
+    #maxCHR: max int value in CHR column (after stripping 'chr' if present)
     maxCHR=0
 
     #dictionary checking that the EXON_ID are unique(key='EXON_ID', value=1) 
     exonIDDict={}
 
-    for line in range(len(exons)):        
+    bedname=os.path.basename(bedFile)
+    try:
+        if bedname.endswith(".gz"):
+            bedFH = gzip.open(bedFile, "rt")
+        else:
+            bedFH = open(bedFile, "r")
+    except Exception as e:
+        logger.error("Opening provided BED file %s: %s", bedFile, e)
+        sys.exit(1)
+
+    for line in bedFH:
+        fields = line.rstrip().split("\t")
         #############################
-        ##### Fill in the first 4 columns 
-        #############################
-        #CHR column: copy
-        ProcessArray[line]["CHR"]=exons[line]["CHR"] 
-        
-        ###########
-        #START and END columns: pad
-        if (exons[line]["START"] < 0) or (exons[line]["END"] < 0):
-            logger.error("In BED file %s, columns 2 and/or 3 contain negative values in line : ", 
+        # sanity checks + preprocess data
+        # need exactly 4 fields
+        if len(fields) != 4 :
+            logger.error("In BED file %s, a line doesn't have 4 fields, illegal: %s",
                          bedname, line)
             sys.exit(1)
-            
-        ProcessArray[line]["START"] = exons[line]["START"] - padding
-        # never negative
-        if ProcessArray[line]["START"] < 0:
-            ProcessArray[line]["START"] = 0
-        ProcessArray[line]["END"] = exons[line]["END"] + padding
-        
-        ###########
-        #EXON_ID column: copy and check that each ID is unique
-        currentID = exons[line]["EXON_ID"]
-        if (currentID in exonIDDict):
-            logger.error("In BED file %s, EXON_ID (4th column) %s is not unique", bedname, currentID)
-            sys.exit(1)
+        # START and END must be ints
+        if fields[1].isdigit() and fields[2].isdigit():
+            # OK, convert to actual ints and pad (but don't pad to negatives)
+            fields[1] = max(int(fields[1]) - padding, 0)
+            fields[2] = int(fields[2]) + padding
         else:
-            ProcessArray[line]["EXON_ID"] = currentID
-            exonIDDict[currentID] = 1
-
+            logger.error("In BED file %s, columns 2-3 START-END must be ints but are not in: %s",
+                         bedname, line)
+            sys.exit(1)
+        # EXON_ID must be unique
+        if fields[3] in exonIDDict:
+            logger.error("In BED file %s, EXON_ID (4th column) %s is not unique", bedname, fields[3])
+            sys.exit(1)
         #############################
-        ##### CHR_NUM preparation
-        #############################
-        #we want ints so we remove chr prefix from CHR column if present
-        currentCHR = exons[line]["CHR"]
-        currentCHRNum = re.sub("^chr","",currentCHR)
-          
-        if currentCHRNum.isdigit():
-            currentCHRNum=int(currentCHRNum)
-            translateCHRDict[currentCHR] = currentCHRNum
-            if maxCHR<currentCHRNum:
-                maxCHR=currentCHRNum
+        # prepare numeric version of CHR
+        # we want ints so we remove chr prefix from CHR column if present
+        chrNum = re.sub("^chr", "", fields[0])
+        if chrNum.isdigit():
+            chrNum = int(chrNum)
+            translateCHRDict[fields[0]] = chrNum
+            if maxCHR<chrNum:
+                maxCHR=chrNum
         else:
             #non-numeric chromosome: save in remainingChRs for later
-            remainingCHRs[currentCHRNum]=currentCHR
-            
+            remainingCHRs[chrNum]=fields[0]
+        #############################
+        # save exon definition
+        exons.append(fields)
+
     ###############
     #### Non-numerical chromosome conversion to int
     ###############
     #replace non-numerical chromosomes by maxCHR+1, maxCHR+2 etc
     increment=1
     # first deal with X, Y, M/MT in that order
-    for chr in ["X","Y","M","MT"]:
-        if chr in remainingCHRs:
-            translateCHRDict[remainingCHRs[chr]] = maxCHR+increment
+    for chrom in ["X","Y","M","MT"]:
+        if chrom in remainingCHRs:
+            translateCHRDict[remainingCHRs[chrom]] = maxCHR+increment
             increment+=1
-            del remainingCHRs[chr]
+            del remainingCHRs[chrom]
     # now deal with any other non-numeric CHRs, in alphabetical order
-    for key in sorted(remainingCHRs):
-        translateCHRDict[remainingCHRs[key]] = maxCHR+increment
+    for chrom in sorted(remainingCHRs):
+        translateCHRDict[remainingCHRs[chrom]] = maxCHR+increment
         increment+=1
         
     ############### 
-    #### finally we can fill CHR_NUM column
+    #### finally we can add the CHR_NUM column to exons
     ###############
-    for line in range(len(ProcessArray)):
-        ProcessArray[line]["CHR_NUM"] = translateCHRDict[ProcessArray[line]["CHR"]]
+    for line in range(len(exons)):
+        exons[line].append(translateCHRDict[exons[line][0]])
 
     ############### 
-    #### Sorting and recovery of the first four columns
+    #### Sort and remove temp CHR_NUM column
     ###############    
     # sort by CHR_NUM, then START, then END, then EXON_ID
-    exonsSort=np.sort(ProcessArray,order=['CHR_NUM','START','END','EXON_ID'])
-
+    exons.sort(key = lambda row: (row[4],row[1],row[2],row[3]))
     # delete the tmp column, and return result
-    exons=exonsSort[["CHR","START","END","EXON_ID"]]
+    for line in range(len(exons)):
+        exons[line].pop()
     return(exons)
 
 
 ####################################################
 #Create nested containment lists (similar to interval trees but faster), one per
 # chromosome, storing the exons
-#Input : numpy array of exons, as returned by processBed
+#Input : list of exons(ie lists of 4 fields), as returned by processBed
 #Output: dictionary(hash): key=chr, value=NCL
 def createExonDict(exons):
+    # for each chrom, build 3 lists with same length: starts, ends, indexes (in
+    # the complete exons list). key is the CHR
+    starts = {}
+    ends = {}
+    indexes = {}
+    for i in range(len(exons)):
+        # exons[i] is a list: CHR, START, END, EXON_ID
+        chrom = exons[i][0]
+        if chrom not in starts:
+            # first time we see chrom, initialize with empty lists
+            starts[chrom] = []
+            ends[chrom] = []
+            indexes[chrom] = []
+        # in all cases, append current values to the lists
+        starts[chrom].append(exons[i][1])
+        ends[chrom].append(exons[i][2])
+        indexes[chrom].append(i)
+
+    # build dictionary of NCLs, one per chromosome
     exonDict={}
-    listCHR=np.unique(exons["CHR"])
-    for chr in listCHR:
-        index=np.where(np.in1d(exons["CHR"],chr))[0]
-        exonsOnChr=exons[index]
-        ncls = NCLS(exonsOnChr["START"], exonsOnChr["END"], index)
-        exonDict[chr]=ncls
+    for chrom in starts.keys():
+        ncls = NCLS(starts[chrom], ends[chrom], indexes[chrom])
+        exonDict[chrom]=ncls
     return(exonDict)
 
 #################################################
@@ -201,8 +187,8 @@ def createExonDict(exons):
 # Input:
 #   - countsFile is a tsv file (with path), including column titles, as
 #     produced by this program
-#   - exons is a numpy.array holding exon definitions, padded and sorted,
-#     as returned by processBed
+#   - exons holds the exon definitions, padded and sorted, as returned
+#     by processBed
 #   - SOIs is a list of strings: the sample names of interest
 #   - countsArray is an empty int numpy array (dim=NbExons*NbSOIs)
 #
@@ -241,10 +227,10 @@ def parseCountsFile(countsFile,exons,SOIs,countsArray,countsFilled):
         splitLine=line.rstrip().split("\t")
 
         ####### Compare exon definitions
-        if ((splitLine[0]!=exons[lineIndex]["CHR"]) or
-            (int(splitLine[1])!=exons[lineIndex]["START"]) or 
-            (int(splitLine[2])!=exons[lineIndex]["END"]) or
-            (splitLine[3]!=exons[lineIndex]["EXON_ID"])) :
+        if ((splitLine[0]!=exons[lineIndex][0]) or
+            (not splitLine[1].isdigit()) or (int(splitLine[1])!=exons[lineIndex][1]) or
+            (not splitLine[2].isdigit()) or (int(splitLine[2])!=exons[lineIndex][2]) or
+            (splitLine[3]!=exons[lineIndex][3])) :
             logger.error("exon definitions disagree between previous countsFile %s and the provided BED file "+
                          "(after padding and sorting) at line index %i. If the BED file changed, a previous "+
                          "countsFile cannot be re-used: all counts must be recalculated from scratch", lineIndex)
@@ -739,7 +725,7 @@ ARGUMENTS:
 
     #####################################################
     # Print exon defs + counts to stdout
-    toPrint = "\t".join(exons.dtype.names)+"\t"+"\t".join(sampleNames)
+    toPrint = "CHR\tSTART\tEND\tEXON_ID\t"+"\t".join(sampleNames)
     print(toPrint)
     for exonIndex in range(len(exons)):
         toPrint = "\t".join(map(str,exons[exonIndex]))
