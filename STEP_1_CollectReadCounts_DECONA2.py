@@ -218,7 +218,7 @@ def parseCountsFile(countsFile,exons,SOIs,countsArray,countsFilled):
 
     ######################
     # parse header from (old) countsFile
-    oldHeader = counts.readline().rstrip().rsplit("\t")
+    oldHeader = counts.readline().rstrip().split("\t")
 
     # fill old2new to identify samples of interest that are already in countsFile:
     # old2new is a vector, same size as oldHeader, value old2new[old] is:
@@ -235,9 +235,9 @@ def parseCountsFile(countsFile,exons,SOIs,countsArray,countsFilled):
 
     ######################
     # parse data lines from countsFile
-    lineIndex = 0            
+    lineIndex = 0
     for line in counts:
-        splitLine=line.rstrip().rsplit("\t")
+        splitLine=line.rstrip().split("\t")
 
         ####### Compare exon definitions
         if ((splitLine[0]!=exons[lineIndex]["CHR"]) or
@@ -560,13 +560,13 @@ def Qname2ExonCount(chromString,startFList,endFList,startRList,endRList,exonDict
     #######################################################
     #Retrieve the corresponding NCL
     RefNCL=exonDict[chromString]
-    # we want to increment vecExonCount at most once per exon, even if
+    # we want to increment countsArray at most once per exon, even if
     # we have two intervals and they both overlap the same exon
     exonsSeen = []
     for idx in range(len(Frag) // 2):
         overlappedExons = RefNCL.find_overlap(Frag[2*idx],Frag[2*idx+1])
         for exon in overlappedExons:
-            exonIndex = int(exon[2])
+            exonIndex = exon[2]
             if (exonIndex in exonsSeen):
                 continue
             else:
