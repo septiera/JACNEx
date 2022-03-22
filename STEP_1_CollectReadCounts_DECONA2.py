@@ -185,7 +185,7 @@ def createExonDict(exons):
 #################################################
 # parseCountsFile:
 # Input:
-#   - countsFile is a tsv file (with path), possibly gzipped, including
+#   - countsFH is a filehandle open for reading, containing
 #     column titles, as produced by this program
 #   - exons holds the exon definitions, padded and sorted, as returned
 #     by processBed
@@ -196,19 +196,10 @@ def createExonDict(exons):
 # -> for any sample present in both countsFile and SOIs, fill the sample's
 #    column in countsArray by copying data from countsFile, and set
 #    countsFilled[sample] to True
-def parseCountsFile(countsFile,exons,SOIs,countsArray,countsFilled):
-    try:
-        if countsFile.endswith(".gz"):
-            counts = gzip.open(countsFile, "rt")
-        else:
-            counts=open(countsFile,"r")
-    except Exception as e:
-        logger.error("Opening provided countsFile %s: %s", countsFile, e)
-        sys.exit(1)
-
+def parseCountsFile(countsFH,exons,SOIs,countsArray,countsFilled):
     ######################
     # parse header from (old) countsFile
-    oldHeader = counts.readline().rstrip().split("\t")
+    oldHeader = countsFH.readline().rstrip().split("\t")
 
     # fill old2new to identify samples of interest that are already in countsFile:
     # old2new is a vector, same size as oldHeader, value old2new[old] is:
@@ -226,7 +217,7 @@ def parseCountsFile(countsFile,exons,SOIs,countsArray,countsFilled):
     ######################
     # parse data lines from countsFile
     lineIndex = 0
-    for line in counts:
+    for line in countsFH:
         splitLine=line.rstrip().split("\t")
 
         ####### Compare exon definitions
@@ -587,14 +578,14 @@ from each BAM that overlap each exon (+- padding).
 Results are printed to stdout in TSV format: first 4 columns hold the exon definitions after
 padding and sorting, subsequent columns (one per BAM) hold the counts.
 If a pre-existing counts file produced by this program with the same BED is provided (with --counts),
-its content is copied and counting is only performed for the new BAM(s).
+counts for requested BAMs are copied from this file and counting is only performed for the new BAM(s).
 ARGUMENTS:
    --bams [str]: comma-separated list of BAM files
    --bams-from [str]: text file listing BAM files, one per line
    --bed [str]: BED file, possibly gzipped, containing exon definitions (format: 4-column 
                 headerless tab-separated file, columns contain CHR START END EXON_ID)
    --counts [str] optional: pre-existing counts file produced by this program, possibly gzipped,
-                content will be copied
+                coounts for requested BAMs will be copied from this file if present
    --tmp [str]: pre-existing dir for temp files, faster is better (eg tmpfs), default: """+tmpDir+"""
    --threads [int]: number of threads to allocate for samtools sort, default: """+str(threads)+"\n"
 
@@ -696,7 +687,20 @@ ARGUMENTS:
 
     # fill countsArray with pre-calculated counts if countsFile was provided
     if (countsFile!=""):
-        parseCountsFile(countsFile,exons,sampleNames,countsArray,countsFilled)
+        try:
+            if countsFile.endswith(".gz"):
+                countsFH = gzip.open(countsFile, "rt")
+            else:
+                countsFH = open(countsFile,"r")
+        except Exception as e:
+            logger.error("Opening provided countsFile %s: %s", countsFile, e)
+            sys.exit(1)
+        try:
+            parseCountsFile(countsFH,exons,sampleNames,countsArray,countsFilled)
+        except Exception as e:
+            logger.error(e)
+            sys.exit(1)
+
         thisTime = time.time()
         logger.debug("Done parsing old countsFile, in %.2f s", thisTime-startTime)
         startTime = thisTime
