@@ -185,8 +185,8 @@ def createExonDict(exons):
 #################################################
 # parseCountsFile:
 # Input:
-#   - countsFile is a tsv file (with path), including column titles, as
-#     produced by this program
+#   - countsFile is a tsv file (with path), possibly gzipped, including
+#     column titles, as produced by this program
 #   - exons holds the exon definitions, padded and sorted, as returned
 #     by processBed
 #   - SOIs is a list of strings: the sample names of interest
@@ -198,7 +198,10 @@ def createExonDict(exons):
 #    countsFilled[sample] to True
 def parseCountsFile(countsFile,exons,SOIs,countsArray,countsFilled):
     try:
-        counts=open(countsFile,"r")
+        if countsFile.endswith(".gz"):
+            counts = gzip.open(countsFile, "rt")
+        else:
+            counts=open(countsFile,"r")
     except Exception as e:
         logger.error("Opening provided countsFile %s: %s", countsFile, e)
         sys.exit(1)
@@ -590,7 +593,8 @@ ARGUMENTS:
    --bams-from [str]: text file listing BAM files, one per line
    --bed [str]: BED file, possibly gzipped, containing exon definitions (format: 4-column 
                 headerless tab-separated file, columns contain CHR START END EXON_ID)
-   --counts [str] optional: pre-existing counts file produced by this program, content will be copied
+   --counts [str] optional: pre-existing counts file produced by this program, possibly gzipped,
+                content will be copied
    --tmp [str]: pre-existing dir for temp files, faster is better (eg tmpfs), default: """+tmpDir+"""
    --threads [int]: number of threads to allocate for samtools sort, default: """+str(threads)+"\n"
 
