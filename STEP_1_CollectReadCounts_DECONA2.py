@@ -12,6 +12,7 @@ import getopt
 import logging
 import os
 import numpy as np # numpy arrays
+import numba as nb # compiled numerical algorithms in Python can approach the speeds of C or FORTRAN.
 import re
 # nested containment lists, similar to interval trees but faster (https://github.com/biocore-ntnu/ncls)
 from ncls import NCLS
@@ -182,6 +183,26 @@ def createExonDict(exons):
         exonDict[chrom]=ncls
     return(exonDict)
 
+
+#################################################
+# oldCount2CountArray
+# function to increase the execution speed with numba in "nopython" mode.
+# This loop is necessary for the parseCountFile function. 
+# Input:
+#   -old2new is a vector with for same sample : index= old sample header index, 
+#   value = sample user order index (eq sample header index in countsArray) 
+#   -countsArray is an empty int numpy array (dim=NbExons*NbSOIs)
+#   -lineIndex is an int corresponding to the old file line index.
+#   -npInt is an int array containing old fragment counts
+
+# Fill the new count table with the old counts if identical sample.
+@nb.njit
+def oldCount2CountArray(old2new,countsArray,lineIndex,npInt):
+    for oldIndex in nb.prange(len(old2new)):
+            if old2new[oldIndex]!=-1:
+                #oldIndex contains indexes of columns CHR,START,END,EXON_ID, 
+                #npInt doesn't contain these columns indexes shift of -4.
+                countsArray[lineIndex][old2new[oldIndex]] = npInt[oldIndex-4] 
 #################################################
 # parseCountsFile:
 # Input:
@@ -191,6 +212,7 @@ def createExonDict(exons):
 #     by processBed
 #   - SOIs is a list of strings: the sample names of interest
 #   - countsArray is an empty int numpy array (dim=NbExons*NbSOIs)
+#   - countsFilled is a boolean numpy array filled by false (1D=len(sampleName))
 #
 # -> make sure countsFile was produced with the same BED as exons, else die;
 # -> for any sample present in both countsFile and SOIs, fill the sample's
@@ -213,13 +235,14 @@ def parseCountsFile(countsFH,exons,SOIs,countsArray,countsFilled):
                 old2new[oldIndex] = newIndex
                 countsFilled[newIndex] = True
                 break
-
     ######################
     # parse data lines from countsFile
     lineIndex = 0
     for line in countsFH:
-        splitLine=line.rstrip().split("\t")
-
+        splitLine=line.rstrip().split("\t",maxsplit=4) #list of 5 terms. 5th term is equivalent to a str of all counts.
+        # Fill an int numpy array with the old frag counts.
+        # Necessary for the numba use which is restrictive on input variables.
+        npInt=np.fromstring(splitLine[4], dtype=int, sep='\t') 
         ####### Compare exon definitions
         if ((splitLine[0]!=exons[lineIndex][0]) or
             (not splitLine[1].isdigit()) or (int(splitLine[1])!=exons[lineIndex][1]) or
@@ -229,11 +252,10 @@ def parseCountsFile(countsFH,exons,SOIs,countsArray,countsFilled):
                          "(after padding and sorting) at line index %i. If the BED file changed, a previous "+
                          "countsFile cannot be re-used: all counts must be recalculated from scratch", lineIndex)
             sys.exit(1)
-
+               
         ###### Fill countsArray with old count data
-        for oldIndex in range(len(old2new)):
-            if old2new[oldIndex]!=-1:
-                countsArray[lineIndex][old2new[oldIndex]] = int(splitLine[oldIndex])
+        oldCount2CountArray(old2new,countsArray,lineIndex,npInt)#speed up by numba
+        
         ###### next line
         lineIndex+=1
 
