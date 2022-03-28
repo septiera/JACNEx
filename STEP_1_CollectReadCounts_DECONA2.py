@@ -202,12 +202,23 @@ def oldCount2CountArray(countsArray,exonIndex,oldCounts,old2new):
                 countsArray[exonIndex][old2new[oldIndex]] = oldCounts[oldIndex]
 
 #################################################
+# counts2str:
+# return a string holding the counts from countsArray[exonIndex],
+# tab-separated and starting with a tab
+@numba.njit
+def counts2str(countsArray,exonIndex):
+    toPrint = ""
+    for i in range(countsArray.shape[1]):
+        toPrint += "\t" + str(countsArray[exonIndex][i])
+    return(toPrint)
+
+#################################################
 # parseCountsFile:
 # Input:
 #   - countsFH is a filehandle open for reading, content is a countsFile 
 #     as produced by this program
 #   - exons holds the exon definitions, padded and sorted, as returned
-#     by processBed
+#     by processBed but with START and END converted to strings
 #   - SOIs is a list of strings: the sample names of interest
 #   - countsArray is an all-zeroes int numpy array (dim=NbExons*NbSOIs)
 #   - countsFilled is an all-False boolean numpy array, same size as SOIs
@@ -243,10 +254,10 @@ def parseCountsFile(countsFH,exons,SOIs,countsArray,countsFilled):
         # split into 4 exon definition strings + one string containing all the counts
         splitLine=line.rstrip().split("\t",maxsplit=4)
         ####### Compare exon definitions
-        if ((splitLine[0]!=exons[exonIndex][0]) or
-            (not splitLine[1].isdigit()) or (int(splitLine[1])!=exons[exonIndex][1]) or
-            (not splitLine[2].isdigit()) or (int(splitLine[2])!=exons[exonIndex][2]) or
-            (splitLine[3]!=exons[exonIndex][3])) :
+        if ((splitLine[0] != exons[exonIndex][0]) or
+            (splitLine[1] != exons[exonIndex][1]) or
+            (splitLine[2] != exons[exonIndex][2]) or
+            (splitLine[3] != exons[exonIndex][3])) :
             logger.error("exon definitions disagree between previous countsFile and the provided BED file "+
                          "(after padding and sorting) for exon index %i. If the BED file changed, a previous "+
                          "countsFile cannot be re-used: all counts must be recalculated from scratch", exonIndex)
@@ -693,6 +704,10 @@ ARGUMENTS:
     # parse exons from BED and create an NCL for each chrom
     exons=processBed(bedFile)
     exonDict=createExonDict(exons)
+    # START and END can become strings now
+    for i in range(len(exons)):
+        exons[i][1] = str(exons[i][1])
+        exons[i][2] = str(exons[i][2])
     thisTime = time.time()
     logger.debug("Done pre-processing BED, in %.2f s", thisTime-startTime)
     startTime = thisTime
@@ -759,8 +774,8 @@ ARGUMENTS:
     toPrint = "CHR\tSTART\tEND\tEXON_ID\t"+"\t".join(sampleNames)
     print(toPrint)
     for exonIndex in range(len(exons)):
-        toPrint = "\t".join(map(str,exons[exonIndex]))
-        toPrint += "\t" + "\t".join(map(str,countsArray[exonIndex]))
+        toPrint = "\t".join(exons[exonIndex])
+        toPrint += counts2str(countsArray,exonIndex)
         print(toPrint)
     thisTime = time.time()
     logger.debug("Done printing results, in %.2f s", thisTime-startTime)
