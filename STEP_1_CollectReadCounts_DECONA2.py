@@ -224,16 +224,18 @@ def parseCountsFile(countsFH,exons,SOIs,countsArray,countsFilled):
     del oldHeader[0:4]
     # fill old2new to identify samples of interest that are already in countsFile:
     # old2new is a vector, size is the number of samples in countsFH, value old2new[old] is:
-    # the index in SOIs (if present) of the old sample (at index "old" in countsFH, 
-    #   ignoring exon definitions);
+    # the index in SOIs (if present) of the old sample (at index "old" in countsFH 
+    #   after discarding exon definitions);
     # -1 otherwise, ie if the old sample at index "old" is absent from SOIs
     old2new = np.full(len(oldHeader), -1, dtype=int)
+    # oldIndexes: temp dict, key = sample identifier, value = index in oldHeader
+    oldIndexes = {}
     for oldIndex in range(len(oldHeader)):
-        for newIndex in range(len(SOIs)):
-            if oldHeader[oldIndex] == SOIs[newIndex]:
-                old2new[oldIndex] = newIndex
-                countsFilled[newIndex] = True
-                break
+        oldIndexes[oldHeader[oldIndex]] = oldIndex
+    for newIndex in range(len(SOIs)):
+        if SOIs[newIndex] in oldIndexes:
+            old2new[oldIndexes[SOIs[newIndex]]] = newIndex
+            countsFilled[newIndex] = True
     ######################
     # parse data lines from countsFile
     exonIndex = 0
