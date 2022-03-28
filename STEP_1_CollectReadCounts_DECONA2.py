@@ -343,7 +343,7 @@ def countFrags(bamFile,exonDict,tmpDir,num_threads,countsArray,sampleIndex):
             # If we are done with previous qname: process it and reset accumulators
             if (qname!=align[0]) and (qname!=""):  # align[0] is the qname
                 if not qBad:
-                    Qname2ExonCount(qchrom,qstartF,qendF,qstartR,qendR,exonDict,countsArray,sampleIndex)
+                    Qname2ExonCount(qstartF,qendF,qstartR,qendR,exonDict[qchrom],countsArray,sampleIndex)
                 qname, qchrom = "", ""
                 qstartF, qstartR, qendF, qendR = [], [], [], []
                 qFirstOnForward=0
@@ -405,7 +405,7 @@ def countFrags(bamFile,exonDict,tmpDir,num_threads,countsArray,sampleIndex):
 
         # process last Qname
         if not qBad:
-            Qname2ExonCount(qchrom,qstartF,qendF,qstartR,qendR,exonDict,countsArray,sampleIndex)
+            Qname2ExonCount(qstartF,qendF,qstartR,qendR,exonDict[qchrom],countsArray,sampleIndex)
 
         # wait for samtools to finish cleanly and check return codes
         if (p1.wait() != 0):
@@ -416,8 +416,7 @@ def countFrags(bamFile,exonDict,tmpDir,num_threads,countsArray,sampleIndex):
             logger.error("in countFrags, while processing %s, the 'samtools view' subprocess returned %s",
                          bamFile, p2.returncode)
             raise Exception("samtools-view failed")
- 
-    
+
 
 ####################################################
 # AliLengthOnRef :
@@ -441,13 +440,12 @@ def AliLengthOnRef(CIGARAlign):
 #   either actually covered by a sequencing read or closely flanked by a pair of mate reads;
 # - identify exons overlapped by the fragment, and increment their count.
 # Inputs:
-#   -chr [str]
 #   -4 lists of ints for F and R strand positions (start and end)
-#   -the dictionary containing the NCLs for each chromosome
+#   -the NCL for the chromosome where current alignments map
 #   -the numpy array to fill, counts in column sampleIndex will be incremented
 #   -the column index in countsArray corresponding to the current sample
 # Nothing is returned, this function just updates countsArray
-def Qname2ExonCount(chromString,startFList,endFList,startRList,endRList,exonDict,countsArray,sampleIndex):
+def Qname2ExonCount(startFList,endFList,startRList,endRList,exonNCL,countsArray,sampleIndex):
     #######################################################
     # apply QC filters
     #######################################################
@@ -571,21 +569,29 @@ def Qname2ExonCount(chromString,startFList,endFList,startRList,endRList,exonDict
     #######################################################
     # find exons overlapped by the fragment and increment counters
     #######################################################
-    #Retrieve the corresponding NCL
-    RefNCL=exonDict[chromString]
     # we want to increment countsArray at most once per exon, even if
     # we have two intervals and they both overlap the same exon
     exonsSeen = []
     for idx in range(len(Frag) // 2):
-        overlappedExons = RefNCL.find_overlap(Frag[2*idx],Frag[2*idx+1])
+        overlappedExons = exonNCL.find_overlap(Frag[2*idx],Frag[2*idx+1])
         for exon in overlappedExons:
             exonIndex = exon[2]
             if (exonIndex in exonsSeen):
                 continue
             else:
                 exonsSeen.append(exonIndex)
-                countsArray[exonIndex][sampleIndex] += 1
+                incrementCount(countsArray, sampleIndex, exonIndex)
+                # countsArray[exonIndex][sampleIndex] += 1
 
+    
+####################################################
+# incrementCount:
+# increment the counters in countsArray for the specified sample and exon
+@numba.njit
+def incrementCount(countsArray, sampleIndex, exonIndex):
+    countsArray[exonIndex][sampleIndex] += 1
+
+    
 ######################################################################################################
 ######################################## Main ########################################################
 ######################################################################################################
