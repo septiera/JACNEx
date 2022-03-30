@@ -1,41 +1,52 @@
-#!/usr/bin/env python3
-# coding: utf-8
-
 #############################################################################################################
 ############################################## STEP2 makeCNVCalls DECoN #####################################
 #############################################################################################################
-#STEPS:
-#   A) Getopt user argument (ARGV) recovery
-#   B) Checking that the mandatory parameters are presents
-#   C) Check that the optional arguments are entered together.
-#   D) Checking that the parameters actually exists
-#   E) Using the R script based on the CNV calling part of ExomeDepth v1.1.15.
-
-# The calling is based on the selection of a set of the most correlated patients.
-# This base profile is then compared to the target patient.
+# Performs CNV calling from exome fragment count data using ExomeDepth(v1.1.15).
+# The calling is based on the most correlated patients set selection.
+# Unlike the default ExomeDepth application, we splitted count data between gonosomes and autosomes to obtain
+# optimal reference sets (e.g: Grouping same gender samples for gonosomes eliminates false positive calls).
+# The base profile (sums the selected samples across each exon) is then compared to the target patient.
 # A beta-binomial distribution is fitted to the data to extract the differences in 
 # copy number via a likelihood profile.
 # The segmentation is performed using a hidden Markov chain model.
-# The output results have a format identical to the basic ExomDepth format. 
-# It corresponds to a .tsv table containing all the CNVs called for the samples set considered.
-# The output file has 15 columns:
-    # sample : sample name (str)
-    # correlation : average correlation between the target sample and the control sample set 
-    #               (The controls are samples of the data set, not real controls). (float)
-    # N.Comp : control samples number used (int)
-    # start.p + end.p : index corresponding to the line of exons affected by the CNV in the 
-    #                   bed file (int)
-    # type : cnv type ("duplication" or "deletion" str)
-    # nexons : number of exons affected by the cnv (int)
-    # start + end :  CNV genomic locations (WARN: deduced from the affected exons intervals 
-    #               so no precise breakpoints)
-    # chromosome : without "chr" before (str)
-    # id : "chr:start-end" , chr correspond to "chr"+str (str)
-    # BF : Bayesian factor (float)
-    # reads_expected : average of reads covering the interval for all control samples (int)
-    # reads_observed : reads observed in the target patient for the interval 
-    # reads_ratio : reads_observed/reads_expected (float)
 
+#Inputs:
+#   - a fragment count TSV file (possibly gzipped) : first 4 columns hold the exon definitions ("CHR","START","END","EXONID"),
+#   subsequent columns (one per sample) hold the counts.
+#   - a path defining the new calling TSV file (str) 
+#   - a path defining the new reference TSV file (str) 
+#   optional :
+#   - a path to an old calling TSV file (str)
+#   - a path to an old reference TSV file (str)
+
+# Two output file are provided:
+#   - The calls results have a format identical to the basic ExomDepth format. 
+#   It corresponds to a TSV table containing all the CNVs called for the samples set considered.
+#   The output file has 15 columns:
+#       -sample : sample name (str)
+#       -correlation : average correlation between the target sample and the control sample set 
+#                   (The controls are samples of the data set, not real controls). (float)
+#       -N.Comp : control samples number used (int)
+#       -start.p + end.p : index corresponding to the line of exons affected by the CNV in the 
+#                       bed file (int)
+#       -type : cnv type ("duplication" or "deletion" str)
+#       -nexons : number of exons affected by the cnv (int)
+#       -start + end :  CNV genomic locations (WARN: deduced from the affected exons intervals 
+#                   so no precise breakpoints)
+#       -chromosome : without "chr" before (str)
+#       -id : "chr:start-end" , chr correspond to "chr"+str (str)
+#       -BF : Bayesian factor (float)
+#       -reads_expected : average of reads covering the interval for all control samples (int)
+#       -reads_observed : reads observed in the target patient for the interval 
+#       -reads_ratio : reads_observed/reads_expected (float)
+#   - A TSV file containing the reference samples lists used for each target sample.
+#   It contains 3 untitled columns :
+#       -First : target sample name (str)
+#       -Second : reference samples list for autosomes, all sample names are joined by "," forming a large string.  
+#       -Third : reference samples list for gonosomes, same format as second column.
+
+# This python script is a wrapper of the calling R script. 
+# It allows to display the R script usage and to check the input parameters.
 #############################################################################################################
 ################################ Loading of the modules required for processing #############################
 #############################################################################################################
@@ -76,27 +87,28 @@ def main():
     OLDrefFile=""
 
     usage="""\nCOMMAND SUMMARY:
-Give a count file (reads or fragments) on the canonical transcripts exonic intervals,
-for a minimum of 20 samples, the CNVs can be called.
+Given a fragment count file on the canonical transcripts exonic intervals,for a minimum of 20 samples,
+the CNVs can be called.
 Call algorithm : beta-binomial. 
 Segmentation : hidden Markov chain model.
-The script will print on stdout folder :
-   -a new call file in TSV format, modifies the data from the pre-existing file
-    if it is provided.
-   -a new text tab-delimited file, modifies the data from the pre-existing file
-    if it is provided.
+Two results files are printed to stdout in TSV format:
+    - The calls results have a format identical to the basic ExomeDepth format (eq:15 columns).
+    - The reference sample lists for autosome and gonosome are keeped for each target sample (eq: 3 columns). 
+If a pre-existing calls file and a pre-existing ref file produced by this program are provided (with --calls
+and --refs ), the ref sets(New vs Old) are compared :
+    -if same, target sample calls and ref lists are copied in the two new outputs.
+    -if not the same, a new call is performed and a the new ref Sets is saved.
 OPTIONS:
-    --counts [str] : a .tsv count file (with path), contains 4 columns (CHR,START,END,EXON-ID)
-                     corresponding to the target interval informations.
-    --outputcalls [str] : a new CNV calling file (with path).
-    --outputref [str] : a new tab-delimited text file (with path)
-                             Each subsequent column is the counting for one sample of the set 
-                             (colnames=sampleNames).
+    --counts [str] : a fragment count TSV file (possibly gzipped). First 4 columns hold the exon definitions
+     ("CHR","START","END","EXONID"), subsequent columns (one per sample) hold the counts.
+    --outputcalls [str] : name of a new CNV calling TSV file (with path).
+    --outputref [str] : name of a new TSV file (with path) for saved reference set used for each sample.
     --calls [str] optional : a pre-parsed call file (with path), old cnv call lines are completed or
                             re-parsed if one or more new patients are added.
-    --refs [str] optional :  a tab-delimited text file (with path)
-                                 column 1: name of the sample to be processed,
-                                 column 2: comma-delimited ref sample names list.\n"""
+    --refs [str] optional : a pre-parsed reference sample set TSV file (with path)
+                            column 1: name of the sample to be processed,
+                            column 2: comma-delimited autosomes ref sample names list,
+                            column 3: comma-delimited gonosomes ref sample names list.\n"""
 
     try:
         opts,args = getopt.gnu_getopt(sys.argv[1:],'h',
@@ -111,24 +123,30 @@ OPTIONS:
             sys.exit(0)
         elif opt in ("--counts"):
             countFile=value
+            if not os.path.isfile(countFile):
+                sys.exit("ERROR : counts file "+countFile+" doesn't exist. Try "+scriptName+" --help.\n")
         elif opt in ("--outputcalls"):
             NEWcallFile=value
+            if os.path.isfile(NEWcallFile):
+                sys.exit("ERROR : new Callfile "+NEWcallFile+" already exist. Try "+scriptName+" --help.\n") 
         elif opt in ("--outputrefs"):
             NEWrefFile=value
+            if os.path.isfile(NEWrefFile):
+                sys.exit("ERROR : new Callfile "+NEWrefFile+" already exist. Try "+scriptName+" --help.\n")
         elif opt in ("--calls"):
             OLDcallFile=value
+            if not os.path.isfile(OLDcallFile):
+                sys.exit("ERROR : old counts file "+OLDcallFile+" doesn't exist. Try "+scriptName+" --help.\n")
         elif opt in ("--refs"):
             OLDrefFile=value
+            if not os.path.isfile(OLDrefFile):
+                sys.exit("ERROR : old ref file "+OLDrefFile+" doesn't exist. Try "+scriptName+" --help.\n")
+
         else:
-            sys.exit("ERROR : Programming error. Unhandled option "+opt+".\n")
+            sys.exit("ERROR : unhandled option "+opt+".\n")
 
     #####################################################
     # B) Checking that the mandatory parameter is present
-    if countFile=="":
-        print("ERROR :You must use --counts.\n",file=sys.stderr)
-        usage()
-        sys.exit(1)
-
     if (NEWcallFile==""):
         print("ERROR :You must use --outputcalls.\n",file=sys.stderr)
         usage()
@@ -147,21 +165,7 @@ OPTIONS:
         sys.exit(1)
 
     #####################################################
-    # D) Checking that the parameters actually exists
-    if not os.path.isfile(countFile):
-        sys.exit("ERROR : Countfile "+countFile+" doesn't exist. Try "+scriptName+" --help.\n") 
-    if os.path.isfile(NEWcallFile):
-       sys.exit("ERROR : new Callfile "+NEWcallFile+" already exist. Try "+scriptName+" --help.\n") 
-    if os.path.isfile(NEWrefFile):
-        sys.exit("ERROR : new Callfile "+NEWrefFile+" already exist. Try "+scriptName+" --help.\n") 
-
-    if (OLDcallFile!="") and (not os.path.isfile(OLDcallFile)):
-        sys.exit("ERROR : CallFile "+OLDcallFile+" doesn't exist. Try "+scriptName+" --help.\n")
-    if (OLDrefFile!="") and (not os.path.isfile(OLDrefFile)):
-        sys.exit("ERROR : CallFile "+OLDrefFile+" doesn't exist. Try "+scriptName+" --help.\n") 
-
-    #####################################################
-    # E) Use of the R script for calling
+    # F) R script usage for calling
     if OLDrefFile=="":
         EDCommand="Rscript ./Rscript/CallCNV_ExomeDepth.R "+countFile+" "+NEWcallFile+" "+NEWrefFile+""
         logger.info("\nExomeDepth  COMMAND: %s \n", EDCommand)
