@@ -271,7 +271,7 @@ ARGUMENTS:
     CNVBFfilter.loc[:,"CN"]=np.repeat(4,len(CNVBFfilter))#CN obsolete allow to delete DEL with RR>0.75
     CNVBFfilter.loc[CNVBFfilter["type"]=="duplication","CN"]=3
     CNVBFfilter.loc[CNVBFfilter["reads.ratio"]<0.75,"CN"]=1
-    CNVBFfilter.loc[CNVBFfilter["reads.ratio"]<0.25,"CN"]=0
+    CNVBFfilter.loc[CNVBFfilter["reads.ratio"]<0.15,"CN"]=0
     CNVAllFilter=CNVBFfilter[CNVBFfilter["CN"]!=4]
     logger.info("2) CNVs Number obtained after copy number attribution  = %s/%s",len(CNVAllFilter),len(tabToTreat))
 
