@@ -276,12 +276,13 @@ def parseCountsFile(countsFH,exons,SOIs,countsArray,countsFilled):
 #   - a bam file (with path)
 #   - the dictionary of exon NCLs
 #   - a tmp dir with fast RW access and enough space for samtools sort
+#   - the number of gap length between reads pairs
 #   - the number of cpu threads that samtools can use
 #   - the numpy array to fill in with count data
 #   - the column index (in countsArray) corresponding to bamFile
 #
 # Raises an exception if something goes wrong
-def countFrags(bamFile,exonDict,tmpDir,num_threads,countsArray,sampleIndex):
+def countFrags(bamFile,exonDict,tmpDir,num_maxGap,num_threads,countsArray,sampleIndex):
     # We need to process all alignments for a given qname simultaneously
     # => ALGORITHM:
     # parse alignements from BAM, sorted by qname;
@@ -343,7 +344,7 @@ def countFrags(bamFile,exonDict,tmpDir,num_threads,countsArray,sampleIndex):
             # If we are done with previous qname: process it and reset accumulators
             if (qname!=align[0]) and (qname!=""):  # align[0] is the qname
                 if not qBad:
-                    Qname2ExonCount(qstartF,qendF,qstartR,qendR,exonDict[qchrom],countsArray,sampleIndex)
+                    Qname2ExonCount(qstartF,qendF,qstartR,qendR,exonDict[qchrom],countsArray,sampleIndex,num_maxGap)
                 qname, qchrom = "", ""
                 qstartF, qstartR, qendF, qendR = [], [], [], []
                 qFirstOnForward=0
@@ -444,8 +445,9 @@ def AliLengthOnRef(CIGARAlign):
 #   -the NCL for the chromosome where current alignments map
 #   -the numpy array to fill, counts in column sampleIndex will be incremented
 #   -the column index in countsArray corresponding to the current sample
+#   - the number of gap length between reads pairs
 # Nothing is returned, this function just updates countsArray
-def Qname2ExonCount(startFList,endFList,startRList,endRList,exonNCL,countsArray,sampleIndex):
+def Qname2ExonCount(startFList,endFList,startRList,endRList,exonNCL,countsArray,sampleIndex,num_maxGap):
     #######################################################
     # apply QC filters
     #######################################################
@@ -496,19 +498,18 @@ def Qname2ExonCount(startFList,endFList,startRList,endRList,exonNCL,countsArray,
 
     # Examine gap length between the two reads (negative if overlapping)
     # CAVEAT: hard-coded cutoff here, could be a problem if the sequencing
-    # library fragments are often longer than maxGapBetweenReads+2*readLength
-    maxGapBetweenReads = 1000
+    # library fragments are often longer than num_maxGap+2*readLength
     if (len(startFList+startRList)==2): # 1F1R
-        if (startRList[0] - endFList[0] > maxGapBetweenReads):
+        if (startRList[0] - endFList[0] > num_maxGap):
             # large gap between forward and reverse reads, could be a DEL but
             # we don't have reads spanning it -> insufficient evidence, skip qname
             return
     elif (len(startFList+startRList)==3): # 2F1R or 1F2R
-        if (min(startRList)-max(endFList) > maxGapBetweenReads):
+        if (min(startRList)-max(endFList) > num_maxGap):
             # eg 2F1R: the R ali is too far from the rightmost F ali, so
             # a fortiori it is too far from the leftmost F ali => ignore qname
             return
-        elif (max(startRList)-min(endFList) > maxGapBetweenReads):
+        elif (max(startRList)-min(endFList) > num_maxGap):
             # eg 2F1R: the R ali is too far from the leftmost F ali => ignore this F ali
             if (len(startFList)==2): #2F1R
                 startFList = [max(startFList)]
@@ -606,6 +607,7 @@ def main():
     bamsFrom=""
     bedFile=""
     # optional args with default values
+    maxGap=1000
     countsFile=""
     tmpDir="/tmp/"
     threads=10 
@@ -624,13 +626,14 @@ ARGUMENTS:
                 headerless tab-separated file, columns contain CHR START END EXON_ID)
    --counts [str] optional: pre-existing counts file produced by this program, possibly gzipped,
                 coounts for requested BAMs will be copied from this file if present
+   --maxGap [int] : maximum gap length (bp) between reads pairs, default : 1000
    --tmp [str]: pre-existing dir for temp files, faster is better (eg tmpfs), default: """+tmpDir+"""
    --threads [int]: number of threads to allocate for samtools sort, default: """+str(threads)+"\n"
 
     
     try:
         opts,args = getopt.gnu_getopt(sys.argv[1:],'h',
-        ["help","bams=","bams-from=","bed=","counts=","tmp=","threads="])
+        ["help","bams=","bams-from=","bed=","counts=","maxGap=","tmp=","threads="])
     except getopt.GetoptError as e:
         sys.exit("ERROR : "+e.msg+".\n"+usage)
 
@@ -654,6 +657,10 @@ ARGUMENTS:
             countsFile=value
             if not os.path.isfile(countsFile):
                 sys.exit("ERROR : countsFile "+countsFile+" doesn't exist. Try "+scriptName+" --help.\n") 
+        elif opt in ("--maxGap"):
+            maxGap=int(value)
+            if (maxGap<=0):
+                sys.exit("ERROR : maxGap "+str(threads)+" must be a positive int. Try "+scriptName+" --help.\n")        
         elif opt in ("--tmp"):
             tmpDir=value
             if not os.path.isdir(tmpDir):
@@ -761,7 +768,7 @@ ARGUMENTS:
         else:
             try:
                 logger.info('Processing BAM for sample %s', sampleName)
-                countFrags(bam, exonDict, tmpDir, threads, countsArray, bamIndex)
+                countFrags(bam, exonDict, tmpDir,maxGap, threads, countsArray, bamIndex)
                 thisTime = time.time()
                 logger.debug("Done processing BAM for %s, in %.2f s", sampleName, thisTime-startTime)
                 startTime = thisTime
