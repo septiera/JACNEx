@@ -306,117 +306,123 @@ def countFrags(bamFile,exonDict,tmpDir,maxGap,num_threads,countsArray,sampleInde
     # first/last read-in-pair aligns
     qBad=False
 
-    with tempfile.TemporaryDirectory(dir=tmpDir) as SampleTmpDir:
-        ############################################
-        # Preprocessing:
-        # Our algorithm needs to parse the alignements sorted by qname,
-        # "samtools sort -n" allows this
-        cmd1 ="samtools sort -n "+bamFile+" -@ "+str(num_threads)+" -T "+SampleTmpDir+" -O sam"
-        p1 = subprocess.Popen(cmd1.split(), stdout=subprocess.PIPE)
-        
-        # We can immediately filter out poorly mapped (low MAPQ) or low quality
-        # reads (based on the SAM flags) with samtools view:
-        # -q sets the minimum mapping quality;
-        # -F excludes alignements where any of the specified bits is set, we want to filter out:
-        #   4 0x4 Read Unmapped
-        #   256 0x80 not primary alignment
-        #   512 0x200 Read fails platform/vendor quality checks
-        #   1024 0x400 Read is PCR or optical duplicate
-        # Total Flag decimal = 1796
-        # For more details on FLAGs read the SAM spec: http://samtools.github.io/hts-specs/
-        cmd2 ="samtools view -q 20 -F 1796"
-        p2 = subprocess.Popen(cmd2.split(), stdin=p1.stdout, stdout=subprocess.PIPE, universal_newlines=True)
+    tmpDirObj=tempfile.TemporaryDirectory(dir=tmpDir)
+    SampleTmpDir=tmpDirObj.name
 
-        ############################################
-        # Regular expression to identify alignments on the main chromosomes (no ALTs etc)
-        mainChr=re.compile("^chr[\dXYM][\dT]?$|^[\dXYM][\dT]?$")
+    ############################################
+    # Preprocessing:
+    # Our algorithm needs to parse the alignements sorted by qname,
+    # "samtools sort -n" allows this
+    cmd1 ="samtools sort -n "+bamFile+" -@ "+str(num_threads)+" -T "+SampleTmpDir+" -O sam"
+    p1 = subprocess.Popen(cmd1.split(), stdout=subprocess.PIPE)
+    
+    # We can immediately filter out poorly mapped (low MAPQ) or low quality
+    # reads (based on the SAM flags) with samtools view:
+    # -q sets the minimum mapping quality;
+    # -F excludes alignements where any of the specified bits is set, we want to filter out:
+    #   4 0x4 Read Unmapped
+    #   256 0x80 not primary alignment
+    #   512 0x200 Read fails platform/vendor quality checks
+    #   1024 0x400 Read is PCR or optical duplicate
+    # Total Flag decimal = 1796
+    # For more details on FLAGs read the SAM spec: http://samtools.github.io/hts-specs/
+    cmd2 ="samtools view -q 20 -F 1796"
+    p2 = subprocess.Popen(cmd2.split(), stdin=p1.stdout, stdout=subprocess.PIPE, universal_newlines=True)
 
-        ############################################
-        # Main loop: parse each alignment
-        for line in p2.stdout:
-            align=line.rstrip().split('\t')
+    ############################################
+    # Regular expression to identify alignments on the main chromosomes (no ALTs etc)
+    mainChr=re.compile("^chr[\dXYM][\dT]?$|^[\dXYM][\dT]?$")
 
-            # skip ali if not on main chr
-            if not mainChr.match(align[2]): 
-                continue
+    ############################################
+    # Main loop: parse each alignment
+    for line in p2.stdout:
+        align=line.rstrip().split('\t')
 
-            ######################################################################
-            # If we are done with previous qname: process it and reset accumulators
-            if (qname!=align[0]) and (qname!=""):  # align[0] is the qname
-                if not qBad:
-                    Qname2ExonCount(qstartF,qendF,qstartR,qendR,exonDict[qchrom],countsArray,sampleIndex,maxGap)
-                qname, qchrom = "", ""
-                qstartF, qstartR, qendF, qendR = [], [], [], []
-                qFirstOnForward=0
-                qBad=False
-            elif qBad: #same qname as previous ali but we know it's bad -> skip
-                continue
+        # skip ali if not on main chr
+        if not mainChr.match(align[2]): 
+            continue
 
-            ######################################################################
-            # Either we're in the same qname and it's not bad, or we changed qname
-            # -> in both cases update accumulators with current line
-            if qname=="" :
-                qname=align[0]
+        ######################################################################
+        # If we are done with previous qname: process it and reset accumulators
+        if (qname!=align[0]) and (qname!=""):  # align[0] is the qname
+            if not qBad:
+                Qname2ExonCount(qstartF,qendF,qstartR,qendR,exonDict[qchrom],countsArray,sampleIndex,maxGap)
+            qname, qchrom = "", ""
+            qstartF, qstartR, qendF, qendR = [], [], [], []
+            qFirstOnForward=0
+            qBad=False
+        elif qBad: #same qname as previous ali but we know it's bad -> skip
+            continue
 
-            # align[2] == chrom
-            if qchrom=="":
-                qchrom=align[2]
-            elif qchrom!=align[2]:
-                qBad=True
-                continue
-            # else same chrom, don't modify qchrom
+        ######################################################################
+        # Either we're in the same qname and it's not bad, or we changed qname
+        # -> in both cases update accumulators with current line
+        if qname=="" :
+            qname=align[0]
 
-            #Retrieving flags for STRAND and first/second read
-            currentFlag=int(align[1])
-            #flag 16 the alignment is on the reverse strand
-            currentStrand="F"
-            if currentFlag&16 :
-                currentStrand="R"
+        # align[2] == chrom
+        if qchrom=="":
+            qchrom=align[2]
+        elif qchrom!=align[2]:
+            qBad=True
+            continue
+        # else same chrom, don't modify qchrom
 
-            # currentFirstOnForward==1 if according to this ali, the first-in-pair
-            # read is on the forward strand, -1 otherwise
-            currentFirstOnForward=-1
-            #flag 64 the alignment is first in pair, otherwise 128
-            if (((currentFlag&64) and (currentStrand=="F")) or 
-                ((currentFlag&128) and (currentStrand=="R"))) :
-                currentFirstOnForward=1
-            if qFirstOnForward==0:
-                # first ali for this qname
-                qFirstOnForward=currentFirstOnForward
-            elif qFirstOnForward!=currentFirstOnForward:
-                qBad=True
-                continue
-            # else this ali agrees with previous alis for qname -> NOOP
+        #Retrieving flags for STRAND and first/second read
+        currentFlag=int(align[1])
+        #flag 16 the alignment is on the reverse strand
+        currentStrand="F"
+        if currentFlag&16 :
+            currentStrand="R"
 
-            # START and END coordinates of current alignment
-            currentStart=int(align[3])
-            # END depends on CIGAR
-            currentCigar=align[5]
-            currentAliLength=AliLengthOnRef(currentCigar)
-            currentEnd=currentStart+currentAliLength-1
-            if currentStrand=="F":
-                qstartF.append(currentStart)
-                qendF.append(currentEnd)
-            else:
-                qstartR.append(currentStart)
-                qendR.append(currentEnd)
+        # currentFirstOnForward==1 if according to this ali, the first-in-pair
+        # read is on the forward strand, -1 otherwise
+        currentFirstOnForward=-1
+        #flag 64 the alignment is first in pair, otherwise 128
+        if (((currentFlag&64) and (currentStrand=="F")) or 
+            ((currentFlag&128) and (currentStrand=="R"))) :
+            currentFirstOnForward=1
+        if qFirstOnForward==0:
+            # first ali for this qname
+            qFirstOnForward=currentFirstOnForward
+        elif qFirstOnForward!=currentFirstOnForward:
+            qBad=True
+            continue
+        # else this ali agrees with previous alis for qname -> NOOP
 
-        #################################################################################################
-        # Done reading lines from BAM
+        # START and END coordinates of current alignment
+        currentStart=int(align[3])
+        # END depends on CIGAR
+        currentCigar=align[5]
+        currentAliLength=AliLengthOnRef(currentCigar)
+        currentEnd=currentStart+currentAliLength-1
+        if currentStrand=="F":
+            qstartF.append(currentStart)
+            qendF.append(currentEnd)
+        else:
+            qstartR.append(currentStart)
+            qendR.append(currentEnd)
 
-        # process last Qname
-        if not qBad:
-            Qname2ExonCount(qstartF,qendF,qstartR,qendR,exonDict[qchrom],countsArray,sampleIndex)
+    #################################################################################################
+    # Done reading lines from BAM
 
-        # wait for samtools to finish cleanly and check return codes
-        if (p1.wait() != 0):
-            logger.error("in countFrags, while processing %s, the 'samtools sort' subprocess returned %s",
-                         bamFile, p1.returncode)
-            raise Exception("samtools-sort failed")
-        if (p2.wait() != 0):
-            logger.error("in countFrags, while processing %s, the 'samtools view' subprocess returned %s",
-                         bamFile, p2.returncode)
-            raise Exception("samtools-view failed")
+    # process last Qname
+    if not qBad:
+        Qname2ExonCount(qstartF,qendF,qstartR,qendR,exonDict[qchrom],countsArray,sampleIndex,maxGap)
+
+    # wait for samtools to finish cleanly and check return codes
+    if (p1.wait() != 0):
+        logger.error("in countFrags, while processing %s, the 'samtools sort' subprocess returned %s",
+                        bamFile, p1.returncode)
+        raise Exception("samtools-sort failed")
+    if (p2.wait() != 0):
+        logger.error("in countFrags, while processing %s, the 'samtools view' subprocess returned %s",
+                        bamFile, p2.returncode)
+        raise Exception("samtools-view failed")
+
+    # SampleTmpDir should get cleaned up automatically but sometimes samtools tempfiles
+    # are in the process of being deleted => sync to avoid race
+    os.sync()
 
 
 ####################################################
