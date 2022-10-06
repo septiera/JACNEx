@@ -265,6 +265,9 @@ def main():
     # mandatory args
     countsFile=""
     metadata=""
+    ##########################################
+    # optionnal arguments
+    # default values fixed
     sexChromList=["chrX","chrY"]
     minSampleNBAutosomes=15
     minSampleNBGonosomes=12
