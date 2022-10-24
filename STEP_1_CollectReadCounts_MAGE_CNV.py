@@ -278,11 +278,11 @@ def parseCountsFile(countsFH,exons,SOIs,countsArray,countsFilled):
 #   - a tmp dir with fast RW access and enough space for samtools sort
 #   - the maximum accepted gap length between reads pairs
 #   - the number of cpu threads that samtools can use
-#   - the numpy array to fill in with count data
+#   - the numpy array to fill
 #   - the column index (in countsArray) corresponding to bamFile
 #
 # Raises an exception if something goes wrong
-def countFrags(bamFile,exonDict,tmpDir,maxGap,num_threads,countsArray,sampleIndex):
+def countFrags(bamFile,exonDict,tmpDir,maxGap,countsSample,num_threads):
     # We need to process all alignments for a given qname simultaneously
     # => ALGORITHM:
     # parse alignements from BAM, sorted by qname;
@@ -346,7 +346,7 @@ def countFrags(bamFile,exonDict,tmpDir,maxGap,num_threads,countsArray,sampleInde
         # If we are done with previous qname: process it and reset accumulators
         if (qname!=align[0]) and (qname!=""):  # align[0] is the qname
             if not qBad:
-                Qname2ExonCount(qstartF,qendF,qstartR,qendR,exonDict[qchrom],countsArray,sampleIndex,maxGap)
+                Qname2ExonCount(qstartF,qendF,qstartR,qendR,exonDict[qchrom],countsSample,maxGap)
             qname, qchrom = "", ""
             qstartF, qstartR, qendF, qendR = [], [], [], []
             qFirstOnForward=0
@@ -408,7 +408,7 @@ def countFrags(bamFile,exonDict,tmpDir,maxGap,num_threads,countsArray,sampleInde
 
     # process last Qname
     if not qBad:
-        Qname2ExonCount(qstartF,qendF,qstartR,qendR,exonDict[qchrom],countsArray,sampleIndex,maxGap)
+        Qname2ExonCount(qstartF,qendF,qstartR,qendR,exonDict[qchrom],countsSample,maxGap)
 
     # wait for samtools to finish cleanly and check return codes
     if (p1.wait() != 0):
@@ -423,7 +423,6 @@ def countFrags(bamFile,exonDict,tmpDir,maxGap,num_threads,countsArray,sampleInde
     # SampleTmpDir should get cleaned up automatically but sometimes samtools tempfiles
     # are in the process of being deleted => sync to avoid race
     os.sync()
-
 
 ####################################################
 # AliLengthOnRef :
@@ -449,12 +448,12 @@ def AliLengthOnRef(CIGARAlign):
 # Inputs:
 #   -4 lists of ints for F and R strand positions (start and end)
 #   -the NCL for the chromosome where current alignments map
-#   -the numpy array to fill, counts in column sampleIndex will be incremented
+#   -the numpy array to fill, counts in exonIndex will be incremented
 #   -the column index in countsArray corresponding to the current sample
 #   - the maximum accepted gap length between reads pairs, pairs separated by a longer gap
 #       are assumed to possibly result from a structural variant and are ignored
 # Nothing is returned, this function just updates countsArray
-def Qname2ExonCount(startFList,endFList,startRList,endRList,exonNCL,countsArray,sampleIndex,maxGap):
+def Qname2ExonCount(startFList,endFList,startRList,endRList,exonNCL,countsSample,maxGap):
     #######################################################
     # apply QC filters
     #######################################################
@@ -588,22 +587,21 @@ def Qname2ExonCount(startFList,endFList,startRList,endRList,exonNCL,countsArray,
                 continue
             else:
                 exonsSeen.append(exonIndex)
-                incrementCount(countsArray, sampleIndex, exonIndex)
+                incrementCount(countsSample, exonIndex)
                 # countsArray[exonIndex][sampleIndex] += 1
-
     
 ####################################################
 # incrementCount:
-# increment the counters in countsArray for the specified sample and exon
+# increment the counters in countsSample for the specified exon index
 @numba.njit
-def incrementCount(countsArray, sampleIndex, exonIndex):
-    countsArray[exonIndex][sampleIndex] += 1
-
+def incrementCount(countsSample, exonIndex):
+    countsSample[exonIndex]+=1
     
 ######################################################################################################
 ######################################## Main ########################################################
 ######################################################################################################
-def main():
+
+if __name__ =='__main__':
     scriptName=os.path.basename(sys.argv[0])
     logger.info("starting to work")
     startTime = time.time()
@@ -719,7 +717,6 @@ ARGUMENTS:
             sampleName=re.sub(".bam$","",sampleName)
             sampleNames.append(sampleName)
 
-
     ######################################################
     # Preparation:
     # parse exons from BED and create an NCL for each chrom
@@ -776,7 +773,16 @@ ARGUMENTS:
         else:
             try:
                 logger.info('Processing BAM for sample %s', sampleName)
-                countFrags(bam, exonDict, tmpDir,maxGap, threads, countsArray, bamIndex)
+                # To Fill:
+                # numpy array containing the sample fragment counts for all exons
+                # defined here as a global variable to simplify the use in fonctions 
+                # => no value feedback in the counting function
+                countsSample=np.zeros(len(exons), dtype=np.uint32)
+                countFrags(bam, exonDict, tmpDir,maxGap,countsSample, threads)
+
+                #fill column count associated with the sample in countsArray
+                for j in range(len(countsSample)):
+                    countsArray[j,bamIndex] = countsSample[j]
                 thisTime = time.time()
                 logger.debug("Done processing BAM for %s, in %.2f s", sampleName, thisTime-startTime)
                 startTime = thisTime
@@ -801,7 +807,3 @@ ARGUMENTS:
     thisTime = time.time()
     logger.debug("Done printing results, in %.2f s", thisTime-startTime)
     logger.info("ALL DONE")
-
-
-if __name__ =='__main__':
-    main()
