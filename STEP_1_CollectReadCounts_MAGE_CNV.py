@@ -278,7 +278,7 @@ def parseCountsFile(countsFH,exons,SOIs,countsArray,countsFilled):
 #   - a tmp dir with fast RW access and enough space for samtools sort
 #   - the maximum accepted gap length between reads pairs
 #   - the number of cpu threads that samtools can use
-#   - the numpy array to fill
+#   - the number of exons to define the np.array sample count
 #   - the column index (in countsArray) corresponding to bamFile
 #
 # Raises an exception if something goes wrong
@@ -427,6 +427,7 @@ def countFrags(bamFile,exonDict,tmpDir,maxGap,exonsNB,num_threads):
     # SampleTmpDir should get cleaned up automatically but sometimes samtools tempfiles
     # are in the process of being deleted => sync to avoid race
     os.sync()
+
     return(countsSample)
 
 ####################################################
@@ -601,7 +602,16 @@ def Qname2ExonCount(startFList,endFList,startRList,endRList,exonNCL,countsSample
 @numba.njit
 def incrementCount(countsSample, exonIndex):
     countsSample[exonIndex]+=1
-    
+
+#####################################################
+# mergeCounts
+# fill sample column in countsArray with the corresponding 1D np.array (countsSample)
+@numba.njit
+def mergeCounts(countsSample):
+    for j in range(len(countsSample)):
+        countsArray[j,bamIndex] = countsSample[j]
+    logger.debug("Done processing BAM for %s", sampleName)
+
 ######################################################################################################
 ######################################## Main ########################################################
 ######################################################################################################
@@ -779,21 +789,20 @@ ARGUMENTS:
             try:
                 logger.info('Processing BAM for sample %s', sampleName)
                 
-                #fragment count for a sample for all exons
-                #results saved in a one-dimensional np.array
+                # apply fragment count function for a sample for all exons
+                # results saved in a one-dimensional np.array
                 countsSample=countFrags(bam, exonDict, tmpDir,maxGap,len(exons), threads)
 
-                #fill column count associated with the sample in countsArray
-                for j in range(len(countsSample)):
-                    countsArray[j,bamIndex] = countsSample[j]
-                thisTime = time.time()
-                logger.debug("Done processing BAM for %s, in %.2f s", sampleName, thisTime-startTime)
-                startTime = thisTime
+                # fill countsArray with the sample fragment count results
+                mergeCounts(countsSample)
+                
             except Exception as e:
                 logger.warning("Failed to count fragments for sample %s, skipping it - exception: %s",
                                sampleName, e)
                 failedBams.append(bamIndex)
                 continue
+
+        
     # now expunge samples for which countFrags failed
     for failedI in reversed(failedBams):
         del(sampleNames[failedI])
