@@ -20,7 +20,7 @@ BED="EnsemblCanonicalTranscripts.bed.gz"
 TMP="/mnt/RamDisk/"
 OUT="FragCount.tsv"
 ERR="step1.err"
-python STEP_1_CollectReadCounts_MAGE_CNV.py --bams-from $BAM --bed $BED --counts $COUNT --tmp $TMP --threads 20 > $OUT 2> $ERR
+python STEP_1_CollectReadCounts_MAGE_CNV.py --bams-from $BAM --bed $BED --counts $COUNT --tmp $TMP --threads 20 --jobs 3 > $OUT 2> $ERR
 
 ```
 
