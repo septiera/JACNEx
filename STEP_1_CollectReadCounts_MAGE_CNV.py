@@ -282,7 +282,7 @@ def parseCountsFile(countsFH,exons,SOIs,countsArray,countsFilled):
 #   - the column index (in countsArray) corresponding to bamFile
 #
 # Raises an exception if something goes wrong
-def countFrags(bamFile,exonDict,tmpDir,maxGap,exonsNB,num_threads):
+def countFrags(bamFile,exonDict,tmpDir,maxGap,exonsNB,num_threads,bamIndex):
     # We need to process all alignments for a given qname simultaneously
     # => ALGORITHM:
     # parse alignements from BAM, sorted by qname;
@@ -428,7 +428,7 @@ def countFrags(bamFile,exonDict,tmpDir,maxGap,exonsNB,num_threads):
     # are in the process of being deleted => sync to avoid race
     os.sync()
 
-    return(countsSample)
+    return([bamIndex,countsSample])
 
 ####################################################
 # AliLengthOnRef :
@@ -606,11 +606,11 @@ def incrementCount(countsSample, exonIndex):
 #####################################################
 # mergeCounts
 # fill sample column in countsArray with the corresponding 1D np.array (countsSample)
-@numba.njit
-def mergeCounts(countsSample):
-    for j in range(len(countsSample)):
-        countsArray[j,bamIndex] = countsSample[j]
-    logger.debug("Done processing BAM for %s", sampleName)
+# coli_res : list [bam_Index, countsSample] 
+def mergeCounts(coli_res):
+    for j in range(len(coli_res[1])):
+        countsArray[j,coli_res[0]] = coli_res[1][j]
+    logger.debug("Done processing BAM for index %s", coli_res[0])
 
 ######################################################################################################
 ######################################## Main ########################################################
@@ -791,11 +791,11 @@ ARGUMENTS:
                 
                 # apply fragment count function for a sample for all exons
                 # results saved in a one-dimensional np.array
-                countsSample=countFrags(bam, exonDict, tmpDir,maxGap,len(exons), threads)
+                res=countFrags(bam, exonDict, tmpDir,maxGap,len(exons), threads,bamIndex)
 
-                # fill countsArray with the sample fragment count results
-                mergeCounts(countsSample)
-                
+                # fill countsArray with the one-dimensional np.array
+                mergeCounts(res)
+
             except Exception as e:
                 logger.warning("Failed to count fragments for sample %s, skipping it - exception: %s",
                                sampleName, e)
