@@ -282,7 +282,7 @@ def parseCountsFile(countsFH,exons,SOIs,countsArray,countsFilled):
 #   - the column index (in countsArray) corresponding to bamFile
 #
 # Raises an exception if something goes wrong
-def countFrags(bamFile,exonDict,tmpDir,maxGap,countsSample,num_threads):
+def countFrags(bamFile,exonDict,tmpDir,maxGap,exonsNB,num_threads):
     # We need to process all alignments for a given qname simultaneously
     # => ALGORITHM:
     # parse alignements from BAM, sorted by qname;
@@ -308,6 +308,10 @@ def countFrags(bamFile,exonDict,tmpDir,maxGap,countsSample,num_threads):
 
     tmpDirObj=tempfile.TemporaryDirectory(dir=tmpDir)
     SampleTmpDir=tmpDirObj.name
+
+    # To Fill:
+    # numpy array containing the sample fragment counts for all exons
+    countsSample=np.zeros(exonsNB, dtype=np.uint32)
 
     ############################################
     # Preprocessing:
@@ -423,6 +427,7 @@ def countFrags(bamFile,exonDict,tmpDir,maxGap,countsSample,num_threads):
     # SampleTmpDir should get cleaned up automatically but sometimes samtools tempfiles
     # are in the process of being deleted => sync to avoid race
     os.sync()
+    return(countsSample)
 
 ####################################################
 # AliLengthOnRef :
@@ -773,12 +778,10 @@ ARGUMENTS:
         else:
             try:
                 logger.info('Processing BAM for sample %s', sampleName)
-                # To Fill:
-                # numpy array containing the sample fragment counts for all exons
-                # defined here as a global variable to simplify the use in fonctions 
-                # => no value feedback in the counting function
-                countsSample=np.zeros(len(exons), dtype=np.uint32)
-                countFrags(bam, exonDict, tmpDir,maxGap,countsSample, threads)
+                
+                #fragment count for a sample for all exons
+                #results saved in a one-dimensional np.array
+                countsSample=countFrags(bam, exonDict, tmpDir,maxGap,len(exons), threads)
 
                 #fill column count associated with the sample in countsArray
                 for j in range(len(countsSample)):
