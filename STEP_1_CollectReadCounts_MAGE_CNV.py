@@ -21,6 +21,8 @@ import tempfile
 import gzip
 import time
 
+from multiprocessing import Pool #parallelize processes
+
 #####################################################################################################
 ################################ Logging Definition #################################################
 #####################################################################################################
@@ -282,7 +284,7 @@ def parseCountsFile(countsFH,exons,SOIs,countsArray,countsFilled):
 #   - the column index (in countsArray) corresponding to bamFile
 #
 # Raises an exception if something goes wrong
-def countFrags(bamFile,exonDict,tmpDir,maxGap,exonsNB,num_threads,bamIndex):
+def countFrags(bamFile,tmpDir,maxGap,exonsNB,num_threads,bamIndex):
     # We need to process all alignments for a given qname simultaneously
     # => ALGORITHM:
     # parse alignements from BAM, sorted by qname;
@@ -612,6 +614,11 @@ def mergeCounts(coli_res):
         countsArray[j,coli_res[0]] = coli_res[1][j]
     logger.debug("Done processing BAM for index %s", coli_res[0])
 
+def jobError(coli_res):
+    logger.debug("ERROR in job with ", args, " ", i, " , result=", coli_res)
+    #logger.warning("Failed to count fragments for sample %s, skipping it - exception: %s",sampleName, e)
+    #failedBams.append(bamIndex)
+
 ######################################################################################################
 ######################################## Main ########################################################
 ######################################################################################################
@@ -779,29 +786,25 @@ ARGUMENTS:
     # and only expunge them at the end, after exiting the for bamIndex loop
     # -> save their indexes in failedBams
     failedBams = []
-    for bamIndex in range(len(bamsToProcess)):
-        bam = bamsToProcess[bamIndex]
-        sampleName = sampleNames[bamIndex]
-        if countsFilled[bamIndex]:
-            logger.info('Sample %s already filled from countsFile', sampleName)
-            continue
-        else:
-            try:
+
+    with Pool(2) as pool:
+        for bamIndex in range(len(bamsToProcess)):
+            bam = bamsToProcess[bamIndex]
+            sampleName = sampleNames[bamIndex]
+            if countsFilled[bamIndex]:
+                logger.info('Sample %s already filled from countsFile', sampleName)
+                continue
+            else:
                 logger.info('Processing BAM for sample %s', sampleName)
                 
                 # apply fragment count function for a sample for all exons
                 # results saved in a one-dimensional np.array
-                res=countFrags(bam, exonDict, tmpDir,maxGap,len(exons), threads,bamIndex)
-
                 # fill countsArray with the one-dimensional np.array
-                mergeCounts(res)
+                res=pool.apply_async(countFrags,args=(bam, tmpDir,maxGap,len(exons), threads,bamIndex),\
+                    callback=mergeCounts, error_callback=jobError)
 
-            except Exception as e:
-                logger.warning("Failed to count fragments for sample %s, skipping it - exception: %s",
-                               sampleName, e)
-                failedBams.append(bamIndex)
-                continue
-
+        pool.close()
+        pool.join()
         
     # now expunge samples for which countFrags failed
     for failedI in reversed(failedBams):
