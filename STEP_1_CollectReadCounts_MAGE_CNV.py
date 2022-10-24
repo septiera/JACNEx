@@ -276,15 +276,15 @@ def parseCountsFile(countsFH,exons,SOIs,countsArray,countsFilled):
 # Count the fragments in bamFile that overlap each exon described in exonDict.
 # Arguments:
 #   - a bam file (with path)
-#   - the dictionary of exon NCLs
 #   - a tmp dir with fast RW access and enough space for samtools sort
 #   - the maximum accepted gap length between reads pairs
 #   - the number of cpu threads that samtools can use
-#   - the number of exons to define the np.array sample count
 #   - the column index (in countsArray) corresponding to bamFile
 #
+# output :
+# - list with two values [SampleIndex in countsArray, counts sample np.array]
 # Raises an exception if something goes wrong
-def countFrags(bamFile,tmpDir,maxGap,exonsNB,num_threads,bamIndex):
+def countFrags(bamFile,tmpDir,maxGap,num_threads,bamIndex):
     # We need to process all alignments for a given qname simultaneously
     # => ALGORITHM:
     # parse alignements from BAM, sorted by qname;
@@ -312,8 +312,8 @@ def countFrags(bamFile,tmpDir,maxGap,exonsNB,num_threads,bamIndex):
     SampleTmpDir=tmpDirObj.name
 
     # To Fill:
-    # numpy array containing the sample fragment counts for all exons
-    countsSample=np.zeros(exonsNB, dtype=np.uint32)
+    # 1-dimensional numpy array containing the sample fragment counts for all exons
+    countsSample=np.zeros(len(countsArray), dtype=np.uint32)
 
     ############################################
     # Preprocessing:
@@ -614,10 +614,12 @@ def mergeCounts(coli_res):
         countsArray[j,coli_res[0]] = coli_res[1][j]
     logger.debug("Done processing BAM for index %s", coli_res[0])
 
-def jobError(coli_res):
-    logger.debug("ERROR in job with ", args, " ", i, " , result=", coli_res)
-    #logger.warning("Failed to count fragments for sample %s, skipping it - exception: %s",sampleName, e)
-    #failedBams.append(bamIndex)
+#####################################################
+# jobError
+# Raise exception if multiprocessing encountered problem during counting 
+def jobError(exc):
+    logger.debug("ERROR in job , exception=", exc)
+    failedBams.append(bamIndex)
 
 ######################################################################################################
 ######################################## Main ########################################################
@@ -638,6 +640,7 @@ if __name__ =='__main__':
     countsFile=""
     tmpDir="/tmp/"
     threads=10 
+    countJobs=3
 
     usage = """\nCOMMAND SUMMARY:
 Given a BED of exons and one or more BAM files, count the number of sequenced fragments
@@ -656,12 +659,12 @@ ARGUMENTS:
    --maxGap [int] : maximum accepted gap length (bp) between reads pairs, pairs separated by a longer gap
            are assumed to possibly result from a structural variant and are ignored, default : """+str(maxGap)+"""
    --tmp [str]: pre-existing dir for temp files, faster is better (eg tmpfs), default: """+tmpDir+"""
-   --threads [int]: number of threads to allocate for samtools sort, default: """+str(threads)+"\n"
-
+   --threads [int]: number of threads to allocate for samtools sort, default: """+str(threads)+""""
+   --jobs [int] : number of threads to allocate for counting step, default:"""+str(countJobs)+"\n"
 
     try:
         opts,args = getopt.gnu_getopt(sys.argv[1:],'h',
-        ["help","bams=","bams-from=","bed=","counts=","maxGap=","tmp=","threads="])
+        ["help","bams=","bams-from=","bed=","counts=","maxGap=","tmp=","threads=","jobs="])
     except getopt.GetoptError as e:
         sys.exit("ERROR : "+e.msg+".\n"+usage)
 
@@ -697,6 +700,10 @@ ARGUMENTS:
             threads=int(value)
             if (threads<=0):
                 sys.exit("ERROR : threads "+str(threads)+" must be a positive int. Try "+scriptName+" --help.\n")
+        elif opt in ("--jobs"):
+            countJobs=int(value)
+            if (countJobs<=0):
+                sys.exit("ERROR : threads allocated for counting step "+str(countJobs)+" must be a positive int. Try "+scriptName+" --help.\n")      
         else:
             sys.exit("ERROR : unhandled option "+opt+".\n")
 
@@ -743,6 +750,9 @@ ARGUMENTS:
     # Preparation:
     # parse exons from BED and create an NCL for each chrom
     exons=processBed(bedFile)
+    # Multiprocessing module and its apply_async function does not 
+    # manage the arguments obtained with NCLS but can read them in the 
+    # functions application so this variable is global (WARNING on its use)
     exonDict=createExonDict(exons)
     # START and END can become strings now
     for i in range(len(exons)):
@@ -755,6 +765,7 @@ ARGUMENTS:
     # countsArray[exonIndex][sampleIndex] will store the corresponding count.
     # order=F should improve performance, since we fill the array one column at a time.
     # dtype=np.uint32 should also be faster and totally sufficient to store the counts
+    # defined as a global variable for simplified filling during parallelization. 
     countsArray = np.zeros((len(exons),len(sampleNames)),dtype=np.uint32, order='F')
     # countsFilled: same size and order as sampleNames, value will be set 
     # to True iff counts were filled from countsFile
@@ -787,7 +798,11 @@ ARGUMENTS:
     # -> save their indexes in failedBams
     failedBams = []
 
-    with Pool(2) as pool:
+    # The pool function allows to define the number of jobs to run.
+    # WARNING : don't forget that the countFrags function parallels the 
+    # samtools processes 
+    # By default countsJobs = 3 jobs ; 3x10 threads = 30 cpu for samtools at the same times  
+    with Pool(countJobs) as pool:
         for bamIndex in range(len(bamsToProcess)):
             bam = bamsToProcess[bamIndex]
             sampleName = sampleNames[bamIndex]
@@ -797,10 +812,14 @@ ARGUMENTS:
             else:
                 logger.info('Processing BAM for sample %s', sampleName)
                 
-                # apply fragment count function for a sample for all exons
-                # results saved in a one-dimensional np.array
-                # fill countsArray with the one-dimensional np.array
-                res=pool.apply_async(countFrags,args=(bam, tmpDir,maxGap,len(exons), threads,bamIndex),\
+                # Fragment counting parallelization
+                # apply allows to set several arguments
+                # async allows not to block processes when finished
+                # The output list [sampleIndex, countSample np array] is passed 
+                # directly to the callback mergeCount function to store the sample results.
+                # Raise an exception if counting error with the callback_error JobError 
+                # function and store the failed sample index in failedBams. 
+                res=pool.apply_async(countFrags,args=(bam, tmpDir,maxGap,threads,bamIndex),\
                     callback=mergeCounts, error_callback=jobError)
 
         pool.close()
