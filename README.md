@@ -48,10 +48,11 @@ To launch the different stages of the pipeline it is necessary to be located in 
 It is necessary that all the software used are present. <br>
 Samtools (v1.15.1): <br>
 ```
-wget https://github.com/samtools/samtools/releases/download/1.9/samtools-1.15.1.tar.bz2
+wget https://github.com/samtools/samtools/releases/download/1.15.1/samtools-1.15.1.tar.bz2
 tar -vxjf samtools-1.15.1.tar.bz2
 cd samtools-1.15.1
-make
+./configure
+make all all-htslib
 ```
 It is also necessary to have python version 3.6.
 As well as the following modules:
