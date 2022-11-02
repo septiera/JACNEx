@@ -281,20 +281,23 @@ def parseCountsFile(countsFH,exons,SOIs,countsArray,countsFilled):
 #   containing CHR,START,END,EXON_ID
 #   - the maximum accepted gap length between reads pairs
 #   - the number of cpu threads that samtools can use
-#   - the column index (in countsArray) corresponding to bamFile
 #
 # output :
-# - list with two values [SampleIndex in countsArray, counts sample np.array]
+# - counts sample 1D np.array [int]
 # Raises an exception if something goes wrong
-def countFrags(bamFile,tmpDir,maxGap,exons,num_threads,bamIndex):
-
+def countFrags(bamFile,tmpDir,maxGap,exons,num_threads):
+    startTime = time.time()
     # Create NCLS (nested containment lists)
     # implement here because the output object is coded in Cython 
     # and the parallelization module (multiprocess) does not accept this 
-    # type of object as an argument.
+    # object type as an argument.
     # Cleaner than defining a global variable.
-    # Redefinition at each new sample but fast step.
+    # Redefinition at each new sample but it's a fast step.
     exonDict=createExonDict(exons)
+
+    thisTime = time.time()
+    logger.debug("Done createExonDict for %s, in %.2f s",os.path.basename(bamFile), thisTime-startTime)
+    startTime =thisTime
 
     # We need to process all alignments for a given qname simultaneously
     # => ALGORITHM:
@@ -440,8 +443,9 @@ def countFrags(bamFile,tmpDir,maxGap,exons,num_threads,bamIndex):
     # SampleTmpDir should get cleaned up automatically but sometimes samtools tempfiles
     # are in the process of being deleted => sync to avoid race
     os.sync()
-
-    return([bamIndex,countsSample])
+    thisTime = time.time()
+    logger.debug("Done countsFrag for %s, in %.2f s",os.path.basename(bamFile), thisTime-startTime)
+    return(countsSample)
 
 ####################################################
 # AliLengthOnRef :
@@ -619,18 +623,13 @@ def incrementCount(countsSample, exonIndex):
 #####################################################
 # mergeCounts
 # fill sample column in countsArray with the corresponding 1D np.array (countsSample)
-# coli_res : list [bam_Index, countsSample] 
-def mergeCounts(coli_res):
-    for j in range(len(coli_res[1])):
-        countsArray[j,coli_res[0]] = coli_res[1][j]
-    logger.debug("Done processing BAM for index %s", coli_res[0])
-
-#####################################################
-# jobError
-# Raise exception if multiprocessing encountered problem during counting 
-def jobError(exc):
-    logger.debug("ERROR in job , exception=", exc)
-    failedBams.append(bamIndex)
+# counts : nd array with Fragment counts results [numberOfExons]x[numberOfSamples] [int]
+# colSampleIndex : sample column index in counts
+# sampleCount :  
+def mergeCounts(counts, colSampleIndex, sampleCounts):
+    logger.debug("OK in job mergeCounts, merging %s as column %s", sampleCounts, colSampleIndex)
+    for rowExonIndex in range(len(sampleCounts)):
+        counts[rowExonIndex,colSampleIndex] = sampleCounts[rowExonIndex]
 
 ######################################################################################################
 ######################################## Main ########################################################
@@ -801,14 +800,20 @@ ARGUMENTS:
 
     #####################################################
     # Process each BAM
+    # data structure in the form of a queue where each result is stored 
+    # if countFrags is completed (np array 1D counts stored for each sample)
+    results = []
+
+    # if countFrags is completed save the samples indexes
+    processedBams = []
+
     # if countFrags fails for any BAMs, we have to remember their indexes
     # and only expunge them at the end, after exiting the for bamIndex loop
     # -> save their indexes in failedBams
     failedBams = []
 
     # The pool function allows to define the number of jobs to run.
-    # WARNING : don't forget that the countFrags function parallels the 
-    # samtools processes 
+    # WARNING : don't forget that the countFrags function parallels the samtools processes 
     # By default countsJobs = 3 jobs ; 3x10 threads = 30 cpu for samtools at the same times  
     with Pool(countJobs) as pool:
         for bamIndex in range(len(bamsToProcess)):
@@ -819,21 +824,29 @@ ARGUMENTS:
                 continue
             else:
                 logger.info('Processing BAM for sample %s', sampleName)
-                
+                ####################
                 # Fragment counting parallelization
-                # apply allows to set several arguments
-                # async allows not to block processes when finished
-                # The output list [sampleIndex, countSample np array] is passed 
-                # directly to the callback mergeCount function to store the sample results.
-                # Raise an exception if counting error with the callback_error JobError 
-                # function and store the failed sample index in failedBams. 
-                res=pool.apply_async(countFrags,args=(bam, tmpDir,maxGap,exons,threads,bamIndex),\
-                    callback=mergeCounts, error_callback=jobError)
-
+                # apply module allows to set several arguments
+                # async module allows not to block processes when finished
+                # The output count np array results are placed in a queue which can then be 
+                # retrieved by the get() command.
+                # Note that all bam's must be processed to retrieve the results.
+                try:
+                    results.append(pool.apply_async(countFrags,args=(bam, tmpDir,maxGap,exons,threads)))
+                    processedBams.append(bamIndex)
+                
+                # Raise an exception if counting error and storage the failed sample index in failedBams.
+                except Exception as e:
+                    logger.warning("Failed to count fragments for sample %s, skipping it - exception: %s",
+                               sampleName, e)
+                    failedBams.append(bamIndex)
         pool.close()
         pool.join()
+        # Copy sample results into local counts array
+        for ListIndex in range(len(processedBams)):
+            mergeCounts(countsArray, processedBams[ListIndex], results[ListIndex].get())
         
-    # now expunge samples for which countFrags failed
+    # Expunge samples for which countFrags failed
     for failedI in reversed(failedBams):
         del(sampleNames[failedI])
         countsArray = np.delete(countsArray,failedI,1)
