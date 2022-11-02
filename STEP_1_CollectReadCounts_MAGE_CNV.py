@@ -9,7 +9,6 @@
 
 import sys
 import getopt
-import logging
 import os
 import numpy as np # numpy arrays
 import numba # make python faster
@@ -25,22 +24,9 @@ from Modules.Bed import processBed
 
 from multiprocessing import Pool #parallelize processes
 
-#####################################################################################################
-################################ Logging Definition #################################################
-#####################################################################################################
-# set up logger
-logger=logging.getLogger(os.path.basename(sys.argv[0]))
-logger.setLevel(logging.DEBUG)
-# create console handler for STDERR
-stderr = logging.StreamHandler(sys.stderr)
-stderr.setLevel(logging.DEBUG)
-#create formatter
-formatter = logging.Formatter('%(asctime)s %(levelname)s %(name)s %(funcName)s(): %(message)s',
-                                '%Y-%m-%d %H:%M:%S')
-#add formatter to stderr handler
-stderr.setFormatter(formatter)
-#add stderr handler to logger
-logger.addHandler(stderr)
+from Modules.Logger import get_module_logger
+
+logger = get_module_logger(sys.argv[0])
 
 #####################################################################################################
 ################################ Functions ##########################################################
