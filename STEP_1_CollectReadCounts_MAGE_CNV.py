@@ -327,7 +327,7 @@ def countFrags(bamFile,tmpDir,maxGap,exons,num_threads):
 
     # To Fill:
     # 1-dimensional numpy array containing the sample fragment counts for all exons
-    countsSample=np.zeros(len(countsArray), dtype=np.uint32)
+    countsSample=np.zeros(len(exons), dtype=np.uint32)
 
     ############################################
     # Preprocessing:
@@ -635,7 +635,7 @@ def mergeCounts(counts, colSampleIndex, sampleCounts):
 ######################################## Main ########################################################
 ######################################################################################################
 
-if __name__ =='__main__':
+def main():
     scriptName=os.path.basename(sys.argv[0])
     logger.info("starting to work")
     startTime = time.time()
@@ -862,3 +862,6 @@ ARGUMENTS:
     thisTime = time.time()
     logger.debug("Done printing results, in %.2f s", thisTime-startTime)
     logger.info("ALL DONE")
+
+if __name__ =='__main__':
+    main()
