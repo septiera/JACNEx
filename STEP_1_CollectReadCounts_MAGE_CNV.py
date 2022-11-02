@@ -174,8 +174,8 @@ def createExonDict(exons):
             ends[chrom] = []
             indexes[chrom] = []
         # in all cases, append current values to the lists
-        starts[chrom].append(exons[i][1])
-        ends[chrom].append(exons[i][2])
+        starts[chrom].append(int(exons[i][1]))
+        ends[chrom].append(int(exons[i][2]))
         indexes[chrom].append(i)
 
     # build dictionary of NCLs, one per chromosome
@@ -277,6 +277,8 @@ def parseCountsFile(countsFH,exons,SOIs,countsArray,countsFilled):
 # Arguments:
 #   - a bam file (with path)
 #   - a tmp dir with fast RW access and enough space for samtools sort
+#   - a list of [numberOfExons] lists of 4 scalars (types: str,int,int,str)
+#   containing CHR,START,END,EXON_ID
 #   - the maximum accepted gap length between reads pairs
 #   - the number of cpu threads that samtools can use
 #   - the column index (in countsArray) corresponding to bamFile
@@ -284,7 +286,16 @@ def parseCountsFile(countsFH,exons,SOIs,countsArray,countsFilled):
 # output :
 # - list with two values [SampleIndex in countsArray, counts sample np.array]
 # Raises an exception if something goes wrong
-def countFrags(bamFile,tmpDir,maxGap,num_threads,bamIndex):
+def countFrags(bamFile,tmpDir,maxGap,exons,num_threads,bamIndex):
+
+    # Create NCLS (nested containment lists)
+    # implement here because the output object is coded in Cython 
+    # and the parallelization module (multiprocess) does not accept this 
+    # type of object as an argument.
+    # Cleaner than defining a global variable.
+    # Redefinition at each new sample but fast step.
+    exonDict=createExonDict(exons)
+
     # We need to process all alignments for a given qname simultaneously
     # => ALGORITHM:
     # parse alignements from BAM, sorted by qname;
@@ -750,10 +761,7 @@ ARGUMENTS:
     # Preparation:
     # parse exons from BED and create an NCL for each chrom
     exons=processBed(bedFile)
-    # Multiprocessing module and its apply_async function does not 
-    # manage the arguments obtained with NCLS but can read them in the 
-    # functions application so this variable is global (WARNING on its use)
-    exonDict=createExonDict(exons)
+    
     # START and END can become strings now
     for i in range(len(exons)):
         exons[i][1] = str(exons[i][1])
@@ -819,7 +827,7 @@ ARGUMENTS:
                 # directly to the callback mergeCount function to store the sample results.
                 # Raise an exception if counting error with the callback_error JobError 
                 # function and store the failed sample index in failedBams. 
-                res=pool.apply_async(countFrags,args=(bam, tmpDir,maxGap,threads,bamIndex),\
+                res=pool.apply_async(countFrags,args=(bam, tmpDir,maxGap,exons,threads,bamIndex),\
                     callback=mergeCounts, error_callback=jobError)
 
         pool.close()
