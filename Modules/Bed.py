@@ -74,6 +74,8 @@ def processBed(bedFile):
             logger.error("In BED file %s, EXON_ID (4th column) %s is not unique",
                          bedname, fields[3])
             raise Exception()
+        else:
+            exonIDDict[fields[3]] = 1
         #############################
         # prepare numeric version of CHR
         # we want ints so we remove chr prefix from CHR column if present
