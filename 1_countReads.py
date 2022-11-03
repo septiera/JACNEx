@@ -63,8 +63,6 @@ def counts2str(countsArray,exonIndex):
 ################################################################################################
 def main():
     scriptName=os.path.basename(sys.argv[0])
-    logger.info("starting to work")
-    startTime = time.time()
     ##########################################
     # parse user-provided arguments
     # mandatory args
@@ -102,7 +100,7 @@ ARGUMENTS:
         opts,args = getopt.gnu_getopt(sys.argv[1:],'h',
         ["help","bams=","bams-from=","bed=","counts=","maxGap=","tmp=","threads=","jobs="])
     except getopt.GetoptError as e:
-        sys.exit("ERROR : "+e.msg+".\n"+usage)
+        sys.exit("ERROR : "+e.msg+". Try "+scriptName+" --help\n")
 
     for opt, value in opts:
         # sanity-check and store arguments
@@ -183,6 +181,10 @@ ARGUMENTS:
             sampleNames.append(sampleName)
 
     ######################################################
+    # args seem OK, start working
+    logger.info("starting to work")
+    startTime = time.time()
+
     # Preparation:
     # parse exons from BED and create an NCL for each chrom
     exons=processBed(bedFile)
