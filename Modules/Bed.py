@@ -1,6 +1,3 @@
-#############################################################
-############ Modules/Bed.py
-#############################################################
 import sys
 import os
 import re
@@ -11,9 +8,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 #############################################################
-################ Function
-#############################################################
-#Exon intervals file parsing and preparing.
+# Parse and process BED file holding exon definitions.
 # Args : bedFile == a bed file (with path), possibly gzipped, containing exon definitions
 #            formatted as CHR START END EXON_ID
 #        padding (int)
@@ -24,19 +19,19 @@ logger = logging.getLogger(__name__)
 # - exons are sorted by CHR, then START, then END, then EXON_ID
 def processBed(bedFile, padding):
     # list of exons to be returned
-    exons=[]
+    exons = []
     
-    # we'll need a numerical version of CHR but we must read the whole file
+    # for sorting we'll need a numerical version of CHR, but we must read the whole file
     # beforehand => fill a CHR -> CHR_NUM dictionary
-    translateCHRDict={}
-    # temp dict containing all non-numeric chrs, key is the CHR stripped of 'chr' if
+    chr2num = {}
+    # dict to store all non-numeric chromosomes, key is the CHR stripped of 'chr' if
     # present and value is the CHR (e.g 'Y'->'chrY')
-    remainingCHRs={}
+    nonNumChrs = {}
     #maxCHR: max int value in CHR column (after stripping 'chr' if present)
     maxCHR=0
 
-    #dictionary checking that the EXON_ID are unique(key='EXON_ID', value=1) 
-    exonIDDict={}
+    # dictionary for checking that EXON_IDs are unique (key='EXON_ID', value=1) 
+    exonIDs = {}
 
     bedname=os.path.basename(bedFile)
     try:
@@ -51,7 +46,7 @@ def processBed(bedFile, padding):
     for line in bedFH:
         fields = line.rstrip().split("\t")
         #############################
-        # sanity checks + preprocess data
+        # sanity checks + preprocess START+END
         # need exactly 4 fields
         if len(fields) != 4 :
             logger.error("In BED file %s, line doesn't have 4 fields:\n%s",
@@ -67,54 +62,49 @@ def processBed(bedFile, padding):
                          bedname, line)
             raise Exception()
         # EXON_ID must be unique
-        if fields[3] in exonIDDict:
+        if fields[3] in exonIDs:
             logger.error("In BED file %s, EXON_ID (4th column) %s is not unique",
                          bedname, fields[3])
             raise Exception()
         else:
-            exonIDDict[fields[3]] = 1
+            exonIDs[fields[3]] = 1
         #############################
-        # prepare numeric version of CHR
-        # we want ints so we remove chr prefix from CHR column if present
-        chrNum = re.sub("^chr", "", fields[0])
-        if chrNum.isdigit():
-            chrNum = int(chrNum)
-            translateCHRDict[fields[0]] = chrNum
-            if maxCHR<chrNum:
-                maxCHR=chrNum
-        else:
-            #non-numeric chromosome: save in remainingChRs for later
-            remainingCHRs[chrNum]=fields[0]
+        # populate chr2num with numeric version of CHR (if not seen yet)
+        if fields[0] not in chr2num:
+            # strip chr prefix from CHR if present
+            chrStripped = re.sub("^chr", "", fields[0])
+            if chrStripped.isdigit():
+                chrNum = int(chrStripped)
+                chr2num[fields[0]] = chrNum
+                if maxCHR < chrNum:
+                    maxCHR = chrNum
+            else:
+                # non-numeric chromosome: save in nonNumChrs for later
+                nonNumChrs[chrStripped] = fields[0]
+                # also populate chr2num with dummy value, to skip this chr next time we see it
+                chr2num[fields[0]] = -1
         #############################
         # save exon definition
         exons.append(fields)
 
-    ###############
-    #### Non-numerical chromosome conversion to int
-    ###############
-    #replace non-numerical chromosomes by maxCHR+1, maxCHR+2 etc
-    increment=1
+    #########################
+    #### Done parsing bedFile
+    #########################
+    # map non-numerical chromosomes to maxCHR+1, maxCHR+2 etc
     # first deal with X, Y, M/MT in that order
     for chrom in ["X","Y","M","MT"]:
-        if chrom in remainingCHRs:
-            translateCHRDict[remainingCHRs[chrom]] = maxCHR+increment
-            increment+=1
-            del remainingCHRs[chrom]
+        if chrom in nonNumChrs:
+            maxCHR += 1
+            chr2num[nonNumChrs[chrom]] = maxCHR
+            del nonNumChrs[chrom]
     # now deal with any other non-numeric CHRs, in alphabetical order
-    for chrom in sorted(remainingCHRs):
-        translateCHRDict[remainingCHRs[chrom]] = maxCHR+increment
-        increment+=1
-        
-    ############### 
-    #### finally we can add the CHR_NUM column to exons
-    ###############
+    for chrom in sorted(nonNumChrs):
+        maxCHR += 1
+        chr2num[nonNumChrs[chrom]] = maxCHR
+    # add temp CHR_NUM column to exons
     for line in range(len(exons)):
-        exons[line].append(translateCHRDict[exons[line][0]])
-
-    ############### 
-    #### Sort and remove temp CHR_NUM column
-    ###############    
-    # sort by CHR_NUM, then START, then END, then EXON_ID
+        exons[line].append(chr2num[exons[line][0]])
+    # sort exons by CHR_NUM, then START, then END, then EXON_ID
     exons.sort(key = lambda row: (row[4],row[1],row[2],row[3]))
     # delete the tmp column, and return result
     for line in range(len(exons)):
