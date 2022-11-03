@@ -15,14 +15,15 @@ import re
 import gzip
 import time
 from multiprocessing import Pool #parallelize processes
+import logging
+
+# prevent numba DEBUG messages filling the logs when we are in DEBUG loglevel
+numba_logger = logging.getLogger('numba')
+numba_logger.setLevel(logging.WARNING)
 
 ###############################################################################################
 ################################ Modules ######################################################
 ###############################################################################################
-# set the logger status for all user messages returned in the stderr
-from Modules.Logger import get_module_logger
-logger = get_module_logger(sys.argv[0])
-
 # parse the bed to obtain a list of lists (dim=NbExon x [CHR,START,END,EXONID])
 # the exons are sorted according to their genomic position and padded by 10bp
 from Modules.Bed import processBed 
@@ -43,7 +44,6 @@ from Modules.Counting import countFrags
 # colSampleIndex : sample column index in counts
 # sampleCount :  
 def mergeCounts(counts, colSampleIndex, sampleCounts):
-    logger.debug("OK in job mergeCounts, merging %s as column %s", sampleCounts, colSampleIndex)
     for rowExonIndex in range(len(sampleCounts)):
         counts[rowExonIndex,colSampleIndex] = sampleCounts[rowExonIndex]
 
@@ -63,6 +63,13 @@ def counts2str(countsArray,exonIndex):
 ################################################################################################
 def main():
     scriptName=os.path.basename(sys.argv[0])
+    # configure logging, sub-modules will inherit this config
+    logging.basicConfig(format='%(asctime)s %(levelname)s %(name)s %(funcName)s(): %(message)s',
+                        datefmt='%Y-%m-%d %H:%M:%S',
+                        level=logging.DEBUG)
+    # set up logger: we want scriptName rather than 'root'
+    logger = logging.getLogger(scriptName)
+    
     ##########################################
     # parse user-provided arguments
     # mandatory args
@@ -187,8 +194,12 @@ ARGUMENTS:
 
     # Preparation:
     # parse exons from BED and create an NCL for each chrom
-    exons=processBed(bedFile)
-    
+    try:
+        exons=processBed(bedFile)
+    except Exception:
+        logger.error("processBed failed")
+        sys.exit(1)
+        
     # START and END can become strings now
     for i in range(len(exons)):
         exons[i][1] = str(exons[i][1])

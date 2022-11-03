@@ -5,9 +5,11 @@ import sys
 import os
 import re
 import gzip
+import logging
 
-from .Logger import get_module_logger
-logger = get_module_logger(sys.argv[0])
+# set up logger, using inherited config
+logger = logging.getLogger(__name__)
+
 #############################################################
 ################ Function
 #############################################################
