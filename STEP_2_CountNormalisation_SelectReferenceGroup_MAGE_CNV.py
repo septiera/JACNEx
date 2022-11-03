@@ -9,7 +9,6 @@
 
 import sys
 import getopt
-import logging
 import os
 import numpy as np
 import numba
@@ -21,21 +20,11 @@ from sklearn.cluster import KMeans #allows Kmeans calculation
 from functools import wraps #create a decorator to monitor the execution of the functions
 
 ################################################################################################
-################################ Logging Definition ############################################
+################################ Modules #######################################################
 ################################################################################################
-# set up logger
-logger=logging.getLogger(os.path.basename(sys.argv[0]))
-logger.setLevel(logging.DEBUG)
-# create console handler for STDERR
-stderr = logging.StreamHandler(sys.stderr)
-stderr.setLevel(logging.DEBUG)
-#create formatter
-formatter = logging.Formatter('%(asctime)s %(levelname)s %(name)s %(funcName)s(): %(message)s',
-                                '%Y-%m-%d %H:%M:%S')
-#add formatter to stderr handler
-stderr.setFormatter(formatter)
-#add stderr handler to logger
-logger.addHandler(stderr)
+# set the logger status for all user messages returned in the stderr
+from Modules.Logger import get_module_logger
+logger = get_module_logger(sys.argv[0])
 
 ################################################################################################
 ################################ Functions #####################################################
