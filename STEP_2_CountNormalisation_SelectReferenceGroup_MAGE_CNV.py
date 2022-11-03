@@ -29,22 +29,7 @@ logger = get_module_logger(sys.argv[0])
 ################################################################################################
 ################################ Functions #####################################################
 ################################################################################################
-##############################################
-#timeMonitoring:
-#decorator to monitor the execution of the functions
-def timeMonitoring(func):
-    @wraps(func)
-    def timeit_wrapper(*args, **kwargs):
-        start_time = time.perf_counter()
-        result = func(*args, **kwargs)
-        end_time = time.perf_counter()
-        total_time = end_time - start_time
-        logger.info('Function %r, took %2.2f sec' %(func.__name__, total_time))
-        return result
-    return timeit_wrapper
-
-##############################################
-#parseCountsFile:
+#parseCountsFile: 
 #Inputs:
 #   -countsFH is a filehandle open for reading, content is a countsFile 
 #     as produced by STEP1_CollectReadCounts_MAGE_CNV.py
@@ -54,8 +39,9 @@ def timeMonitoring(func):
 # "CHR", "START", "END", "EXON_ID"
 #   -countsArray is a numpy array[exonIndex][sampleIndex]
 #   -gonosomeIndex is a exons indexes list associated with sex chromosomes
-@timeMonitoring
 def parseCountsFile(countsFH,sexChromList):
+    startTime=time.time()
+
     #outputs initialisation
     exonsList=[] #list of list [str]
     countsList=[] #list of list [str], then converted to numpy array [int]
@@ -72,29 +58,32 @@ def parseCountsFile(countsFH,sexChromList):
             gonosomeIndex.append(exonIndex)
     
     #converting countFrag to numpy array of int
-    if (countsList!=""):
-        try:
-            countsArray=np.array(countsList, dtype=np.uint32)
-        except Exception as e:
-            logger.error("Numpy array conversion failed : %s", e)
-            sys.exit(1)
-        return(exonsList,countsArray,gonosomeIndex)
+    try:
+        countsArray=np.array(countsList, dtype=np.uint32)
+    except Exception as e:
+        logger.error("Numpy array conversion failed : %s", e)
+        sys.exit(1)
+
+    thisTime=time.time()
+    logger.debug("Done parseCountsFile in %.2f s", thisTime-startTime)
+    return(exonsList,countsArray,gonosomeIndex)
+
+    
         
 ##############################################
 #FPMNormalisation:
 #Fragment Per Million normalisation for comparison between samples
-#NormCountOneExonForOneSample=(FragsOneExonOneSample*1x10⁶)/(TotalFragsAllExonsOneSample)
+#NormCountOneExonForOneSample=(FragsOneExonOneSample*1x10^6)/(TotalFragsAllExonsOneSample)
 #Input:
 #   -countsArray is a numpy array[exonIndex][sampleIndex] of counts [int]
 #   -countsNorm is a numpy array[exonIndex][sampleIndex] of 0 [float]
 #Output:
 #   -countsNorm is a numpy array[exonIndex][sampleIndex] of FPM normalised counts [float]
-@timeMonitoring
 @numba.njit
 def FPMNormalisation(countsArray,countsNorm):
     for sampleCol in range(countsArray.shape[1]):
         SampleCountsSum=np.sum(countsArray[:,sampleCol])
-        SampleCountNorm=(countsArray[:,sampleCol]*1e6)/SampleCountsSum #1e6 is equivalent to 1x10⁶
+        SampleCountNorm=(countsArray[:,sampleCol]*1e6)/SampleCountsSum #1e6 is equivalent to 1x10^6
         countsNorm[:,sampleCol]=SampleCountNorm
     return(countsNorm)
 
@@ -121,8 +110,8 @@ def FPMNormalisation(countsArray,countsNorm):
 #       3-correlation threshold used to form the group
 #       4-Boolean indicating if the group is optimal, that it meets the selection criteria.
 #       0: valid sample , 1: dubious sample
-@timeMonitoring
 def ReferenceBuilding(FPMArray,SOIs,minSampleInCluster):
+    startTime=time.time()
     hashCluster=dict()
     #####################################################
     # Correlation:
@@ -218,7 +207,10 @@ def ReferenceBuilding(FPMArray,SOIs,minSampleInCluster):
             groupCounter+=1
             hashClean[hashCluster[key]]=groupCounter
             resList.append([sample,groupCounter,splitValue[0],splitValue[2]])
+    thisTime=time.time()
+    logger.debug("Done ReferenceBuilding in %.2f s", thisTime-startTime)
     return (resList)
+    
 
 ##############################################
 #parseMetadata:
@@ -228,32 +220,33 @@ def ReferenceBuilding(FPMArray,SOIs,minSampleInCluster):
 #        2-"Sex" [str] : gender information. (e.g human "M"=Male "F":Female)
 #Outputs:
 #   -hashSamp2Sex[SOIsSampleIndex]="Sex"
-@timeMonitoring
 def parseMetadata(metadataFH,SOIs):
+    startTime=time.time()
     ######################
     # parse header
-    headers= metadataFH.readline().rstrip().split("\t")
+    headers= metadataFH.readline().rstrip().split(",")
     hashSamp2Sex=dict()
     for line in metadataFH:
-        splitLine=line.rstrip().split("\t")
+        splitLine=line.rstrip().split(",")
         sample=splitLine[headers.index("sampleID")]
         sex=splitLine[headers.index("Sex")]
         if sample in SOIs:
             hashSamp2Sex[SOIs.index(sample)]=sex
-
+    thisTime=time.time()
+    logger.debug("Done parseMetadata in %.2f s", thisTime-startTime)
     return(hashSamp2Sex)
 
 ################################################################################################
 ######################################## Main ##################################################
 ################################################################################################
-@timeMonitoring
 def main():
     scriptName=os.path.basename(sys.argv[0])
+    logger.info("starting to work")
     ##########################################
     # parse user-provided arguments
     # mandatory args
     countsFile=""
-    metadata=""
+    metadataFile=""
     ##########################################
     # optionnal arguments
     # default values fixed
