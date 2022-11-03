@@ -148,7 +148,7 @@ ARGUMENTS:
     if (bams=="" and bamsFrom=="") or (bams!="" and bamsFrom!=""):
         sys.exit("ERROR : You must use either --bams or --bams-from but not both.\n"+usage)
     if bedFile=="":
-        sys.exit("ERROR : You must use --bedFile.\n"+usage)
+        sys.exit("ERROR : You must use --bed.\n"+usage)
 
     #####################################################
     # Check and clean up the provided list of BAMs
