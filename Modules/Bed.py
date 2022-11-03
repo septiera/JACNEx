@@ -1,5 +1,5 @@
 #############################################################
-############ /Modules/Bed.py
+############ Modules/Bed.py
 #############################################################
 import sys
 import os
@@ -48,8 +48,8 @@ def processBed(bedFile):
         else:
             bedFH = open(bedFile, "r")
     except Exception as e:
-        logger.error("Opening provided BED file %s: %s", bedFile, e)
-        sys.exit(1)
+        logger.error("Cannot open BED file - %s", e)
+        raise Exception()
 
     for line in bedFH:
         fields = line.rstrip().split("\t")
@@ -57,22 +57,23 @@ def processBed(bedFile):
         # sanity checks + preprocess data
         # need exactly 4 fields
         if len(fields) != 4 :
-            logger.error("In BED file %s, a line doesn't have 4 fields, illegal: %s",
+            logger.error("In BED file %s, line doesn't have 4 fields:\n%s",
                          bedname, line)
-            sys.exit(1)
+            raise Exception()
         # START and END must be ints
         if fields[1].isdigit() and fields[2].isdigit():
             # OK, convert to actual ints and pad (but don't pad to negatives)
             fields[1] = max(int(fields[1]) - padding, 0)
             fields[2] = int(fields[2]) + padding
         else:
-            logger.error("In BED file %s, columns 2-3 START-END must be ints but are not in: %s",
+            logger.error("In BED file %s, columns 2-3 START-END are not ints in line:\n%s",
                          bedname, line)
-            sys.exit(1)
+            raise Exception()
         # EXON_ID must be unique
         if fields[3] in exonIDDict:
-            logger.error("In BED file %s, EXON_ID (4th column) %s is not unique", bedname, fields[3])
-            sys.exit(1)
+            logger.error("In BED file %s, EXON_ID (4th column) %s is not unique",
+                         bedname, fields[3])
+            raise Exception()
         #############################
         # prepare numeric version of CHR
         # we want ints so we remove chr prefix from CHR column if present
