@@ -25,16 +25,16 @@ numba_logger.setLevel(logging.WARNING)
 ################################ Modules ######################################################
 ###############################################################################################
 # parse the bed to obtain a list of lists (dim=NbExon x [CHR,START,END,EXONID])
-# the exons are sorted according to their genomic position and padded by 10bp
-from Modules.Bed import processBed 
+# the exons are sorted according to their genomic position and padded
+from countFrags.bed import processBed 
 
-# parse an old count file and complete the output array with the count data
-from Modules.OldCountsFile import parseCountsFile 
+# parse a pre-existing counts file
+from countFrags.oldCountsFile import parseCountsFile 
 
-# fragment count step, returns a 1D np array with counts[int] for each sample
-from Modules.Counting import countFrags
+# count the fragments overlapping each exon, returns a 1D np array with counts[int] for each sample
+from countFrags.counting import countFrags
 
-#For more details on the functions used see the scripts in the Modules folder
+#For more details on the functions used see the scripts in the countFrags/ folder
 ###############################################################################################
 ################################ Functions ####################################################
 ###############################################################################################

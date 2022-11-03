@@ -1,6 +1,3 @@
-#############################################################
-############ /Modules/OldCountsFile.py
-#############################################################
 import sys
 import numpy as np # numpy arrays
 import numba # make python faster
