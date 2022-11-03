@@ -1,5 +1,5 @@
 ###############################################################################################
-######################################## STEP1 Collect Read Count DECONA2 #####################
+######################################## MAGE-CNV step 1: count reads #########################
 ###############################################################################################
 # Given a BED of exons and one or more BAM files, count the number of sequenced fragments
 # from each BAM that overlap each exon (+- padding).
