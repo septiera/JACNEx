@@ -6,7 +6,6 @@
 # Print results to stdout. 
 # See usage for details.
 ###############################################################################################
-
 import sys
 import getopt
 import os
@@ -15,22 +14,29 @@ import numba # make python faster
 import re
 import gzip
 import time
-
 from multiprocessing import Pool #parallelize processes
 
-#####################################################################################################
-################################ Modules ############################################################
-#####################################################################################################
+###############################################################################################
+################################ Modules ######################################################
+###############################################################################################
+# set the logger status for all user messages returned in the stderr
 from Modules.Logger import get_module_logger
 logger = get_module_logger(sys.argv[0])
 
+# parse the bed to obtain a list of lists (dim=NbExon x [CHR,START,END,EXONID])
+# the exons are sorted according to their genomic position and padded by 10bp
 from Modules.Bed import processBed 
+
+# parse an old count file and complete the output array with the count data
 from Modules.OldCountsFile import parseCountsFile 
+
+# fragment count step, returns a 1D np array with counts[int] for each sample
 from Modules.Counting import countFrags
 
-#####################################################################################################
-################################ Functions ##########################################################
-#####################################################################################################
+#For more details on the functions used see the scripts in the Modules folder
+###############################################################################################
+################################ Functions ####################################################
+###############################################################################################
 # mergeCounts
 # fill sample column in countsArray with the corresponding 1D np.array (countsSample)
 # counts : nd array with Fragment counts results [numberOfExons]x[numberOfSamples] [int]
@@ -52,10 +58,9 @@ def counts2str(countsArray,exonIndex):
         toPrint += "\t" + str(countsArray[exonIndex][i])
     return(toPrint)
 
-######################################################################################################
-######################################## Main ########################################################
-######################################################################################################
-
+################################################################################################
+######################################## Main ##################################################
+################################################################################################
 def main():
     scriptName=os.path.basename(sys.argv[0])
     logger.info("starting to work")
@@ -251,7 +256,7 @@ ARGUMENTS:
                 # async module allows not to block processes when finished
                 # The output count np array results are placed in a queue which can then be 
                 # retrieved by the get() command.
-                # Note that all bam's must be processed to retrieve the results.
+                # Note: that all bam's must be processed to retrieve the results.
                 try:
                     results.append(pool.apply_async(countFrags,args=(bam, tmpDir,maxGap,exons,threads)))
                     processedBams.append(bamIndex)

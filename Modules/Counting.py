@@ -17,10 +17,10 @@ logger = get_module_logger(sys.argv[0])
 #############################################################
 ################ Function
 #############################################################
-#Create nested containment lists (similar to interval trees but faster), one per
+# Create nested containment lists (similar to interval trees but faster), one per
 # chromosome, storing the exons
-#Input : list of exons(ie lists of 4 fields), as returned by processBed
-#Output: dictionary(hash): key=chr, value=NCL
+# Input : list of exons(ie lists of 4 fields), as returned by processBed
+# Output: dictionary(hash): key=chr, value=NCL
 def createExonDict(exons):
     # for each chrom, build 3 lists with same length: starts, ends, indexes (in
     # the complete exons list). key is the CHR
@@ -53,13 +53,13 @@ def createExonDict(exons):
 # Arguments:
 #   - a bam file (with path)
 #   - a tmp dir with fast RW access and enough space for samtools sort
-#   - a list of [numberOfExons] lists of 4 scalars (types: str,int,int,str)
-#   containing CHR,START,END,EXON_ID
 #   - the maximum accepted gap length between reads pairs
+#   - a list of lists contains exons information (dim=NbExons x [CHR, START, END, EXONID])
+#  (columns types: [str,int,int,str])
 #   - the number of cpu threads that samtools can use
 #
 # output :
-# - counts sample 1D np.array [int]
+# - 1-dimensional numpy array contains fragment counts[int] for one sample
 # Raises an exception if something goes wrong
 def countFrags(bamFile,tmpDir,maxGap,exons,num_threads):
     startTime = time.time()
@@ -102,7 +102,7 @@ def countFrags(bamFile,tmpDir,maxGap,exons,num_threads):
     SampleTmpDir=tmpDirObj.name
 
     # To Fill:
-    # 1-dimensional numpy array containing the sample fragment counts for all exons
+    # 1D numpy array containing the sample fragment counts for all exons
     countsSample=np.zeros(len(exons), dtype=np.uint32)
 
     ############################################
@@ -395,5 +395,3 @@ def Qname2ExonCount(startFList,endFList,startRList,endRList,exonNCL,countsSample
 @numba.njit
 def incrementCount(countsSample, exonIndex):
     countsSample[exonIndex]+=1
-
-

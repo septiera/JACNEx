@@ -8,7 +8,7 @@ import sys
 #############################################################
 ################ Function
 #############################################################
-# allows to return in the stderr the different user messages (warning, info, debug, error)
+# allows to return in the stderr the differents process messages (warning, info, debug, error)
 # takes as input the name of the function using this module.
 def get_module_logger(mod_name):
     # set up logger

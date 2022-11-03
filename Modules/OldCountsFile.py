@@ -10,25 +10,6 @@ logger = get_module_logger(sys.argv[0])
 #############################################################
 ################ Function
 #############################################################
-
-# oldCount2CountArray :
-# fill countsArray[exonIndex] with appropriate counts from oldCounts, using old2new to
-# know which old samples (ie columns from old2new) go where in countsArray[exonIndex].
-# This small auxiliary function enables numba optimizations.
-# Args:
-#   -countsArray is an int numpy array, row exonIndex will be filled  (dim=NbExons*NbSOIs)
-#   -exonIndex is the index of the current exon (ie row in countsArray)
-#   -oldCounts contains the old counts for exon exonIndex
-#   -old2new is a vector of size oldCounts, old2new[i] is the column index in countsArray where
-#    counts for old sample i (in oldCounts) must be stored, or -1 if sample i must be discarded
-@numba.njit
-def oldCount2CountArray(countsArray,exonIndex,oldCounts,old2new):
-    for oldIndex in numba.prange(len(old2new)):
-            if old2new[oldIndex]!=-1:
-                countsArray[exonIndex][old2new[oldIndex]] = oldCounts[oldIndex]
-
-#################################################
-#################################################
 # parseCountsFile:
 # Input:
 #   - countsFH is a filehandle open for reading, content is a countsFile 
@@ -84,3 +65,20 @@ def parseCountsFile(countsFH,exons,SOIs,countsArray,countsFilled):
         oldCount2CountArray(countsArray,exonIndex,oldCounts,old2new)
         ###### next line
         exonIndex += 1
+
+#################################################
+# oldCount2CountArray :
+# fill countsArray[exonIndex] with appropriate counts from oldCounts, using old2new to
+# know which old samples (ie columns from old2new) go where in countsArray[exonIndex].
+# This small auxiliary function enables numba optimizations.
+# Args:
+#   -countsArray is an int numpy array, row exonIndex will be filled  (dim=NbExons*NbSOIs)
+#   -exonIndex is the index of the current exon (ie row in countsArray)
+#   -oldCounts contains the old counts for exon exonIndex
+#   -old2new is a vector of size oldCounts, old2new[i] is the column index in countsArray where
+#    counts for old sample i (in oldCounts) must be stored, or -1 if sample i must be discarded
+@numba.njit
+def oldCount2CountArray(countsArray,exonIndex,oldCounts,old2new):
+    for oldIndex in numba.prange(len(old2new)):
+            if old2new[oldIndex]!=-1:
+                countsArray[exonIndex][old2new[oldIndex]] = oldCounts[oldIndex]
