@@ -14,18 +14,15 @@ logger = logging.getLogger(__name__)
 ################ Function
 #############################################################
 #Exon intervals file parsing and preparing.
-# Input : bedFile == a bed file (with path), possibly gzipped, containing exon definitions
-#         formatted as CHR START END EXON_ID
+# Args : bedFile == a bed file (with path), possibly gzipped, containing exon definitions
+#            formatted as CHR START END EXON_ID
+#        padding (int)
 #
-# Output : returns a list of [numberOfExons] lists of 4 scalars (types: str,int,int,str)
+# Returns a list of [numberOfExons] lists of 4 scalars (types: str,int,int,str)
 # containing CHR,START,END,EXON_ID, and where:
-# - a padding is added to exon coordinates (ie -padding for START and +padding for END,
-#   current padding=10bp)
+# - exons are padded, ie -padding for START (never negative) and +padding for END
 # - exons are sorted by CHR, then START, then END, then EXON_ID
-def processBed(bedFile):
-    # number of bps used to pad the exon coordinates
-    padding=10
-
+def processBed(bedFile, padding):
     # list of exons to be returned
     exons=[]
     

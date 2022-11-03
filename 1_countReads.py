@@ -77,6 +77,7 @@ def main():
     bamsFrom=""
     bedFile=""
     # optional args with default values
+    padding=10
     maxGap=1000
     countsFile=""
     tmpDir="/tmp/"
@@ -97,6 +98,7 @@ ARGUMENTS:
            headerless tab-separated file, columns contain CHR START END EXON_ID)
    --counts [str] optional: pre-existing counts file produced by this program, possibly gzipped,
            coounts for requested BAMs will be copied from this file if present
+   --padding [int] : number of bps used to pad the exon coordinates, default : """+str(padding)+"""
    --maxGap [int] : maximum accepted gap length (bp) between reads pairs, pairs separated by a longer gap
            are assumed to possibly result from a structural variant and are ignored, default : """+str(maxGap)+"""
    --tmp [str]: pre-existing dir for temp files, faster is better (eg tmpfs), default: """+tmpDir+"""
@@ -195,7 +197,7 @@ ARGUMENTS:
     # Preparation:
     # parse exons from BED and create an NCL for each chrom
     try:
-        exons=processBed(bedFile)
+        exons=processBed(bedFile, padding)
     except Exception:
         logger.error("processBed failed")
         sys.exit(1)
