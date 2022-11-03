@@ -3,33 +3,14 @@
 #############################################################
 import sys
 import os
-import numpy as np # numpy arrays
 import re
 import gzip
-import logging
 
-#############################################################################################################
-############# Logging Definition 
-#############################################################################################################
-# set up logger
-logger=logging.getLogger(os.path.basename(sys.argv[0]))
-logger.setLevel(logging.DEBUG)
-# create console handler for STDERR
-stderr = logging.StreamHandler(sys.stderr)
-stderr.setLevel(logging.DEBUG)
-#create formatter
-formatter = logging.Formatter('%(asctime)s %(levelname)s %(name)s %(funcName)s(): %(message)s',
-                                '%Y-%m-%d %H:%M:%S')
-#add formatter to stderr handler
-stderr.setFormatter(formatter)
-#add stderr handler to logger
-logger.addHandler(stderr)
-logging.getLogger().addHandler(formatter)
-logger.propagate = False
-
-##############################################################################################################
+from .Logger import get_module_logger
+logger = get_module_logger(sys.argv[0])
+#############################################################
 ################ Function
-##############################################################################################################
+#############################################################
 #Exon intervals file parsing and preparing.
 # Input : bedFile == a bed file (with path), possibly gzipped, containing exon definitions
 #         formatted as CHR START END EXON_ID

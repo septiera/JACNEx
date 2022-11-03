@@ -1,7 +1,15 @@
+#############################################################
+############ /Modules/Logger.py
+#############################################################
 import logging
 import os
 import sys
 
+#############################################################
+################ Function
+#############################################################
+# allows to return in the stderr the different user messages (warning, info, debug, error)
+# takes as input the name of the function using this module.
 def get_module_logger(mod_name):
     # set up logger
     logger=logging.getLogger(os.path.basename(mod_name))
