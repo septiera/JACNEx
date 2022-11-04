@@ -14,17 +14,28 @@ import numpy as np
 import numba
 import gzip
 import time
+import logging
 from scipy.cluster.hierarchy import linkage,fcluster #allows clustering algorithms to be applied
 from scipy.spatial.distance import squareform
 from sklearn.cluster import KMeans #allows Kmeans calculation
 from functools import wraps #create a decorator to monitor the execution of the functions
 
+# prevent numba DEBUG messages filling the logs when we are in DEBUG loglevel
+numba_logger = logging.getLogger('numba')
+numba_logger.setLevel(logging.WARNING)
+
+# !!!! definition of the logger here as the functions are not yet modularised (will change) 
+# configure logging, sub-modules will inherit this config
+logging.basicConfig(format='%(asctime)s %(levelname)s %(name)s %(funcName)s(): %(message)s',
+                    datefmt='%Y-%m-%d %H:%M:%S',
+                    level=logging.DEBUG)
+# set up logger: we want scriptName rather than 'root'
+logger = logging.getLogger(os.path.basename(sys.argv[0]))
+logger.info("starting to work")
 ################################################################################################
 ################################ Modules #######################################################
 ################################################################################################
-# set the logger status for all user messages returned in the stderr
-from Modules.Logger import get_module_logger
-logger = get_module_logger(sys.argv[0])
+
 
 ################################################################################################
 ################################ Functions #####################################################
@@ -241,7 +252,7 @@ def parseMetadata(metadataFH,SOIs):
 ################################################################################################
 def main():
     scriptName=os.path.basename(sys.argv[0])
-    logger.info("starting to work")
+
     ##########################################
     # parse user-provided arguments
     # mandatory args
