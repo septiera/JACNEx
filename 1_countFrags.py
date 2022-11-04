@@ -270,9 +270,14 @@ ARGUMENTS:
                     failedBams.append(bamIndex)
         pool.close()
         pool.join()
-        # Copy sample results into local counts array
-        for ListIndex in range(len(processedBams)):
-            mergeCounts(countsArray, processedBams[ListIndex], results[ListIndex].get())
+        
+    thisTime = time.time()
+    logger.debug("Done processing all BAMs, in %.2f s", thisTime-startTime)
+    startTime = thisTime
+
+    # Copy sample results into local counts array
+    for ListIndex in range(len(processedBams)):
+        mergeCounts(countsArray, processedBams[ListIndex], results[ListIndex].get())
         
     # Expunge samples for which countFrags failed
     for failedI in reversed(failedBams):
@@ -288,7 +293,7 @@ ARGUMENTS:
         toPrint += counts2str(countsArray,i)
         print(toPrint)
     thisTime = time.time()
-    logger.debug("Done printing results, in %.2f s", thisTime-startTime)
+    logger.debug("Done merging and printing results for all samples, in %.2f s", thisTime-startTime)
     logger.info("ALL DONE")
 
 if __name__ =='__main__':
