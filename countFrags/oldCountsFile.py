@@ -56,8 +56,8 @@ def parseCountsFile(countsFile,exons,SOIs,countsArray,countsFilled):
         splitLine=line.rstrip().split("\t",maxsplit=4)
         ####### Compare exon definitions
         if ((splitLine[0] != exons[exonIndex][0]) or
-            (splitLine[1] != exons[exonIndex][1]) or
-            (splitLine[2] != exons[exonIndex][2]) or
+            (splitLine[1] != str(exons[exonIndex][1])) or
+            (splitLine[2] != str(exons[exonIndex][2])) or
             (splitLine[3] != exons[exonIndex][3])) :
             logger.error("exon definitions disagree between countsFile and BED file...\n\tIf the BED file changed "+
                          "you cannot re-use a previous countsFile: all counts must be recalculated from scratch")

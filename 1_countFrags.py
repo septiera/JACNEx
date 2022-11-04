@@ -201,10 +201,6 @@ ARGUMENTS:
         logger.error("processBed failed")
         sys.exit(1)
         
-    # START and END can become strings now
-    for i in range(len(exons)):
-        exons[i][1] = str(exons[i][1])
-        exons[i][2] = str(exons[i][2])
     thisTime = time.time()
     logger.debug("Done pre-processing BED, in %.2f s", thisTime-startTime)
     startTime = thisTime
@@ -287,9 +283,9 @@ ARGUMENTS:
     # Print exon defs + counts to stdout
     toPrint = "CHR\tSTART\tEND\tEXON_ID\t"+"\t".join(sampleNames)
     print(toPrint)
-    for exonIndex in range(len(exons)):
-        toPrint = "\t".join(exons[exonIndex])
-        toPrint += counts2str(countsArray,exonIndex)
+    for i in range(len(exons)):
+        toPrint = exons[i][0]+"\t"+str(exons[i][1])+"\t"+str(exons[i][2])+"\t"+exons[i][3]
+        toPrint += counts2str(countsArray,i)
         print(toPrint)
     thisTime = time.time()
     logger.debug("Done printing results, in %.2f s", thisTime-startTime)
