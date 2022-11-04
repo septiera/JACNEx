@@ -1,11 +1,10 @@
-import sys
 import os
-import numpy as np # numpy arrays
+import numpy as np
 import numba # make python faster
 import re
 # nested containment lists, similar to interval trees but faster (https://github.com/biocore-ntnu/ncls)
 from ncls import NCLS
-import subprocess # run samtools
+import subprocess
 import tempfile
 import time
 import logging
@@ -216,7 +215,7 @@ def countFrags(bamFile,tmpDir,maxGap,exons,num_threads):
     # are in the process of being deleted => sync to avoid race
     os.sync()
     thisTime = time.time()
-    logger.debug("Done countsFrag for %s, in %.2f s",os.path.basename(bamFile), thisTime-startTime)
+    logger.debug("Done countFrags for %s, in %.2f s",os.path.basename(bamFile), thisTime-startTime)
     return(countsSample)
 
 ####################################################
