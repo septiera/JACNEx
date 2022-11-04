@@ -35,8 +35,8 @@ def createExonDict(exons):
             ends[chrom] = []
             indexes[chrom] = []
         # in all cases, append current values to the lists
-        starts[chrom].append(int(exons[i][1]))
-        ends[chrom].append(int(exons[i][2]))
+        starts[chrom].append(exons[i][1])
+        ends[chrom].append(exons[i][2])
         indexes[chrom].append(i)
 
     # build dictionary of NCLs, one per chromosome
