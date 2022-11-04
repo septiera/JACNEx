@@ -1,5 +1,6 @@
 import numpy as np
 import numba # make python faster
+import gzip
 import logging
 
 # set up logger, using inherited config
@@ -8,20 +9,27 @@ logger = logging.getLogger(__name__)
 #############################################################
 # parseCountsFile:
 # Input:
-#   - countsFH is a filehandle open for reading, content is a countsFile 
-#     as produced by this program
-#   - exons holds the exon definitions, padded and sorted, as returned
-#     by processBed but with START and END converted to strings
-#   - SOIs is a list of strings: the sample names of interest
+#   - a countsFile produced by 1_countFrags.py for some samples (hopefully some of the
+#     SOIs), using the same exon definitions
+#   - exons: exon definitions as returned by processBed, padded and sorted
+#   - SOIs: a list of samples of interest (ie list of strings)
 #   - countsArray is an all-zeroes int numpy array (dim=NbExons*NbSOIs)
 #   - countsFilled is an all-False boolean numpy array, same size as SOIs
 #
 # -> make sure countsFile was produced with the same BED as exons, else die;
-# -> for any sample present in both countsFH and SOIs, fill the sample's
+# -> for any sample present in both countsFile and SOIs, fill the sample's
 #    column in countsArray by copying data from countsFH, and set
 #    countsFilled[sample] to True
-def parseCountsFile(countsFH,exons,SOIs,countsArray,countsFilled):
-    ######################
+def parseCountsFile(countsFile,exons,SOIs,countsArray,countsFilled):
+    try:
+        if countsFile.endswith(".gz"):
+            countsFH = gzip.open(countsFile, "rt")
+        else:
+            countsFH = open(countsFile,"r")
+    except Exception as e:
+        logger.error("Opening provided countsFile %s: %s", countsFile, e)
+        raise Exception('cannot open countsFile')
+     ######################
     # parse header from (old) countsFile
     oldHeader = countsFH.readline().rstrip().split("\t")
     # ignore exon definition headers "CHR", "START", "END", "EXON_ID"

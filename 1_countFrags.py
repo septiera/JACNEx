@@ -12,7 +12,6 @@ import os
 import numpy as np # numpy arrays
 import numba # make python faster
 import re
-import gzip
 import time
 from multiprocessing import Pool #parallelize processes
 import logging
@@ -222,15 +221,7 @@ ARGUMENTS:
     # fill countsArray with pre-calculated counts if countsFile was provided
     if (countsFile!=""):
         try:
-            if countsFile.endswith(".gz"):
-                countsFH = gzip.open(countsFile, "rt")
-            else:
-                countsFH = open(countsFile,"r")
-        except Exception as e:
-            logger.error("Opening provided countsFile %s: %s", countsFile, e)
-            sys.exit(1)
-        try:
-            parseCountsFile(countsFH,exons,sampleNames,countsArray,countsFilled)
+            parseCountsFile(countsFile,exons,sampleNames,countsArray,countsFilled)
         except Exception as e:
             logger.error("parseCountsFile failed - %s", e)
             sys.exit(1)
