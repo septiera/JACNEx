@@ -125,16 +125,13 @@ def countFrags(bamFile,tmpDir,maxGap,exons,num_threads):
     p2 = subprocess.Popen(cmd2.split(), stdin=p1.stdout, stdout=subprocess.PIPE, universal_newlines=True)
 
     ############################################
-    # Regular expression to identify alignments on the main chromosomes (no ALTs etc)
-    mainChr=re.compile("^chr[\dXYM][\dT]?$|^[\dXYM][\dT]?$")
-
-    ############################################
     # Main loop: parse each alignment
     for line in p2.stdout:
         align=line.rstrip().split('\t')
 
-        # skip ali if not on main chr
-        if not mainChr.match(align[2]): 
+        # skip ali if not on main chromosome (no ALTs etc): assume the BAMs use the same
+        # chrom naming conventions as the BED of exons -> chrom must be a key of exonDict
+        if align[2] not in exonDict: 
             continue
 
         ######################################################################
