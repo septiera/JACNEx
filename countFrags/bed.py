@@ -1,4 +1,3 @@
-import os
 import gzip
 import logging
 
@@ -31,9 +30,8 @@ def processBed(bedFile, padding):
     # dictionary for checking that EXON_IDs are unique (key='EXON_ID', value=1) 
     exonIDs = {}
 
-    bedname=os.path.basename(bedFile)
     try:
-        if bedname.endswith(".gz"):
+        if bedFile.endswith(".gz"):
             bedFH = gzip.open(bedFile, "rt")
         else:
             bedFH = open(bedFile, "r")
@@ -48,7 +46,7 @@ def processBed(bedFile, padding):
         # need exactly 4 fields
         if len(fields) != 4 :
             logger.error("In BED file %s, line doesn't have 4 fields:\n%s",
-                         bedname, line)
+                         bedFile, line)
             raise Exception()
         # START and END must be ints
         if fields[1].isdigit() and fields[2].isdigit():
@@ -57,12 +55,12 @@ def processBed(bedFile, padding):
             fields[2] = int(fields[2]) + padding
         else:
             logger.error("In BED file %s, columns 2-3 START-END are not ints in line:\n%s",
-                         bedname, line)
+                         bedFile, line)
             raise Exception()
         # EXON_ID must be unique
         if fields[3] in exonIDs:
             logger.error("In BED file %s, EXON_ID (4th column) %s is not unique",
-                         bedname, fields[3])
+                         bedFile, fields[3])
             raise Exception()
         else:
             exonIDs[fields[3]] = 1
