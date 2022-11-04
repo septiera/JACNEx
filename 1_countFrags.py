@@ -232,7 +232,7 @@ ARGUMENTS:
         try:
             parseCountsFile(countsFH,exons,sampleNames,countsArray,countsFilled)
         except Exception as e:
-            logger.error(e)
+            logger.error("parseCountsFile failed - %s", e)
             sys.exit(1)
 
         thisTime = time.time()

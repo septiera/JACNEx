@@ -1,13 +1,10 @@
-import sys
-import numpy as np # numpy arrays
+import numpy as np
 import numba # make python faster
 import logging
 
 # set up logger, using inherited config
 logger = logging.getLogger(__name__)
 
-#############################################################
-################ Function
 #############################################################
 # parseCountsFile:
 # Input:
@@ -54,10 +51,9 @@ def parseCountsFile(countsFH,exons,SOIs,countsArray,countsFilled):
             (splitLine[1] != exons[exonIndex][1]) or
             (splitLine[2] != exons[exonIndex][2]) or
             (splitLine[3] != exons[exonIndex][3])) :
-            logger.error("exon definitions disagree between previous countsFile and the provided BED file "+
-                         "(after padding and sorting) for exon index %i. If the BED file changed, a previous "+
-                         "countsFile cannot be re-used: all counts must be recalculated from scratch", exonIndex)
-            sys.exit(1)
+            logger.error("exon definitions disagree between countsFile and BED file...\n\tIf the BED file changed "+
+                         "you cannot re-use a previous countsFile: all counts must be recalculated from scratch")
+            raise Exception('mismatched exon definitions')
         ###### Fill countsArray with old count data
         # convert counts from strings to ints, populating a numpy array (needed for numba)
         oldCounts = np.fromstring(splitLine[4], dtype=np.uint32, sep='\t') 
