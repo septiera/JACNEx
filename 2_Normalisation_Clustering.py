@@ -15,10 +15,13 @@ import numba
 import gzip
 import time
 import logging
-from scipy.cluster.hierarchy import linkage,fcluster #allows clustering algorithms to be applied
-from scipy.spatial.distance import squareform
-from sklearn.cluster import KMeans #allows Kmeans calculation
-from functools import wraps #create a decorator to monitor the execution of the functions
+
+# different scipy submodules are used for the application of hierachical clustering 
+import scipy.cluster.hierarchy 
+import scipy.spatial.distance  
+
+# sklearn submodule is used to make clusters by Kmeans
+import sklearn.cluster 
 
 # prevent numba DEBUG messages filling the logs when we are in DEBUG loglevel
 numba_logger = logging.getLogger('numba')
@@ -140,7 +143,7 @@ def ReferenceBuilding(FPMArray,SOIs,minSampleInCluster):
     dissimilarity = 1 - abs(correlation) 
     # Complete linkage, which is the more popular method, takes the maximum distance.
     # f=max(d(x,y)) ; x is a sample in one cluster and y is a sample in the other.
-    sampleLinks = linkage(squareform(dissimilarity), 'complete')
+    sampleLinks = scipy.cluster.hierarchy.linkage(scipy.spatial.distance.squareform(dissimilarity), 'complete')
 
     ######################################################
     # Clustering :
@@ -160,7 +163,7 @@ def ReferenceBuilding(FPMArray,SOIs,minSampleInCluster):
         # the given linkage matrix.
         # Return An 1D array[sampleIndex][i] is the flat cluster number to which 
         # original observation i belongs.
-        groupsLabels=fcluster(sampleLinks, corrThreshold, criterion='distance')
+        groupsLabels=scipy.cluster.hierarchy.fcluster(sampleLinks, corrThreshold, criterion='distance')
 
         #creation of two tables with descriptive elements of the whole cluster for 
         #a single correlation threshold:
@@ -405,7 +408,7 @@ ARGUMENTS:
     # But without appriori a Kmeans can be made to split the data on chromosome number
     # Works well on humans but needs to be tested on other species
     logger.info("####### Gonosomes process")
-    kmeans =KMeans(n_clusters=len(sexChromList), random_state=0).fit(gonosomesFPM.T)#transposition to consider the samples
+    kmeans =sklearn.cluster.KMeans(n_clusters=len(sexChromList), random_state=0).fit(gonosomesFPM.T)#transposition to consider the samples
 
     #check that all samples are clustered according to their gender
     #not the case returns a warning (in stderr) and stores the sampleIndex in a dubious sample list.
