@@ -1,6 +1,4 @@
-import sys
 import os
-import re
 import gzip
 import logging
 
@@ -72,8 +70,13 @@ def processBed(bedFile, padding):
         # populate chr2num with numeric version of CHR (if not seen yet)
         if fields[0] not in chr2num:
             # strip chr prefix from CHR if present
-            chrStripped = re.sub("^chr", "", fields[0])
+            if fields[0].startswith('chr'):
+                chrStripped = fields[0][3:]
+            else:
+                chrStripped = fields[0]
+
             if chrStripped.isdigit():
+                # numeric chrom: populate chr2num
                 chrNum = int(chrStripped)
                 chr2num[fields[0]] = chrNum
                 if maxCHR < chrNum:
