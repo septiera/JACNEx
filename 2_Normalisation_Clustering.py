@@ -1,9 +1,9 @@
 ###############################################################################################
-################### STEP2 CountNormalisation_SelectReferenceGroupe_MAGE_CNV.py ################
+######################################## MAGE-CNV step 2: Normalisation & clustering ##########
 ###############################################################################################
-#  Given a TSV of exon fragment counts and a TSV of sample gender information,
+#  Given a BED of exons and a TSV of exon fragment counts,
 #  normalizes the counts (Fragment Per Million) and forms the reference groups for the call. 
-#  Prints the results on stdout. 
+#  Prints results in a folder defined by the user. 
 #  See usage for more details.
 ###############################################################################################
 
