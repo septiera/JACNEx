@@ -4,6 +4,11 @@ import logging
 # set up logger, using inherited config
 logger = logging.getLogger(__name__)
 
+
+###############################################################################
+############################ PUBLIC FUNCTIONS #################################
+###############################################################################
+
 #############################################################
 # Parse and process BED file holding exon definitions.
 # Args : bedFile == a bed file (with path), possibly gzipped, containing exon definitions
@@ -111,3 +116,9 @@ def processBed(bedFile, padding):
     for line in range(len(exons)):
         exons[line].pop()
     return(exons)
+
+
+###############################################################################
+############################ PRIVATE FUNCTIONS ################################
+###############################################################################
+

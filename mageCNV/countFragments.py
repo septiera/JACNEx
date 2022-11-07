@@ -12,38 +12,10 @@ import logging
 # set up logger, using inherited config
 logger = logging.getLogger(__name__)
 
-#############################################################
-################ Function
-#############################################################
-# Create nested containment lists (similar to interval trees but faster), one per
-# chromosome, storing the exons
-# Input : list of exons (ie lists of 4 fields), as returned by processBed
-# Output: dictionary(hash): key=chr, value=NCL
-def createExonDict(exons):
-    # for each chrom, build 3 lists with same length: starts, ends, indexes (in
-    # the complete exons list). key is the CHR
-    starts = {}
-    ends = {}
-    indexes = {}
-    for i in range(len(exons)):
-        # exons[i] is a list: CHR, START, END, EXON_ID
-        chrom = exons[i][0]
-        if chrom not in starts:
-            # first time we see chrom, initialize with empty lists
-            starts[chrom] = []
-            ends[chrom] = []
-            indexes[chrom] = []
-        # in all cases, append current values to the lists
-        starts[chrom].append(exons[i][1])
-        ends[chrom].append(exons[i][2])
-        indexes[chrom].append(i)
 
-    # build dictionary of NCLs, one per chromosome
-    exonDict={}
-    for chrom in starts.keys():
-        ncls = NCLS(starts[chrom], ends[chrom], indexes[chrom])
-        exonDict[chrom]=ncls
-    return(exonDict)
+###############################################################################
+############################ PUBLIC FUNCTIONS #################################
+###############################################################################
 
 ####################################################
 # countFrags :
@@ -218,6 +190,11 @@ def countFrags(bamFile,tmpDir,maxGap,exons,num_threads):
     logger.debug("Done countFrags for %s, in %.2f s",os.path.basename(bamFile), thisTime-startTime)
     return(countsSample)
 
+
+###############################################################################
+############################ PRIVATE FUNCTIONS ################################
+###############################################################################
+
 ####################################################
 # AliLengthOnRef :
 #Input : a CIGAR string
@@ -231,6 +208,37 @@ def AliLengthOnRef(CIGARAlign):
     for op in match:
         length+=int(op)
     return(length)
+
+#############################################################
+# Create nested containment lists (similar to interval trees but faster), one per
+# chromosome, storing the exons
+# Input : list of exons (ie lists of 4 fields), as returned by processBed
+# Output: dictionary(hash): key=chr, value=NCL
+def createExonDict(exons):
+    # for each chrom, build 3 lists with same length: starts, ends, indexes (in
+    # the complete exons list). key is the CHR
+    starts = {}
+    ends = {}
+    indexes = {}
+    for i in range(len(exons)):
+        # exons[i] is a list: CHR, START, END, EXON_ID
+        chrom = exons[i][0]
+        if chrom not in starts:
+            # first time we see chrom, initialize with empty lists
+            starts[chrom] = []
+            ends[chrom] = []
+            indexes[chrom] = []
+        # in all cases, append current values to the lists
+        starts[chrom].append(exons[i][1])
+        ends[chrom].append(exons[i][2])
+        indexes[chrom].append(i)
+
+    # build dictionary of NCLs, one per chromosome
+    exonDict={}
+    for chrom in starts.keys():
+        ncls = NCLS(starts[chrom], ends[chrom], indexes[chrom])
+        exonDict[chrom]=ncls
+    return(exonDict)
 
 ####################################################
 # Qname2ExonCount :
