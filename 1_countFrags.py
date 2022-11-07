@@ -28,7 +28,7 @@ numba_logger.setLevel(logging.WARNING)
 from countFrags.bed import processBed 
 
 # parse a pre-existing counts file
-from countFrags.oldCountsFile import parseCountsFile 
+from countFrags.oldCountsFile import extractCountsFromPrev
 
 # count the fragments overlapping each exon, returns a 1D np array with counts[int] for each sample
 from countFrags.counting import countFrags
@@ -209,26 +209,19 @@ ARGUMENTS:
     logger.debug("Done pre-processing BED, in %.2f s", thisTime-startTime)
     startTime = thisTime
 
-    # countsArray[exonIndex][sampleIndex] will store the corresponding count.
-    # order=F should improve performance, since we fill the array one column at a time.
-    # dtype=np.uint32 should also be faster and totally sufficient to store the counts
-    # defined as a global variable for simplified filling during parallelization. 
-    countsArray = np.zeros((len(exons),len(sampleNames)),dtype=np.uint32, order='F')
-    # countsFilled: same size and order as sampleNames, value will be set 
-    # to True iff counts were filled from countsFile
-    countsFilled = np.array([False]*len(sampleNames))
+    # allocate countsArray and countsFilled, and populate them with pre-calculated
+    # counts if countsFile was provided.
+    # countsArray[exonIndex][sampleIndex] will store the specified count,
+    # countsFilled[sampleIndex] is True iff counts for specified sample were filled from countsFile
+    try:
+        (countsArray, countsFilled) = extractCountsFromPrev(exons, samples, countsFile)
+    except Exception as e:
+        logger.error("parseCountsFile failed - %s", e)
+        sys.exit(1)
+    thisTime = time.time()
+    logger.debug("Done parsing previous countsFile, in %.2f s", thisTime-startTime)
+    startTime = thisTime
 
-    # fill countsArray with pre-calculated counts if countsFile was provided
-    if (countsFile!=""):
-        try:
-            parseCountsFile(countsFile,exons,sampleNames,countsArray,countsFilled)
-        except Exception as e:
-            logger.error("parseCountsFile failed - %s", e)
-            sys.exit(1)
-
-        thisTime = time.time()
-        logger.debug("Done parsing old countsFile, in %.2f s", thisTime-startTime)
-        startTime = thisTime
 
     #####################################################
     # Process each BAM
