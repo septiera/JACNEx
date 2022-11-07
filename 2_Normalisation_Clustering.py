@@ -261,23 +261,28 @@ def main():
     # mandatory args
     countsFile=""
     metadataFile=""
+    bedFile=""
     ##########################################
     # optionnal arguments
     # default values fixed
     sexChromList=["chrX","chrY"]
+    padding=10
     minSampleNBAutosomes=15
     minSampleNBGonosomes=12
 
     usage = """\nCOMMAND SUMMARY:
-Given a TSV of exon fragment counts and a TSV of sample gender information, normalizes the counts 
-(Fragment Per Million) and forms the reference groups for the call.
+Given a BED of exons and a TSV of exon fragment counts, normalizes the counts (Fragment Per Million) 
+and forms the reference groups for the call. 
 Results are printed to stdout folder : 
 - a TSV file format: first 4 columns hold the exon definitions, subsequent columns hold the normalised counts.
-- a TSV file format: describe the distribution of samples in the reference groups (7 columns);
-first column sample of interest (SOIs), second reference group number for autosomes, third minimum group correlation 
-level for autosomes, fourth sample valid status, fifth sixth and seventh identical but for sex chromosome.
+- a TSV file format: describe the distribution of samples in the reference groups (5 columns);
+first column sample of interest (SOIs), second reference group number for autosomes, third the group to be compared 
+for calling, fourth and fifth identical but for gonosomes.
 ARGUMENTS:
    --counts [str]: TSV file, first 4 columns hold the exon definitions, subsequent columns hold the fragment counts.
+   --bed [str]: BED file, possibly gzipped, containing exon definitions (format: 4-column 
+           headerless tab-separated file, columns contain CHR START END EXON_ID)
+   --padding [int] : number of bps used to pad the exon coordinates, default : """+str(padding)+"""
    --metadata [str]: TSV file, contains 2 columns: "sampleID", "Sex". 
    --sexChrom [str]: a list of gonosome name [str]. (default ["chrX", "chrY"])
    --nbSampAuto [int]: an integer indicating the minimum sample number to create a reference cluster for autosomes.
@@ -287,7 +292,7 @@ ARGUMENTS:
 
     try:
         opts,args = getopt.gnu_getopt(sys.argv[1:],'h',
-        ["help","counts=","metadata=","sexChrom=","nbSampAuto=","nbSampGono=","out="])
+        ["help","counts=","bed=","padding=","metadata=","sexChrom=","nbSampAuto=","nbSampGono=","out="])
     except getopt.GetoptError as e:
         sys.exit("ERROR : "+e.msg+".\n"+usage)
 
@@ -300,6 +305,18 @@ ARGUMENTS:
             countsFile=value
             if not os.path.isfile(countsFile):
                 sys.exit("ERROR : countsFile "+countsFile+" doesn't exist. Try "+scriptName+" --help.\n")
+        elif opt in ("--bed"):
+            bedFile=value
+            if not os.path.isfile(bedFile):
+                sys.exit("ERROR : bedFile "+bedFile+" doesn't exist. Try "+scriptName+" --help.\n")
+        elif opt in ("--padding"):
+            try:
+                padding=np.int(value)
+            except Exception as e:
+                logger.error("Conversion of padding value to int failed : %s", e)
+                sys.exit(1)
+
+        #### TO MODIFIED
         elif opt in ("--metadata"):
             metadataFile=value
             if not os.path.isfile(metadataFile):
