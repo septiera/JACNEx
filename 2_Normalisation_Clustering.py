@@ -74,25 +74,31 @@ def main():
     # optionnal arguments
     # default values fixed
     padding=10
+    genotypes=[["male","X","Y"],["female","X","X"]]
 
     usage = """\nCOMMAND SUMMARY:
-Given a BED of exons and a TSV of exon fragment counts, normalizes the counts (Fragment Per Million) 
-and forms the reference groups for the call. 
+Given a BED of exons and a TSV of exon fragment counts, normalizes the counts 
+(Fragment Per Million) and forms the reference groups for the call. 
 Results are printed to stdout folder : 
 - a TSV file format: first 4 columns hold the exon definitions, subsequent columns hold the normalised counts.
 - a TSV file format: describe the distribution of samples in the reference groups (5 columns);
-first column sample of interest (SOIs), second reference group number for autosomes, third the group to be compared 
-for calling, fourth and fifth identical but for gonosomes.
+  first column sample of interest (SOIs), second reference group number for autosomes, third the group to be compared 
+  for calling, fourth and fifth identical but for gonosomes.
 ARGUMENTS:
-   --counts [str]: TSV file, first 4 columns hold the exon definitions, subsequent columns hold the fragment counts.
+   --counts [str]: TSV file, first 4 columns hold the exon definitions, subsequent columns 
+                   hold the fragment counts.
    --bed [str]: BED file, possibly gzipped, containing exon definitions (format: 4-column 
-           headerless tab-separated file, columns contain CHR START END EXON_ID)
+                   headerless tab-separated file, columns contain CHR START END EXON_ID)
    --padding [int] : number of bps used to pad the exon coordinates, default : """+str(padding)+""" 
+   --genotypes [str]: comma-separated list of list fo sexual genotypes, default : """+str(genotypes)+"""
+   --genotypes-from [str]: text file listing sexual genotypes, one per line. (format : not fixed columns number
+                  1:genotypeName 2:Gonosome n°1 3:Gonosome n°2)
+                           
    --out[str]: pre-existing folder to save the output files"""+"\n"
 
     try:
         opts,args = getopt.gnu_getopt(sys.argv[1:],'h',
-        ["help","counts=","bed=","padding=","out="])
+        ["help","counts=","bed=","padding=","genotypes=","genotypes-from=","out="])
     except getopt.GetoptError as e:
         sys.exit("ERROR : "+e.msg+".\n"+usage)
 
@@ -115,6 +121,13 @@ ARGUMENTS:
             except Exception as e:
                 logger.error("Conversion of padding value to int failed : %s", e)
                 sys.exit(1)
+        elif opt in ("--genotypes"):
+            genotypes =value
+            # genotypes is checked later
+        elif opt in ("--genotypes-from"):
+            genotypesFrom=value
+            if not os.path.isfile(genotypesFrom):
+                sys.exit("ERROR : genotypes-from file "+genotypesFrom+" doesn't exist. Try "+scriptName+" --help.\n")
         elif opt in ("--out"):
             outFolder=value
             if not os.path.isdir(outFolder):
@@ -128,13 +141,52 @@ ARGUMENTS:
         sys.exit("ERROR : You must use --counts.\n"+usage)
     if bedFile=="":
         sys.exit("ERROR : You must use --bed.\n"+usage)
+    #####################################################
+    # Check and clean up the genotypes lists
+    # list containing the sex chromosomes, with any dupes removed
+    gonosomes=[]
+
+    if (genotypesFrom!=""):
+        genotypes=[]
+        genoList = open(genotypesFrom,"r")
+        for line in genoList:
+            lineInfo = line.rstrip()
+            lineInfo= lineInfo.split(",")
+            genotypes.append(lineInfo)
+    
+    # It should be taken into account the different non-human organisms 
+    genoTmp=np.array(genotypes)
+    for row in range(len(genoTmp)): #genotypes is unlimited
+        for col in range(len(genoTmp[row])-1): #several chromosomes can induce the genotype (not only 2)
+            if not genoTmp[row][col+1].startswith("chr"):
+                genoTmp[row][col+1]="chr"+genoTmp[row][col+1]
+            if genoTmp[row][col+1] not in gonosomes:
+                gonosomes.append(genoTmp[row][col+1])
+
+    # Check that gonosomes exist in exons and extract gonosomes exons index
+    gonoIndex=[]
+    controlDict={}
+    for exonId in range(len(exons)):
+        if exons[exonId][0] in gonosomes:
+            gonoIndex.append(exonId)
+            if exons[exonId][0] in controlDict:
+                controlDict[exons[exonId][0]] += 1
+            else:
+                controlDict[exons[exonId][0]] =1
+
+    for gonosome in gonosomes:
+        if gonosome not in controlDict:
+            logger.error("Gonosome %s not defined in bedFile.Please check.\n \
+                        Tip: for all non-numerary gonosomes processBed has annotated them maxCHR+1.(except for X and Y) ",gonosome)
+
+
     ######################################################
     # args seem OK, start working
     logger.info("starting to work")
     startTime = time.time()
 
     #####################################################
-    #Preparation:
+    # Preparation:
     ##################
     # parse exons from BED
     try:
@@ -178,7 +230,7 @@ ARGUMENTS:
         startTime = thisTime
 
     #####################################################
-    #Normalisation:
+    # Normalisation:
     ##################
     #create an empty array to filled with the normalized counts
     FPM=np.zeros((len(exons),len(sampleNames)),dtype=np.float32, order='F')
@@ -213,6 +265,8 @@ ARGUMENTS:
     #sys.stdout reassigning to sys.__stdout__
     sys.stdout = sys.__stdout__
     
+    # Dicotomisation of data associated with autosomes and gonosomes as correlations may
+    # be influenced by gender. 
     
 
 if __name__ =='__main__':
