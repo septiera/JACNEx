@@ -169,7 +169,7 @@ ARGUMENTS:
     # bamsToProcess, with any dupes removed
     bamsToProcess=[]
     # sample names stripped of path and .bam extension, same order as in bamsToProcess 
-    sampleNames=[]
+    samples=[]
 
     if bams != "":
         bamsTmp=bams.split(",")
@@ -190,7 +190,7 @@ ARGUMENTS:
             bamsToProcess.append(bam)
             sampleName=os.path.basename(bam)
             sampleName=re.sub(".bam$","",sampleName)
-            sampleNames.append(sampleName)
+            samples.append(sampleName)
 
     ######################################################
     # args seem OK, start working
@@ -250,12 +250,12 @@ ARGUMENTS:
     with Pool(countJobs) as pool:
         for bamIndex in range(len(bamsToProcess)):
             bam = bamsToProcess[bamIndex]
-            sampleName = sampleNames[bamIndex]
+            sample = samples[bamIndex]
             if countsFilled[bamIndex]:
-                logger.info('Sample %s already filled from countsFile', sampleName)
+                logger.info('Sample %s already filled from countsFile', sample)
                 continue
             else:
-                logger.info('Processing BAM for sample %s', sampleName)
+                logger.info('Processing BAM for sample %s', sample)
                 ####################
                 # Fragment counting parallelization
                 # apply module allows to set several arguments
@@ -270,7 +270,7 @@ ARGUMENTS:
                 # Raise an exception if counting error and storage the failed sample index in failedBams.
                 except Exception as e:
                     logger.warning("Failed to count fragments for sample %s, skipping it - exception: %s",
-                               sampleName, e)
+                               sample, e)
                     failedBams.append(bamIndex)
         pool.close()
         pool.join()
@@ -285,12 +285,12 @@ ARGUMENTS:
         
     # Expunge samples for which countFrags failed
     for failedI in reversed(failedBams):
-        del(sampleNames[failedI])
+        del(samples[failedI])
         countsArray = np.delete(countsArray,failedI,1)
 
     #####################################################
     # Print exon defs + counts to stdout
-    toPrint = "CHR\tSTART\tEND\tEXON_ID\t"+"\t".join(sampleNames)
+    toPrint = "CHR\tSTART\tEND\tEXON_ID\t"+"\t".join(samples)
     print(toPrint)
     for i in range(len(exons)):
         toPrint = exons[i][0]+"\t"+str(exons[i][1])+"\t"+str(exons[i][2])+"\t"+exons[i][3]
