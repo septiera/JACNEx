@@ -130,6 +130,10 @@ ARGUMENTS:
             countsFile=value
             if not os.path.isfile(countsFile):
                 sys.exit("ERROR : countsFile "+countsFile+" doesn't exist. Try "+scriptName+" --help.\n")
+        elif opt in ("--padding"):
+            padding=int(value)
+            if (padding<0):
+                sys.exit("ERROR : padding "+str(padding)+" must be a positive int. Try "+scriptName+" --help.\n")
         elif opt in ("--maxGap"):
             maxGap=int(value)
             if (maxGap<0):
