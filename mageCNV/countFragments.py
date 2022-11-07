@@ -19,30 +19,25 @@ logger = logging.getLogger(__name__)
 
 ####################################################
 # countFrags :
-# Count the fragments in bamFile that overlap each exon described in exonDict.
+# Count the fragments in bamFile that overlap each exon described in exons.
 # Arguments:
 #   - a bam file (with path)
-#   - a tmp dir with fast RW access and enough space for samtools sort
-#   - the maximum accepted gap length between reads pairs
-#   - a list of lists contains exons information (dim=NbExons x [CHR, START, END, EXONID])
-#  (columns types: [str,int,int,str])
+#   - exon definitions as returned by processBed, padded and sorted
+#   - a tmp dir with enough space for samtools sort and fast RW access
+#   - the maximum accepted gap length between paired reads
 #   - the number of cpu threads that samtools can use
 #
-# output :
-# - 1-dimensional numpy array contains fragment counts[int] for one sample
-# Raises an exception if something goes wrong
-def countFrags(bamFile,tmpDir,maxGap,exons,num_threads):
+# Return a 1D numpy int array, dim = len(exons), with the fragment counts for this sample
+def countFrags(bamFile, exons, tmpDir, maxGap, num_threads):
     startTime = time.time()
-    # Create NCLS (nested containment lists)
-    # implement here because the output object is coded in Cython 
-    # and the parallelization module (multiprocess) does not accept this 
-    # object type as an argument.
-    # Cleaner than defining a global variable.
-    # Redefinition at each new sample but it's a fast step.
-    exonDict=createExonDict(exons)
+    # for each chrom, build an NCL holding the exons
+    # NOTE: we would like to build this once in the caller and use it for each BAM,
+    # but the multiprocessing module doesn't allow this... We therefore build the
+    # same NCLs for each BAM, wasteful but it's OK, createExonNCLs() is fast
+    exonNCLs=createExonNCLs(exons)
 
     thisTime = time.time()
-    logger.debug("Done createExonDict for %s, in %.2f s",os.path.basename(bamFile), thisTime-startTime)
+    logger.debug("Done createExonNCLs for %s, in %.2f s",os.path.basename(bamFile), thisTime-startTime)
     startTime =thisTime
 
     # We need to process all alignments for a given qname simultaneously
@@ -100,16 +95,16 @@ def countFrags(bamFile,tmpDir,maxGap,exons,num_threads):
     for line in p2.stdout:
         align=line.rstrip().split('\t')
 
-        # skip ali if not on main chromosome (no ALTs etc): assume the BAMs use the same
-        # chrom naming conventions as the BED of exons -> chrom must be a key of exonDict
-        if align[2] not in exonDict: 
+        # skip ali if not on a chromosome where we have at least one exon - importantly this
+        # skips non-main GRCh38 "chroms" (eg ALT contigs)
+        if align[2] not in exonNCLs:
             continue
 
         ######################################################################
         # If we are done with previous qname: process it and reset accumulators
         if (qname!=align[0]) and (qname!=""):  # align[0] is the qname
             if not qBad:
-                Qname2ExonCount(qstartF,qendF,qstartR,qendR,exonDict[qchrom],countsSample,maxGap)
+                Qname2ExonCount(qstartF,qendF,qstartR,qendR,exonNCLs[qchrom],countsSample,maxGap)
             qname, qchrom = "", ""
             qstartF, qstartR, qendF, qendR = [], [], [], []
             qFirstOnForward=0
@@ -171,7 +166,7 @@ def countFrags(bamFile,tmpDir,maxGap,exons,num_threads):
 
     # process last Qname
     if not qBad:
-        Qname2ExonCount(qstartF,qendF,qstartR,qendR,exonDict[qchrom],countsSample,maxGap)
+        Qname2ExonCount(qstartF,qendF,qstartR,qendR,exonNCLs[qchrom],countsSample,maxGap)
 
     # wait for samtools to finish cleanly and check return codes
     if (p1.wait() != 0):
@@ -214,7 +209,7 @@ def AliLengthOnRef(CIGARAlign):
 # chromosome, storing the exons
 # Input : list of exons (ie lists of 4 fields), as returned by processBed
 # Output: dictionary(hash): key=chr, value=NCL
-def createExonDict(exons):
+def createExonNCLs(exons):
     # for each chrom, build 3 lists with same length: starts, ends, indexes (in
     # the complete exons list). key is the CHR
     starts = {}
@@ -234,11 +229,11 @@ def createExonDict(exons):
         indexes[chrom].append(i)
 
     # build dictionary of NCLs, one per chromosome
-    exonDict={}
+    exonNCLs = {}
     for chrom in starts.keys():
-        ncls = NCLS(starts[chrom], ends[chrom], indexes[chrom])
-        exonDict[chrom]=ncls
-    return(exonDict)
+        ncl = NCLS(starts[chrom], ends[chrom], indexes[chrom])
+        exonNCLs[chrom]=ncl
+    return(exonNCLs)
 
 ####################################################
 # Qname2ExonCount :
@@ -394,7 +389,7 @@ def Qname2ExonCount(startFList,endFList,startRList,endRList,exonNCL,countsSample
     
 ####################################################
 # incrementCount:
-# increment the counters in countsSample for the specified exon index
+# increment the counter in countsSample for the specified exon index
 @numba.njit
 def incrementCount(countsSample, exonIndex):
     countsSample[exonIndex]+=1
