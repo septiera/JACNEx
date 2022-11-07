@@ -10,7 +10,6 @@ import sys
 import getopt
 import os
 import numpy as np # numpy arrays
-import numba # make python faster
 import re
 import time
 from multiprocessing import Pool #parallelize processes
@@ -21,10 +20,6 @@ import mageCNV.bed
 import mageCNV.countsFile
 import mageCNV.countFragments
 
-
-# prevent numba DEBUG messages filling the logs when we are in DEBUG loglevel
-numba_logger = logging.getLogger('numba')
-numba_logger.setLevel(logging.WARNING)
 
 ###############################################################################################
 ################################ Functions ####################################################
@@ -37,17 +32,6 @@ numba_logger.setLevel(logging.WARNING)
 def mergeCounts(counts, colSampleIndex, sampleCounts):
     for rowExonIndex in range(len(sampleCounts)):
         counts[rowExonIndex,colSampleIndex] = sampleCounts[rowExonIndex]
-
-#################################################
-# counts2str:
-# return a string holding the counts from countsArray[exonIndex],
-# tab-separated and starting with a tab
-@numba.njit
-def counts2str(countsArray,exonIndex):
-    toPrint = ""
-    for i in range(countsArray.shape[1]):
-        toPrint += "\t" + str(countsArray[exonIndex][i])
-    return(toPrint)
 
 ################################################################################################
 ######################################## Main ##################################################
@@ -189,7 +173,6 @@ ARGUMENTS:
     logger.info("starting to work")
     startTime = time.time()
 
-    # Preparation:
     # parse exons from BED to obtain a list of lists (dim=NbExon x [CHR,START,END,EXONID]),
     # the exons are sorted according to their genomic position and padded
     try:
@@ -217,7 +200,7 @@ ARGUMENTS:
 
 
     #####################################################
-    # Process each BAM
+    # Process remaining (new) BAMs
     # data structure in the form of a queue where each result is stored 
     # if countFrags is completed (np array 1D counts stored for each sample)
     results = []
@@ -276,12 +259,8 @@ ARGUMENTS:
 
     #####################################################
     # Print exon defs + counts to stdout
-    toPrint = "CHR\tSTART\tEND\tEXON_ID\t"+"\t".join(samples)
-    print(toPrint)
-    for i in range(len(exons)):
-        toPrint = exons[i][0]+"\t"+str(exons[i][1])+"\t"+str(exons[i][2])+"\t"+exons[i][3]
-        toPrint += counts2str(countsArray,i)
-        print(toPrint)
+    mageCNV.countsFile.printCountsFile(exons, samples, countsArray)
+
     thisTime = time.time()
     logger.debug("Done merging and printing results for all samples, in %.2f s", thisTime-startTime)
     logger.info("ALL DONE")

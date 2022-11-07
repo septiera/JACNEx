@@ -3,6 +3,11 @@ import numba # make python faster
 import gzip
 import logging
 
+
+# prevent numba DEBUG messages filling the logs when we are in DEBUG loglevel
+numba_logger = logging.getLogger('numba')
+numba_logger.setLevel(logging.WARNING)
+
 # set up logger, using inherited config
 logger = logging.getLogger(__name__)
 
@@ -16,7 +21,7 @@ logger = logging.getLogger(__name__)
 # Args:
 #   - exons: exon definitions as returned by processBed, padded and sorted
 #   - SOIs: a list of samples of interest (ie list of strings)
-#   - prevCountsFile: a countsFile produced by 1_countFrags.py for some samples
+#   - prevCountsFile: a countsFile produced by printCountsFile for some samples
 #     (hopefully some of the SOIs), using the same exon definitions as in 'exons',
 #     if there is one; or '' otherwise
 #
@@ -88,6 +93,24 @@ def parseCountsFile(countsFile):
         countsVec2array(countsArray, i, countsList[i])
 
     return(exons, samples, countsArray)
+
+#############################################################
+# printCountsFile:
+# Args:
+#   - 'exons' is a list of exons same as returned by processBed, ie each exon is a lists
+#     of 4 scalars (types: str,int,int,str) containing CHR,START,END,EXON_ID
+#   - 'samples' is a list of sampleIDs
+#   - 'countsArray' is an int numpy array, dim = len(exons) x len(samples)
+#
+# Print this data to stdout as a 'countsFile' (same format parsed by extractCountsFromPrev).
+def printCountsFile(exons, samples, countsArray):
+    toPrint = "CHR\tSTART\tEND\tEXON_ID\t"+"\t".join(samples)
+    print(toPrint)
+    for i in range(len(exons)):
+        # exon def + counts
+        toPrint = exons[i][0]+"\t"+str(exons[i][1])+"\t"+str(exons[i][2])+"\t"+exons[i][3]
+        toPrint += counts2str(countsArray,i)
+        print(toPrint)
 
 
 ###############################################################################
@@ -182,3 +205,13 @@ def countsVec2array(countsArray, exonIndex, countsVector):
     for i in numba.prange(len(countsVector)):
         countsArray[exonIndex][i] = countsVector[i]
 
+#################################################
+# counts2str:
+# return a string holding the counts from countsArray[exonIndex],
+# tab-separated and starting with a tab
+@numba.njit
+def counts2str(countsArray, exonIndex):
+    toPrint = ""
+    for i in range(countsArray.shape[1]):
+        toPrint += "\t" + str(countsArray[exonIndex][i])
+    return(toPrint)
