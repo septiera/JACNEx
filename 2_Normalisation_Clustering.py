@@ -16,13 +16,6 @@ import gzip
 import time
 import logging
 
-# different scipy submodules are used for the application of hierachical clustering 
-import scipy.cluster.hierarchy 
-import scipy.spatial.distance  
-
-# sklearn submodule is used to make clusters by Kmeans
-import sklearn.cluster 
-
 # prevent numba DEBUG messages filling the logs when we are in DEBUG loglevel
 numba_logger = logging.getLogger('numba')
 numba_logger.setLevel(logging.WARNING)
@@ -49,14 +42,14 @@ from countFrags.oldCountsFile import parseCountsFile
 ################################ Functions #####################################################
 ################################################################################################
 ##############################################
-#FPMNormalisation:
-#Fragment Per Million normalisation for comparison between samples
-#NormCountOneExonForOneSample=(FragsOneExonOneSample*1x10^6)/(TotalFragsAllExonsOneSample)
-#Input:
-#   -countsArray is a numpy array[exonIndex][sampleIndex] of counts [int]
-#   -countsNorm is a numpy array[exonIndex][sampleIndex] of 0 [float]
-#Output:
-#   -countsNorm is a numpy array[exonIndex][sampleIndex] of FPM normalised counts [float]
+# FPMNormalisation:
+# Fragment Per Million normalisation for comparison between samples
+# NormCountOneExonForOneSample=(FragsOneExonOneSample*1x10^6)/(TotalFragsAllExonsOneSample)
+# Inputs:
+#   -countsArray : numpy array of counts [int] (Dim=[exonIndex]x[sampleIndex])
+#   -countsNorm : numpy array of 0 [float] (Dim=[exonIndex]x[sampleIndex])
+# Output:
+#   -countsNorm : numpy array of FPM normalised counts [float] (Dim=[exonIndex]x[sampleIndex])
 @numba.njit
 def FPMNormalisation(countsArray,countsNorm):
     for sampleCol in range(countsArray.shape[1]):
@@ -76,15 +69,11 @@ def main():
     # parse user-provided arguments
     # mandatory args
     countsFile=""
-    metadataFile=""
     bedFile=""
     ##########################################
     # optionnal arguments
     # default values fixed
-    sexChromList=["chrX","chrY"]
     padding=10
-    minSampleNBAutosomes=15
-    minSampleNBGonosomes=12
 
     usage = """\nCOMMAND SUMMARY:
 Given a BED of exons and a TSV of exon fragment counts, normalizes the counts (Fragment Per Million) 
@@ -98,17 +87,12 @@ ARGUMENTS:
    --counts [str]: TSV file, first 4 columns hold the exon definitions, subsequent columns hold the fragment counts.
    --bed [str]: BED file, possibly gzipped, containing exon definitions (format: 4-column 
            headerless tab-separated file, columns contain CHR START END EXON_ID)
-   --padding [int] : number of bps used to pad the exon coordinates, default : """+str(padding)+"""
-   --metadata [str]: TSV file, contains 2 columns: "sampleID", "Sex". 
-   --sexChrom [str]: a list of gonosome name [str]. (default ["chrX", "chrY"])
-   --nbSampAuto [int]: an integer indicating the minimum sample number to create a reference cluster for autosomes.
-                       (default =15)
-   --nbSampGono [int]:same as previous variable but for gonosomes. (default =12)
+   --padding [int] : number of bps used to pad the exon coordinates, default : """+str(padding)+""" 
    --out[str]: pre-existing folder to save the output files"""+"\n"
 
     try:
         opts,args = getopt.gnu_getopt(sys.argv[1:],'h',
-        ["help","counts=","bed=","padding=","metadata=","sexChrom=","nbSampAuto=","nbSampGono=","out="])
+        ["help","counts=","bed=","padding=","out="])
     except getopt.GetoptError as e:
         sys.exit("ERROR : "+e.msg+".\n"+usage)
 
@@ -138,14 +122,20 @@ ARGUMENTS:
         else:
             sys.exit("ERROR : unhandled option "+opt+".\n")
 
+    #####################################################
+    # Check that the mandatory parameters are present
+    if countsFile=="":
+        sys.exit("ERROR : You must use --counts.\n"+usage)
+    if bedFile=="":
+        sys.exit("ERROR : You must use --bed.\n"+usage)
     ######################################################
     # args seem OK, start working
     logger.info("starting to work")
     startTime = time.time()
+
     #####################################################
     #Preparation:
     ##################
-    # Preparation:
     # parse exons from BED
     try:
         exons=processBed(bedFile, padding)
@@ -157,20 +147,14 @@ ARGUMENTS:
     logger.debug("Done pre-processing BED, in %.2f s", thisTime-startTime)
     startTime = thisTime
 
+    ####################
     # parse fragment counts from TSV
-    try:
-        if countsFile.endswith(".gz"):
-            countsFH = gzip.open(countsFile, "rt")
-        else:
-            countsFH = open(countsFile,"r")
-    except Exception as e:
-        logger.error("Opening provided countsFile %s: %s", countsFile, e)
-        raise Exception('cannot open countsFile')
-     ######################
-    # parse header from (old) countsFile
-    sampleNames = countsFH.readline().rstrip().split("\t")
-    # ignore exon definition headers "CHR", "START", "END", "EXON_ID"
-    del sampleNames[0:4]
+    # Header extraction of the count file to find the names and the samples number
+    # needed for parsing
+    with open(countsFile) as f:
+        sampleNames= f.readline().rstrip().split("\t")
+        del sampleNames[0:4]
+    logger.debug("Samples number to be treated : %s", len(sampleNames))
 
     # countsArray[exonIndex][sampleIndex] will store the corresponding count.
     # order=F should improve performance, since we fill the array one column at a time.
@@ -201,13 +185,17 @@ ARGUMENTS:
     
     #FPM calcul
     FPM=FPMNormalisation(countsArray,FPM)
-
-    ##########
-    ## write file in stdout normalisation TSV
+    thisTime = time.time()
+    logger.debug("Done FPM normalisation, in %.2f s", thisTime-startTime)
+    startTime = thisTime
     
-    startTime = time.time()
-    normalisationFile=open(outFolder+"/FPMCount_"+str(len(sampleNames))+"samples_"+time.strftime("%Y%m%d")+".tsv",'w')
-    sys.stdout = normalisationFile
+    ##################
+    ## write file in stdout normalisation TSV
+    #output file definition
+    normalisationFile=open(outFolder+"/FPMCounts_"+str(len(sampleNames))+"samples_"+time.strftime("%Y%m%d")+".tsv",'w')
+    #replace basic sys.stdout by the file to be filled
+    sys.stdout = normalisationFile 
+
     toPrint = "CHR\tSTART\tEND\tEXON_ID\t"+"\t".join(sampleNames)
     print(toPrint)
     for index in range(len(exons)):
@@ -215,10 +203,12 @@ ARGUMENTS:
         toPrint=[*exons[index],*np.round(FPM[index],2)]
         toPrint="\t".join(map(str,toPrint))
         print(toPrint)
-    sys.stdout = sys.__stdout__
     normalisationFile.close()
     thisTime = time.time()
     logger.info("Writing normalised data in tsv file: in %.2f s", thisTime-startTime)
+    #sys.stdout reassigning to sys.__stdout__
+    sys.stdout = sys.__stdout__
+    
     
 
 if __name__ =='__main__':
