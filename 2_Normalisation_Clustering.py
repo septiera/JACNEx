@@ -12,7 +12,6 @@ import getopt
 import os
 import numpy as np
 import numba
-import gzip
 import time
 import logging
 
@@ -57,6 +56,7 @@ def FPMNormalisation(countsArray,countsNorm):
         SampleCountNorm=(countsArray[:,sampleCol]*1e6)/SampleCountsSum #1e6 is equivalent to 1x10^6
         countsNorm[:,sampleCol]=SampleCountNorm
     return(countsNorm)    
+
 
 ################################################################################################
 ######################################## Main ##################################################
@@ -188,10 +188,14 @@ ARGUMENTS:
     thisTime = time.time()
     logger.debug("Done FPM normalisation, in %.2f s", thisTime-startTime)
     startTime = thisTime
-    
+
     ##################
     ## write file in stdout normalisation TSV
-    #output file definition
+    # alert no solution found to speed up saving
+    # numba => no successful conversion
+    # round() goes faster (78,74s, here 104.17s)
+
+    # output file definition
     normalisationFile=open(outFolder+"/FPMCounts_"+str(len(sampleNames))+"samples_"+time.strftime("%Y%m%d")+".tsv",'w')
     #replace basic sys.stdout by the file to be filled
     sys.stdout = normalisationFile 
@@ -200,7 +204,7 @@ ARGUMENTS:
     print(toPrint)
     for index in range(len(exons)):
         toPrint=[]
-        toPrint=[*exons[index],*np.round(FPM[index],2)]
+        toPrint=[*exons[index],*["%.2f" % x for x in FPM[index]]]# method selected to remain consistent with previous scripts
         toPrint="\t".join(map(str,toPrint))
         print(toPrint)
     normalisationFile.close()
