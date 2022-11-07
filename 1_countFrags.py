@@ -16,24 +16,16 @@ import time
 from multiprocessing import Pool #parallelize processes
 import logging
 
+####### MAGE-CNV modules
+import mageCNV.bed
+import mageCNV.countsFile
+import mageCNV.countFragments
+
+
 # prevent numba DEBUG messages filling the logs when we are in DEBUG loglevel
 numba_logger = logging.getLogger('numba')
 numba_logger.setLevel(logging.WARNING)
 
-###############################################################################################
-################################ Modules ######################################################
-###############################################################################################
-# parse the bed to obtain a list of lists (dim=NbExon x [CHR,START,END,EXONID])
-# the exons are sorted according to their genomic position and padded
-from countFrags.bed import processBed 
-
-# parse a pre-existing counts file
-from countFrags.oldCountsFile import extractCountsFromPrev
-
-# count the fragments overlapping each exon, returns a 1D np array with counts[int] for each sample
-from countFrags.counting import countFrags
-
-#For more details on the functions used see the scripts in the countFrags/ folder
 ###############################################################################################
 ################################ Functions ####################################################
 ###############################################################################################
@@ -198,9 +190,10 @@ ARGUMENTS:
     startTime = time.time()
 
     # Preparation:
-    # parse exons from BED and create an NCL for each chrom
+    # parse exons from BED to obtain a list of lists (dim=NbExon x [CHR,START,END,EXONID]),
+    # the exons are sorted according to their genomic position and padded
     try:
-        exons=processBed(bedFile, padding)
+        exons = mageCNV.bed.processBed(bedFile, padding)
     except Exception:
         logger.error("processBed failed")
         sys.exit(1)
@@ -214,7 +207,7 @@ ARGUMENTS:
     # countsArray[exonIndex][sampleIndex] will store the specified count,
     # countsFilled[sampleIndex] is True iff counts for specified sample were filled from countsFile
     try:
-        (countsArray, countsFilled) = extractCountsFromPrev(exons, samples, countsFile)
+        (countsArray, countsFilled) =  mageCNV.countsFile.extractCountsFromPrev(exons, samples, countsFile)
     except Exception as e:
         logger.error("parseCountsFile failed - %s", e)
         sys.exit(1)
@@ -257,7 +250,7 @@ ARGUMENTS:
                 # retrieved by the get() command.
                 # Note: that all bam's must be processed to retrieve the results.
                 try:
-                    results.append(pool.apply_async(countFrags,args=(bam, tmpDir,maxGap,exons,threads)))
+                    results.append(pool.apply_async(mageCNV.countFragments.countFrags,args=(bam,tmpDir,maxGap,exons,threads)))
                     processedBams.append(bamIndex)
                 
                 # Raise an exception if counting error and storage the failed sample index in failedBams.
