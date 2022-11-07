@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 #############################################################
 # Create nested containment lists (similar to interval trees but faster), one per
 # chromosome, storing the exons
-# Input : list of exons(ie lists of 4 fields), as returned by processBed
+# Input : list of exons (ie lists of 4 fields), as returned by processBed
 # Output: dictionary(hash): key=chr, value=NCL
 def createExonDict(exons):
     # for each chrom, build 3 lists with same length: starts, ends, indexes (in
