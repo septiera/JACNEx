@@ -38,52 +38,16 @@ logger.info("starting to work")
 ################################################################################################
 ################################ Modules #######################################################
 ################################################################################################
+# parse the bed to obtain a list of lists (dim=NbExon x [CHR,START,END,EXONID])
+# the exons are sorted according to their genomic position and padded
+from countFrags.bed import processBed 
 
+# parse a pre-existing counts file
+from countFrags.oldCountsFile import parseCountsFile 
 
 ################################################################################################
 ################################ Functions #####################################################
 ################################################################################################
-#parseCountsFile: 
-#Inputs:
-#   -countsFH is a filehandle open for reading, content is a countsFile 
-#     as produced by STEP1_CollectReadCounts_MAGE_CNV.py
-#   -sexChromList is a list containing the names of the sex chromosomes present in the count tsv. 
-#Outputs:
-#   -exonsList is a list of lists [str] each list corresponds to an exon with the definitions :
-# "CHR", "START", "END", "EXON_ID"
-#   -countsArray is a numpy array[exonIndex][sampleIndex]
-#   -gonosomeIndex is a exons indexes list associated with sex chromosomes
-def parseCountsFile(countsFH,sexChromList):
-    startTime=time.time()
-
-    #outputs initialisation
-    exonsList=[] #list of list [str]
-    countsList=[] #list of list [str], then converted to numpy array [int]
-    gonosomeIndex=[] #list [str]
-
-    #fill the 3 outputs with the informations contained in countsFile
-    for exonIndex, line in enumerate(countsFH) :
-        splitLine=line.rstrip().split("\t")
-        #first 4 terms correspond to the exon information 
-        exonsList.append(splitLine[0:4])
-        #the other terms are the count data 
-        countsList.append(splitLine[4:len(splitLine)])
-        if splitLine[0] in sexChromList:
-            gonosomeIndex.append(exonIndex)
-    
-    #converting countFrag to numpy array of int
-    try:
-        countsArray=np.array(countsList, dtype=np.uint32)
-    except Exception as e:
-        logger.error("Numpy array conversion failed : %s", e)
-        sys.exit(1)
-
-    thisTime=time.time()
-    logger.debug("Done parseCountsFile in %.2f s", thisTime-startTime)
-    return(exonsList,countsArray,gonosomeIndex)
-
-    
-        
 ##############################################
 #FPMNormalisation:
 #Fragment Per Million normalisation for comparison between samples
@@ -346,26 +310,53 @@ ARGUMENTS:
     #####################################################
     #Preparation:
     ##################
-    ###### CountFile parsing
-    # Reading STEP1 counts results and storing data
-    countsName=os.path.basename(countsFile)
+    # Preparation:
+    # parse exons from BED
     try:
-        if countsName.endswith(".gz"):
+        exons=processBed(bedFile, padding)
+    except Exception:
+        logger.error("processBed failed")
+        sys.exit(1)
+        
+    thisTime = time.time()
+    logger.debug("Done pre-processing BED, in %.2f s", thisTime-startTime)
+    startTime = thisTime
+
+    # parse fragment counts from TSV
+    try:
+        if countsFile.endswith(".gz"):
             countsFH = gzip.open(countsFile, "rt")
         else:
-            countsFH = open(countsFile, "r")
+            countsFH = open(countsFile,"r")
     except Exception as e:
-        logger.error("Opening provided TSV count file %s: %s", countsName, e)
-        sys.exit(1)
-
-    # Parse header from countsFile
-    SOIs= countsFH.readline().rstrip().split("\t")
+        logger.error("Opening provided countsFile %s: %s", countsFile, e)
+        raise Exception('cannot open countsFile')
+     ######################
+    # parse header from (old) countsFile
+    sampleNames = countsFH.readline().rstrip().split("\t")
     # ignore exon definition headers "CHR", "START", "END", "EXON_ID"
-    # SOIs is a list of strings: the sample names of interest, ordered according to the input file
-    del SOIs[0:4]
-    logger.info("Total number of samples in "+str(countsName)+" : "+str(len(SOIs)))
+    del sampleNames[0:4]
 
-    exons, counts, gonosomeIndex =parseCountsFile(countsFH,sexChromList)
+    # countsArray[exonIndex][sampleIndex] will store the corresponding count.
+    # order=F should improve performance, since we fill the array one column at a time.
+    # dtype=np.uint32 should also be faster and totally sufficient to store the counts
+    # defined as a global variable for simplified filling during parallelization. 
+    countsArray = np.zeros((len(exons),len(sampleNames)),dtype=np.uint32, order='F')
+    # countsFilled: same size and order as sampleNames, value will be set 
+    # to True iff counts were filled from countsFile
+    countsFilled = np.array([False]*len(sampleNames))
+
+    # fill countsArray with pre-calculated counts if countsFile was provided
+    if (countsFile!=""):
+        try:
+            parseCountsFile(countsFile,exons,sampleNames,countsArray,countsFilled)
+        except Exception as e:
+            logger.error("parseCountsFile failed - %s", e)
+            sys.exit(1)
+
+        thisTime = time.time()
+        logger.debug("Done parsing old countsFile, in %.2f s", thisTime-startTime)
+        startTime = thisTime
 
     ##################
     ###### Metadata parsing
@@ -379,24 +370,24 @@ ARGUMENTS:
         logger.error("Opening provided CSV metadata file %s: %s", metadataFile, e)
         sys.exit(1)
 
-    hashSamp2Sex=parseMetadata(metadataFH,SOIs)
+    hashSamp2Sex=parseMetadata(metadataFH,sampleNames)
 
     #####################################################
     #Normalisation:
     ##################
     #create an empty array to filled with the normalized counts
-    FPM=np.zeros((len(exons),len(SOIs)),dtype=np.float32, order='F')
+    FPM=np.zeros((len(exons),len(sampleNames)),dtype=np.float32, order='F')
     
     #FPM calcul
-    FPM=FPMNormalisation(counts,FPM)
+    FPM=FPMNormalisation(countsArray,FPM)
 
     ##########
     ## write file in stdout normalisation TSV
     
     startTime = time.time()
-    normalisationFile=open(outFolder+"/FPMCount_"+str(len(SOIs))+"samples_"+time.strftime("%Y%m%d")+".tsv",'w')
+    normalisationFile=open(outFolder+"/FPMCount_"+str(len(sampleNames))+"samples_"+time.strftime("%Y%m%d")+".tsv",'w')
     sys.stdout = normalisationFile
-    toPrint = "CHR\tSTART\tEND\tEXON_ID\t"+"\t".join(SOIs)
+    toPrint = "CHR\tSTART\tEND\tEXON_ID\t"+"\t".join(sampleNames)
     print(toPrint)
     for index in range(len(exons)):
         toPrint=[]
@@ -410,6 +401,7 @@ ARGUMENTS:
     
     #Dicotomisation of data associated with autosomes and gonosomes as correlations may
     # be influenced by gender. 
+    gonosomeIndex=[0]
     autosomesFPM=np.delete(FPM,gonosomeIndex,axis=0)
     gonosomesFPM=np.take(FPM,gonosomeIndex,axis=0)
 
@@ -417,7 +409,7 @@ ARGUMENTS:
     # Reference group selection:
     ##################
     logger.info("####### Autosomes process")
-    autosomesCluster=ReferenceBuilding(autosomesFPM,SOIs,minSampleNBAutosomes)
+    autosomesCluster=ReferenceBuilding(autosomesFPM,sampleNames,minSampleNBAutosomes)
 
     #Gonosomes are a special case 
     # TODO how to adapt the script to other species?
@@ -440,25 +432,25 @@ ARGUMENTS:
         elif sex=="F" and clusterValue==1:
             Female.append(index)
         else:
-            logger.warning("%s does not cluster with its gender, dubious sample !!!",SOIs[index])
+            logger.warning("%s does not cluster with its gender, dubious sample !!!",sampleNames[index])
             dubiousSample.append(index)
             if clusterValue==0:
                 Male.append(index)
             else:
                 Female.append(index)
 
-    gonoMCluster=ReferenceBuilding(gonosomesFPM[:,Male],np.asarray(SOIs)[Male].tolist(),minSampleNBGonosomes)
-    gonoFCluster=ReferenceBuilding(gonosomesFPM[:,Female],np.asarray(SOIs)[Female].tolist(),minSampleNBGonosomes)
+    gonoMCluster=ReferenceBuilding(gonosomesFPM[:,Male],np.asarray(sampleNames)[Male].tolist(),minSampleNBGonosomes)
+    gonoFCluster=ReferenceBuilding(gonosomesFPM[:,Female],np.asarray(sampleNames)[Female].tolist(),minSampleNBGonosomes)
 
     #####################################################
     # Print exon defs + counts to stdout
     startTime = time.time()
-    clusterFile=open(outFolder+"/ReferenceCluster_"+str(len(SOIs))+"samples_"+time.strftime("%Y%m%d")+".tsv",'w')
+    clusterFile=open(outFolder+"/ReferenceCluster_"+str(len(sampleNames))+"samples_"+time.strftime("%Y%m%d")+".tsv",'w')
     sys.stdout = clusterFile
     toPrint = "sampleID\tAutosomesGP\tAutosomesCorr\tAutosomesValidSample\tGonosomesGP\tGonosomesCorr\tGonosomesValidSample"
     print(toPrint)
     maxGroupGonoM=max(l[1] for l in gonoMCluster)
-    for sampleIndex in range(len(SOIs)):
+    for sampleIndex in range(len(sampleNames)):
         toPrintAuto=[]
         toPrintAuto=autosomesCluster[sampleIndex]
         if sampleIndex in Male:
