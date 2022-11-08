@@ -233,7 +233,7 @@ ARGUMENTS:
                 # retrieved by the get() command.
                 # Note: that all bam's must be processed to retrieve the results.
                 try:
-                    results.append(pool.apply_async(mageCNV.countFragments.countFrags,args=(bam,tmpDir,maxGap,exons,threads)))
+                    results.append(pool.apply_async(mageCNV.countFragments.countFrags,args=(bam,exons,tmpDir,maxGap,threads)))
                     processedBams.append(bamIndex)
                 
                 # Raise an exception if counting error and storage the failed sample index in failedBams.
