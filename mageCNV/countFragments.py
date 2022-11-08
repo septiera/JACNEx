@@ -242,15 +242,14 @@ def createExonNCLs(exons):
 # - identify the genomic positions that are putatively covered by the sequenced fragment,
 #   either actually covered by a sequencing read or closely flanked by a pair of mate reads;
 # - identify exons overlapped by the fragment, and increment their count.
-# Inputs:
-#   -4 lists of ints for F and R strand positions (start and end)
-#   -the NCL for the chromosome where current alignments map
-#   -the numpy array to fill, counts in exonIndex will be incremented
-#   -the column index in countsArray corresponding to the current sample
-#   - the maximum accepted gap length between reads pairs, pairs separated by a longer gap
-#       are assumed to possibly result from a structural variant and are ignored
-# Nothing is returned, this function just updates countsArray
-def Qname2ExonCount(startFList,endFList,startRList,endRList,exonNCL,countsSample,maxGap):
+# Args:
+#   - 4 lists of ints for F and R strand positions (start and end)
+#   - the NCL for the chromosome where current alignments map
+#   - the counts vector to update (1D numpy int array)
+#   - the maximum accepted gap length between a pair of mate reads, pairs separated by
+#     a longer gap are ignored (putative structural variant or alignment error)
+# Nothing is returned, this function just updates countsVec
+def Qname2ExonCount(startFList,endFList,startRList,endRList,exonNCL,countsVec,maxGap):
     #######################################################
     # apply QC filters
     #######################################################
@@ -284,13 +283,13 @@ def Qname2ExonCount(startFList,endFList,startRList,endRList,exonNCL,countsSample
             startRList = [max(startRList)]
             endRList = [max(endRList)]
 
-    if (len(startFList+startRList)==2): # 1F1R
+    if (len(startFList)==1) and (len(startRList)==1): # 1F1R
         if startFList[0] > endRList[0]:
             # alignments are back-to-back (SV? Dup? alignment error?)
             return
     # elif (len(startFList+startRList)==3)
     # 1F2R and 2F1R have either become 1F1R, or they can't have any back-to-back pair
-    elif (len(startFList+startRList)==4): #2F2R
+    elif (len(startFList)==2) and (len(startRList)==2): #2F2R
         if (min(startFList) > min(endRList)) or (min(endFList) < min(startRList)):
             # leftmost F and R alignments are back-to-back, or they don't
             # overlap - but what could explain this? aberrant
@@ -302,7 +301,7 @@ def Qname2ExonCount(startFList,endFList,startRList,endRList,exonNCL,countsSample
     # Examine gap length between the two reads (negative if overlapping).
     # maxGap should be set so that the sequencing library fragments are rarely
     # longer than maxGap+2*readLength, otherwise some informative qnames will be skipped
-    if (len(startFList+startRList)==2): # 1F1R
+    if (len(startFList)==1) and (len(startRList)==1): # 1F1R
         if (startRList[0] - endFList[0] > maxGap):
             # large gap between forward and reverse reads, could be a DEL but
             # we don't have reads spanning it -> insufficient evidence, skip qname
@@ -324,72 +323,83 @@ def Qname2ExonCount(startFList,endFList,startRList,endRList,exonNCL,countsSample
     #######################################################
     # identify genomic regions covered by the fragment
     #######################################################
-    # Frag: genomic intervals covered by this fragment, 
-    # as a list of (pairs of) ints: start1,end1[,start2,end2...]
+    # fragStarts, fragEnds: start and end coordinates of the genomic intervals
+    # covered by this fragment.
     # There is usually one (1F1R overlapping) or 2 intervals (1F1R not 
     # overlapping) , but if the fragment spans a DEL there can be up to 3
-    Frag=[]
+    fragStarts = []
+    fragEnds = []
     # algo: merge F-R pairs of alis only if they overlap
     if (len(startFList)==1) and (len(startRList)==1):
         if (startRList[0] - endFList[0] < 0): # overlap => merge
-            Frag=[min(startFList + startRList), max(endFList + endRList)]
+            fragStarts = [min(startFList + startRList)]
+            fragEnds = [max(endFList + endRList)]
         else:
-            Frag=[startFList[0], endFList[0], startRList[0], endRList[0]]
+            fragStarts = [startFList[0], endFList[0]]
+            fragEnds = [startRList[0], endRList[0]]
 
     elif (len(startFList)==2) and (len(startRList)==1): #2F1R
         if (startRList[0] < min(endFList)): 
             # leftmost F ali overlaps R ali => merge into a single interval (because we know
             # that the rightmost F ali overlaps the R ali
-            Frag = [min(startRList + startFList), max(endRList + endFList)]
+            fragStarts = [min(startRList + startFList)]
+            fragEnds = [max(endRList + endFList)]
         else:
             # leftmost F ali is an interval by itself
-            Frag = [min(startFList),min(endFList)]
+            fragStarts = [min(startFList)]
+            fragEnds = [min(endFList)]
             if (startRList[0] < max(endFList)):
                 # rightmost F ali overlaps R ali => merge
-                Frag = Frag + [min(max(startFList),startRList[0]), max(endFList + endRList)]
+                fragStarts.append(min(max(startFList),startRList[0]))
+                fragEnds.append(max(endFList + endRList))
             else:
                 # no overlap, add 2 more intervals
-                Frag = Frag + [max(startFList), max(endFList), startRList[0], endRList[0]]
+                fragStarts.extend([max(startFList), startRList[0]])
+                fragEnds.extend([max(endFList), endRList[0]])
 
     elif (len(startFList)==1) and (len(startRList)==2): #1F2R
         if (max(startRList) < endFList[0]): 
             # rightmost R ali overlaps F ali => merge into a single interval
-            Frag = [min(startRList + startFList), max(endRList + endFList)]
+            fragStarts = [min(startRList + startFList)]
+            fragEnds = [max(endRList + endFList)]
         else:
             # rightmost R ali is an interval by itself
-            Frag = [max(startRList),max(endRList)]
+            fragStarts = [max(startRList)]
+            fragEnds = [max(endRList)]
             if (min(startRList) < endFList[0]):
                 # leftmost R ali overlaps F ali => merge
-                Frag = Frag + [min(startFList + startRList), max(min(endRList),endFList[0])]
+                fragStarts.append(min(startFList + startRList))
+                fragEnds.append(max(min(endRList),endFList[0]))
             else:
                 # no overlap, add 2 more intervals
-                Frag = Frag + [min(startRList), min(endRList), startFList[0], endFList[0]]
+                fragStarts.extend([min(startRList), startFList[0]])
+                fragEnds.extend([min(endRList), endFList[0]])
 
     elif(len(startFList)==2) and (len(startRList)==2): #2F2R
         # we already checked that each pair of F-R alis overlaps
-        Frag=[min(startFList + startRList), max(min(endFList),min(endRList)),
-              min(max(startFList),max(startRList)), max(endFList + endRList)]
+        fragStarts.extend([min(startFList + startRList), min(max(startFList),max(startRList))])
+        fragEnds.extend([max(min(endFList),min(endRList)), max(endFList + endRList)])
 
     #######################################################
     # find exons overlapped by the fragment and increment counters
     #######################################################
-    # we want to increment countsArray at most once per exon, even if
+    # we want to increment countsVec at most once per exon, even if
     # we have two intervals and they both overlap the same exon
     exonsSeen = []
-    for idx in range(len(Frag) // 2):
-        overlappedExons = exonNCL.find_overlap(Frag[2*idx],Frag[2*idx+1])
+    for fi in range(len(fragStarts)):
+        overlappedExons = exonNCL.find_overlap(fragStarts[fi],fragEnds[fi])
         for exon in overlappedExons:
             exonIndex = exon[2]
             if (exonIndex in exonsSeen):
                 continue
             else:
                 exonsSeen.append(exonIndex)
-                incrementCount(countsSample, exonIndex)
-                # countsArray[exonIndex][sampleIndex] += 1
+                incrementCount(countsVec, exonIndex)
+                # countsVec[exonIndex] += 1
     
 ####################################################
 # incrementCount:
-# increment the counter in countsSample for the specified exon index
+# increment the counter in countsVec (1D numpy array) at index exonIndex
 @numba.njit
-def incrementCount(countsSample, exonIndex):
-    countsSample[exonIndex]+=1
+def incrementCount(countsVec, exonIndex):
+    countsVec[exonIndex] += 1
