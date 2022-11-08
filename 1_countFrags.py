@@ -187,7 +187,7 @@ ARGUMENTS:
 
     # allocate countsArray and countsFilled, and populate them with pre-calculated
     # counts if countsFile was provided.
-    # countsArray[exonIndex][sampleIndex] will store the specified count,
+    # countsArray[exonIndex,sampleIndex] will store the specified count,
     # countsFilled[sampleIndex] is True iff counts for specified sample were filled from countsFile
     try:
         (countsArray, countsFilled) =  mageCNV.countsFile.extractCountsFromPrev(exons, samples, countsFile)

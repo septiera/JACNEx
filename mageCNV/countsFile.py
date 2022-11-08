@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 #    countsArray by copying data from prevCounts, and set countsFilled[sample] to True
 def extractCountsFromPrev(exons, SOIs, prevCountsFile):
     # numpy arrays to be returned:
-    # countsArray[exonIndex][sampleIndex] will store the specified count
+    # countsArray[exonIndex,sampleIndex] will store the specified count
     countsArray = allocateCountsArray(len(exons),len(SOIs))
     # countsFilled: same size and order as sampleNames, value will be set 
     # to True iff counts were filled from countsFile
@@ -86,7 +86,7 @@ def extractCountsFromPrev(exons, SOIs, prevCountsFile):
 # -> 'countsArray' is an int numpy array, dim = len(exons) x len(samples)
 def parseCountsFile(countsFile):
     (exons, samples, countsList) = parseCountsFilePrivate(prevCountsFile)
-    # countsArray[exonIndex][sampleIndex] will store the specified count
+    # countsArray[exonIndex,sampleIndex] will store the specified count
     countsArray = allocateCountsArray(len(exons),len(samples))
     # Fill countsArray from CountsList
     for i in range(len(exons)):
@@ -191,7 +191,7 @@ def allocateCountsArray(numExons, numSamples):
 def prevCountsVec2CountsArray(countsArray, exonIndex, prevCounts, prev2new):
     for i in numba.prange(len(prev2new)):
         if prev2new[i]!=-1:
-            countsArray[exonIndex][prev2new[i]] = prevCounts[i]
+            countsArray[exonIndex,prev2new[i]] = prevCounts[i]
 
 #################################################
 # countsVec2array
@@ -203,7 +203,7 @@ def prevCountsVec2CountsArray(countsArray, exonIndex, prevCounts, prev2new):
 @numba.njit
 def countsVec2array(countsArray, exonIndex, countsVector):
     for i in numba.prange(len(countsVector)):
-        countsArray[exonIndex][i] = countsVector[i]
+        countsArray[exonIndex,i] = countsVector[i]
 
 #################################################
 # counts2str:
@@ -213,5 +213,5 @@ def countsVec2array(countsArray, exonIndex, countsVector):
 def counts2str(countsArray, exonIndex):
     toPrint = ""
     for i in range(countsArray.shape[1]):
-        toPrint += "\t" + str(countsArray[exonIndex][i])
+        toPrint += "\t" + str(countsArray[exonIndex,i])
     return(toPrint)
