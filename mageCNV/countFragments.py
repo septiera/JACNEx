@@ -335,8 +335,8 @@ def Qname2ExonCount(startFList,endFList,startRList,endRList,exonNCL,countsVec,ma
             fragStarts = [min(startFList + startRList)]
             fragEnds = [max(endFList + endRList)]
         else:
-            fragStarts = [startFList[0], endFList[0]]
-            fragEnds = [startRList[0], endRList[0]]
+            fragStarts = [startFList[0], startRList[0]]
+            fragEnds = [endFList[0], endRList[0]]
 
     elif (len(startFList)==2) and (len(startRList)==1): #2F1R
         if (startRList[0] < min(endFList)): 
