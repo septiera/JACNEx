@@ -121,11 +121,11 @@ ARGUMENTS:
             tmpDir=value
             if not os.path.isdir(tmpDir):
                 sys.exit("ERROR : tmp directory "+tmpDir+" doesn't exist. Try "+scriptName+" --help.\n")
-         elif opt in ("--samtools"):
+        elif opt in ("--samtools"):
             samtools=value
             if shutil.which(samtools) is None:
                 sys.exit("ERROR : samtools "+samtools+" cannot be run (wrong path, or binary not in $PATH?). Try "+scriptName+" --help.\n")
-         elif opt in ("--samthreads"):
+        elif opt in ("--samthreads"):
             samThreads=int(value)
             if (threads<=0):
                 sys.exit("ERROR : threads "+str(threads)+" must be a positive int. Try "+scriptName+" --help.\n")
