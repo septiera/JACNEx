@@ -12,6 +12,7 @@ import os
 import numpy as np # numpy arrays
 import re
 import time
+import shutil
 from multiprocessing import Pool #parallelize processes
 import logging
 
@@ -56,7 +57,8 @@ def main():
     maxGap=1000
     countsFile=""
     tmpDir="/tmp/"
-    threads=10 
+    samtools="samtools"
+    samThreads=10
     countJobs=3
 
     usage = """\nCOMMAND SUMMARY:
@@ -77,7 +79,8 @@ ARGUMENTS:
    --maxGap [int] : maximum accepted gap length (bp) between reads pairs, pairs separated by a longer gap
            are assumed to possibly result from a structural variant and are ignored, default : """+str(maxGap)+"""
    --tmp [str]: pre-existing dir for temp files, faster is better (eg tmpfs), default: """+tmpDir+"""
-   --threads [int]: number of threads to allocate for samtools sort, default: """+str(threads)+""""
+   --samtools [str]: samtools binary (with path if not in $PATH), default: """+str(samtools)+""""
+   --samthreads [int]: number of threads for samtools, default: """+str(samThreads)+""""
    --jobs [int] : number of threads to allocate for counting step, default:"""+str(countJobs)+"\n"
 
     try:
@@ -118,8 +121,12 @@ ARGUMENTS:
             tmpDir=value
             if not os.path.isdir(tmpDir):
                 sys.exit("ERROR : tmp directory "+tmpDir+" doesn't exist. Try "+scriptName+" --help.\n")
-        elif opt in ("--threads"):
-            threads=int(value)
+         elif opt in ("--samtools"):
+            samtools=value
+            if shutil.which(samtools) is None:
+                sys.exit("ERROR : samtools "+samtools+" cannot be run (wrong path, or binary not in $PATH?). Try "+scriptName+" --help.\n")
+         elif opt in ("--samthreads"):
+            samThreads=int(value)
             if (threads<=0):
                 sys.exit("ERROR : threads "+str(threads)+" must be a positive int. Try "+scriptName+" --help.\n")
         elif opt in ("--jobs"):
@@ -233,7 +240,7 @@ ARGUMENTS:
                 # retrieved by the get() command.
                 # Note: that all bam's must be processed to retrieve the results.
                 try:
-                    results.append(pool.apply_async(mageCNV.countFragments.countFrags,args=(bam,exons,tmpDir,maxGap,threads)))
+                    results.append(pool.apply_async(mageCNV.countFragments.countFrags,args=(bam,exons,maxGap,tmpDir,samtools,samThreads)))
                     processedBams.append(bamIndex)
                 
                 # Raise an exception if counting error and storage the failed sample index in failedBams.

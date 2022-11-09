@@ -23,12 +23,13 @@ logger = logging.getLogger(__name__)
 # Arguments:
 #   - a bam file (with path)
 #   - exon definitions as returned by processBed, padded and sorted
-#   - a tmp dir with enough space for samtools sort and fast RW access
 #   - the maximum accepted gap length between paired reads
+#   - a fast tmp dir with enough space for samtools collate
+#   - the samtools binary, with path
 #   - the number of cpu threads that samtools can use
 #
 # Return a 1D numpy int array, dim = len(exons), with the fragment counts for this sample
-def countFrags(bamFile, exons, tmpDir, maxGap, num_threads):
+def countFrags(bamFile, exons, maxGap, tmpDir, samtools, samThreads):
     startTime = time.time()
     # for each chrom, build an NCL holding the exons
     # NOTE: we would like to build this once in the caller and use it for each BAM,
