@@ -34,12 +34,8 @@ logger = logging.getLogger(os.path.basename(sys.argv[0]))
 ################################################################################################
 ################################ Modules #######################################################
 ################################################################################################
-# parse the bed to obtain a list of lists (dim=NbExon x [CHR,START,END,EXONID])
-# the exons are sorted according to their genomic position and padded
-from countFrags.bed import processBed 
-
 # parse a pre-existing counts file
-from countFrags.oldCountsFile import parseCountsFile 
+from mageCNV.countsFile import parseCountsFile 
 
 ################################################################################################
 ################################ Functions #####################################################
@@ -152,7 +148,7 @@ def clusterBuilding(FPMArray, minSampleInCluster, minLinks):
                 gpControlList=[]
                 
                 ######################
-                # part filling the SOI2ClusterDict
+                # Fill SOI2ClusterDict
                 ######################
                 # all samples in the current cluster are processed
                 # GOALS: identification of samples to be added if new, 
@@ -181,7 +177,7 @@ def clusterBuilding(FPMArray, minSampleInCluster, minLinks):
                     continue
                                 
                 ######################
-                # part filling the controlClusterDict
+                # Fill controlClusterDict
                 ######################
                 if len(gpControlList)!=0:
                     for gp in gpControlList:
@@ -219,18 +215,16 @@ def main():
     # parse user-provided arguments
     # mandatory args
     countsFile=""
-    bedFile=""
     ##########################################
     # optionnal arguments
     # default values fixed
-    padding=10
     genotypes=[["male","X","Y"],["female","X","X"]]
     minSample=20
     minLinks=0.25
 
     usage = """\nCOMMAND SUMMARY:
-Given a BED of exons and a TSV of exon fragment counts, normalizes the counts 
-(Fragment Per Million) and forms the reference groups for the call. 
+Given a TSV of exon fragment counts, normalizes the counts (Fragment Per Million) and forms the reference 
+groups for the call. 
 Results are printed to stdout folder : 
 - a TSV file format: first 4 columns hold the exon definitions, subsequent columns hold the normalised counts.
 - a TSV file format: describe the distribution of samples in the reference groups (5 columns);
@@ -239,9 +233,6 @@ Results are printed to stdout folder :
 ARGUMENTS:
    --counts [str]: TSV file, first 4 columns hold the exon definitions, subsequent columns 
                    hold the fragment counts.
-   --bed [str]: BED file, possibly gzipped, containing exon definitions (format: 4-column 
-                   headerless tab-separated file, columns contain CHR START END EXON_ID)
-   --padding [int] : number of bps used to pad the exon coordinates, default : """+str(padding)+""" 
    --genotypes [str]: comma-separated list of list fo sexual genotypes, default : """+str(genotypes)+"""
    --genotypes-from [str]: text file listing sexual genotypes, one per line. (format : not fixed columns number
                   1:genotypeName 2:Gonosome n°1 3:Gonosome n°2)
@@ -253,7 +244,7 @@ ARGUMENTS:
 
     try:
         opts,args = getopt.gnu_getopt(sys.argv[1:],'h',
-        ["help","counts=","bed=","padding=","genotypes=","genotypes-from=","minSample=","minLinks=","out="])
+        ["help","counts=","genotypes=","genotypes-from=","minSample=","minLinks=","out="])
     except getopt.GetoptError as e:
         sys.exit("ERROR : "+e.msg+".\n"+usage)
 
@@ -266,16 +257,6 @@ ARGUMENTS:
             countsFile=value
             if not os.path.isfile(countsFile):
                 sys.exit("ERROR : countsFile "+countsFile+" doesn't exist. Try "+scriptName+" --help.\n")
-        elif opt in ("--bed"):
-            bedFile=value
-            if not os.path.isfile(bedFile):
-                sys.exit("ERROR : bedFile "+bedFile+" doesn't exist. Try "+scriptName+" --help.\n")
-        elif opt in ("--padding"):
-            try:
-                padding=np.int(value)
-            except Exception as e:
-                logger.error("Conversion of padding value to int failed : %s", e)
-                sys.exit(1)
         elif opt in ("--genotypes"):
             genotypes =value
             # genotypes is checked later
@@ -306,57 +287,27 @@ ARGUMENTS:
     # Check that the mandatory parameters are present
     if countsFile=="":
         sys.exit("ERROR : You must use --counts.\n"+usage)
-    if bedFile=="":
-        sys.exit("ERROR : You must use --bed.\n"+usage)
     
     ######################################################
     # args seem OK, start working
     logger.info("starting to work")
     startTime = time.time()
 
-    #####################################################
-    # Preparation:
-    ##################
-    # parse exons from BED
+    # parse counts from TSV to obtain :
+    # - a list of exons same as returned by processBed, ie each
+    #    exon is a lists of 4 scalars (types: str,int,int,str) containing CHR,START,END,EXON_ID
+    #    copied from the first 4 columns of countsFile, in the same order
+    # - the list of sampleIDs (ie strings) copied from countsFile's header
+    # - an int numpy array, dim = len(exons) x len(samples)
     try:
-        exons=processBed(bedFile, padding)
-    except Exception:
-        logger.error("processBed failed")
+        exons, SOIs, countsArray= parseCountsFile(countsFile)
+    except Exception as e:
+        logger.error("parseCountsFile failed - %s", e)
         sys.exit(1)
-        
+
     thisTime = time.time()
-    logger.debug("Done pre-processing BED, in %.2f s", thisTime-startTime)
+    logger.debug("Done parsing countsFile, in %.2f s", thisTime-startTime)
     startTime = thisTime
-
-    ####################
-    # parse fragment counts from TSV
-    # Header extraction of the count file to find the names and the samples number
-    # needed for parsing
-    with open(countsFile) as f:
-        sampleNames= f.readline().rstrip().split("\t")
-        del sampleNames[0:4]
-    logger.debug("Samples number to be treated : %s", len(sampleNames))
-
-    # countsArray[exonIndex][sampleIndex] will store the corresponding count.
-    # order=F should improve performance, since we fill the array one column at a time.
-    # dtype=np.uint32 should also be faster and totally sufficient to store the counts
-    # defined as a global variable for simplified filling during parallelization. 
-    countsArray = np.zeros((len(exons),len(sampleNames)),dtype=np.uint32, order='F')
-    # countsFilled: same size and order as sampleNames, value will be set 
-    # to True iff counts were filled from countsFile
-    countsFilled = np.array([False]*len(sampleNames))
-
-    # fill countsArray with pre-calculated counts if countsFile was provided
-    if (countsFile!=""):
-        try:
-            parseCountsFile(countsFile,exons,sampleNames,countsArray,countsFilled)
-        except Exception as e:
-            logger.error("parseCountsFile failed - %s", e)
-            sys.exit(1)
-
-        thisTime = time.time()
-        logger.debug("Done parsing old countsFile, in %.2f s", thisTime-startTime)
-        startTime = thisTime
 
     #####################################################
     # Check and clean up the genotypes lists
@@ -371,10 +322,15 @@ ARGUMENTS:
             lineInfo= lineInfo.split(",")
             genotypes.append(lineInfo)
     
-    # It should be taken into account the different non-human organisms 
+    # Takes into account the different non-human organisms 
     genoTmp=np.array(genotypes)
-    for row in range(len(genoTmp)): #genotypes is unlimited
-        for col in range(len(genoTmp[row])-1): #several chromosomes can induce the genotype (not only 2)
+    # Unlimited genotypes number
+    for row in range(len(genoTmp)): 
+        # several chromosomes can induce the genotype (not only 2)
+        for col in range(len(genoTmp[row])-1): 
+            # chromosome annotation correction 
+            # force to include "chr" before the chromosome ID
+            # nothing happens if it already has
             if not genoTmp[row][col+1].startswith("chr"):
                 genoTmp[row][col+1]="chr"+genoTmp[row][col+1]
             if genoTmp[row][col+1] not in gonosomes:
@@ -403,7 +359,7 @@ ARGUMENTS:
     # Normalisation:
     ##################
     #create an empty array to filled with the normalized counts
-    FPM=np.zeros((len(exons),len(sampleNames)),dtype=np.float32, order='F')
+    FPM=np.zeros((len(exons),len(SOIs)),dtype=np.float32, order='F')
     
     #FPM calcul
     FPM=FPMNormalisation(countsArray,FPM)
@@ -418,11 +374,11 @@ ARGUMENTS:
     # round() goes faster (78,74s, here 104.17s)
 
     # output file definition
-    normalisationFile=open(outFolder+"/FPMCounts_"+str(len(sampleNames))+"samples_"+time.strftime("%Y%m%d")+".tsv",'w')
+    normalisationFile=open(outFolder+"/FPMCounts_"+str(len(SOIs))+"samples_"+time.strftime("%Y%m%d")+".tsv",'w')
     #replace basic sys.stdout by the file to be filled
     sys.stdout = normalisationFile 
 
-    toPrint = "CHR\tSTART\tEND\tEXON_ID\t"+"\t".join(sampleNames)
+    toPrint = "CHR\tSTART\tEND\tEXON_ID\t"+"\t".join(SOIs)
     print(toPrint)
     for index in range(len(exons)):
         toPrint=[]
@@ -431,7 +387,8 @@ ARGUMENTS:
         print(toPrint)
     normalisationFile.close()
     thisTime = time.time()
-    logger.info("Writing normalised data in tsv file: in %.2f s", thisTime-startTime)
+    logger.info("Done writing normalised data in tsv file: in %.2f s", thisTime-startTime)
+    startTime = thisTime
     #sys.stdout reassigning to sys.__stdout__
     sys.stdout = sys.__stdout__
     
@@ -443,6 +400,9 @@ ARGUMENTS:
     ################
     # Get Autosomes Clusters
     SOI2ClusterAutosomes,controlClusterAutosomes,inValidSOIsAutosomes=clusterBuilding(autosomesFPM,minSample, minLinks)
+    thisTime = time.time()
+    logger.info("Done samples clustering for autosomes : in %.2f s", thisTime-startTime)
+    startTime = thisTime
 
 if __name__ =='__main__':
     main()
