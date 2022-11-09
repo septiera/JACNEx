@@ -63,16 +63,18 @@ def FPMNormalisation(countsArray,countsNorm):
 # Use absolute pearson correlation and hierarchical clustering.
 # Args:
 #   -FPMArray is a float numpy array, dim = NbExons x NbSOIs 
+#   -SOIs is the str sample of interest name list 
 #   -minSampleInCluster is an int variable, defining the minimal sample number to validate a cluster
 #   -minLinks is a float variable, it's the minimal distance tolerated for build clusters 
 #   (advice:run the script once with the graphical output to deduce this threshold as specific to the data)
 
-#Return:2 dictionnairy and a list of ints
-#   - SOI2ClusterDict: key: Sample Index [int], value: clusterID [int]
-#   - controlClusterDict: key: control clusterID [int], value: target(s) clusterID ints list
-#   - inValidSOIs : dubious sample of interest indexes list [int]
+#Return :
+# -resClustering: a 2D numpy array with different columns typing, extract clustering results,
+#  dim= NbSOIs*5. columns: 0) SOIs Index [int],1) SOIs Names [str], 2)clusterID [int], 
+#  3)clusterIDToControl [str], 4) Sample validity for calling [int] 
+# -samplesLinks: a 2D numpy array of floats, correspond to the linkage matrix, dim= NbSOIs-1*4
 
-def clusterBuilding(FPMArray, minSampleInCluster, minLinks):
+def clusterBuilding(FPMArray, SOIs, minSampleInCluster, minLinks):
     #####################################################
     # Correlation:
     ##################
@@ -111,20 +113,14 @@ def clusterBuilding(FPMArray, minSampleInCluster, minLinks):
     clusterCounter=0
     
     # To fill
-    # sample membership in a cluster
-    # key: Sample Index [int], value: clusterID [int]
-    SOI2ClusterDict=dict()
-    # control cluster to be used for other clusters
-    # key: control clusterID [int], value: target(s) clusterID int list
-    controlClusterDict=dict()
-    # enerating dubious data
-    inValidSOIs=[]
-    
+    # 2D np array with different column typing, dim = NbSOIs*5columns
+    resClustering=np.full((len(SOIs),5),(np.int,"",np.int,"",1))
+   
     # Distances range definition 
     # add 0.01 to minLinks as np.arrange(start,stop,step) don't conciderate stop in range 
     distanceStep=0.05
     linksRange=np.arange(distanceStep,minLinks+0.01,distanceStep)
-    
+ 
     for selectLinks in linksRange:
         # fcluster : Form flat clusters from the hierarchical clustering defined by 
         # the given linkage matrix.
@@ -139,70 +135,58 @@ def clusterBuilding(FPMArray, minSampleInCluster, minLinks):
         # all clusters obtained for a distance value (selectLinks) are processed
         for clusterIndex in range(len(uniqueClusterID)):
             # list of sample indexes associated with this group
-            SOIsIndexInCluster,=list(np.where(groupFormedList == uniqueClusterID[clusterIndex]))
+            SOIIndexInCluster,=list(np.where(groupFormedList == uniqueClusterID[clusterIndex]))
             
             #####################
             # Group selection criterion, enough samples number in cluster
-            if len(SOIsIndexInCluster)>=minSampleInCluster:
+            if len(SOIIndexInCluster)>=minSampleInCluster:
                 # contains the control groups ID of the current group [int list]
                 gpControlList=[]
                 
-                ######################
-                # Fill SOI2ClusterDict
-                ######################
-                # all samples in the current cluster are processed
-                # GOALS: identification of samples to be added if new, 
-                # keep clusterID for samples already seen
+                # New samples to fill in numpy array, it's list of SOIs indexes
+                SOIToAddList=set(SOIIndexInCluster)-set(resClustering[:,0])
                 
-                # New samples indexes list
-                SOIToAddList=set(SOIsIndexInCluster)-set(SOI2ClusterDict.keys())
-                
-                # New cluster if new samples are present
+                # New cluster if new samples are presents
                 # For clusters with the same composition from one distance threshold to the other,
                 # no analysis is performed                                       
                 if len(SOIToAddList)!=0:
                     clusterCounter+=1
-                    for SOIIndex in SOIsIndexInCluster:
-                        if SOIIndex in SOIToAddList:                           
-                             SOI2ClusterDict[SOIIndex]=clusterCounter 
+                    for SOIIndex in SOIIndexInCluster:
+                        if SOIIndex in SOIToAddList:
+                            # fill informations for new patient
+                            resClustering[SOIIndex,0]=SOIIndex
+                            resClustering[SOIIndex,1]=SOIs[SOIIndex]
+                            resClustering[SOIIndex,2]=clusterCounter 
                         else:
-                            SOIgp=SOI2ClusterDict[SOIIndex]
-                            if SOIgp not in gpControlList:
-                                gpControlList.append(SOIgp)
-                            #clusterID already identified, next sample                             
+                            # update informations for patient used as control
+                            # need to pass countClusters in str for the final format 
+                            if resClustering[SOIIndex,3]!="":
+                                ControlGp=resClustering[SOIIndex,3].split(",")
+                                if str(clusterCounter) not in ControlGp:
+                                    ControlGp.append(str(clusterCounter))
+                                    resClustering[SOIIndex,3]=",".join(ControlGp)
+                                else:
+                                    continue
                             else:
-                                continue     
-                # no new sample move to next cluster
-                else:
-                    continue
-                                
-                ######################
-                # Fill controlClusterDict
-                ######################
-                if len(gpControlList)!=0:
-                    for gp in gpControlList:
-                        if gp in controlClusterDict:
-                            tmpList=controlClusterDict[gp]
-                            tmpList.append(clusterCounter)
-                            controlClusterDict[gp]=tmpList
-                        else:
-                            controlClusterDict[gp]=[clusterCounter]
+                                resClustering[SOIIndex,3]=str(clusterCounter)
             
             # not enough samples number in cluster              
             else: 
                 #####################
-                # Case where it's the last distance threshold and the cluster is not large enough
-                # New cluster creation with dubious sample for calling step 
+                # Case where it's the last distance threshold and the samples have never been seen
+                # New cluster creation with dubious samples for calling step 
                 if selectLinks==linksRange[-1]:
                     clusterCounter+=1
                     logger.warning("Creation of cluster n°%s with insufficient numbers %s\
-                         with low correlation %s",clusterCounter,str(len(SOIsIndexInCluster)),str(selectLinks))
-                    for SOIIndex in SOIsIndexInCluster:
-                        SOI2ClusterDict[SOIIndex]=clusterCounter
-                        inValidSOIs.append(SOIIndex)
+                    with low correlation %s",clusterCounter,str(len(SOIIndexInCluster)),str(selectLinks))
+                    for SOIIndex in SOIIndexInCluster:
+                        resClustering[SOIIndex,0]=SOIIndex
+                        resClustering[SOIIndex,1]=SOIs[SOIIndex]
+                        resClustering[SOIIndex,2]=clusterCounter 
+                        resClustering[SOIIndex,4]=0
                 else:
-                    continue
-    return(SOI2ClusterDict,controlClusterDict,inValidSOIs)
+                    continue  
+    return(resClustering,samplesLinks)
 
 ################################################################################################
 ######################################## Main ##################################################
