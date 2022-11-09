@@ -75,7 +75,7 @@ def countFrags(bamFile, exons, maxGap, tmpDir, samtools, samThreads):
     # Preprocessing:
     # Our algorithm needs to parse the alignements sorted by qname,
     # "samtools sort -n" allows this
-    cmd1 ="samtools sort -n "+bamFile+" -@ "+str(num_threads)+" -T "+SampleTmpDir+" -O sam"
+    cmd1 =samtools+" sort -n "+bamFile+" -@ "+str(samThreads)+" -T "+SampleTmpDir+" -O sam"
     p1 = subprocess.Popen(cmd1.split(), stdout=subprocess.PIPE)
     
     # We can immediately filter out poorly mapped (low MAPQ) or low quality
@@ -88,7 +88,7 @@ def countFrags(bamFile, exons, maxGap, tmpDir, samtools, samThreads):
     #   1024 0x400 Read is PCR or optical duplicate
     # Total Flag decimal = 1796
     # For more details on FLAGs read the SAM spec: http://samtools.github.io/hts-specs/
-    cmd2 ="samtools view -q 20 -F 1796"
+    cmd2 = samtools+" view -q 20 -F 1796"
     p2 = subprocess.Popen(cmd2.split(), stdin=p1.stdout, stdout=subprocess.PIPE, universal_newlines=True)
 
     ############################################
@@ -167,6 +167,7 @@ def countFrags(bamFile, exons, maxGap, tmpDir, samtools, samThreads):
 
     # process last Qname
     if not qBad:
+        Qname2ExonCount(qstartF,qendF,qstartR,qendR,exonNCLs[qchrom],sampleCounts,maxGap)
 
     # wait for samtools to finish cleanly and check return codes
     if (p1.wait() != 0):
@@ -179,7 +180,6 @@ def countFrags(bamFile, exons, maxGap, tmpDir, samtools, samThreads):
         raise Exception("samtools-view failed")
 
     # SampleTmpDir should get cleaned up automatically but sometimes samtools tempfiles
-        Qname2ExonCount(qstartF,qendF,qstartR,qendR,exonNCLs[qchrom],sampleCounts,maxGap)
     # are in the process of being deleted => sync to avoid race
     os.sync()
     thisTime = time.time()
