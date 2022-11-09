@@ -85,7 +85,7 @@ def extractCountsFromPrev(exons, SOIs, prevCountsFile):
 # -> 'samples' is the list of sampleIDs (ie strings) copied from countsFile's header
 # -> 'countsArray' is an int numpy array, dim = len(exons) x len(samples)
 def parseCountsFile(countsFile):
-    (exons, samples, countsList) = parseCountsFilePrivate(prevCountsFile)
+    (exons, samples, countsList) = parseCountsFilePrivate(countsFile)
     # countsArray[exonIndex,sampleIndex] will store the specified count
     countsArray = allocateCountsArray(len(exons),len(samples))
     # Fill countsArray from CountsList
