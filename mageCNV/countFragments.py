@@ -69,7 +69,7 @@ def countFrags(bamFile, exons, maxGap, tmpDir, samtools, samThreads):
 
     # To Fill:
     # 1D numpy array containing the sample fragment counts for all exons
-    countsSample=np.zeros(len(exons), dtype=np.uint32)
+    sampleCounts=np.zeros(len(exons), dtype=np.uint32)
 
     ############################################
     # Preprocessing:
@@ -105,7 +105,7 @@ def countFrags(bamFile, exons, maxGap, tmpDir, samtools, samThreads):
         # If we are done with previous qname: process it and reset accumulators
         if (qname!=align[0]) and (qname!=""):  # align[0] is the qname
             if not qBad:
-                Qname2ExonCount(qstartF,qendF,qstartR,qendR,exonNCLs[qchrom],countsSample,maxGap)
+                Qname2ExonCount(qstartF,qendF,qstartR,qendR,exonNCLs[qchrom],sampleCounts,maxGap)
             qname, qchrom = "", ""
             qstartF, qstartR, qendF, qendR = [], [], [], []
             qFirstOnForward=0
@@ -167,7 +167,6 @@ def countFrags(bamFile, exons, maxGap, tmpDir, samtools, samThreads):
 
     # process last Qname
     if not qBad:
-        Qname2ExonCount(qstartF,qendF,qstartR,qendR,exonNCLs[qchrom],countsSample,maxGap)
 
     # wait for samtools to finish cleanly and check return codes
     if (p1.wait() != 0):
@@ -180,11 +179,12 @@ def countFrags(bamFile, exons, maxGap, tmpDir, samtools, samThreads):
         raise Exception("samtools-view failed")
 
     # SampleTmpDir should get cleaned up automatically but sometimes samtools tempfiles
+        Qname2ExonCount(qstartF,qendF,qstartR,qendR,exonNCLs[qchrom],sampleCounts,maxGap)
     # are in the process of being deleted => sync to avoid race
     os.sync()
     thisTime = time.time()
     logger.debug("Done countFrags for %s, in %.2f s",os.path.basename(bamFile), thisTime-startTime)
-    return(countsSample)
+    return(sampleCounts)
 
 
 ###############################################################################
@@ -238,7 +238,7 @@ def createExonNCLs(exons):
 
 ####################################################
 # Qname2ExonCount :
-# Given data representing all alignments for a single qname:
+# Given data representing all alignments for a single qname (must all map to the same chrom):
 # - apply QC filters to ignore aberrant or unusual alignments / qnames;
 # - identify the genomic positions that are putatively covered by the sequenced fragment,
 #   either actually covered by a sequencing read or closely flanked by a pair of mate reads;
