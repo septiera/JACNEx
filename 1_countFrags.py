@@ -10,30 +10,17 @@ import sys
 import getopt
 import os
 import numpy as np # numpy arrays
-import numba # make python faster
 import re
 import time
 from multiprocessing import Pool #parallelize processes
 import logging
 
-# prevent numba DEBUG messages filling the logs when we are in DEBUG loglevel
-numba_logger = logging.getLogger('numba')
-numba_logger.setLevel(logging.WARNING)
+####### MAGE-CNV modules
+import mageCNV.bed
+import mageCNV.countsFile
+import mageCNV.countFragments
 
-###############################################################################################
-################################ Modules ######################################################
-###############################################################################################
-# parse the bed to obtain a list of lists (dim=NbExon x [CHR,START,END,EXONID])
-# the exons are sorted according to their genomic position and padded
-from countFrags.bed import processBed 
 
-# parse a pre-existing counts file
-from countFrags.oldCountsFile import parseCountsFile 
-
-# count the fragments overlapping each exon, returns a 1D np array with counts[int] for each sample
-from countFrags.counting import countFrags
-
-#For more details on the functions used see the scripts in the countFrags/ folder
 ###############################################################################################
 ################################ Functions ####################################################
 ###############################################################################################
@@ -45,17 +32,6 @@ from countFrags.counting import countFrags
 def mergeCounts(counts, colSampleIndex, sampleCounts):
     for rowExonIndex in range(len(sampleCounts)):
         counts[rowExonIndex,colSampleIndex] = sampleCounts[rowExonIndex]
-
-#################################################
-# counts2str:
-# return a string holding the counts from countsArray[exonIndex],
-# tab-separated and starting with a tab
-@numba.njit
-def counts2str(countsArray,exonIndex):
-    toPrint = ""
-    for i in range(countsArray.shape[1]):
-        toPrint += "\t" + str(countsArray[exonIndex][i])
-    return(toPrint)
 
 ################################################################################################
 ######################################## Main ##################################################
@@ -130,6 +106,10 @@ ARGUMENTS:
             countsFile=value
             if not os.path.isfile(countsFile):
                 sys.exit("ERROR : countsFile "+countsFile+" doesn't exist. Try "+scriptName+" --help.\n")
+        elif opt in ("--padding"):
+            padding=int(value)
+            if (padding<0):
+                sys.exit("ERROR : padding "+str(padding)+" must be a positive int. Try "+scriptName+" --help.\n")
         elif opt in ("--maxGap"):
             maxGap=int(value)
             if (maxGap<0):
@@ -165,7 +145,7 @@ ARGUMENTS:
     # bamsToProcess, with any dupes removed
     bamsToProcess=[]
     # sample names stripped of path and .bam extension, same order as in bamsToProcess 
-    sampleNames=[]
+    samples=[]
 
     if bams != "":
         bamsTmp=bams.split(",")
@@ -186,17 +166,17 @@ ARGUMENTS:
             bamsToProcess.append(bam)
             sampleName=os.path.basename(bam)
             sampleName=re.sub(".bam$","",sampleName)
-            sampleNames.append(sampleName)
+            samples.append(sampleName)
 
     ######################################################
     # args seem OK, start working
     logger.info("starting to work")
     startTime = time.time()
 
-    # Preparation:
-    # parse exons from BED and create an NCL for each chrom
+    # parse exons from BED to obtain a list of lists (dim=NbExon x [CHR,START,END,EXONID]),
+    # the exons are sorted according to their genomic position and padded
     try:
-        exons=processBed(bedFile, padding)
+        exons = mageCNV.bed.processBed(bedFile, padding)
     except Exception:
         logger.error("processBed failed")
         sys.exit(1)
@@ -205,29 +185,22 @@ ARGUMENTS:
     logger.debug("Done pre-processing BED, in %.2f s", thisTime-startTime)
     startTime = thisTime
 
-    # countsArray[exonIndex][sampleIndex] will store the corresponding count.
-    # order=F should improve performance, since we fill the array one column at a time.
-    # dtype=np.uint32 should also be faster and totally sufficient to store the counts
-    # defined as a global variable for simplified filling during parallelization. 
-    countsArray = np.zeros((len(exons),len(sampleNames)),dtype=np.uint32, order='F')
-    # countsFilled: same size and order as sampleNames, value will be set 
-    # to True iff counts were filled from countsFile
-    countsFilled = np.array([False]*len(sampleNames))
+    # allocate countsArray and countsFilled, and populate them with pre-calculated
+    # counts if countsFile was provided.
+    # countsArray[exonIndex,sampleIndex] will store the specified count,
+    # countsFilled[sampleIndex] is True iff counts for specified sample were filled from countsFile
+    try:
+        (countsArray, countsFilled) =  mageCNV.countsFile.extractCountsFromPrev(exons, samples, countsFile)
+    except Exception as e:
+        logger.error("parseCountsFile failed - %s", e)
+        sys.exit(1)
+    thisTime = time.time()
+    logger.debug("Done parsing previous countsFile, in %.2f s", thisTime-startTime)
+    startTime = thisTime
 
-    # fill countsArray with pre-calculated counts if countsFile was provided
-    if (countsFile!=""):
-        try:
-            parseCountsFile(countsFile,exons,sampleNames,countsArray,countsFilled)
-        except Exception as e:
-            logger.error("parseCountsFile failed - %s", e)
-            sys.exit(1)
-
-        thisTime = time.time()
-        logger.debug("Done parsing old countsFile, in %.2f s", thisTime-startTime)
-        startTime = thisTime
 
     #####################################################
-    # Process each BAM
+    # Process remaining (new) BAMs
     # data structure in the form of a queue where each result is stored 
     # if countFrags is completed (np array 1D counts stored for each sample)
     results = []
@@ -246,12 +219,12 @@ ARGUMENTS:
     with Pool(countJobs) as pool:
         for bamIndex in range(len(bamsToProcess)):
             bam = bamsToProcess[bamIndex]
-            sampleName = sampleNames[bamIndex]
+            sample = samples[bamIndex]
             if countsFilled[bamIndex]:
-                logger.info('Sample %s already filled from countsFile', sampleName)
+                logger.info('Sample %s already filled from countsFile', sample)
                 continue
             else:
-                logger.info('Processing BAM for sample %s', sampleName)
+                logger.info('Processing BAM for sample %s', sample)
                 ####################
                 # Fragment counting parallelization
                 # apply module allows to set several arguments
@@ -260,13 +233,13 @@ ARGUMENTS:
                 # retrieved by the get() command.
                 # Note: that all bam's must be processed to retrieve the results.
                 try:
-                    results.append(pool.apply_async(countFrags,args=(bam, tmpDir,maxGap,exons,threads)))
+                    results.append(pool.apply_async(mageCNV.countFragments.countFrags,args=(bam,exons,tmpDir,maxGap,threads)))
                     processedBams.append(bamIndex)
                 
                 # Raise an exception if counting error and storage the failed sample index in failedBams.
                 except Exception as e:
                     logger.warning("Failed to count fragments for sample %s, skipping it - exception: %s",
-                               sampleName, e)
+                               sample, e)
                     failedBams.append(bamIndex)
         pool.close()
         pool.join()
@@ -281,17 +254,13 @@ ARGUMENTS:
         
     # Expunge samples for which countFrags failed
     for failedI in reversed(failedBams):
-        del(sampleNames[failedI])
+        del(samples[failedI])
         countsArray = np.delete(countsArray,failedI,1)
 
     #####################################################
     # Print exon defs + counts to stdout
-    toPrint = "CHR\tSTART\tEND\tEXON_ID\t"+"\t".join(sampleNames)
-    print(toPrint)
-    for i in range(len(exons)):
-        toPrint = exons[i][0]+"\t"+str(exons[i][1])+"\t"+str(exons[i][2])+"\t"+exons[i][3]
-        toPrint += counts2str(countsArray,i)
-        print(toPrint)
+    mageCNV.countsFile.printCountsFile(exons, samples, countsArray)
+
     thisTime = time.time()
     logger.debug("Done merging and printing results for all samples, in %.2f s", thisTime-startTime)
     logger.info("ALL DONE")

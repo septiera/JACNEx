@@ -12,65 +12,32 @@ import logging
 # set up logger, using inherited config
 logger = logging.getLogger(__name__)
 
-#############################################################
-################ Function
-#############################################################
-# Create nested containment lists (similar to interval trees but faster), one per
-# chromosome, storing the exons
-# Input : list of exons(ie lists of 4 fields), as returned by processBed
-# Output: dictionary(hash): key=chr, value=NCL
-def createExonDict(exons):
-    # for each chrom, build 3 lists with same length: starts, ends, indexes (in
-    # the complete exons list). key is the CHR
-    starts = {}
-    ends = {}
-    indexes = {}
-    for i in range(len(exons)):
-        # exons[i] is a list: CHR, START, END, EXON_ID
-        chrom = exons[i][0]
-        if chrom not in starts:
-            # first time we see chrom, initialize with empty lists
-            starts[chrom] = []
-            ends[chrom] = []
-            indexes[chrom] = []
-        # in all cases, append current values to the lists
-        starts[chrom].append(exons[i][1])
-        ends[chrom].append(exons[i][2])
-        indexes[chrom].append(i)
 
-    # build dictionary of NCLs, one per chromosome
-    exonDict={}
-    for chrom in starts.keys():
-        ncls = NCLS(starts[chrom], ends[chrom], indexes[chrom])
-        exonDict[chrom]=ncls
-    return(exonDict)
+###############################################################################
+############################ PUBLIC FUNCTIONS #################################
+###############################################################################
 
 ####################################################
 # countFrags :
-# Count the fragments in bamFile that overlap each exon described in exonDict.
+# Count the fragments in bamFile that overlap each exon described in exons.
 # Arguments:
 #   - a bam file (with path)
-#   - a tmp dir with fast RW access and enough space for samtools sort
-#   - the maximum accepted gap length between reads pairs
-#   - a list of lists contains exons information (dim=NbExons x [CHR, START, END, EXONID])
-#  (columns types: [str,int,int,str])
+#   - exon definitions as returned by processBed, padded and sorted
+#   - a tmp dir with enough space for samtools sort and fast RW access
+#   - the maximum accepted gap length between paired reads
 #   - the number of cpu threads that samtools can use
 #
-# output :
-# - 1-dimensional numpy array contains fragment counts[int] for one sample
-# Raises an exception if something goes wrong
-def countFrags(bamFile,tmpDir,maxGap,exons,num_threads):
+# Return a 1D numpy int array, dim = len(exons), with the fragment counts for this sample
+def countFrags(bamFile, exons, tmpDir, maxGap, num_threads):
     startTime = time.time()
-    # Create NCLS (nested containment lists)
-    # implement here because the output object is coded in Cython 
-    # and the parallelization module (multiprocess) does not accept this 
-    # object type as an argument.
-    # Cleaner than defining a global variable.
-    # Redefinition at each new sample but it's a fast step.
-    exonDict=createExonDict(exons)
+    # for each chrom, build an NCL holding the exons
+    # NOTE: we would like to build this once in the caller and use it for each BAM,
+    # but the multiprocessing module doesn't allow this... We therefore build the
+    # same NCLs for each BAM, wasteful but it's OK, createExonNCLs() is fast
+    exonNCLs=createExonNCLs(exons)
 
     thisTime = time.time()
-    logger.debug("Done createExonDict for %s, in %.2f s",os.path.basename(bamFile), thisTime-startTime)
+    logger.debug("Done createExonNCLs for %s, in %.2f s",os.path.basename(bamFile), thisTime-startTime)
     startTime =thisTime
 
     # We need to process all alignments for a given qname simultaneously
@@ -128,16 +95,16 @@ def countFrags(bamFile,tmpDir,maxGap,exons,num_threads):
     for line in p2.stdout:
         align=line.rstrip().split('\t')
 
-        # skip ali if not on main chromosome (no ALTs etc): assume the BAMs use the same
-        # chrom naming conventions as the BED of exons -> chrom must be a key of exonDict
-        if align[2] not in exonDict: 
+        # skip ali if not on a chromosome where we have at least one exon - importantly this
+        # skips non-main GRCh38 "chroms" (eg ALT contigs)
+        if align[2] not in exonNCLs:
             continue
 
         ######################################################################
         # If we are done with previous qname: process it and reset accumulators
         if (qname!=align[0]) and (qname!=""):  # align[0] is the qname
             if not qBad:
-                Qname2ExonCount(qstartF,qendF,qstartR,qendR,exonDict[qchrom],countsSample,maxGap)
+                Qname2ExonCount(qstartF,qendF,qstartR,qendR,exonNCLs[qchrom],countsSample,maxGap)
             qname, qchrom = "", ""
             qstartF, qstartR, qendF, qendR = [], [], [], []
             qFirstOnForward=0
@@ -199,7 +166,7 @@ def countFrags(bamFile,tmpDir,maxGap,exons,num_threads):
 
     # process last Qname
     if not qBad:
-        Qname2ExonCount(qstartF,qendF,qstartR,qendR,exonDict[qchrom],countsSample,maxGap)
+        Qname2ExonCount(qstartF,qendF,qstartR,qendR,exonNCLs[qchrom],countsSample,maxGap)
 
     # wait for samtools to finish cleanly and check return codes
     if (p1.wait() != 0):
@@ -218,6 +185,11 @@ def countFrags(bamFile,tmpDir,maxGap,exons,num_threads):
     logger.debug("Done countFrags for %s, in %.2f s",os.path.basename(bamFile), thisTime-startTime)
     return(countsSample)
 
+
+###############################################################################
+############################ PRIVATE FUNCTIONS ################################
+###############################################################################
+
 ####################################################
 # AliLengthOnRef :
 #Input : a CIGAR string
@@ -232,6 +204,37 @@ def AliLengthOnRef(CIGARAlign):
         length+=int(op)
     return(length)
 
+#############################################################
+# Create nested containment lists (similar to interval trees but faster), one per
+# chromosome, storing the exons
+# Input : list of exons (ie lists of 4 fields), as returned by processBed
+# Output: dictionary(hash): key=chr, value=NCL
+def createExonNCLs(exons):
+    # for each chrom, build 3 lists with same length: starts, ends, indexes (in
+    # the complete exons list). key is the CHR
+    starts = {}
+    ends = {}
+    indexes = {}
+    for i in range(len(exons)):
+        # exons[i] is a list: CHR, START, END, EXON_ID
+        chrom = exons[i][0]
+        if chrom not in starts:
+            # first time we see chrom, initialize with empty lists
+            starts[chrom] = []
+            ends[chrom] = []
+            indexes[chrom] = []
+        # in all cases, append current values to the lists
+        starts[chrom].append(exons[i][1])
+        ends[chrom].append(exons[i][2])
+        indexes[chrom].append(i)
+
+    # build dictionary of NCLs, one per chromosome
+    exonNCLs = {}
+    for chrom in starts.keys():
+        ncl = NCLS(starts[chrom], ends[chrom], indexes[chrom])
+        exonNCLs[chrom]=ncl
+    return(exonNCLs)
+
 ####################################################
 # Qname2ExonCount :
 # Given data representing all alignments for a single qname:
@@ -239,15 +242,14 @@ def AliLengthOnRef(CIGARAlign):
 # - identify the genomic positions that are putatively covered by the sequenced fragment,
 #   either actually covered by a sequencing read or closely flanked by a pair of mate reads;
 # - identify exons overlapped by the fragment, and increment their count.
-# Inputs:
-#   -4 lists of ints for F and R strand positions (start and end)
-#   -the NCL for the chromosome where current alignments map
-#   -the numpy array to fill, counts in exonIndex will be incremented
-#   -the column index in countsArray corresponding to the current sample
-#   - the maximum accepted gap length between reads pairs, pairs separated by a longer gap
-#       are assumed to possibly result from a structural variant and are ignored
-# Nothing is returned, this function just updates countsArray
-def Qname2ExonCount(startFList,endFList,startRList,endRList,exonNCL,countsSample,maxGap):
+# Args:
+#   - 4 lists of ints for F and R strand positions (start and end)
+#   - the NCL for the chromosome where current alignments map
+#   - the counts vector to update (1D numpy int array)
+#   - the maximum accepted gap length between a pair of mate reads, pairs separated by
+#     a longer gap are ignored (putative structural variant or alignment error)
+# Nothing is returned, this function just updates countsVec
+def Qname2ExonCount(startFList,endFList,startRList,endRList,exonNCL,countsVec,maxGap):
     #######################################################
     # apply QC filters
     #######################################################
@@ -281,13 +283,13 @@ def Qname2ExonCount(startFList,endFList,startRList,endRList,exonNCL,countsSample
             startRList = [max(startRList)]
             endRList = [max(endRList)]
 
-    if (len(startFList+startRList)==2): # 1F1R
+    if (len(startFList)==1) and (len(startRList)==1): # 1F1R
         if startFList[0] > endRList[0]:
             # alignments are back-to-back (SV? Dup? alignment error?)
             return
     # elif (len(startFList+startRList)==3)
     # 1F2R and 2F1R have either become 1F1R, or they can't have any back-to-back pair
-    elif (len(startFList+startRList)==4): #2F2R
+    elif (len(startFList)==2) and (len(startRList)==2): #2F2R
         if (min(startFList) > min(endRList)) or (min(endFList) < min(startRList)):
             # leftmost F and R alignments are back-to-back, or they don't
             # overlap - but what could explain this? aberrant
@@ -299,7 +301,7 @@ def Qname2ExonCount(startFList,endFList,startRList,endRList,exonNCL,countsSample
     # Examine gap length between the two reads (negative if overlapping).
     # maxGap should be set so that the sequencing library fragments are rarely
     # longer than maxGap+2*readLength, otherwise some informative qnames will be skipped
-    if (len(startFList+startRList)==2): # 1F1R
+    if (len(startFList)==1) and (len(startRList)==1): # 1F1R
         if (startRList[0] - endFList[0] > maxGap):
             # large gap between forward and reverse reads, could be a DEL but
             # we don't have reads spanning it -> insufficient evidence, skip qname
@@ -321,72 +323,83 @@ def Qname2ExonCount(startFList,endFList,startRList,endRList,exonNCL,countsSample
     #######################################################
     # identify genomic regions covered by the fragment
     #######################################################
-    # Frag: genomic intervals covered by this fragment, 
-    # as a list of (pairs of) ints: start1,end1[,start2,end2...]
+    # fragStarts, fragEnds: start and end coordinates of the genomic intervals
+    # covered by this fragment.
     # There is usually one (1F1R overlapping) or 2 intervals (1F1R not 
     # overlapping) , but if the fragment spans a DEL there can be up to 3
-    Frag=[]
+    fragStarts = []
+    fragEnds = []
     # algo: merge F-R pairs of alis only if they overlap
     if (len(startFList)==1) and (len(startRList)==1):
         if (startRList[0] - endFList[0] < 0): # overlap => merge
-            Frag=[min(startFList + startRList), max(endFList + endRList)]
+            fragStarts = [min(startFList + startRList)]
+            fragEnds = [max(endFList + endRList)]
         else:
-            Frag=[startFList[0], endFList[0], startRList[0], endRList[0]]
+            fragStarts = [startFList[0], startRList[0]]
+            fragEnds = [endFList[0], endRList[0]]
 
     elif (len(startFList)==2) and (len(startRList)==1): #2F1R
         if (startRList[0] < min(endFList)): 
             # leftmost F ali overlaps R ali => merge into a single interval (because we know
             # that the rightmost F ali overlaps the R ali
-            Frag = [min(startRList + startFList), max(endRList + endFList)]
+            fragStarts = [min(startRList + startFList)]
+            fragEnds = [max(endRList + endFList)]
         else:
             # leftmost F ali is an interval by itself
-            Frag = [min(startFList),min(endFList)]
+            fragStarts = [min(startFList)]
+            fragEnds = [min(endFList)]
             if (startRList[0] < max(endFList)):
                 # rightmost F ali overlaps R ali => merge
-                Frag = Frag + [min(max(startFList),startRList[0]), max(endFList + endRList)]
+                fragStarts.append(min(max(startFList),startRList[0]))
+                fragEnds.append(max(endFList + endRList))
             else:
                 # no overlap, add 2 more intervals
-                Frag = Frag + [max(startFList), max(endFList), startRList[0], endRList[0]]
+                fragStarts.extend([max(startFList), startRList[0]])
+                fragEnds.extend([max(endFList), endRList[0]])
 
     elif (len(startFList)==1) and (len(startRList)==2): #1F2R
         if (max(startRList) < endFList[0]): 
             # rightmost R ali overlaps F ali => merge into a single interval
-            Frag = [min(startRList + startFList), max(endRList + endFList)]
+            fragStarts = [min(startRList + startFList)]
+            fragEnds = [max(endRList + endFList)]
         else:
             # rightmost R ali is an interval by itself
-            Frag = [max(startRList),max(endRList)]
+            fragStarts = [max(startRList)]
+            fragEnds = [max(endRList)]
             if (min(startRList) < endFList[0]):
                 # leftmost R ali overlaps F ali => merge
-                Frag = Frag + [min(startFList + startRList), max(min(endRList),endFList[0])]
+                fragStarts.append(min(startFList + startRList))
+                fragEnds.append(max(min(endRList),endFList[0]))
             else:
                 # no overlap, add 2 more intervals
-                Frag = Frag + [min(startRList), min(endRList), startFList[0], endFList[0]]
+                fragStarts.extend([min(startRList), startFList[0]])
+                fragEnds.extend([min(endRList), endFList[0]])
 
     elif(len(startFList)==2) and (len(startRList)==2): #2F2R
         # we already checked that each pair of F-R alis overlaps
-        Frag=[min(startFList + startRList), max(min(endFList),min(endRList)),
-              min(max(startFList),max(startRList)), max(endFList + endRList)]
+        fragStarts.extend([min(startFList + startRList), min(max(startFList),max(startRList))])
+        fragEnds.extend([max(min(endFList),min(endRList)), max(endFList + endRList)])
 
     #######################################################
     # find exons overlapped by the fragment and increment counters
     #######################################################
-    # we want to increment countsArray at most once per exon, even if
+    # we want to increment countsVec at most once per exon, even if
     # we have two intervals and they both overlap the same exon
     exonsSeen = []
-    for idx in range(len(Frag) // 2):
-        overlappedExons = exonNCL.find_overlap(Frag[2*idx],Frag[2*idx+1])
+    for fi in range(len(fragStarts)):
+        overlappedExons = exonNCL.find_overlap(fragStarts[fi],fragEnds[fi])
         for exon in overlappedExons:
             exonIndex = exon[2]
             if (exonIndex in exonsSeen):
                 continue
             else:
                 exonsSeen.append(exonIndex)
-                incrementCount(countsSample, exonIndex)
-                # countsArray[exonIndex][sampleIndex] += 1
+                incrementCount(countsVec, exonIndex)
+                # countsVec[exonIndex] += 1
     
 ####################################################
 # incrementCount:
-# increment the counters in countsSample for the specified exon index
+# increment the counter in countsVec (1D numpy array) at index exonIndex
 @numba.njit
-def incrementCount(countsSample, exonIndex):
-    countsSample[exonIndex]+=1
+def incrementCount(countsVec, exonIndex):
+    countsVec[exonIndex] += 1
