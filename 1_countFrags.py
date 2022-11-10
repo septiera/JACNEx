@@ -40,7 +40,7 @@ def mergeCounts(countsArray, sampleIndex, sampleCounts):
 # parseArgs:
 # Parse and sanity check the command+arguments, provided as a list of 
 # strings (eg sys.argv).
-# Return a list of values
+# Return a list with everything needed by this module's main()
 def parseArgs(argv):
     scriptName = os.path.basename(argv[0])
 
