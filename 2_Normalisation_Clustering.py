@@ -41,6 +41,63 @@ from mageCNV.countsFile import parseCountsFile
 ################################ Functions #####################################################
 ################################################################################################
 ##############################################
+# extractGonosomesInfos:
+# Evaluation of arguments passed by user 
+# Arg:
+# - gender: a str list of list, each list corresponds to a gender, ie format : ["genderName","chrG1","chrG2",etc ]
+# - exons: 
+# Returns two dictionaries:
+# - genderInfosDict: key: gender name [str], value: chromosomes list [str]
+# - sexChrToBedIndexDict: key: sexChromName [str], value: list of indexes in bedfile [int]
+def extractGonosomesInfos(gender,exons):
+    # genderInfosDict building
+    # Takes into account the different non-human organisms 
+    # no fixed gender number
+    # no fixed chromosomes number
+    genderInfosDict=dict()
+    for row in gender:
+        tmpChrList=[] # will contain all chromosomes specified for the current gender
+        for i in range(len(row)):
+            # Key definition
+            if i ==0:
+                genderName=row[i]
+            # Value definition
+            # checking the input syntax format
+            # force to include "chr" before the chromosome ID
+            # nothing happens if it already has
+            else:
+                if not row[i].startswith("chr"):
+                    addChr="chr"+row[i]
+                    tmpChrList.append(addChr)
+                else:
+                    tmpChrList.append(row[i])
+            # filling dictionary with corrects infos
+            genderInfosDict[genderName]=tmpChrList
+
+    # sexChrToBedIndexDict building
+    # is used to extract the exon indexes specific to each sex chromosome
+    sexChrToBedIndexDict=dict()
+    # list containing only unique chromosome identifiers for all gender
+    SexChrFlatList = np.unique([item for sublist in list(genderInfosDict.values()) for item in sublist])
+    for exonId in range(len(exons)):
+        if exons[exonId][0] in SexChrFlatList:
+            if exons[exonId][0] in sexChrToBedIndexDict:
+                sexChrToBedIndexDict[exons[exonId][0]].append(exonId)
+            else:
+                sexChrToBedIndexDict[exons[exonId][0]] =[exonId]
+        else:
+            continue
+
+    # Checks if the chromosomes are found in the bed file 
+    # if not returns an error and break process
+    if len(set(SexChrFlatList)-set(sexChrToBedIndexDict))!=0:
+        logger.error("Gonosome %s not defined in bedFile.Please check.\n \
+            Tip: for all non-numerary gonosomes processBed has annotated them maxCHR+1.(except for X and Y) ",
+            set(SexChrFlatList)-set(sexChrToBedIndexDict))
+        sys.exit(1)   
+    return(genderInfosDict,sexChrToBedIndexDict)
+
+##############################################
 # FPMNormalisation:
 # Fragment Per Million normalisation for comparison between samples
 # NormCountOneExonForOneSample=(FragsOneExonOneSample*1x10^6)/(TotalFragsAllExonsOneSample)
@@ -140,9 +197,6 @@ def clusterBuilding(FPMArray, SOIs, minSampleInCluster, minLinks):
             #####################
             # Group selection criterion, enough samples number in cluster
             if len(SOIIndexInCluster)>=minSampleInCluster:
-                # contains the control groups ID of the current group [int list]
-                gpControlList=[]
-                
                 # New samples to fill in numpy array, it's list of SOIs indexes
                 SOIToAddList=set(SOIIndexInCluster)-set(resClustering[:,0])
                 
@@ -202,7 +256,7 @@ def main():
     ##########################################
     # optionnal arguments
     # default values fixed
-    genotypes=[["male","X","Y"],["female","X","X"]]
+    gender=[["male","X","Y"],["female","X","X"]]
     minSample=20
     minLinks=0.25
 
@@ -217,8 +271,8 @@ Results are printed to stdout folder :
 ARGUMENTS:
    --counts [str]: TSV file, first 4 columns hold the exon definitions, subsequent columns 
                    hold the fragment counts.
-   --genotypes [str]: comma-separated list of list fo sexual genotypes, default : """+str(genotypes)+"""
-   --genotypes-from [str]: text file listing sexual genotypes, one per line. (format : not fixed columns number
+   --gender [str]: comma-separated list of list fo sexual genotypes, default : """+str(gender)+"""
+   --gender-from [str]: text file listing sexual genotypes, one per line. (format : not fixed columns number
                   1:genotypeName 2:Gonosome n°1 3:Gonosome n°2)
    --minSample [int]: an integer indicating the minimum sample number to create a reference cluster for autosomes,
                   default : """+str(minSample)+"""
@@ -228,7 +282,7 @@ ARGUMENTS:
 
     try:
         opts,args = getopt.gnu_getopt(sys.argv[1:],'h',
-        ["help","counts=","genotypes=","genotypes-from=","minSample=","minLinks=","out="])
+        ["help","counts=","gender=","gender-from=","minSample=","minLinks=","out="])
     except getopt.GetoptError as e:
         sys.exit("ERROR : "+e.msg+".\n"+usage)
 
@@ -241,13 +295,13 @@ ARGUMENTS:
             countsFile=value
             if not os.path.isfile(countsFile):
                 sys.exit("ERROR : countsFile "+countsFile+" doesn't exist. Try "+scriptName+" --help.\n")
-        elif opt in ("--genotypes"):
-            genotypes =value
+        elif opt in ("--gender"):
+            gender =value
             # genotypes is checked later
-        elif opt in ("--genotypes-from"):
-            genotypesFrom=value
-            if not os.path.isfile(genotypesFrom):
-                sys.exit("ERROR : genotypes-from file "+genotypesFrom+" doesn't exist. Try "+scriptName+" --help.\n")
+        elif opt in ("--gender-from"):
+            genderFrom=value
+            if not os.path.isfile(genderFrom):
+                sys.exit("ERROR : genders-from file "+genderFrom+" doesn't exist. Try "+scriptName+" --help.\n")
         elif opt in ("--minSample"):
             try:
                 minSample=np.int(value)
@@ -293,52 +347,37 @@ ARGUMENTS:
     logger.debug("Done parsing countsFile, in %.2f s", thisTime-startTime)
     startTime = thisTime
 
-    #####################################################
-    # Check and clean up the genotypes lists
-    # list containing the sex chromosomes, with any dupes removed
-    gonosomes=[]
-
-    if (genotypesFrom!=""):
-        genotypes=[]
-        genoList = open(genotypesFrom,"r")
-        for line in genoList:
-            lineInfo = line.rstrip()
-            lineInfo= lineInfo.split(",")
-            genotypes.append(lineInfo)
     
-    # Takes into account the different non-human organisms 
-    genoTmp=np.array(genotypes)
-    # Unlimited genotypes number
-    for row in range(len(genoTmp)): 
-        # several chromosomes can induce the genotype (not only 2)
-        for col in range(len(genoTmp[row])-1): 
-            # chromosome annotation correction 
-            # force to include "chr" before the chromosome ID
-            # nothing happens if it already has
-            if not genoTmp[row][col+1].startswith("chr"):
-                genoTmp[row][col+1]="chr"+genoTmp[row][col+1]
-            if genoTmp[row][col+1] not in gonosomes:
-                gonosomes.append(genoTmp[row][col+1])
+    #####################################################
+    # Check the gender arguments
+    # case where a file is placed as an argument by the user
+    # creation of a list of lists in the same format as "gender" 
+    # i.e. [genderName, chr1, chr2, ...].
+    if (genderFrom!=""):
+        gender=[]
+        try:
+            genderLists = open(genderFrom,"r")
+        except Exception as e:
+            logger.error("Opening genotypeFrom failed - %s", e)
+            sys.exit(1)
+        for genderline in genderLists :
+            genderList = genderline.rstrip()
+            genderList = genderList.split(",")
+            gender.append(genderList)
 
-    # Check that gonosomes exist in exons and extract gonosomes exons index
-    gonoIndex=[]
-    controlDict={}
-    for exonId in range(len(exons)):
-        if exons[exonId][0] in gonosomes:
-            gonoIndex.append(exonId)
-            if exons[exonId][0] in controlDict:
-                controlDict[exons[exonId][0]] += 1
-            else:
-                controlDict[exons[exonId][0]] =1
-        else:
-            continue
+    # Check and clean up the gender lists to obtain two dictionaries:
+    # - genderInfosDict: key: gender name [str], value: chromosomes list [str]
+    # - sexChrToBedIndexDict: key: sexChromName [str], value: list of indexes in bedfile [str]
+    try :
+        genderInfosDict,sexChrToBedIndexDict=extractGonosomesInfos(gender,exons)
+    except Exception as e:
+        logger.error("extractGonosomesInfos failed - %s", e)
+        sys.exit(1)
 
-    for gonosome in gonosomes:
-        if gonosome not in controlDict:
-            logger.error("Gonosome %s not defined in bedFile.Please check.\n \
-                        Tip: for all non-numerary gonosomes processBed has annotated them maxCHR+1.(except for X and Y) ",gonosome)
-        else:
-            continue
+    thisTime = time.time()
+    logger.debug("Done gonosomes information extraction, in %.2f s", thisTime-startTime)
+    startTime = thisTime
+   
     #####################################################
     # Normalisation:
     ##################
@@ -378,6 +417,7 @@ ARGUMENTS:
     
     # Dicotomisation of data associated with autosomes and gonosomes as correlations may
     # be influenced by gender. 
+    gonoIndex=np.unique([item for sublist in list(sexChrToBedIndexDict.values()) for item in sublist])
     autosomesFPM=np.delete(FPM,gonoIndex,axis=0)
     gonosomesFPM=np.take(FPM,gonoIndex,axis=0)
     
