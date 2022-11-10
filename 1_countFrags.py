@@ -26,29 +26,24 @@ import mageCNV.countFragments
 ############################ PRIVATE FUNCTIONS ################################
 ###############################################################################
 
+####################################################
 # mergeCounts
-# fill sample column in countsArray with the corresponding 1D np.array (countsSample)
-# counts : nd array with Fragment counts results [numberOfExons]x[numberOfSamples] [int]
-# colSampleIndex : sample column index in counts
-# sampleCount :  
-def mergeCounts(counts, colSampleIndex, sampleCounts):
-    for rowExonIndex in range(len(sampleCounts)):
-        counts[rowExonIndex,colSampleIndex] = sampleCounts[rowExonIndex]
+# fill column at index sampleIndex in countsArray (numpy array of ints, 
+# dim = numberOfExons x numberOfSamples) with counts for this sample, stored
+# in sampleCounts (1D np array of ints, dim = numberOfExons)
+def mergeCounts(countsArray, sampleIndex, sampleCounts):
+    for exonIndex in range(len(sampleCounts)):
+        countsArray[exonIndex,sampleIndex] = sampleCounts[exonIndex]
 
-################################################################################################
-######################################## Main ##################################################
-################################################################################################
-def main(argv):
-    scriptName=os.path.basename(argv[0])
-    # configure logging, sub-modules will inherit this config
-    logging.basicConfig(format='%(asctime)s %(levelname)s %(name)s %(funcName)s(): %(message)s',
-                        datefmt='%Y-%m-%d %H:%M:%S',
-                        level=logging.DEBUG)
-    # set up logger: we want scriptName rather than 'root'
-    logger = logging.getLogger(scriptName)
-    
-    ##########################################
-    # parse user-provided arguments
+
+####################################################
+# parseArgs:
+# Parse and sanity check the command+arguments, provided as a list of 
+# strings (eg sys.argv).
+# Return a list of values
+def parseArgs(argv):
+    scriptName = os.path.basename(argv[0])
+
     # mandatory args
     bams=""
     bamsFrom=""
@@ -169,7 +164,6 @@ ARGUMENTS:
         sys.stderr.write("ERROR : You must provide a BED file with --bed. Try "+scriptName+" --help.\n")
         raise Exception()
 
-    #####################################################
     # Check and clean up the provided list of BAMs
     # bamsTmp is user-supplied and may have dupes
     bamsTmp=[]
@@ -208,8 +202,30 @@ ARGUMENTS:
             sampleName = os.path.basename(bam)
             sampleName = re.sub("\.[bs]am$", "", sampleName)
             samples.append(sampleName)
+    # AOK, return everything that's needed
+    return(bamsToProcess, samples, bedFile, padding, maxGap, countsFile, tmpDir, samtools, samThreads, countJobs)
 
-    ######################################################
+
+###############################################################################
+############################ PUBLIC FUNCTIONS #################################
+###############################################################################
+
+####################################################
+# main function
+# Arg: list of strings, eg sys.argv
+# If anything goes wrong, print error message to stderr and raise exception.
+def main(argv):
+    scriptName = os.path.basename(argv[0])
+    # configure logging, sub-modules will inherit this config
+    logging.basicConfig(format='%(asctime)s %(levelname)s %(name)s %(funcName)s(): %(message)s',
+                        datefmt='%Y-%m-%d %H:%M:%S',
+                        level=logging.DEBUG)
+    # set up logger: we want scriptName rather than 'root'
+    logger = logging.getLogger(scriptName)
+
+    # parse, check and preprocess arguments - exceptions must be caught by caller
+    (bamsToProcess, samples, bedFile, padding, maxGap, countsFile, tmpDir, samtools, samThreads, countJobs) = parseArgs(argv)
+
     # args seem OK, start working
     logger.info("starting to work")
     startTime = time.time()
@@ -306,6 +322,11 @@ ARGUMENTS:
     thisTime = time.time()
     logger.debug("Done merging and printing results for all samples, in %.2f s", thisTime-startTime)
     logger.info("ALL DONE")
+
+
+####################################################################################
+######################################## Main ######################################
+####################################################################################
 
 if __name__ =='__main__':
     try:
