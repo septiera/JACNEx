@@ -261,8 +261,8 @@ def main():
     # default values fixed
     minSamples = 20
     minLinks = 0.25
-    nogender=""
-    figure=""
+    nogender = False
+    figure = False
 
     usage = """\nCOMMAND SUMMARY:
 Given a TSV of exon fragment counts, normalizes the counts (Fragment Per Million) and forms the reference 
@@ -295,7 +295,7 @@ ARGUMENTS:
 
     try:
         opts,args = getopt.gnu_getopt(sys.argv[1:],'h',
-        ["help","counts=","gender=","gender-from=","minSamples=","minLinks=","out="])
+        ["help","counts=","minSamples=","minLinks=","nogender=","figure=","out="])
     except getopt.GetoptError as e:
         sys.exit("ERROR : "+e.msg+".\n"+usage)
 
@@ -308,13 +308,6 @@ ARGUMENTS:
             countsFile = value
             if (not os.path.isfile(countsFile)):
                 sys.exit("ERROR : countsFile "+countsFile+" doesn't exist. Try "+scriptName+" --help.\n")
-        elif (opt in ("--gender")):
-            gender = value
-            # genotypes is checked later
-        elif (opt in ("--gender-from")):
-            genderFrom = value
-            if (not os.path.isfile(genderFrom)):
-                sys.exit("ERROR : genders-from file "+genderFrom+" doesn't exist. Try "+scriptName+" --help.\n")
         elif (opt in ("--minSamples")):
             try:
                 minSamples = np.int(value)
@@ -327,6 +320,10 @@ ARGUMENTS:
             except Exception as e:
                 logger.error("Conversion of 'minLinks' value to int failed : %s", e)
                 sys.exit(1)
+        elif (opt in ("--nogender")):
+            nogender = True
+        elif (opt in ("--figure")):
+            figure = True
         elif (opt in ("--out")):
             outFolder = value
             if not os.path.isdir(outFolder):
