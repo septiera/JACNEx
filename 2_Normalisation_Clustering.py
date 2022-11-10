@@ -109,7 +109,7 @@ def extractGonosomesInfos(gender,exons):
 @numba.njit
 def FPMNormalisation(countsArray):
     #create an empty array to filled with the normalized counts
-    countsNorm=np.zeros((countsArray.shape[0],countsArray.shape[1]),dtype=np.float32, order='F')
+    countsNorm=np.zeros_like(countsArray,dtype=np.float32)
     for sampleCol in range(countsArray.shape[1]):
         SampleCountsSum=np.sum(countsArray[:,sampleCol])
         SampleCountNorm=(countsArray[:,sampleCol]*1e6)/SampleCountsSum #1e6 is equivalent to 1x10^6
