@@ -259,6 +259,7 @@ def main():
     # optionnal arguments
     # default values fixed
     gender=[["male","X","Y"],["female","X","X"]]
+    genderFrom=""
     minSample=20
     minLinks=0.25
 
