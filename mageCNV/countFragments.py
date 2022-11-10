@@ -168,7 +168,7 @@ def countFrags(bamFile, exons, maxGap, tmpDir, samtools, samThreads):
     # Done reading lines from BAM
 
     # process last Qname
-    if not qBad:
+    if (qname!="") and not qBad:
         Qname2ExonCount(qstartF,qendF,qstartR,qendR,exonNCLs[qchrom],sampleCounts,maxGap)
 
     # wait for samtools to finish cleanly and check exit code
