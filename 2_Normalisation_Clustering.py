@@ -19,6 +19,9 @@ import logging
 import scipy.cluster.hierarchy 
 import scipy.spatial.distance  
 
+# import sklearn submodule for  Kmeans calculation
+import sklearn.cluster
+
 # prevent numba DEBUG messages filling the logs when we are in DEBUG loglevel
 numba_logger = logging.getLogger('numba')
 numba_logger.setLevel(logging.WARNING)
@@ -258,7 +261,7 @@ def main():
     # default values fixed
     gender = [["male","X","Y"],["female","X","X"]]
     genderFrom = ""
-    minSample = 20
+    minSamples = 20
     minLinks = 0.25
 
     usage = """\nCOMMAND SUMMARY:
@@ -274,15 +277,15 @@ ARGUMENTS:
    --gender [str]: comma-separated list of list fo sexual genotypes, default : """+str(gender)+"""
    --gender-from [str]: text file listing sexual genotypes, one per line. (format : not fixed columns number
                   1:genotypeName 2:Gonosome n°1 3:Gonosome n°2)
-   --minSample [int]: an integer indicating the minimum sample number to create a reference cluster for autosomes,
-                  default : """+str(minSample)+"""
+   --minSamples [int]: an integer indicating the minimum sample number to create a reference cluster for autosomes,
+                  default : """+str(minSamples)+"""
    --minLinks [float]: a float indicating the minimal distance to considered for the hierarchical clustering,
                   default : """+str(minLinks)+"""                                          
    --out[str]: pre-existing folder to save the output files"""+"\n"
 
     try:
         opts,args = getopt.gnu_getopt(sys.argv[1:],'h',
-        ["help","counts=","gender=","gender-from=","minSample=","minLinks=","out="])
+        ["help","counts=","gender=","gender-from=","minSamples=","minLinks=","out="])
     except getopt.GetoptError as e:
         sys.exit("ERROR : "+e.msg+".\n"+usage)
 
@@ -302,11 +305,11 @@ ARGUMENTS:
             genderFrom = value
             if (not os.path.isfile(genderFrom)):
                 sys.exit("ERROR : genders-from file "+genderFrom+" doesn't exist. Try "+scriptName+" --help.\n")
-        elif (opt in ("--minSample")):
+        elif (opt in ("--minSamples")):
             try:
-                minSample = np.int(value)
+                minSamples = np.int(value)
             except Exception as e:
-                logger.error("Conversion of 'minSample' value to int failed : %s", e)
+                logger.error("Conversion of 'minSamples' value to int failed : %s", e)
                 sys.exit(1)
         elif (opt in ("--minLinks")):
             try:
@@ -410,13 +413,23 @@ ARGUMENTS:
     #       Required for the graphical part.
     logger.info("### Samples clustering on normalised counts of autosomes")
     try :
-        resClusteringAutosomes, sampleLinksAutosomes = clusterBuilding(autosomesFPM, SOIs, minSample, minLinks)
+        resClusteringAutosomes, sampleLinksAutosomes = clusterBuilding(autosomesFPM, SOIs, minSamples, minLinks)
     except Exception as e:
         logger.error("clusterBuilding for autosomes failed - %s", e)
         sys.exit(1)
     thisTime = time.time()
     logger.info("Done samples clustering for autosomes : in %.2f s", thisTime-startTime)
     startTime = thisTime
+
+    #####################################################
+    # Get Gonosomes Clusters
+    ##################
+    # Different treatment
+    # It is necessary to have the gender genotype information
+    # But without appriori a Kmeans can be made to split the data on gender number
+    logger.info("### Samples clustering on normalised counts of gonosomes")
+    kmeans =sklearn.cluster.KMeans(n_clusters=len(genderInfosDict.keys()), random_state=0).fit(gonosomesFPM.T)#transposition to consider the samples
+
 
 if __name__ =='__main__':
     main()
