@@ -421,9 +421,20 @@ ARGUMENTS:
     autosomesFPM=np.delete(FPM,gonoIndex,axis=0)
     gonosomesFPM=np.take(FPM,gonoIndex,axis=0)
     
-    ################
+    #####################################################
     # Get Autosomes Clusters
-    SOI2ClusterAutosomes,controlClusterAutosomes,inValidSOIsAutosomes=clusterBuilding(autosomesFPM,minSample, minLinks)
+    ##################
+    # Application of hierarchical clustering on autosome count data to obtain :
+    # - a 2D numpy array with different columns typing, extract clustering results,
+    #       dim= NbSOIs*5. columns: 0) SOIs Index [int],1) SOIs Names [str], 2)clusterID [int], 
+    #       3)clusterIDToControl [str], 4) Sample validity for calling [int] 
+    # - a 2D numpy array of floats, correspond to the linkage matrix, dim= NbSOIs-1*4. 
+    #       Required for the graphical part.
+    try :
+        resClusteringAutosomes, sampleLinksAutosomes=clusterBuilding(autosomesFPM, SOIs, minSample, minLinks)
+    except Exception as e:
+        logger.error("clusterBuilding for autosomes failed - %s", e)
+        sys.exit(1)
     thisTime = time.time()
     logger.info("Done samples clustering for autosomes : in %.2f s", thisTime-startTime)
     startTime = thisTime
