@@ -259,28 +259,38 @@ def main():
     ##########################################
     # optionnal arguments
     # default values fixed
-    gender = [["male","X","Y"],["female","X","X"]]
-    genderFrom = ""
     minSamples = 20
     minLinks = 0.25
+    nogender=""
+    figure=""
 
     usage = """\nCOMMAND SUMMARY:
 Given a TSV of exon fragment counts, normalizes the counts (Fragment Per Million) and forms the reference 
 groups for the call. 
-Results are printed to stdout folder : 
-- a TSV file format: describe the distribution of samples in the reference groups (5 columns);
-  first column sample of interest (SOIs), second reference group number for autosomes, third the group to be compared 
-  for calling, fourth and fifth identical but for gonosomes.
+Separation of autosomes and gonosomes (chr accepted: X, Y, Z, W) for clustering, to avoid bias.
+Results are printed to stdout folder:
+- a TSV file format, describe the clustering results, dim = NbSOIs*8 columns:
+    1) sample of interest (SOIs),
+    2) groupID for autosomes, 
+    3) groupID controlling the current group for autosomes,
+    4) sample validity for autosomes to considered for calling steps, 0=dubious and 1=valid,
+    5) gender predicted by Kmeans, M=Male and F=Female,
+    6) groupID for gonosomes, 
+    7) groupID of controls for gonosomes,
+    8) sample validity for gonosomes.
+- one or more png's illustrating the clustering performed on the data by dendograms. [optionnal]
+    Legend : solid line = target groups , thin line = control groups
+    The groups appear in decreasing order of distance.
+
 ARGUMENTS:
    --counts [str]: TSV file, first 4 columns hold the exon definitions, subsequent columns 
                    hold the fragment counts.
-   --gender [str]: comma-separated list of list fo sexual genotypes, default : """+str(gender)+"""
-   --gender-from [str]: text file listing sexual genotypes, one per line. (format : not fixed columns number
-                  1:genotypeName 2:Gonosome n°1 3:Gonosome n°2)
    --minSamples [int]: an integer indicating the minimum sample number to create a reference cluster for autosomes,
-                  default : """+str(minSamples)+"""
+                  default : """+str(minSamples)+""".
    --minLinks [float]: a float indicating the minimal distance to considered for the hierarchical clustering,
-                  default : """+str(minLinks)+"""                                          
+                  default : """+str(minLinks)+""".   
+   --nogender: no autosomes and gonosomes discrimination for clustering.
+   --figure: make one or more dendograms that will be present in the output in png format.                                          
    --out[str]: pre-existing folder to save the output files"""+"\n"
 
     try:
