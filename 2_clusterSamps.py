@@ -1,10 +1,10 @@
 ###############################################################################################
 ######################################## MAGE-CNV step 2: Normalisation & clustering ##########
 ###############################################################################################
-#  Given a BED of exons and a TSV of exon fragment counts,
-#  normalizes the counts (Fragment Per Million) and forms the reference groups for the call. 
-#  Prints results in a folder defined by the user. 
-#  See usage for more details.
+# Given a TSV of exon fragment counts, normalizes the counts (Fragment Per Million) and forms the reference 
+# groups for the call. 
+# Prints results in a folder defined by the user. 
+# See usage for more details.
 ###############################################################################################
 
 import sys
@@ -39,6 +39,9 @@ logger = logging.getLogger(os.path.basename(sys.argv[0]))
 ################################################################################################
 # parse a pre-existing counts file
 from mageCNV.countsFile import parseCountsFile 
+
+# normalizes a fragment counting array to FPM. 
+from mageCNV.normalisation import FPMNormalisation 
 
 ################################################################################################
 ################################ Functions #####################################################
@@ -100,24 +103,7 @@ def extractGonosomesInfos(gender,exons):
         sys.exit(1)   
     return(genderInfosDict,sexChrToBedIndexDict)
 
-##############################################
-# FPMNormalisation:
-# Fragment Per Million normalisation => comparison between samples
-# NormCountOneExonForOneSample=(FragsOneExonOneSample*1x10^6)/(TotalFragsAllExonsOneSample)
-# Inputs:
-#   -countsArray : numpy array of counts [int] (Dim=[exonIndex]x[sampleIndex])
-#   -countsNorm : numpy array of 0 [float] (Dim=[exonIndex]x[sampleIndex])
-# Output:
-#   -countsNorm : numpy array of FPM normalised counts [float] , Dim=exonIndex*sampleIndex
-@numba.njit
-def FPMNormalisation(countsArray):
-    #create an empty array to filled with the normalized counts
-    countsNorm = np.zeros_like(countsArray,dtype=np.float32)
-    for sampleCol in range(countsArray.shape[1]):
-        SampleCountsSum = np.sum(countsArray[:,sampleCol])
-        SampleCountNorm = (countsArray[:,sampleCol]*1e6)/SampleCountsSum #1e6 is equivalent to 1x10^6
-        countsNorm[:,sampleCol] = SampleCountNorm
-    return(countsNorm)    
+ 
 
 ##############################################
 # clusterBuilding :
@@ -278,7 +264,7 @@ Results are printed to stdout folder:
     6) groupID for gonosomes, 
     7) groupID of controls for gonosomes,
     8) sample validity for gonosomes.
-- one or more png's illustrating the clustering performed on the data by dendograms. [optionnal]
+- one or more png's illustrating the clustering performed by dendograms. [optionnal]
     Legend : solid line = target groups , thin line = control groups
     The groups appear in decreasing order of distance.
 
@@ -332,7 +318,7 @@ ARGUMENTS:
             sys.exit("ERROR : unhandled option "+opt+".\n")
 
     #####################################################
-    # Check that the mandatory parameters are present
+    # Check that the mandatory parameter is present
     if countsFile == "":
         sys.exit("ERROR : You must use --counts.\n"+usage)
     
@@ -357,6 +343,23 @@ ARGUMENTS:
     logger.debug("Done parsing countsFile, in %.2f s", thisTime-startTime)
     startTime = thisTime
     
+    #####################################################
+    # Normalisation:
+    ##################  
+    # allocate countsNorm and populate it with normalised counts of countsArray
+    # same dimension for arrays in input/output: exonIndex*sampleIndex
+    # Fragment Per Million normalisation
+    # NormCountOneExonForOneSample=(FragsOneExonOneSample*1x10^6)/(TotalFragsAllExonsOneSample)
+    try :
+        countsNorm = FPMNormalisation(countsArray)
+    except Exception as e:
+        logger.error("FPMNormalisation failed - %s", e)
+        sys.exit(1)
+    thisTime = time.time()
+    logger.debug("Done FPM normalisation, in %.2f s", thisTime-startTime)
+    startTime = thisTime
+
+"""
     #####################################################
     # Check the gender arguments
     # case where a file is placed as an argument by the user
@@ -386,29 +389,13 @@ ARGUMENTS:
     thisTime = time.time()
     logger.debug("Done gonosomes information extraction, in %.2f s", thisTime-startTime)
     startTime = thisTime
-   
-    #####################################################
-    # Normalisation:
-    ##################  
-    # allocate countsNorm and populate it with normalised counts of countsArray
-    # same dimension for arrays in input/output: exonIndex*sampleIndex
-    # Fragment Per Million normalisation
-    # NormCountOneExonForOneSample=(FragsOneExonOneSample*1x10^6)/(TotalFragsAllExonsOneSample)
-    try :
-        countsNorm = FPMNormalisation(countsArray)
-    except Exception as e:
-        logger.error("FPMNormalisation failed - %s", e)
-        sys.exit(1)
-    thisTime = time.time()
-    logger.debug("Done FPM normalisation, in %.2f s", thisTime-startTime)
-    startTime = thisTime
 
     # Dicotomisation of data associated with autosomes and gonosomes 
     # Goals: the correlations calculated for clustering are not biased
     gonoIndex = np.unique([item for sublist in list(sexChrToBedIndexDict.values()) for item in sublist])
     autosomesFPM = np.delete(countsNorm,gonoIndex,axis=0)
     gonosomesFPM = np.take(countsNorm,gonoIndex,axis=0)
-    
+
     #####################################################
     # Get Autosomes Clusters
     ##################
@@ -436,7 +423,7 @@ ARGUMENTS:
     # But without appriori a Kmeans can be made to split the data on gender number
     logger.info("### Samples clustering on normalised counts of gonosomes")
     kmeans =sklearn.cluster.KMeans(n_clusters=len(genderInfosDict.keys()), random_state=0).fit(gonosomesFPM.T)#transposition to consider the samples
-
+"""
 
 if __name__ =='__main__':
     main()
