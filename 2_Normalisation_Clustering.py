@@ -99,15 +99,17 @@ def extractGonosomesInfos(gender,exons):
 
 ##############################################
 # FPMNormalisation:
-# Fragment Per Million normalisation for comparison between samples
+# Fragment Per Million normalisation => comparison between samples
 # NormCountOneExonForOneSample=(FragsOneExonOneSample*1x10^6)/(TotalFragsAllExonsOneSample)
 # Inputs:
 #   -countsArray : numpy array of counts [int] (Dim=[exonIndex]x[sampleIndex])
 #   -countsNorm : numpy array of 0 [float] (Dim=[exonIndex]x[sampleIndex])
 # Output:
-#   -countsNorm : numpy array of FPM normalised counts [float] (Dim=[exonIndex]x[sampleIndex])
+#   -countsNorm : numpy array of FPM normalised counts [float] , Dim=exonIndex*sampleIndex
 @numba.njit
-def FPMNormalisation(countsArray,countsNorm):
+def FPMNormalisation(countsArray):
+    #create an empty array to filled with the normalized counts
+    countsNorm=np.zeros((countsArray.shape[0],countsArray.shape[1]),dtype=np.float32, order='F')
     for sampleCol in range(countsArray.shape[1]):
         SampleCountsSum=np.sum(countsArray[:,sampleCol])
         SampleCountNorm=(countsArray[:,sampleCol]*1e6)/SampleCountsSum #1e6 is equivalent to 1x10^6
@@ -346,7 +348,6 @@ ARGUMENTS:
     thisTime = time.time()
     logger.debug("Done parsing countsFile, in %.2f s", thisTime-startTime)
     startTime = thisTime
-
     
     #####################################################
     # Check the gender arguments
@@ -380,46 +381,25 @@ ARGUMENTS:
    
     #####################################################
     # Normalisation:
-    ##################
-    #create an empty array to filled with the normalized counts
-    FPM=np.zeros((len(exons),len(SOIs)),dtype=np.float32, order='F')
-    
-    #FPM calcul
-    FPM=FPMNormalisation(countsArray,FPM)
+    ##################  
+    # allocate countsNorm and populate it with normalised counts of countsArray
+    # same dimension for arrays in input and in output: exonIndex*sampleIndex
+    # Fragment Per Million normalisation
+    # NormCountOneExonForOneSample=(FragsOneExonOneSample*1x10^6)/(TotalFragsAllExonsOneSample)
+    try :
+        countsNorm=FPMNormalisation(countsArray)
+    except Exception as e:
+        logger.error("FPMNormalisation failed - %s", e)
+        sys.exit(1)
     thisTime = time.time()
     logger.debug("Done FPM normalisation, in %.2f s", thisTime-startTime)
     startTime = thisTime
 
-    ##################
-    ## write file in stdout normalisation TSV
-    # alert no solution found to speed up saving
-    # numba => no successful conversion
-    # round() goes faster (78,74s, here 104.17s)
-
-    # output file definition
-    normalisationFile=open(outFolder+"/FPMCounts_"+str(len(SOIs))+"samples_"+time.strftime("%Y%m%d")+".tsv",'w')
-    #replace basic sys.stdout by the file to be filled
-    sys.stdout = normalisationFile 
-
-    toPrint = "CHR\tSTART\tEND\tEXON_ID\t"+"\t".join(SOIs)
-    print(toPrint)
-    for index in range(len(exons)):
-        toPrint=[]
-        toPrint=[*exons[index],*["%.2f" % x for x in FPM[index]]]# method selected to remain consistent with previous scripts
-        toPrint="\t".join(map(str,toPrint))
-        print(toPrint)
-    normalisationFile.close()
-    thisTime = time.time()
-    logger.info("Done writing normalised data in tsv file: in %.2f s", thisTime-startTime)
-    startTime = thisTime
-    #sys.stdout reassigning to sys.__stdout__
-    sys.stdout = sys.__stdout__
-    
-    # Dicotomisation of data associated with autosomes and gonosomes as correlations may
-    # be influenced by gender. 
+    # Dicotomisation of data associated with autosomes and gonosomes 
+    # Goals: the correlations calculated for clustering are not biased
     gonoIndex=np.unique([item for sublist in list(sexChrToBedIndexDict.values()) for item in sublist])
-    autosomesFPM=np.delete(FPM,gonoIndex,axis=0)
-    gonosomesFPM=np.take(FPM,gonoIndex,axis=0)
+    autosomesFPM=np.delete(countsNorm,gonoIndex,axis=0)
+    gonosomesFPM=np.take(countsNorm,gonoIndex,axis=0)
     
     #####################################################
     # Get Autosomes Clusters
