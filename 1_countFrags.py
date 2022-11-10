@@ -85,7 +85,7 @@ ARGUMENTS:
 
     try:
         opts,args = getopt.gnu_getopt(sys.argv[1:],'h',
-        ["help","bams=","bams-from=","bed=","counts=","maxGap=","tmp=","threads=","jobs="])
+        ["help","bams=","bams-from=","bed=","counts=","padding=","maxGap=","tmp=","samtools=","samthreads=","jobs="])
     except getopt.GetoptError as e:
         sys.exit("ERROR : "+e.msg+". Try "+scriptName+" --help\n")
 
@@ -127,8 +127,8 @@ ARGUMENTS:
                 sys.exit("ERROR : samtools "+samtools+" cannot be run (wrong path, or binary not in $PATH?). Try "+scriptName+" --help.\n")
         elif opt in ("--samthreads"):
             samThreads=int(value)
-            if (threads<=0):
-                sys.exit("ERROR : threads "+str(threads)+" must be a positive int. Try "+scriptName+" --help.\n")
+            if (samThreads<=0):
+                sys.exit("ERROR : samthreads "+str(samThreads)+" must be a positive int. Try "+scriptName+" --help.\n")
         elif opt in ("--jobs"):
             countJobs=int(value)
             if (countJobs<=0):
