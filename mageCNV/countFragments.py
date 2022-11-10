@@ -88,8 +88,7 @@ def countFrags(bamFile, exons, maxGap, tmpDir, samtools, samThreads):
     tmpDirPrefix = tmpDirObj.name + "/tmpcoll"
 
     cmd = [samtools, 'collate', '-O', '--output-fmt', 'SAM', '--threads', str(samThreads)]
-    cmd.extend(['--input-fmt-option', 'filter=(mapq >= 20) && flag.paired && !(flag & 1796)'])
-    ## TODO 1796 -> 1804
+    cmd.extend(['--input-fmt-option', 'filter=(mapq >= 20) && flag.paired && !(flag & 1804)'])
     cmd.extend([bamFile, tmpDirPrefix])
     samproc = subprocess.Popen(cmd, stdout=subprocess.PIPE, universal_newlines=True)
 
