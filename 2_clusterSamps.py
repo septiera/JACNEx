@@ -111,7 +111,6 @@ def getGenderInfos(exons):
  
 
 ##############################################
-# clusterBuilding :
 # Group samples with similar coverage profiles (FPM standardised counts).
 # Use absolute pearson correlation and hierarchical clustering.
 # Args:
@@ -122,12 +121,17 @@ def getGenderInfos(exons):
 #   (advice:run the script once with the graphical output to deduce this threshold as specific to the data)
 
 #Return :
-# -resClustering: a 2D numpy array with different columns typing, extract clustering results,
-#  dim= NbSOIs*5. columns: 0) SOIs Index [int],1) SOIs Names [str], 2)clusterID [int], 
-#  3)clusterIDToControl [str], 4) Sample validity for calling [int] 
+# -resClustering: a list of list with different columns typing, it's the clustering results,
+# the list indexes are ordered according to the SOIsIndex
+#  dim= NbSOIs*4 columns: 
+# 1) sampleName [str], 
+# 2) clusterID [int], 
+# 3) controlledBy [ints list], 
+# 4) validitySamps [int], boolean 0: dubious sample and 1: valid sample,
+
 # -samplesLinks: a 2D numpy array of floats, correspond to the linkage matrix, dim= NbSOIs-1*4
 
-def clusterBuilding(FPMArray, SOIs, minSampleInCluster, minLinks):
+def clusterBuilds(FPMArray, SOIs, minSampleInCluster, minLinks):
     #####################################################
     # Correlation:
     ##################
@@ -166,9 +170,9 @@ def clusterBuilding(FPMArray, SOIs, minSampleInCluster, minLinks):
     clusterCounter = 0
     
     # To fill
-    # 2D np array with different column typing, dim = NbSOIs*5columns
-    resClustering = np.full((len(SOIs),5),(np.int,"",np.int,"",1))
-   
+    # a list of list with different types of arguments [str,int,intsList,int]
+    resClustering=[0]*len(SOIs)
+
     # Distances range definition 
     # add 0.01 to minLinks as np.arrange(start,stop,step) don't conciderate stop in range 
     distanceStep = 0.05
@@ -180,8 +184,8 @@ def clusterBuilding(FPMArray, SOIs, minSampleInCluster, minLinks):
         # Return An 1D array, dim= sampleIndex[groupNb]
         groupFormedList = scipy.cluster.hierarchy.fcluster(samplesLinks, selectLinks, criterion='distance')
 
-        # a 1D array with the unique identifiers of the groups
-        uniqueClusterID = np.unique(groupFormedList)
+        # a list of the unique identifiers of the groups [int]
+        uniqueClusterID = set(groupFormedList)
         
         ######################
         # Cluster construction
@@ -193,47 +197,36 @@ def clusterBuilding(FPMArray, SOIs, minSampleInCluster, minLinks):
             #####################
             # Group selection criterion, enough samples number in cluster
             if (len(SOIIndexInCluster)>=minSampleInCluster):
-                # New samples to fill in numpy array, it's list of SOIs indexes
-                SOIToAddList = set(SOIIndexInCluster)-set(resClustering[:,0])
+                # New samplesIndexes to fill in resClustering list
+                SOIIndexToAddList = [index for index,value in enumerate(resClustering) 
+                                   if (index in SOIIndexInCluster and value==0)]
                 
-                # New cluster if new samples are presents
-                # For clusters with the same composition from one distance threshold to the other,
-                # no analysis is performed                                       
-                if (len(SOIToAddList)!=0):
+                # Create a new cluster if new samples are presents                                    
+                if (len(SOIIndexToAddList)!=0):
                     clusterCounter += 1
-                    for SOIIndex in SOIIndexInCluster:
-                        if (SOIIndex in SOIToAddList):
-                            # fill informations for new patient
-                            resClustering[SOIIndex,0] = SOIIndex
-                            resClustering[SOIIndex,1] = SOIs[SOIIndex]
-                            resClustering[SOIIndex,2] = clusterCounter 
-                        else:
-                            # update informations for patient used as control
-                            # need to pass countClusters in str for the final format 
-                            if (resClustering[SOIIndex,3]!=""):
-                                ControlGp = resClustering[SOIIndex,3].split(",")
-                                if (str(clusterCounter) not in ControlGp):
-                                    ControlGp.append(str(clusterCounter))
-                                    resClustering[SOIIndex,3] = ",".join(ControlGp)
-                                else:
-                                    continue
-                            else:
-                                resClustering[SOIIndex,3] = str(clusterCounter)
-            
+                    # selection of samples indexes already present in older clusters => controls clusters 
+                    IndexToGetGroupInfo = set(SOIIndexInCluster)-set(SOIIndexToAddList)
+                    # list containing all unique clusterID as control for this new cluster [int]
+                    listCtrlGroup = set([value[1] for index,value in enumerate(resClustering) 
+                                       if (index in IndexToGetGroupInfo)])
+                    # Filling resClustering for new samples
+                    for SOIIndex in SOIIndexToAddList:
+                        resClustering[SOIIndex]=[SOIs[SOIIndex],clusterCounter,list(listCtrlGroup),1]
+                
+                # probably a previous formed cluster, same sample composition, no analysis is performed
+                else:
+                    continue
             # not enough samples number in cluster              
             else: 
                 #####################
                 # Case where it's the last distance threshold and the samples have never been seen
                 # New cluster creation with dubious samples for calling step 
                 if (selectLinks==linksRange[-1]):
-                    clusterCounter+=1
+                    clusterCounter += 1
                     logger.warning("Creation of cluster n°%s with insufficient numbers %s with low correlation %s",
                     clusterCounter,str(len(SOIIndexInCluster)),str(selectLinks))
                     for SOIIndex in SOIIndexInCluster:
-                        resClustering[SOIIndex,0] = SOIIndex
-                        resClustering[SOIIndex,1] = SOIs[SOIIndex]
-                        resClustering[SOIIndex,2] = clusterCounter 
-                        resClustering[SOIIndex,4] = 0
+                        resClustering[SOIIndex] = [SOIs[SOIIndex],clusterCounter,list(),0]
                 else:
                     continue  
     return(resClustering,samplesLinks)
@@ -258,17 +251,19 @@ def main():
     usage = """\nCOMMAND SUMMARY:
 Given a TSV of exon fragment counts, normalizes the counts (Fragment Per Million) and forms the reference 
 groups for the call. 
-Separation of autosomes and gonosomes (chr accepted: X, Y, Z, W) for clustering, to avoid bias.
+By default, separation of autosomes and gonosomes (chr accepted: X, Y, Z, W) for clustering, to avoid bias.
 Results are printed to stdout folder:
 - a TSV file format, describe the clustering results, dim = NbSOIs*8 columns:
-    1) sample of interest (SOIs),
-    2) groupID for autosomes, 
-    3) groupID controlling the current group for autosomes,
-    4) sample validity for autosomes to considered for calling steps, 0=dubious and 1=valid,
-    5) gender predicted by Kmeans, M=Male and F=Female,
-    6) groupID for gonosomes, 
-    7) groupID of controls for gonosomes,
-    8) sample validity for gonosomes.
+    1) "sampleName": a string for sample of interest full name,
+    2) "clusterID_A": an int for the group containing the sample for autosomes (A), 
+    3) "controlledBy_A": an int list of clusterID controlling the current group for autosomes,
+    4) "validitySamps_A": a boolean specifying if a sample is dubious(0) or not(1) for the calling step, for autosomes.
+                          This score set to 0 in the case the group formed is validated and does not have a sufficient 
+                          number of individuals.
+    5) "genderPreds": a string "M"=Male or "F"=Female deduced by kmeans,
+    6) "clusterID_G": an int for the group containing the sample for gonosomes (G), 
+    7) "controlledBy_G":an int list of clusterID controlling the current group ,
+    8) "validitySamps_G": a boolean specifying if a sample is dubious(0) or not(1) for the calling step, for gonosomes.
 - one or more png's illustrating the clustering performed by dendograms. [optionnal]
     Legend : solid line = target groups , thin line = control groups
     The groups appear in decreasing order of distance.
@@ -280,7 +275,8 @@ ARGUMENTS:
                   default : """+str(minSamples)+""".
    --minLinks [float]: a float indicating the minimal distance to considered for the hierarchical clustering,
                   default : """+str(minLinks)+""".   
-   --nogender: no autosomes and gonosomes discrimination for clustering.
+   --nogender: no autosomes and gonosomes discrimination for clustering. 
+                  output TSV : dim= NbSOIs*4 columns, ["sampleName", "clusterID", "controlledBy", "validitySamps"]
    --figure: make one or more dendograms that will be present in the output in png format.                                          
    --out[str]: pre-existing folder to save the output files"""+"\n"
 
@@ -371,7 +367,7 @@ ARGUMENTS:
     # direct application of the clustering algorithm
     if nogender:
         try: 
-            resClustering, sampleLinks = clusterBuilding(countsNorm, SOIs, minSamples, minLinks)
+            resClustering, sampleLinks = clusterBuilds(countsNorm, SOIs, minSamples, minLinks)
         except Exception as e: 
             logger.error("clusterBuilding failed - %s", e)
             sys.exit(1)
@@ -396,6 +392,25 @@ ARGUMENTS:
         gonoIndex = np.unique([item for sublist in list(gonoIndexDict.values()) for item in sublist]) 
         autosomesFPM = np.delete(countsNorm,gonoIndex,axis=0)
         gonosomesFPM = np.take(countsNorm,gonoIndex,axis=0)
+
+        #####################################################
+        # Get Autosomes Clusters
+        ##################
+        # Application of hierarchical clustering on autosome count data to obtain :
+        # - a 2D numpy array with different columns typing, extract clustering results,
+        #       dim= NbSOIs*4. columns: ,1) SOIs Names [str], 2)clusterID [int], 
+        #       3)clusterIDToControl [str], 4) Sample validity for calling [int] 
+        # - a 2D numpy array of floats, correspond to the linkage matrix, dim= NbSOIs-1*4. 
+        #       Required for the graphical part.
+        logger.info("### Samples clustering on normalised counts for autosomes")
+        try :
+            resClusteringAutosomes, sampleLinksAutosomes = clusterBuilds(autosomesFPM, SOIs, minSamples, minLinks)
+        except Exception as e:
+            logger.error("clusterBuilds for autosomes failed - %s", e)
+            sys.exit(1)
+        thisTime = time.time()
+        logger.info("Done samples clustering for autosomes : in %.2f s", thisTime-startTime)
+        startTime = thisTime
 """
     #####################################################
     # Get Autosomes Clusters
