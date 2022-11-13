@@ -2,7 +2,7 @@
 ######################################## MAGE-CNV step 2: Normalisation & clustering ##########
 ###############################################################################################
 # Given a TSV of exon fragment counts, normalizes the counts (Fragment Per Million) and forms the reference 
-# groups for the call. 
+# clusters for the call. 
 # Prints results in a folder defined by the user. 
 # See usage for more details.
 ###############################################################################################
@@ -13,6 +13,9 @@ import os
 import numpy as np
 import time
 import logging
+
+import matplotlib.pyplot as plt
+import scipy.cluster.hierarchy
 
 # different scipy submodules are used for the application of hierachical clustering 
 import scipy.cluster.hierarchy 
@@ -108,9 +111,8 @@ def getGenderInfos(exons):
         sys.exit(1) 
     return(gonoIndexDict, genderInfoList)
 
- 
-
-##############################################
+ ##############################################
+# clusterBuilds :
 # Group samples with similar coverage profiles (FPM standardised counts).
 # Use absolute pearson correlation and hierarchical clustering.
 # Args:
@@ -119,6 +121,8 @@ def getGenderInfos(exons):
 #   -minSampleInCluster is an int variable, defining the minimal sample number to validate a cluster
 #   -minLinks is a float variable, it's the minimal distance tolerated for build clusters 
 #   (advice:run the script once with the graphical output to deduce this threshold as specific to the data)
+#   -figure: is a boolean: True or false to generate a figure
+#   -outputFile: is a full path (+ file name) for saving a dendogram
 
 #Return :
 # -resClustering: a list of list with different columns typing, it's the clustering results,
@@ -129,9 +133,9 @@ def getGenderInfos(exons):
 # 3) controlledBy [ints list], 
 # 4) validitySamps [int], boolean 0: dubious sample and 1: valid sample,
 
-# -samplesLinks: a 2D numpy array of floats, correspond to the linkage matrix, dim= NbSOIs-1*4
+# -[optionally] a png showing a dendogram
 
-def clusterBuilds(FPMArray, SOIs, minSampleInCluster, minLinks):
+def clusterBuilds(FPMArray, SOIs, minSampleInCluster, minLinks, figure, outputFile):
     #####################################################
     # Correlation:
     ##################
@@ -172,6 +176,9 @@ def clusterBuilds(FPMArray, SOIs, minSampleInCluster, minLinks):
     # To fill
     # a list of list with different types of arguments [str,int,intsList,int]
     resClustering=[0]*len(SOIs)
+    # a dictionary with the correpondence between control cluster (key: int) 
+    # and cluster to be controlled (value: int list)
+    controlsDict={}
 
     # Distances range definition 
     # add 0.01 to minLinks as np.arrange(start,stop,step) don't conciderate stop in range 
@@ -181,21 +188,21 @@ def clusterBuilds(FPMArray, SOIs, minSampleInCluster, minLinks):
     for selectLinks in linksRange:
         # fcluster : Form flat clusters from the hierarchical clustering defined by 
         # the given linkage matrix.
-        # Return An 1D array, dim= sampleIndex[groupNb]
-        groupFormedList = scipy.cluster.hierarchy.fcluster(samplesLinks, selectLinks, criterion='distance')
+        # Return An 1D array, dim= sampleIndex[clusterNb]
+        clusterFormedList = scipy.cluster.hierarchy.fcluster(samplesLinks, selectLinks, criterion='distance')
 
-        # a list of the unique identifiers of the groups [int]
-        uniqueClusterID = set(groupFormedList)
+        # a list of the unique identifiers of the clusters [int]
+        uniqueClusterID = np.unique(clusterFormedList)
         
         ######################
         # Cluster construction
         # all clusters obtained for a distance value (selectLinks) are processed
         for clusterIndex in range(len(uniqueClusterID)):
-            # list of sample indexes associated with this group
-            SOIIndexInCluster, = list(np.where(groupFormedList == uniqueClusterID[clusterIndex]))
+            # list of sample indexes associated with this cluster
+            SOIIndexInCluster, = list(np.where(clusterFormedList == uniqueClusterID[clusterIndex]))
             
             #####################
-            # Group selection criterion, enough samples number in cluster
+            # Cluster selection criterion, enough samples number in cluster
             if (len(SOIIndexInCluster)>=minSampleInCluster):
                 # New samplesIndexes to fill in resClustering list
                 SOIIndexToAddList = [index for index,value in enumerate(resClustering) 
@@ -205,14 +212,22 @@ def clusterBuilds(FPMArray, SOIs, minSampleInCluster, minLinks):
                 if (len(SOIIndexToAddList)!=0):
                     clusterCounter += 1
                     # selection of samples indexes already present in older clusters => controls clusters 
-                    IndexToGetGroupInfo = set(SOIIndexInCluster)-set(SOIIndexToAddList)
+                    IndexToGetClustInfo = set(SOIIndexInCluster)-set(SOIIndexToAddList)
                     # list containing all unique clusterID as control for this new cluster [int]
-                    listCtrlGroup = set([value[1] for index,value in enumerate(resClustering) 
-                                       if (index in IndexToGetGroupInfo)])
+                    listCtrlClust = set([value[1] for index,value in enumerate(resClustering) 
+                                       if (index in IndexToGetClustInfo)])
                     # Filling resClustering for new samples
                     for SOIIndex in SOIIndexToAddList:
-                        resClustering[SOIIndex]=[SOIs[SOIIndex],clusterCounter,list(listCtrlGroup),1]
-                
+                        resClustering[SOIIndex]=[SOIs[SOIIndex],clusterCounter,list(listCtrlClust),1]
+                    # Filling controlsDict if new cluster is controlled by previous cluster(s)
+                    for ctrl in listCtrlClust:
+                        if ctrl in controlsDict:
+                            tmpList=controlsDict[ctrl]
+                            tmpList.append(clusterCounter)
+                            controlsDict[ctrl]=tmpList
+                        else:
+                            controlsDict[ctrl]=[clusterCounter]
+                    
                 # probably a previous formed cluster, same sample composition, no analysis is performed
                 else:
                     continue
@@ -229,7 +244,52 @@ def clusterBuilds(FPMArray, SOIs, minSampleInCluster, minLinks):
                         resClustering[SOIIndex] = [SOIs[SOIIndex],clusterCounter,list(),0]
                 else:
                     continue  
-    return(resClustering,samplesLinks)
+        
+        #in the case where we wish to obtain the graphical representation
+        if figure:
+            try:
+                clusterDendograms(resClustering, controlsDict, samplesLinks, outputFile)
+            except Exception as e: 
+                logger.error("clusterDendograms failed - %s", e)
+                sys.exit(1)
+    return(resClustering)
+
+########################################
+# visualisation of clustering results
+# Args:
+# -resClustering: a list of list with dim: NbSOIs*4 columns 
+# ["sampleName"[str], "ClusterID"[int], "controlsClustID"[int], "ValiditySamps"[int]]
+# -controlsDict: a dictionary key:controlsCluster[int], value:list of clusterID to Control[int]  
+# -sampleLinks: a 2D numpy array of floats, correspond to the linkage matrix, dim= NbSOIs-1*4. 
+# -outputFile : full path to save the png 
+# Return a png to the user-defined output folder
+
+def clusterDendograms(resClustering, controlsDict, sampleLinks, outputFile):
+    #total number of clusters obtained [int]
+    maxClust=max(int(l[1]) for l in resClustering)
+
+    #initialization of a list of strings to complete
+    labelsgp=[]
+
+    # Fill labelsgp at each new sample/row in resClustering
+    # Cluster numbers link with the marking index in the label 
+    # 2 marking type: "*"= target cluster ,"-"= control cluster present in controlsDict
+    for sIndex in range(len(resClustering)):
+        tmplabels=["   "]*maxClust
+        row=resClustering[sIndex]
+        indexCluster=row[1]-1
+        tmplabels[indexCluster]=" * "
+        if row[1] in controlsDict:
+            for gpToCTRL in controlsDict[row[1]]:
+                tmplabels[gpToCTRL-1]=" - "
+        labelsgp.append("".join(tmplabels))
+
+    # dendogram plot
+    plt.figure(figsize=(5,15))
+    plt.title("Absolute Pearson distance (1-r)")
+    dn1 = scipy.cluster.hierarchy.dendrogram(sampleLinks,orientation='left',
+                                                labels=labelsgp,color_threshold=0.05)
+    plt.savefig(outputFile, dpi=75)
 
 ################################################################################################
 ######################################## Main ##################################################
@@ -240,6 +300,7 @@ def main():
     # parse user-provided arguments
     # mandatory args
     countsFile = ""
+    outFolder=""
     ##########################################
     # optionnal arguments
     # default values fixed
@@ -250,23 +311,23 @@ def main():
 
     usage = """\nCOMMAND SUMMARY:
 Given a TSV of exon fragment counts, normalizes the counts (Fragment Per Million) and forms the reference 
-groups for the call. 
+clusters for the call. 
 By default, separation of autosomes and gonosomes (chr accepted: X, Y, Z, W) for clustering, to avoid bias.
 Results are printed to stdout folder:
 - a TSV file format, describe the clustering results, dim = NbSOIs*8 columns:
     1) "sampleName": a string for sample of interest full name,
-    2) "clusterID_A": an int for the group containing the sample for autosomes (A), 
-    3) "controlledBy_A": an int list of clusterID controlling the current group for autosomes,
+    2) "clusterID_A": an int for the cluster containing the sample for autosomes (A), 
+    3) "controlledBy_A": an int list of clusterID controlling the current cluster for autosomes,
     4) "validitySamps_A": a boolean specifying if a sample is dubious(0) or not(1) for the calling step, for autosomes.
-                          This score set to 0 in the case the group formed is validated and does not have a sufficient 
+                          This score set to 0 in the case the cluster formed is validated and does not have a sufficient 
                           number of individuals.
     5) "genderPreds": a string "M"=Male or "F"=Female deduced by kmeans,
-    6) "clusterID_G": an int for the group containing the sample for gonosomes (G), 
-    7) "controlledBy_G":an int list of clusterID controlling the current group ,
+    6) "clusterID_G": an int for the cluster containing the sample for gonosomes (G), 
+    7) "controlledBy_G":an int list of clusterID controlling the current cluster ,
     8) "validitySamps_G": a boolean specifying if a sample is dubious(0) or not(1) for the calling step, for gonosomes.
 - one or more png's illustrating the clustering performed by dendograms. [optionnal]
-    Legend : solid line = target groups , thin line = control groups
-    The groups appear in decreasing order of distance.
+    Legend : solid line = target clusters , thin line = control clusters
+    The clusters appear in decreasing order of distance.
 
 ARGUMENTS:
    --counts [str]: TSV file, first 4 columns hold the exon definitions, subsequent columns 
@@ -367,7 +428,8 @@ ARGUMENTS:
     # direct application of the clustering algorithm
     if nogender:
         try: 
-            resClustering, sampleLinks = clusterBuilds(countsNorm, SOIs, minSamples, minLinks)
+            outputFile=outFolder+"Dendogram_"+str(len(SOIs))+"Samps.png"
+            resClustering = clusterBuilds(countsNorm, SOIs, minSamples, minLinks, figure, outputFile)
         except Exception as e: 
             logger.error("clusterBuilding failed - %s", e)
             sys.exit(1)
@@ -400,11 +462,11 @@ ARGUMENTS:
         # - a 2D numpy array with different columns typing, extract clustering results,
         #       dim= NbSOIs*4. columns: ,1) SOIs Names [str], 2)clusterID [int], 
         #       3)clusterIDToControl [str], 4) Sample validity for calling [int] 
-        # - a 2D numpy array of floats, correspond to the linkage matrix, dim= NbSOIs-1*4. 
-        #       Required for the graphical part.
+
         logger.info("### Samples clustering on normalised counts for autosomes")
         try :
-            resClusteringAutosomes, sampleLinksAutosomes = clusterBuilds(autosomesFPM, SOIs, minSamples, minLinks)
+            outputFile=outFolder+"Dendogram_"+str(len(SOIs))+"Samps_autosomes.png"
+            resClusteringAutosomes = clusterBuilds(autosomesFPM, SOIs, minSamples, minLinks, figure, outputFile)
         except Exception as e:
             logger.error("clusterBuilds for autosomes failed - %s", e)
             sys.exit(1)
@@ -412,25 +474,6 @@ ARGUMENTS:
         logger.info("Done samples clustering for autosomes : in %.2f s", thisTime-startTime)
         startTime = thisTime
 """
-    #####################################################
-    # Get Autosomes Clusters
-    ##################
-    # Application of hierarchical clustering on autosome count data to obtain :
-    # - a 2D numpy array with different columns typing, extract clustering results,
-    #       dim= NbSOIs*5. columns: 0) SOIs Index [int],1) SOIs Names [str], 2)clusterID [int], 
-    #       3)clusterIDToControl [str], 4) Sample validity for calling [int] 
-    # - a 2D numpy array of floats, correspond to the linkage matrix, dim= NbSOIs-1*4. 
-    #       Required for the graphical part.
-    logger.info("### Samples clustering on normalised counts of autosomes")
-    try :
-        resClusteringAutosomes, sampleLinksAutosomes = clusterBuilding(autosomesFPM, SOIs, minSamples, minLinks)
-    except Exception as e:
-        logger.error("clusterBuilding for autosomes failed - %s", e)
-        sys.exit(1)
-    thisTime = time.time()
-    logger.info("Done samples clustering for autosomes : in %.2f s", thisTime-startTime)
-    startTime = thisTime
-
     #####################################################
     # Get Gonosomes Clusters
     ##################
