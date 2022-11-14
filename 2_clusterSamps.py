@@ -331,12 +331,12 @@ def genderAttributionPrivate(kmeans, countsNorm,gonoIndexDict, genderInfoList):
             
             #####################
             # selection of specifics normalized count data
-            tmpArray=countsNorm[gonoExonIndexL,] # gonosome exons
-            tmpArray=tmpArray[:,SOIsIndexKGpL] # Kmean group samples        
+            gonoTmpArray=countsNorm[gonoExonIndexL,] # gonosome exons
+            gonoTmpArray=gonoTmpArray[:,SOIsIndexKGpL] # Kmean group samples        
             
             #####################
             # ratio calcul (axis=0, sum all row/exons for each sample) 
-            countRatio = np.median(np.sum(tmpArray,axis=0))
+            countRatio = np.median(np.sum(gonoTmpArray,axis=0))
 
             # Keep gender names in variables
             g1 = genderInfoList[0][0] #e.g human g1="M"
@@ -384,7 +384,6 @@ def genderAttributionPrivate(kmeans, countsNorm,gonoIndexDict, genderInfoList):
                 # with the next ratio calcul
                 previousCount=countRatio
             
-            
     # predictions test for both conditions
     # the two lists do not agree => raise an error and quit the process.
     if condition1L!=condition1L:
@@ -394,6 +393,119 @@ def genderAttributionPrivate(kmeans, countsNorm,gonoIndexDict, genderInfoList):
         sys.exit(1)
     return(condition1L)
 
+#######################################
+# can distinguish gonosomes during clustering
+# identifies organism gender from exons
+# applies a no-priori approach (Kmeans) to separate samples into different group (only 2),
+# based on normalised fragment counts of gonosomes 
+# assigns gender to each predicted group
+# performs two independent clustering
+# Args:
+#   -countsNorm: a float 2D numpy array of normalised counts, dim=NbExons*NbSOIs 
+#   -SOIs: a str list of sample identifier
+#   -gonoIndexDict: a dictionnary for correspondance between gonosomesID(key:str) and
+#          exons indexes list (value:int)
+#   -genderInfoList: a string list of lists, dim=NbGender*2columns [genderID[str], targetGonosomesID[str]]
+#   -minSamples: an int variable for restrict the minimum number of samples for cluster formation 
+#   -minLinks: a float variable to have a maximum distance selection threshold
+#   -outFolder: a str variable indicating the path to the folder containing the results
+#   -figure: a boolean variable to indicate that a graphical output is requested by the user
+
+# Returns a list of lists, dim=nbSOIs*5columns
+# [sampleID[str], clusterID[int], controlledBy[int list], validitySamps[int], genderPreds[str]]
+
+def gonosomeProcessing(countsNorm, SOIs, gonoIndexDict, genderInfoList, minSamples, minLinks, outFolder, figure):
+    # keeps counts of exons overlapping gonosomes
+    gonoIndex = np.unique([item for sublist in list(gonoIndexDict.values()) for item in sublist]) 
+    gonosomesFPM = np.take(countsNorm,gonoIndex,axis=0)
+    
+    ######################
+    # Kmeans with k=2 (always)
+    # transposition of gonosomesFPM to consider the samples
+    kmeans = sklearn.cluster.KMeans(n_clusters=len(genderInfoList), random_state=0).fit(gonosomesFPM.T)
+    #####################
+    # coverage ratio calcul for the different Kmeans groups and on the different gonosomes 
+    # can then associate group Kmeans with a gender
+    # get a str list where indices are important because identical to groupKmeansID, contains genderID
+    gender2KmeansGp=genderAttributionPrivate(kmeans, countsNorm,gonoIndexDict, genderInfoList)
+
+    ####################
+    # Independent clustering for the two Kmeans groups
+    # returns for each group a list of lists, dim=NbSOIsInKmeansGp*4columns 
+    # [sampleID[str], clusterID[int], controlledBy[int list], validitySamps[int]]
+    sampsIndexG1 = np.where(kmeans.labels_==0)[0]
+    gonosomesFPMG1 = gonosomesFPM[:,sampsIndexG1]
+    targetSOIsG1 = [SOIs[i] for i in sampsIndexG1]
+    outputFile = outFolder+"Dendogram_"+str(len(SOIs))+"Samps_gonosomes_"+gender2KmeansGp[0]+".png"
+    resGono1 = clusterBuilds(gonosomesFPMG1, targetSOIsG1, minSamples, minLinks, figure, outputFile)
+
+    sampsIndexG2 = np.where(kmeans.labels_==1)[0]
+    gonosomesFPMG2 = gonosomesFPM[:,sampsIndexG2]
+    targetSOIsG2 = [SOIs[i] for i in sampsIndexG2]
+    outputFile = outFolder+"Dendogram_"+str(len(SOIs))+"Samps_gonosomes_"+gender2KmeansGp[1]+".png"
+    resGono2 = clusterBuilds(gonosomesFPMG2, targetSOIsG2, minSamples, minLinks, figure, outputFile)
+
+    ####################
+    # Merge Results:
+    # creation of the output list, dim=NbSOIs*5columns
+    # browse the result tables independently but regulate according to the SOIs indices.
+    # the clusterID for the second group is changed to not conflict with the clusterID of the first group,
+    # add maxClusterIDGp1 to the identifier
+    GonoClusters=[[]*5]*len(SOIs)
+    maxClust=[]
+    for row in range(len(resGono1)):
+        sampID = resGono1[row][0]
+        sampIndex = SOIs.index(sampID)
+        rowToPrint = resGono1[row]
+        rowToPrint.append(gender2KmeansGp[0])
+        GonoClusters[sampIndex ] = rowToPrint
+        cluster = resGono1[row][1]
+        if (cluster in maxClust):
+            continue
+        else:
+            maxClust.append(cluster)
+
+    for row in range(len(resGono2)):
+        sampID = resGono2[row][0]
+        sampIndex = SOIs.index(sampID)
+        rowToPrint = resGono2[row]
+        rowToPrint[1] = max(maxClust)+rowToPrint[1]
+        if (rowToPrint[2]!=""):
+            for i in range(len(rowToPrint[2])):
+                rowToPrint[2][i] = max(maxClust)+rowToPrint[2][i]
+        rowToPrint.append(gender2KmeansGp[1])
+        GonoClusters[sampIndex ] = rowToPrint
+    return (GonoClusters)
+
+#######################################
+# print the different types of outputs expected
+# Args:
+#   - 'resClustering' is a list of list, dim=NbSOIs*4columns 
+#       [sampleID[str], clusterID[int], controlledBy[int list], validitySamps[int]
+#       can be derived from clustering on all chromosomes or on the autosomes
+#   - 'resClusteringGonosomes' is a list of list, dim=NbSOIs*5columns
+#       [sampleID[str], clusterID[int], controlledBy[int list], validitySamps[int], genderPreds[str]]
+#       this argument is optional
+#
+# Print this data to stdout as a 'clustersFile'
+def printClustersFile(resClustering, resClusteringGonosomes=False):
+    if resClusteringGonosomes:
+        toPrint = "samplesID\tclusterID_A\tcontrolledBy_A\tvaliditySamps_A\tgenderPreds\tclusterID_G\tcontrolledBy_G\tvaliditySamps_G"
+        print(toPrint)
+        for i in range(len(resClustering)):
+            # SOIsID + clusterInfo for autosomes and gonosomes
+            toPrint = resClustering[i][0]+"\t"+str(resClustering[i][1])+"\t"+",".join(map(str,resClustering[i][2]))+\
+                "\t"+str(resClustering[i][3])+"\t"+resClusteringGonosomes[i][4]+"\t"+str(resClusteringGonosomes[i][1])+\
+                    "\t"+",".join(map(str,resClusteringGonosomes[i][2]))+"\t"+str(resClusteringGonosomes[i][3])
+            print(toPrint)
+        
+    else:
+        toPrint = "samplesID\tclusterID\tcontrolledBy\tvaliditySamps"
+        print(toPrint)
+        for i in range(len(resClustering)):
+            # SOIsID + clusterInfo 
+            toPrint = resClustering[i][0]+"\t"+str(resClustering[i][1])+"\t"+",".join(map(str,resClustering[i][2]))+"\t"+str(resClustering[i][3])
+            print(toPrint)
 ################################################################################################
 ######################################## Main ##################################################
 ################################################################################################
@@ -418,7 +530,7 @@ clusters for the call.
 By default, separation of autosomes and gonosomes (chr accepted: X, Y, Z, W) for clustering, to avoid bias.
 Results are printed to stdout folder:
 - a TSV file format, describe the clustering results, dim = NbSOIs*8 columns:
-    1) "sampleName": a string for sample of interest full name,
+    1) "sampleID": a string for sample of interest full name,
     2) "clusterID_A": an int for the cluster containing the sample for autosomes (A), 
     3) "controlledBy_A": an int list of clusterID controlling the current cluster for autosomes,
     4) "validitySamps_A": a boolean specifying if a sample is dubious(0) or not(1) for the calling step, for autosomes.
@@ -482,9 +594,9 @@ ARGUMENTS:
         else:
             sys.exit("ERROR : unhandled option "+opt+".\n")
 
-    #####################################################
+   #####################################################
     # Check that the mandatory parameter is present
-    if (countsFile == ""):
+    if countsFile == "":
         sys.exit("ERROR : You must use --counts.\n"+usage)
 
     ######################################################
@@ -507,7 +619,7 @@ ARGUMENTS:
     thisTime = time.time()
     logger.debug("Done parsing countsFile, in %.2f s", thisTime-startTime)
     startTime = thisTime
-    
+
     #####################################################
     # Normalisation:
     ##################  
@@ -531,7 +643,7 @@ ARGUMENTS:
     # direct application of the clustering algorithm
     if nogender:
         try: 
-            outputFile=os.path.join(outFolder,"Dendogram_"+str(len(SOIs))+"Samps_FullChrom.png")
+            outputFile=outFolder+"Dendogram_"+str(len(SOIs))+"Samps_FullChrom.png"
             resClustering = clusterBuilds(countsNorm, SOIs, minSamples, minLinks, figure, outputFile)
         except Exception as e: 
             logger.error("clusterBuilding failed - %s", e)
@@ -539,6 +651,15 @@ ARGUMENTS:
         thisTime = time.time()
         logger.debug("Done clusterisation in %.2f s", thisTime-startTime)
         startTime = thisTime
+
+        #####################################################
+        # print results
+        ##################
+        printClustersFile(resClustering)
+
+        thisTime = time.time()
+        logger.debug("Done printing results, in %.2f s", thisTime-startTime)
+        logger.info("ALL DONE")
     # cases where discrimination is made 
     # avoid grouping Male with Female which leads to dubious CNV calls 
     else:
@@ -556,7 +677,6 @@ ARGUMENTS:
         #flat gonosome index list
         gonoIndex = np.unique([item for sublist in list(gonoIndexDict.values()) for item in sublist]) 
         autosomesFPM = np.delete(countsNorm,gonoIndex,axis=0)
-        gonosomesFPM = np.take(countsNorm,gonoIndex,axis=0)
 
         #####################################################
         # Get Autosomes Clusters
@@ -568,8 +688,7 @@ ARGUMENTS:
 
         logger.info("### Samples clustering on normalised counts for autosomes")
         try :
-            outputFile=os.path.join(outFolder,"Dendogram_"+str(len(SOIs))+"Samps_Autosomes.png")
-            logger.info("Normally output File %s, %s",outputFile,outFolder)
+            outputFile=outFolder+"Dendogram_"+str(len(SOIs))+"Samps_autosomes.png"
             resClusteringAutosomes = clusterBuilds(autosomesFPM, SOIs, minSamples, minLinks, figure, outputFile)
         except Exception as e:
             logger.error("clusterBuilds for autosomes failed - %s", e)
@@ -577,17 +696,28 @@ ARGUMENTS:
         thisTime = time.time()
         logger.info("Done samples clustering for autosomes : in %.2f s", thisTime-startTime)
         startTime = thisTime
-
         #####################################################
         # Get Gonosomes Clusters
         ##################
         # Different treatment
-        # It is necessary to have the gender genotype information
-        # But without appriori a Kmeans can be made to split the data on gender number
-        logger.info("### Samples clustering on normalised counts of gonosomes")
-        kmeans =sklearn.cluster.KMeans(n_clusters=len(genderInfosDict.keys()), random_state=0).fit(gonosomesFPM.T)#transposition to consider the samples
+        logger.info("### Samples clustering on normalised counts for gonosomes")
+        try :
+            resClusteringGonosomes=gonosomeProcessing(countsNorm, SOIs, gonoIndexDict, genderInfoList, minSamples, minLinks,outFolder, figure)
+        except Exception as e:
+            logger.error("gonosomeProcessing failed - %s", e)
+            sys.exit(1)
+        thisTime = time.time()
+        logger.info("Done samples clustering for gonosomes : in %.2f s", thisTime-startTime)
+        startTime = thisTime
+        
+        #####################################################
+        # print results
+        ##################
+        printClustersFile(resClusteringAutosomes,resClusteringGonosomes)
 
-
+        thisTime = time.time()
+        logger.debug("Done printing results, in %.2f s", thisTime-startTime)
+        logger.info("ALL DONE")
 
 if __name__ =='__main__':
     main()
