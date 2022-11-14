@@ -14,8 +14,7 @@ import numpy as np
 import time
 import logging
 
-import matplotlib.pyplot as plt
-import scipy.cluster.hierarchy
+import matplotlib.pyplot
 
 # different scipy submodules are used for the application of hierachical clustering 
 import scipy.cluster.hierarchy 
@@ -23,6 +22,10 @@ import scipy.spatial.distance
 
 # import sklearn submodule for  Kmeans calculation
 import sklearn.cluster
+
+# prevent matplotlib DEBUG messages filling the logs when we are in DEBUG loglevel
+matplotlib_logger = logging.getLogger('matplotlib')
+matplotlib_logger.setLevel(logging.WARNING)
 
 # prevent numba DEBUG messages filling the logs when we are in DEBUG loglevel
 numba_logger = logging.getLogger('numba')
@@ -53,8 +56,7 @@ from mageCNV.normalisation import FPMNormalisation
 # These gonosomes are predefined and limited to the X,Y,Z,W chromosomes present
 # in most species (mammals, birds, fish, reptiles).
 # The number of genders is therefore limited to 2, i.e. Male and Female
-# Arg:
-# -list of exons (ie lists of 4 fields), as returned by parseCountsFile
+# Arg:import scipy.cluster.hierarchy
 # Returns a tuple (gonoIndexDict, gendersInfos), each are created here:
 # -> 'gonoIndexDict' is a dictionary where key=GonosomeID(e.g 'chrX')[str], 
 # value=list of gonosome exon index [int]. It's populated from the exons list. 
@@ -111,7 +113,7 @@ def getGenderInfos(exons):
         sys.exit(1) 
     return(gonoIndexDict, genderInfoList)
 
- ##############################################
+##############################################
 # clusterBuilds :
 # Group samples with similar coverage profiles (FPM standardised counts).
 # Use absolute pearson correlation and hierarchical clustering.
@@ -244,14 +246,14 @@ def clusterBuilds(FPMArray, SOIs, minSampleInCluster, minLinks, figure, outputFi
                         resClustering[SOIIndex] = [SOIs[SOIIndex],clusterCounter,list(),0]
                 else:
                     continue  
-        
-        #in the case where we wish to obtain the graphical representation
-        if figure:
-            try:
-                clusterDendograms(resClustering, controlsDict, samplesLinks, outputFile)
-            except Exception as e: 
-                logger.error("clusterDendograms failed - %s", e)
-                sys.exit(1)
+    # case we wish to obtain the graphical representation
+    if figure:
+        try:
+            clusterDendograms(resClustering, controlsDict,clusterCounter, samplesLinks, outputFile)
+        except Exception as e: 
+            logger.error("clusterDendograms failed - %s", e)
+            sys.exit(1)
+
     return(resClustering)
 
 ########################################
@@ -259,37 +261,46 @@ def clusterBuilds(FPMArray, SOIs, minSampleInCluster, minLinks, figure, outputFi
 # Args:
 # -resClustering: a list of list with dim: NbSOIs*4 columns 
 # ["sampleName"[str], "ClusterID"[int], "controlsClustID"[int], "ValiditySamps"[int]]
+# -maxClust: a int variable for maximum clusterNb obtained after clustering
 # -controlsDict: a dictionary key:controlsCluster[int], value:list of clusterID to Control[int]  
 # -sampleLinks: a 2D numpy array of floats, correspond to the linkage matrix, dim= NbSOIs-1*4. 
 # -outputFile : full path to save the png 
 # Return a png to the user-defined output folder
 
-def clusterDendograms(resClustering, controlsDict, sampleLinks, outputFile):
-    #total number of clusters obtained [int]
-    maxClust=max(int(l[1]) for l in resClustering)
-
+def clusterDendograms(resClustering, controlsDict,maxClust, sampleLinks, outputFile):
     #initialization of a list of strings to complete
-    labelsgp=[]
+    labelsGp=[]
 
     # Fill labelsgp at each new sample/row in resClustering
     # Cluster numbers link with the marking index in the label 
     # 2 marking type: "*"= target cluster ,"-"= control cluster present in controlsDict
     for sIndex in range(len(resClustering)):
-        tmplabels=["   "]*maxClust
-        row=resClustering[sIndex]
+        # an empty str list of length of the maximum cluster found
+        tmpLabels=["   "]*maxClust
+        row=resClustering[sIndex] 
+        # select group-related position in tmplabels
+        #-1 because the group numbering starts at 1 and not 0
         indexCluster=row[1]-1
-        tmplabels[indexCluster]=" * "
+        # add symbol to say that this sample is a target 
+        tmpLabels[indexCluster]=" * "
+        # case the sample is part of a control group
+        # add symbol to the index of groups to be controlled in tmpLabels
         if row[1] in controlsDict:
             for gpToCTRL in controlsDict[row[1]]:
-                tmplabels[gpToCTRL-1]=" - "
-        labelsgp.append("".join(tmplabels))
+                # symbol add to tmplabels for the current group index.
+                tmpLabels[gpToCTRL-1]=" - "
+        labelsGp.append("".join(tmpLabels))
 
     # dendogram plot
-    plt.figure(figsize=(5,15))
-    plt.title("Absolute Pearson distance (1-r)")
+    matplotlib.pyplot.figure(figsize=(5,15),facecolor="white")
+    matplotlib.pyplot.title("Complete linkage hierarchical clustering")
     dn1 = scipy.cluster.hierarchy.dendrogram(sampleLinks,orientation='left',
-                                                labels=labelsgp,color_threshold=0.05)
-    plt.savefig(outputFile, dpi=75)
+                                             labels=labelsGp, 
+                                             color_threshold=0.05)
+    
+    matplotlib.pyplot.ylabel("Samples of interest")
+    matplotlib.pyplot.xlabel("Absolute Pearson distance (1-r)")
+    matplotlib.pyplot.savefig(outputFile, dpi=520, format="png", bbox_inches='tight')
 
 ################################################################################################
 ######################################## Main ##################################################
@@ -300,7 +311,7 @@ def main():
     # parse user-provided arguments
     # mandatory args
     countsFile = ""
-    outFolder=""
+    outFolder = ""
     ##########################################
     # optionnal arguments
     # default values fixed
@@ -332,18 +343,18 @@ Results are printed to stdout folder:
 ARGUMENTS:
    --counts [str]: TSV file, first 4 columns hold the exon definitions, subsequent columns 
                    hold the fragment counts.
+   --out[str]: pre-existing folder to save the output files
    --minSamples [int]: an integer indicating the minimum sample number to create a reference cluster for autosomes,
                   default : """+str(minSamples)+""".
    --minLinks [float]: a float indicating the minimal distance to considered for the hierarchical clustering,
                   default : """+str(minLinks)+""".   
-   --nogender: no autosomes and gonosomes discrimination for clustering. 
+   --nogender[optionnal]: no autosomes and gonosomes discrimination for clustering. 
                   output TSV : dim= NbSOIs*4 columns, ["sampleName", "clusterID", "controlledBy", "validitySamps"]
-   --figure: make one or more dendograms that will be present in the output in png format.                                          
-   --out[str]: pre-existing folder to save the output files"""+"\n"
+   --figure[optionnal]: make one or more dendograms that will be present in the output in png format."""+"\n"
 
     try:
         opts,args = getopt.gnu_getopt(sys.argv[1:],'h',
-        ["help","counts=","minSamples=","minLinks=","nogender=","figure=","out="])
+        ["help","counts=","out=","minSamples=","minLinks=","nogender","figure"])
     except getopt.GetoptError as e:
         sys.exit("ERROR : "+e.msg+".\n"+usage)
 
@@ -356,6 +367,10 @@ ARGUMENTS:
             countsFile = value
             if (not os.path.isfile(countsFile)):
                 sys.exit("ERROR : countsFile "+countsFile+" doesn't exist. Try "+scriptName+" --help.\n")
+        elif (opt in ("--out")):
+            outFolder = value
+            if (not os.path.isdir(outFolder)):
+                sys.exit("ERROR : outFolder "+outFolder+" doesn't exist. Try "+scriptName+" --help.\n")
         elif (opt in ("--minSamples")):
             try:
                 minSamples = np.int(value)
@@ -372,18 +387,14 @@ ARGUMENTS:
             nogender = True
         elif (opt in ("--figure")):
             figure = True
-        elif (opt in ("--out")):
-            outFolder = value
-            if not os.path.isdir(outFolder):
-                sys.exit("ERROR : outFolder "+outFolder+" doesn't exist. Try "+scriptName+" --help.\n")
         else:
             sys.exit("ERROR : unhandled option "+opt+".\n")
 
     #####################################################
     # Check that the mandatory parameter is present
-    if countsFile == "":
+    if (countsFile == ""):
         sys.exit("ERROR : You must use --counts.\n"+usage)
-    
+
     ######################################################
     # args seem OK, start working
     logger.info("starting to work")
@@ -428,7 +439,7 @@ ARGUMENTS:
     # direct application of the clustering algorithm
     if nogender:
         try: 
-            outputFile=outFolder+"Dendogram_"+str(len(SOIs))+"Samps.png"
+            outputFile=os.path.join(outFolder,"Dendogram_"+str(len(SOIs))+"Samps_FullChrom.png")
             resClustering = clusterBuilds(countsNorm, SOIs, minSamples, minLinks, figure, outputFile)
         except Exception as e: 
             logger.error("clusterBuilding failed - %s", e)
@@ -465,7 +476,8 @@ ARGUMENTS:
 
         logger.info("### Samples clustering on normalised counts for autosomes")
         try :
-            outputFile=outFolder+"Dendogram_"+str(len(SOIs))+"Samps_autosomes.png"
+            outputFile=os.path.join(outFolder,"Dendogram_"+str(len(SOIs))+"Samps_Autosomes.png")
+            logger.info("Normally output File %s, %s",outputFile,outFolder)
             resClusteringAutosomes = clusterBuilds(autosomesFPM, SOIs, minSamples, minLinks, figure, outputFile)
         except Exception as e:
             logger.error("clusterBuilds for autosomes failed - %s", e)
