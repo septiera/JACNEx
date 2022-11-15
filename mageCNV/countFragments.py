@@ -33,8 +33,8 @@ def countFrags(bamFile, exons, maxGap, tmpDir, samtools, samThreads):
     startTime = time.time()
     # for each chrom, build an NCL holding the exons
     # NOTE: we would like to build this once in the caller and use it for each BAM,
-    # but the multiprocessing module doesn't allow this... We therefore build the
-    # same NCLs for each BAM, wasteful but it's OK, createExonNCLs() is fast
+    # but the multiprocessing module doesn't allow this... We therefore rebuild the
+    # NCLs for each BAM, wasteful but it's OK, createExonNCLs() is fast
     exonNCLs=createExonNCLs(exons)
 
     thisTime = time.time()
@@ -43,7 +43,7 @@ def countFrags(bamFile, exons, maxGap, tmpDir, samtools, samThreads):
 
     # We need to process all alignments for a given qname simultaneously
     # => ALGORITHM:
-    # parse alignements from BAM, sorted by qname;
+    # parse alignements from BAM, grouped by qname;
     # if qname didn't change -> just apply some QC and if AOK store the
     #   data we need in accumulators,
     # if the qname changed -> process accumulated data for the previous
@@ -59,9 +59,8 @@ def countFrags(bamFile, exons, maxGap, tmpDir, samtools, samThreads):
     # qFirstOnForward==1 if the first-in-pair read of this qname is on the
     # forward reference strand, -1 if it's on the reverse strand, 0 if we don't yet know
     qFirstOnForward=0
-    # qBad==True if qname contains alignments on differents chromosomes,
-    # or if some of it's alis disagree regarding the strand on which the
-    # first/last read-in-pair aligns
+    # qBad==True if qname must be skipped (e.g. alis on bad or multiple chroms, or alis
+    # disagree regarding the strand on which the first/last read-in-pair aligns, or...)
     qBad=False
 
     # To Fill:
@@ -70,8 +69,7 @@ def countFrags(bamFile, exons, maxGap, tmpDir, samtools, samThreads):
 
     ############################################
     # Preprocessing:
-    # - our algorithm needs to parse the alignements grouped by qname,
-    #   "samtools collate" allows this;
+    # - need to parse the alignements grouped by qname, "samtools collate" allows this;
     # - we can also immediately filter out poorly mapped (low MAPQ) or dubious/bad
     #   alignments based on the SAM flags
     # Requiring:
@@ -150,11 +148,11 @@ def countFrags(bamFile, exons, maxGap, tmpDir, samtools, samThreads):
             continue
         # else this ali agrees with previous alis for qname -> NOOP
 
-        # START and END coordinates of current alignment
+        # START and END coordinates of current alignment on REF (ignoring any clipped bases)
         currentStart=int(align[3])
         # END depends on CIGAR
         currentCigar=align[5]
-        currentAliLength=AliLengthOnRef(currentCigar)
+        currentAliLength=aliLengthOnRef(currentCigar)
         currentEnd=currentStart+currentAliLength-1
         if currentStrand=="F":
             qstartF.append(currentStart)
@@ -189,15 +187,15 @@ def countFrags(bamFile, exons, maxGap, tmpDir, samtools, samThreads):
 ###############################################################################
 
 ####################################################
-# AliLengthOnRef :
+# aliLengthOnRef :
 #Input : a CIGAR string
 #Output : span of the alignment on the reference sequence, ie number of bases
 # consumed by the alignment on the reference
-def AliLengthOnRef(CIGARAlign):
+def aliLengthOnRef(cigar):
     length=0
     # only count CIGAR operations that consume the reference sequence, see CIGAR definition 
     # in SAM spec available here: https://samtools.github.io/hts-specs/
-    match = re.findall(r"(\d+)[MDN=X]",CIGARAlign)
+    match = re.findall(r"(\d+)[MDN=X]",cigar)
     for op in match:
         length+=int(op)
     return(length)
@@ -237,9 +235,8 @@ def createExonNCLs(exons):
 # Qname2ExonCount :
 # Given data representing all alignments for a single qname (must all map to the same chrom):
 # - apply QC filters to ignore aberrant or unusual alignments / qnames;
-# - identify the genomic positions that are putatively covered by the sequenced fragment,
-#   either actually covered by a sequencing read or closely flanked by a pair of mate reads;
-# - identify exons overlapped by the fragment, and increment their count.
+# - identify the genomic intervals that are covered by the sequenced fragment;
+# - identify exons overlapped by these intervals, and increment their count.
 # Args:
 #   - 4 lists of ints for F and R strand positions (start and end)
 #   - the NCL for the chromosome where current alignments map
