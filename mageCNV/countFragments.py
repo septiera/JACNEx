@@ -23,12 +23,13 @@ logger = logging.getLogger(__name__)
 # Arguments:
 #   - a bam file (with path)
 #   - exon definitions as returned by processBed, padded and sorted
-#   - a tmp dir with enough space for samtools sort and fast RW access
 #   - the maximum accepted gap length between paired reads
+#   - a fast tmp dir with enough space for samtools collate
+#   - the samtools binary, with path
 #   - the number of cpu threads that samtools can use
 #
 # Return a 1D numpy int array, dim = len(exons), with the fragment counts for this sample
-def countFrags(bamFile, exons, tmpDir, maxGap, num_threads):
+def countFrags(bamFile, exons, maxGap, tmpDir, samtools, samThreads):
     startTime = time.time()
     # for each chrom, build an NCL holding the exons
     # NOTE: we would like to build this once in the caller and use it for each BAM,
@@ -63,36 +64,37 @@ def countFrags(bamFile, exons, tmpDir, maxGap, num_threads):
     # first/last read-in-pair aligns
     qBad=False
 
-    tmpDirObj=tempfile.TemporaryDirectory(dir=tmpDir)
-    SampleTmpDir=tmpDirObj.name
-
     # To Fill:
     # 1D numpy array containing the sample fragment counts for all exons
-    countsSample=np.zeros(len(exons), dtype=np.uint32)
+    sampleCounts=np.zeros(len(exons), dtype=np.uint32)
 
     ############################################
     # Preprocessing:
-    # Our algorithm needs to parse the alignements sorted by qname,
-    # "samtools sort -n" allows this
-    cmd1 ="samtools sort -n "+bamFile+" -@ "+str(num_threads)+" -T "+SampleTmpDir+" -O sam"
-    p1 = subprocess.Popen(cmd1.split(), stdout=subprocess.PIPE)
-    
-    # We can immediately filter out poorly mapped (low MAPQ) or low quality
-    # reads (based on the SAM flags) with samtools view:
-    # -q sets the minimum mapping quality;
-    # -F excludes alignements where any of the specified bits is set, we want to filter out:
-    #   4 0x4 Read Unmapped
+    # - our algorithm needs to parse the alignements grouped by qname,
+    #   "samtools collate" allows this;
+    # - we can also immediately filter out poorly mapped (low MAPQ) or dubious/bad
+    #   alignments based on the SAM flags
+    # Requiring:
+    #   1 0x1 read paired
+    # Discarding when any if the below is set:
+    #   4 0x4 read unmapped
+    #   8 0x8 mate unmapped
     #   256 0x80 not primary alignment
-    #   512 0x200 Read fails platform/vendor quality checks
-    #   1024 0x400 Read is PCR or optical duplicate
-    # Total Flag decimal = 1796
+    #   512 0x200 read fails platform/vendor quality checks
+    #   1024 0x400 read is PCR or optical duplicate
+    #   -> sum == 1804
     # For more details on FLAGs read the SAM spec: http://samtools.github.io/hts-specs/
-    cmd2 ="samtools view -q 20 -F 1796"
-    p2 = subprocess.Popen(cmd2.split(), stdin=p1.stdout, stdout=subprocess.PIPE, universal_newlines=True)
+    tmpDirObj = tempfile.TemporaryDirectory(dir=tmpDir)
+    tmpDirPrefix = tmpDirObj.name + "/tmpcoll"
+
+    cmd = [samtools, 'collate', '-O', '--output-fmt', 'SAM', '--threads', str(samThreads)]
+    cmd.extend(['--input-fmt-option', 'filter=(mapq >= 20) && flag.paired && !(flag & 1804)'])
+    cmd.extend([bamFile, tmpDirPrefix])
+    samproc = subprocess.Popen(cmd, stdout=subprocess.PIPE, universal_newlines=True)
 
     ############################################
     # Main loop: parse each alignment
-    for line in p2.stdout:
+    for line in samproc.stdout:
         align=line.rstrip().split('\t')
 
         # skip ali if not on a chromosome where we have at least one exon - importantly this
@@ -104,7 +106,7 @@ def countFrags(bamFile, exons, tmpDir, maxGap, num_threads):
         # If we are done with previous qname: process it and reset accumulators
         if (qname!=align[0]) and (qname!=""):  # align[0] is the qname
             if not qBad:
-                Qname2ExonCount(qstartF,qendF,qstartR,qendR,exonNCLs[qchrom],countsSample,maxGap)
+                Qname2ExonCount(qstartF,qendF,qstartR,qendR,exonNCLs[qchrom],sampleCounts,maxGap)
             qname, qchrom = "", ""
             qstartF, qstartR, qendF, qendR = [], [], [], []
             qFirstOnForward=0
@@ -165,25 +167,21 @@ def countFrags(bamFile, exons, tmpDir, maxGap, num_threads):
     # Done reading lines from BAM
 
     # process last Qname
-    if not qBad:
-        Qname2ExonCount(qstartF,qendF,qstartR,qendR,exonNCLs[qchrom],countsSample,maxGap)
+    if (qname!="") and not qBad:
+        Qname2ExonCount(qstartF,qendF,qstartR,qendR,exonNCLs[qchrom],sampleCounts,maxGap)
 
-    # wait for samtools to finish cleanly and check return codes
-    if (p1.wait() != 0):
-        logger.error("in countFrags, while processing %s, the 'samtools sort' subprocess returned %s",
-                        bamFile, p1.returncode)
-        raise Exception("samtools-sort failed")
-    if (p2.wait() != 0):
-        logger.error("in countFrags, while processing %s, the 'samtools view' subprocess returned %s",
-                        bamFile, p2.returncode)
-        raise Exception("samtools-view failed")
+    # wait for samtools to finish cleanly and check exit code
+    if (samproc.wait() != 0):
+        logger.error("in countFrags, while processing %s, samtools exited with code %s",
+                     bamFile, samproc.returncode)
+        raise Exception("samtools failed")
 
-    # SampleTmpDir should get cleaned up automatically but sometimes samtools tempfiles
+    # tmpDirObj should get cleaned up automatically but sometimes samtools tempfiles
     # are in the process of being deleted => sync to avoid race
     os.sync()
     thisTime = time.time()
     logger.debug("Done countFrags for %s, in %.2f s",os.path.basename(bamFile), thisTime-startTime)
-    return(countsSample)
+    return(sampleCounts)
 
 
 ###############################################################################
@@ -237,7 +235,7 @@ def createExonNCLs(exons):
 
 ####################################################
 # Qname2ExonCount :
-# Given data representing all alignments for a single qname:
+# Given data representing all alignments for a single qname (must all map to the same chrom):
 # - apply QC filters to ignore aberrant or unusual alignments / qnames;
 # - identify the genomic positions that are putatively covered by the sequenced fragment,
 #   either actually covered by a sequencing read or closely flanked by a pair of mate reads;

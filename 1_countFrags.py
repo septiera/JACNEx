@@ -12,6 +12,7 @@ import os
 import numpy as np # numpy arrays
 import re
 import time
+import shutil
 from multiprocessing import Pool #parallelize processes
 import logging
 
@@ -21,32 +22,28 @@ import mageCNV.countsFile
 import mageCNV.countFragments
 
 
-###############################################################################################
-################################ Functions ####################################################
-###############################################################################################
-# mergeCounts
-# fill sample column in countsArray with the corresponding 1D np.array (countsSample)
-# counts : nd array with Fragment counts results [numberOfExons]x[numberOfSamples] [int]
-# colSampleIndex : sample column index in counts
-# sampleCount :  
-def mergeCounts(counts, colSampleIndex, sampleCounts):
-    for rowExonIndex in range(len(sampleCounts)):
-        counts[rowExonIndex,colSampleIndex] = sampleCounts[rowExonIndex]
+###############################################################################
+############################ PRIVATE FUNCTIONS ################################
+###############################################################################
 
-################################################################################################
-######################################## Main ##################################################
-################################################################################################
-def main():
-    scriptName=os.path.basename(sys.argv[0])
-    # configure logging, sub-modules will inherit this config
-    logging.basicConfig(format='%(asctime)s %(levelname)s %(name)s %(funcName)s(): %(message)s',
-                        datefmt='%Y-%m-%d %H:%M:%S',
-                        level=logging.DEBUG)
-    # set up logger: we want scriptName rather than 'root'
-    logger = logging.getLogger(scriptName)
-    
-    ##########################################
-    # parse user-provided arguments
+####################################################
+# mergeCounts
+# fill column at index sampleIndex in countsArray (numpy array of ints, 
+# dim = numberOfExons x numberOfSamples) with counts for this sample, stored
+# in sampleCounts (1D np array of ints, dim = numberOfExons)
+def mergeCounts(countsArray, sampleIndex, sampleCounts):
+    for exonIndex in range(len(sampleCounts)):
+        countsArray[exonIndex,sampleIndex] = sampleCounts[exonIndex]
+
+
+####################################################
+# parseArgs:
+# Parse and sanity check the command+arguments, provided as a list of 
+# strings (eg sys.argv).
+# Return a list with everything needed by this module's main()
+def parseArgs(argv):
+    scriptName = os.path.basename(argv[0])
+
     # mandatory args
     bams=""
     bamsFrom=""
@@ -56,7 +53,8 @@ def main():
     maxGap=1000
     countsFile=""
     tmpDir="/tmp/"
-    threads=10 
+    samtools="samtools"
+    samThreads=10
     countJobs=3
 
     usage = """\nCOMMAND SUMMARY:
@@ -77,66 +75,95 @@ ARGUMENTS:
    --maxGap [int] : maximum accepted gap length (bp) between reads pairs, pairs separated by a longer gap
            are assumed to possibly result from a structural variant and are ignored, default : """+str(maxGap)+"""
    --tmp [str]: pre-existing dir for temp files, faster is better (eg tmpfs), default: """+tmpDir+"""
-   --threads [int]: number of threads to allocate for samtools sort, default: """+str(threads)+""""
+   --samtools [str]: samtools binary (with path if not in $PATH), default: """+str(samtools)+""""
+   --samthreads [int]: number of threads for samtools, default: """+str(samThreads)+""""
    --jobs [int] : number of threads to allocate for counting step, default:"""+str(countJobs)+"\n"
 
     try:
-        opts,args = getopt.gnu_getopt(sys.argv[1:],'h',
-        ["help","bams=","bams-from=","bed=","counts=","maxGap=","tmp=","threads=","jobs="])
+        opts,args = getopt.gnu_getopt(argv[1:],'h',
+        ["help","bams=","bams-from=","bed=","counts=","padding=","maxGap=","tmp=","samtools=","samthreads=","jobs="])
     except getopt.GetoptError as e:
-        sys.exit("ERROR : "+e.msg+". Try "+scriptName+" --help\n")
+        sys.stderr.write("ERROR : "+e.msg+". Try "+scriptName+" --help\n")
+        raise Exception()
 
     for opt, value in opts:
         # sanity-check and store arguments
         if opt in ('-h', '--help'):
             sys.stderr.write(usage)
-            sys.exit(0)
+            raise Exception()
         elif opt in ("--bams"):
             bams=value
             # bams is checked later, along with bamsFrom content
         elif opt in ("--bams-from"):
             bamsFrom=value
             if not os.path.isfile(bamsFrom):
-                sys.exit("ERROR : bams-from file "+bamsFrom+" doesn't exist. Try "+scriptName+" --help.\n")
+                sys.stderr.write("ERROR : bams-from file "+bamsFrom+" doesn't exist.\n")
+                raise Exception()
         elif opt in ("--bed"):
             bedFile=value
             if not os.path.isfile(bedFile):
-                sys.exit("ERROR : bedFile "+bedFile+" doesn't exist. Try "+scriptName+" --help.\n")
+                sys.stderr.write("ERROR : bedFile "+bedFile+" doesn't exist.\n")
+                raise Exception()
         elif opt in ("--counts"):
             countsFile=value
             if not os.path.isfile(countsFile):
-                sys.exit("ERROR : countsFile "+countsFile+" doesn't exist. Try "+scriptName+" --help.\n")
+                sys.stderr.write("ERROR : countsFile "+countsFile+" doesn't exist.\n")
+                raise Exception()
         elif opt in ("--padding"):
-            padding=int(value)
-            if (padding<0):
-                sys.exit("ERROR : padding "+str(padding)+" must be a positive int. Try "+scriptName+" --help.\n")
+            try:
+                padding=int(value)
+                if (padding<0):
+                    raise Exception()
+            except Exception:
+                sys.stderr.write("ERROR : padding must be a non-negative integer, not '"+value+"'.\n")
+                raise Exception()
         elif opt in ("--maxGap"):
-            maxGap=int(value)
-            if (maxGap<0):
-                sys.exit("ERROR : maxGap "+str(maxGap)+" must be a positive int. Try "+scriptName+" --help.\n")
+            try:
+                maxGap=int(value)
+                if (maxGap<0):
+                    raise Exception()
+            except Exception:
+                sys.stderr.write("ERROR : maxGap must be a non-negative integer, not '"+value+"'.\n")
+                raise Exception()
         elif opt in ("--tmp"):
             tmpDir=value
             if not os.path.isdir(tmpDir):
-                sys.exit("ERROR : tmp directory "+tmpDir+" doesn't exist. Try "+scriptName+" --help.\n")
-        elif opt in ("--threads"):
-            threads=int(value)
-            if (threads<=0):
-                sys.exit("ERROR : threads "+str(threads)+" must be a positive int. Try "+scriptName+" --help.\n")
+                sys.stderr.write("ERROR : tmp directory "+tmpDir+" doesn't exist.\n")
+                raise Exception()
+        elif opt in ("--samtools"):
+            samtools=value
+            if shutil.which(samtools) is None:
+                sys.stderr.write("ERROR : samtools program '"+samtools+"' cannot be run (wrong path, or binary not in $PATH?).\n")
+                raise Exception()
+        elif opt in ("--samthreads"):
+            try:
+                samThreads=int(value)
+                if (samThreads<=0):
+                    raise Exception()
+            except Exception:
+                sys.stderr.write("ERROR : samthreads must be a positive integer, not '"+value+"'.\n")
+                raise Exception()
         elif opt in ("--jobs"):
-            countJobs=int(value)
-            if (countJobs<=0):
-                sys.exit("ERROR : threads allocated for counting step "+str(countJobs)+" must be a positive int. Try "+scriptName+" --help.\n")      
+            try:
+                countJobs=int(value)
+                if (countJobs<=0):
+                    raise Exception()
+            except Exception:
+                sys.stderr.write("ERROR : jobs must be a positive integer, not '"+value+"'.\n")
+                raise Exception()
         else:
-            sys.exit("ERROR : unhandled option "+opt+".\n")
+            sys.stderr.write("ERROR : unhandled option "+opt+".\n")
+            raise Exception()
 
     #####################################################
     # Check that the mandatory parameters are present
     if (bams=="" and bamsFrom=="") or (bams!="" and bamsFrom!=""):
-        sys.exit("ERROR : You must use either --bams or --bams-from but not both.\n"+usage)
+        sys.stderr.write("ERROR : You must use either --bams or --bams-from but not both. Try "+scriptName+" --help.\n")
+        raise Exception()
     if bedFile=="":
-        sys.exit("ERROR : You must use --bed.\n"+usage)
+        sys.stderr.write("ERROR : You must provide a BED file with --bed. Try "+scriptName+" --help.\n")
+        raise Exception()
 
-    #####################################################
     # Check and clean up the provided list of BAMs
     # bamsTmp is user-supplied and may have dupes
     bamsTmp=[]
@@ -150,25 +177,55 @@ ARGUMENTS:
     if bams != "":
         bamsTmp=bams.split(",")
     else:
-        bamsList = open(bamsFrom,"r")
-        for bam in bamsList:
-            bam = bam.rstrip()
-            bamsTmp.append(bam)
+        try:
+            bamsList = open(bamsFrom,"r")
+            for bam in bamsList:
+                bam = bam.rstrip()
+                bamsTmp.append(bam)
+        except Exception as e:
+            sys.stderr.write("ERROR opening provided --bams-from file %s: %s", bamsFrom, e)
+            raise Exception()
 
     # Check that all bams exist and remove any duplicates
     for bam in bamsTmp:
         if not os.path.isfile(bam):
-            sys.exit("ERROR : BAM "+bam+" doesn't exist. Try "+scriptName+" --help.\n")
+            sys.stderr.write("ERROR : BAM "+bam+" doesn't exist.\n")
+            raise Exception()
+        elif not os.access(bam, os.R_OK):
+            sys.stderr.write("ERROR : BAM "+bam+" cannot be read.\n")
+            raise Exception()
         elif bam in bamsNoDupe:
             logger.warning("BAM "+bam+" specified twice, ignoring the dupe")
         else:
-            bamsNoDupe[bam]=1
+            bamsNoDupe[bam] = 1
             bamsToProcess.append(bam)
-            sampleName=os.path.basename(bam)
-            sampleName=re.sub(".bam$","",sampleName)
+            sampleName = os.path.basename(bam)
+            sampleName = re.sub("\.[bs]am$", "", sampleName)
             samples.append(sampleName)
+    # AOK, return everything that's needed
+    return(bamsToProcess, samples, bedFile, padding, maxGap, countsFile, tmpDir, samtools, samThreads, countJobs)
 
-    ######################################################
+
+###############################################################################
+############################ PUBLIC FUNCTIONS #################################
+###############################################################################
+
+####################################################
+# main function
+# Arg: list of strings, eg sys.argv
+# If anything goes wrong, print error message to stderr and raise exception.
+def main(argv):
+    scriptName = os.path.basename(argv[0])
+    # configure logging, sub-modules will inherit this config
+    logging.basicConfig(format='%(asctime)s %(levelname)s %(name)s %(funcName)s(): %(message)s',
+                        datefmt='%Y-%m-%d %H:%M:%S',
+                        level=logging.DEBUG)
+    # set up logger: we want scriptName rather than 'root'
+    logger = logging.getLogger(scriptName)
+
+    # parse, check and preprocess arguments - exceptions must be caught by caller
+    (bamsToProcess, samples, bedFile, padding, maxGap, countsFile, tmpDir, samtools, samThreads, countJobs) = parseArgs(argv)
+
     # args seem OK, start working
     logger.info("starting to work")
     startTime = time.time()
@@ -179,8 +236,8 @@ ARGUMENTS:
         exons = mageCNV.bed.processBed(bedFile, padding)
     except Exception:
         logger.error("processBed failed")
-        sys.exit(1)
-        
+        raise Exception()
+
     thisTime = time.time()
     logger.debug("Done pre-processing BED, in %.2f s", thisTime-startTime)
     startTime = thisTime
@@ -193,7 +250,8 @@ ARGUMENTS:
         (countsArray, countsFilled) =  mageCNV.countsFile.extractCountsFromPrev(exons, samples, countsFile)
     except Exception as e:
         logger.error("parseCountsFile failed - %s", e)
-        sys.exit(1)
+        raise Exception()
+
     thisTime = time.time()
     logger.debug("Done parsing previous countsFile, in %.2f s", thisTime-startTime)
     startTime = thisTime
@@ -233,7 +291,7 @@ ARGUMENTS:
                 # retrieved by the get() command.
                 # Note: that all bam's must be processed to retrieve the results.
                 try:
-                    results.append(pool.apply_async(mageCNV.countFragments.countFrags,args=(bam,exons,tmpDir,maxGap,threads)))
+                    results.append(pool.apply_async(mageCNV.countFragments.countFrags,args=(bam,exons,maxGap,tmpDir,samtools,samThreads)))
                     processedBams.append(bamIndex)
                 
                 # Raise an exception if counting error and storage the failed sample index in failedBams.
@@ -265,5 +323,14 @@ ARGUMENTS:
     logger.debug("Done merging and printing results for all samples, in %.2f s", thisTime-startTime)
     logger.info("ALL DONE")
 
+
+####################################################################################
+######################################## Main ######################################
+####################################################################################
+
 if __name__ =='__main__':
-    main()
+    try:
+        main(sys.argv)
+    except Exception:
+        # whoever raised the exception should have explained it on stderr, here we just die
+        exit(1)
