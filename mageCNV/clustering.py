@@ -277,13 +277,13 @@ def gonosomeProcessing(countsNorm, SOIs, gonoIndexDict, genderInfoList, minSampl
     sampsIndexG1 = np.where(kmeans.labels_==0)[0]
     gonosomesFPMG1 = gonosomesFPM[:,sampsIndexG1]
     targetSOIsG1 = [SOIs[i] for i in sampsIndexG1]
-    outputFile = outFolder+"Dendogram_"+str(len(SOIs))+"Samps_gonosomes_"+gender2KmeansGp[0]+".png"
+    outputFile = os.path.join(outFolder,"Dendogram_"+str(len(SOIs))+"Samps_gonosomes_"+gender2KmeansGp[0]+".png")
     resGono1 = clusterBuilds(gonosomesFPMG1, targetSOIsG1, minSamples, minLinks, figure, outputFile)
 
     sampsIndexG2 = np.where(kmeans.labels_==1)[0]
     gonosomesFPMG2 = gonosomesFPM[:,sampsIndexG2]
     targetSOIsG2 = [SOIs[i] for i in sampsIndexG2]
-    outputFile = outFolder+"Dendogram_"+str(len(SOIs))+"Samps_gonosomes_"+gender2KmeansGp[1]+".png"
+    outputFile = os.path.join(outFolder,"Dendogram_"+str(len(SOIs))+"Samps_gonosomes_"+gender2KmeansGp[1]+".png")
     resGono2 = clusterBuilds(gonosomesFPMG2, targetSOIsG2, minSamples, minLinks, figure, outputFile)
 
     ####################
@@ -325,13 +325,16 @@ def gonosomeProcessing(countsNorm, SOIs, gonoIndexDict, genderInfoList, minSampl
 #   - 'resClustering' is a list of list, dim=NbSOIs*4columns 
 #       [sampleID[str], clusterID[int], controlledBy[int list], validitySamps[int]
 #       can be derived from clustering on all chromosomes or on the autosomes
+#   - 'outFolder' is a str variable, it's the results folder path  
 #   - 'resClusteringGonosomes' is a list of list, dim=NbSOIs*5columns
 #       [sampleID[str], clusterID[int], controlledBy[int list], validitySamps[int], genderPreds[str]]
 #       this argument is optional
 #
 # Print this data to stdout as a 'clustersFile'
-def printClustersFile(resClustering, resClusteringGonosomes=False):
+def printClustersFile(resClustering, outFolder, resClusteringGonosomes=False):
     if resClusteringGonosomes:
+        clusterFile=open(os.path.join(outFolder,"ResClustering_AutosomesAndGonosomes_"+str(len(resClustering))+"samples.tsv"),'w')
+        sys.stdout = clusterFile
         toPrint = "samplesID\tclusterID_A\tcontrolledBy_A\tvaliditySamps_A\tgenderPreds\tclusterID_G\tcontrolledBy_G\tvaliditySamps_G"
         print(toPrint)
         for i in range(len(resClustering)):
@@ -340,14 +343,19 @@ def printClustersFile(resClustering, resClusteringGonosomes=False):
                 "\t"+str(resClustering[i][3])+"\t"+resClusteringGonosomes[i][4]+"\t"+str(resClusteringGonosomes[i][1])+\
                     "\t"+",".join(map(str,resClusteringGonosomes[i][2]))+"\t"+str(resClusteringGonosomes[i][3])
             print(toPrint)
-        
+        sys.stdout = sys.__stdout__
+        clusterFile.close()
     else:
+        clusterFile=open(os.path.join(outFolder,"ResClustering_"+str(len(resClustering))+"samples.tsv"),'w')
+        sys.stdout = clusterFile
         toPrint = "samplesID\tclusterID\tcontrolledBy\tvaliditySamps"
         print(toPrint)
         for i in range(len(resClustering)):
             # SOIsID + clusterInfo 
             toPrint = resClustering[i][0]+"\t"+str(resClustering[i][1])+"\t"+",".join(map(str,resClustering[i][2]))+"\t"+str(resClustering[i][3])
             print(toPrint)
+        sys.stdout = sys.__stdout__
+        clusterFile.close()
 
 ###############################################################################
 ############################ PRIVATE FUNCTIONS ################################

@@ -167,7 +167,7 @@ ARGUMENTS:
     # direct application of the clustering algorithm
     if nogender:
         try: 
-            outputFile=outFolder+"Dendogram_"+str(len(SOIs))+"Samps_FullChrom.png"
+            outputFile=os.path.join(outFolder,"Dendogram_"+str(len(SOIs))+"Samps_FullChrom.png")
             resClustering = mageCNV.clustering.clusterBuilds(countsNorm, SOIs, minSamples, minLinks, figure, outputFile)
         except Exception as e: 
             logger.error("clusterBuilding failed - %s", e)
@@ -178,7 +178,7 @@ ARGUMENTS:
 
         #####################################################
         # print results
-        mageCNV.clustering.printClustersFile(resClustering)
+        mageCNV.clustering.printClustersFile(resClustering,outFolder)
         thisTime = time.time()
         logger.debug("Done printing results, in %.2f s", thisTime-startTime)
         logger.info("ALL DONE")
@@ -211,7 +211,7 @@ ARGUMENTS:
         #       3)clusterIDToControl [str], 4) Sample validity for calling [int] 
         logger.info("### Autosomes, samples clustering:")
         try :
-            outputFile=outFolder+"Dendogram_"+str(len(SOIs))+"Samps_autosomes.png"
+            outputFile=os.path.join(outFolder,"Dendogram_"+str(len(SOIs))+"Samps_autosomes.png")
             resClusteringAutosomes = mageCNV.clustering.clusterBuilds(autosomesFPM, SOIs, minSamples, minLinks, figure, outputFile)
         except Exception as e:
             logger.error("clusterBuilds for autosomes failed - %s", e)
@@ -237,7 +237,7 @@ ARGUMENTS:
         #####################################################
         # print results
         ##################
-        mageCNV.clustering.printClustersFile(resClusteringAutosomes,resClusteringGonosomes)
+        mageCNV.clustering.printClustersFile(resClusteringAutosomes, outFolder, resClusteringGonosomes)
         thisTime = time.time()
         logger.debug("Done printing results, in %.2f s", thisTime-startTime)
         logger.info("ALL DONE")
