@@ -137,17 +137,13 @@ def countFrags(bamFile, exons, maxGap, tmpDir, samtools, samThreads):
 
         #Retrieving flags for STRAND and first/second read
         currentFlag=int(align[1])
-        #flag 16 the alignment is on the reverse strand
-        currentStrand="F"
-        if currentFlag&16 :
-            currentStrand="R"
 
         # currentFirstOnForward==1 if according to this ali, the first-in-pair
         # read is on the forward strand, -1 otherwise
         currentFirstOnForward=-1
-        #flag 64 the alignment is first in pair, otherwise 128
-        if (((currentFlag&64) and (currentStrand=="F")) or 
-            ((currentFlag&128) and (currentStrand=="R"))) :
+        # flag 16 the alignment is on the reverse strand
+        # flag 64 the alignment is first in pair, otherwise 128
+        if ((currentFlag&80) == 64) or ((currentFlag&144) == 144) :
             currentFirstOnForward=1
         if qFirstOnForward==0:
             # first ali for this qname
