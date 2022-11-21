@@ -106,7 +106,14 @@ def countFrags(bamFile, exons, maxGap, tmpDir, samtools, samThreads):
         # If we are done with previous qname: process it and reset accumulators
         if (qname!=align[0]) and (qname!=""):  # align[0] is the qname
             if not qBad:
-                Qname2ExonCount(qstartF,qendF,qstartR,qendR,qstartOnReadF,qstartOnReadR,exonNCLs[qchrom],sampleCounts,maxGap)
+                # if we have 2 alis on a strand, make sure they are in "read" order (switch them if needed)
+                if (len(startFList)==2) and (qstartOnReadF[0] > qstartOnReadF[1]):
+                    startFList.reverse()
+                    endFList.reverse()
+                if (len(startRList)==2) and (qstartOnReadR[0] > qstartOnReadR[1]):
+                    startRList.reverse()
+                    endRList.reverse()
+                Qname2ExonCount(qstartF,qendF,qstartR,qendR,exonNCLs[qchrom],sampleCounts,maxGap)
             qname, qchrom = "", ""
             qstartF, qstartR, qendF, qendR = [], [], [], []
             qstartOnReadF, qstartOnReadR = [], []
@@ -176,7 +183,14 @@ def countFrags(bamFile, exons, maxGap, tmpDir, samtools, samThreads):
 
     # process last Qname
     if (qname!="") and not qBad:
-        Qname2ExonCount(qstartF,qendF,qstartR,qendR,qstartOnReadF,qstartOnReadR,exonNCLs[qchrom],sampleCounts,maxGap)
+        # if we have 2 alis on a strand, make sure they are in "read" order (switch them if needed)
+        if (len(startFList)==2) and (qstartOnReadF[0] > qstartOnReadF[1]):
+            startFList.reverse()
+            endFList.reverse()
+        if (len(startRList)==2) and (qstartOnReadR[0] > qstartOnReadR[1]):
+            startRList.reverse()
+            endRList.reverse()
+        Qname2ExonCount(qstartF,qendF,qstartR,qendR,exonNCLs[qchrom],sampleCounts,maxGap)
 
     # wait for samtools to finish cleanly and check exit code
     if (samproc.wait() != 0):
@@ -264,14 +278,13 @@ def createExonNCLs(exons):
 # - identify the genomic intervals that are covered by the sequenced fragment;
 # - identify exons overlapped by these intervals, and increment their count.
 # Args:
-#   - 4 lists of ints for F and R strand positions (start and end)
-#   - lists of leftmost non-clipped coordinates on the reads
+#   - 4 lists of ints for F and R strand positions (start and end), in "read" order
 #   - the NCL for the chromosome where current alignments map
 #   - the counts vector to update (1D numpy int array)
 #   - the maximum accepted gap length between a pair of mate reads, pairs separated by
 #     a longer gap are ignored (putative structural variant or alignment error)
 # Nothing is returned, this function just updates countsVec
-def Qname2ExonCount(startFList,endFList,startRList,endRList,qstartOnReadF,qstartOnReadR,exonNCL,countsVec,maxGap):
+def Qname2ExonCount(startFList,endFList,startRList,endRList,exonNCL,countsVec,maxGap):
     #######################################################
     # apply QC filters
     #######################################################
@@ -288,12 +301,10 @@ def Qname2ExonCount(startFList,endFList,startRList,endRList,qstartOnReadF,qstart
     if (len(startFList)==2) and (min(endFList) > max(startFList)):
         startFList = [min(startFList)]
         endFList = [max(endFList)]
-        qstartOnReadF = [min(qstartOnReadF)]
     if (len(startRList)==2) and (min(endRList) > max(startRList)):
         startRList = [min(startRList)]
         endRList = [max(endRList)]
-        qstartOnReadR = [min(qstartOnReadR)]
-
+    
     # if we have 2 alis on one strand (eg F) and one ali on the other (R),
     # discard the rightmost F ali if it is back-to-back with the R ali
     # 2F 1R
