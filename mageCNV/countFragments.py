@@ -93,12 +93,11 @@ def countFrags(bamFile, exons, maxGap, tmpDir, samtools, samThreads):
     ############################################
     # Main loop: parse each alignment
     for line in samproc.stdout:
-        align=line.rstrip().split('\t')
-
-        # skip ali if not on a chromosome where we have at least one exon - importantly this
-        # skips non-main GRCh38 "chroms" (eg ALT contigs)
-        if align[2] not in exonNCLs:
+        # skip header
+        if re.match('^@', line):
             continue
+
+        align=line.split('\t', maxsplit=6)
 
         ######################################################################
         # If we are done with previous qname: process it and reset accumulators
@@ -119,12 +118,18 @@ def countFrags(bamFile, exons, maxGap, tmpDir, samtools, samThreads):
             qname=align[0]
 
         # align[2] == chrom
-        if qchrom=="":
-            qchrom=align[2]
-        elif qchrom!=align[2]:
+        if align[2] not in exonNCLs:
+            # ignore qname if ali not on a chromosome where we have at least one exon;
+            # importantly this skips non-main GRCh38 "chroms" (eg ALT contigs)
             qBad=True
             continue
-        # else same chrom, don't modify qchrom
+        elif qchrom=="":
+            qchrom=align[2]
+        elif qchrom!=align[2]:
+            # qname has alignments on different chroms, ignore it
+            qBad=True
+            continue
+        # else same chrom, keep going
 
         #Retrieving flags for STRAND and first/second read
         currentFlag=int(align[1])
@@ -142,8 +147,8 @@ def countFrags(bamFile, exons, maxGap, tmpDir, samtools, samThreads):
             currentFirstOnForward=1
         if qFirstOnForward==0:
             # first ali for this qname
-            qFirstOnForward=currentFirstOnForward
-        elif qFirstOnForward!=currentFirstOnForward:
+            qFirstOnForward = currentFirstOnForward
+        elif qFirstOnForward != currentFirstOnForward :
             qBad=True
             continue
         # else this ali agrees with previous alis for qname -> NOOP
