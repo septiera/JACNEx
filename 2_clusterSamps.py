@@ -40,7 +40,8 @@ def main():
     # optionnal arguments
     # default values are fixed
     minSamples = 20
-    minLinks = 0.25
+    minDist = 0.05
+    maxDist = 0.15
     nogender = False
     figure = False
 
@@ -62,7 +63,7 @@ Results are printed to stdout folder:
     8) "validitySamps_G": a boolean specifying if a sample is dubious(0) or not(1) for the calling step, for gonosomes.
 - one or more png's illustrating the clustering performed by dendograms. [optionnal]
     Legend : solid line = target clusters , thin line = control clusters
-    The clusters appear in decreasing order of distance.
+    The clusters appear in decreasing order of distance (1-|r|).
 
 ARGUMENTS:
    --counts [str]: TSV file, first 4 columns hold the exon definitions, subsequent columns 
@@ -70,15 +71,17 @@ ARGUMENTS:
    --out[str]: pre-existing folder to save the output files
    --minSamples [int]: an integer indicating the minimum sample number to create a reference cluster for autosomes,
                   default : """+str(minSamples)+""".
-   --minLinks [float]: a float indicating the minimal distance to considered for the hierarchical clustering,
-                  default : """+str(minLinks)+""".   
+   --minDist [float]: is a float variable, sets a minimum distance threshold (1-|r|) for the formation of the first clusters,
+                  default : """+str(minDist)+""".   
+   --maxDist [float]: is a float variable, it's the maximal distance to concidered,
+                  default : """+str(maxDist)+""".
    --nogender[optionnal]: no autosomes and gonosomes discrimination for clustering. 
                   output TSV : dim= NbSOIs*4 columns, ["sampleName", "clusterID", "controlledBy", "validitySamps"]
    --figure[optionnal]: make one or more dendograms that will be present in the output in png format."""+"\n"
 
     try:
         opts,args = getopt.gnu_getopt(sys.argv[1:],'h',
-        ["help","counts=","out=","minSamples=","minLinks=","nogender","figure"])
+        ["help","counts=","out=","minSamples=","minDist=","maxDist=","nogender","figure"])
     except getopt.GetoptError as e:
         sys.exit("ERROR : "+e.msg+".\n"+usage)
 
@@ -103,14 +106,22 @@ ARGUMENTS:
                 sys.exit(1)
             if (minSamples<0):
                 sys.exit("ERROR : minSamples "+str(minSamples)+" must be a positive int. Try "+scriptName+" --help.\n")
-        elif (opt in ("--minLinks")):
+        elif (opt in ("--minDist")):
             try:
-                minLinks = np.float(value)
+                minDist = np.float(value)
             except Exception as e:
-                logger.error("ERROR : minLinks "+str(minLinks)+" conversion to float failed : "+e)
+                logger.error("ERROR : minDist "+str(minDist)+" conversion to float failed : "+e)
                 sys.exit(1)
-            if (minLinks>1 or minLinks<0):
-                sys.exit("ERROR : minLinks "+str(minLinks)+" must be must be between 0 and 1. Try "+scriptName+" --help.\n")
+            if (minDist>1 or minDist<0):
+                sys.exit("ERROR : minDist "+str(minDist)+" must be must be between 0 and 1. Try "+scriptName+" --help.\n")
+        elif (opt in ("--maxDist")):
+            try:
+                maxDist = np.float(value)
+            except Exception as e:
+                logger.error("ERROR : maxDist "+str(maxDist)+" conversion to float failed : "+e)
+                sys.exit(1)
+            if (maxDist>1 or maxDist<0):
+                sys.exit("ERROR : maxDist "+str(maxDist)+" must be must be between 0 and 1. Try "+scriptName+" --help.\n")
         elif (opt in ("--nogender")):
             nogender = True
         elif (opt in ("--figure")):
@@ -168,7 +179,7 @@ ARGUMENTS:
     if nogender:
         try: 
             outputFile=os.path.join(outFolder,"Dendogram_"+str(len(SOIs))+"Samps_FullChrom.png")
-            resClustering = mageCNV.clustering.clustersBuilds(countsNorm, SOIs, minSamples, minLinks, figure, outputFile)
+            resClustering = mageCNV.clustering.clustersBuilds(countsNorm, SOIs, minDist, maxDist, minSamples, figure, outputFile)
         except Exception as e: 
             logger.error("clusterBuilding failed - %s", e)
             sys.exit(1)
@@ -212,7 +223,7 @@ ARGUMENTS:
         logger.info("### Autosomes, samples clustering:")
         try :
             outputFile=os.path.join(outFolder,"Dendogram_"+str(len(SOIs))+"Samps_autosomes.png")
-            resClusteringAutosomes = mageCNV.clustering.clustersBuilds(autosomesFPM, SOIs, minSamples, minLinks, figure, outputFile)
+            resClusteringAutosomes = mageCNV.clustering.clustersBuilds(autosomesFPM, SOIs, minDist, maxDist, minSamples, figure, outputFile)
         except Exception as e:
             logger.error("clusterBuilds for autosomes failed - %s", e)
             sys.exit(1)
@@ -226,7 +237,7 @@ ARGUMENTS:
         # Different treatment
         logger.info("### Gonosomes, samples clustering:")
         try :
-            resClusteringGonosomes=mageCNV.clustering.gonosomeProcessing(countsNorm, SOIs, gonoIndexDict, genderInfoList, minSamples, minLinks,outFolder, figure)
+            resClusteringGonosomes=mageCNV.clustering.gonosomeProcessing(countsNorm, SOIs, gonoIndexDict, genderInfoList, minSamples, minDist, maxDist, outFolder, figure)
         except Exception as e:
             logger.error("gonosomeProcessing failed - %s", e)
             sys.exit(1)

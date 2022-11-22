@@ -277,14 +277,15 @@ def clustersBuilds(FPMarray, SOIs, minDist, maxDist, minSampsNbInCluster, figure
 #          exons indexes list (value:int)
 #   -genderInfoList: a string list of lists, dim=NbGender*2columns [genderID[str], targetGonosomesID[str]]
 #   -minSamples: an int variable for restrict the minimum number of samples for cluster formation 
-#   -minLinks: a float variable to have a maximum distance selection threshold
+#  - minDist: is a float variable (1-|r|), it's the minimal distance tolerated to start building clusters 
+#  - maxDist: is a float variable, it's the maximal distance to concedered 
 #   -outFolder: a str variable indicating the path to the folder containing the results
 #   -figure: a boolean variable to indicate that a graphical output is requested by the user
 
 # Returns a list of lists, dim=nbSOIs*5columns
 # [sampleID[str], clusterID[int], controlledBy[int list], validitySamps[int], genderPreds[str]]
 
-def gonosomeProcessing(countsNorm, SOIs, gonoIndexDict, genderInfoList, minSamples, minLinks, outFolder, figure):
+def gonosomeProcessing(countsNorm, SOIs, gonoIndexDict, genderInfoList, minSamples, minDist, maxDist, outFolder, figure):
     # keeps counts of exons overlapping gonosomes
     gonoIndex = np.unique([item for sublist in list(gonoIndexDict.values()) for item in sublist]) 
     gonosomesFPM = np.take(countsNorm,gonoIndex,axis=0)
@@ -307,13 +308,13 @@ def gonosomeProcessing(countsNorm, SOIs, gonoIndexDict, genderInfoList, minSampl
     gonosomesFPMG1 = gonosomesFPM[:,sampsIndexG1]
     targetSOIsG1 = [SOIs[i] for i in sampsIndexG1]
     outputFile = os.path.join(outFolder,"Dendogram_"+str(len(SOIs))+"Samps_gonosomes_"+gender2KmeansGp[0]+".png")
-    resGono1 = clustersBuilds(gonosomesFPMG1, targetSOIsG1, minSamples, minLinks, figure, outputFile)
+    resGono1 = clustersBuilds(gonosomesFPMG1, targetSOIsG1, minDist, maxDist, minSamples, figure, outputFile)
 
     sampsIndexG2 = np.where(kmeans.labels_==1)[0]
     gonosomesFPMG2 = gonosomesFPM[:,sampsIndexG2]
     targetSOIsG2 = [SOIs[i] for i in sampsIndexG2]
     outputFile = os.path.join(outFolder,"Dendogram_"+str(len(SOIs))+"Samps_gonosomes_"+gender2KmeansGp[1]+".png")
-    resGono2 = clustersBuilds(gonosomesFPMG2, targetSOIsG2, minSamples, minLinks, figure, outputFile)
+    resGono2 = clustersBuilds(gonosomesFPMG2, targetSOIsG2, minDist, maxDist, minSamples, figure, outputFile)
 
     ####################
     # Merge Results:
