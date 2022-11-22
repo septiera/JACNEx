@@ -168,7 +168,7 @@ ARGUMENTS:
     if nogender:
         try: 
             outputFile=os.path.join(outFolder,"Dendogram_"+str(len(SOIs))+"Samps_FullChrom.png")
-            resClustering = mageCNV.clustering.clusterBuilds(countsNorm, SOIs, minSamples, minLinks, figure, outputFile)
+            resClustering = mageCNV.clustering.clustersBuilds(countsNorm, SOIs, minSamples, minLinks, figure, outputFile)
         except Exception as e: 
             logger.error("clusterBuilding failed - %s", e)
             sys.exit(1)
@@ -212,7 +212,7 @@ ARGUMENTS:
         logger.info("### Autosomes, samples clustering:")
         try :
             outputFile=os.path.join(outFolder,"Dendogram_"+str(len(SOIs))+"Samps_autosomes.png")
-            resClusteringAutosomes = mageCNV.clustering.clusterBuilds(autosomesFPM, SOIs, minSamples, minLinks, figure, outputFile)
+            resClusteringAutosomes = mageCNV.clustering.clustersBuilds(autosomesFPM, SOIs, minSamples, minLinks, figure, outputFile)
         except Exception as e:
             logger.error("clusterBuilds for autosomes failed - %s", e)
             sys.exit(1)
