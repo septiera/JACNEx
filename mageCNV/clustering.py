@@ -482,7 +482,7 @@ def genderAttributionPrivate(kmeans, countsNorm, gonoIndexDict, genderInfoList):
         sys.exit(1)
     return(condition1L)
 
-################################
+###############################################################################
 # getParentsClustsInfosPrivate [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
 # Extract parents informations : SOIs indexes list and sample number 
 # Arg:
@@ -512,6 +512,62 @@ def getParentsClustsInfosPrivate(parentClustsIDs, links2Clusters, NbLinks):
             SOIsIndexInParents = SOIsIndexInParents+links2Clusters[parentID]
             nbSOIsInParents.append(len(links2Clusters[parentID])) 
     return(SOIsIndexInParents, nbSOIsInParents)
+
+###############################################################################
+# STDZAndCheckResPrivate: [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
+# standardization: replacement of the clusterIDs deduced from linksMatrix by identifiers ranging from 0
+# to the total number of clusters.
+# the new identifiers are assigned according to the correlation level of the clusters 
+# (so the samples in first cluster have strong correlations)
+# check: the clusters formed have sufficient sizes. 
+# If not returns a wanring message and changes the validity status of the samples contributing to the cluster. 
+# Necessary for the calling step.
+# Args:
+#  - clusters: an int numpy array containing clusterID from linksMatrix for each sample
+#  - trgt2Ctrls: a dictionary for target cluster and controls clusters correspondance,
+#    key = target clusterID, value = list of controls clusterID 
+#  - minSampsNbInCluster: an int variable, defining the minimal sample number to validate a cluster
+# Returns a tuple (clusters, ctrls, validityStatus), only ctrls and validityStatus are created here:
+#   - clusters: an int numpy array containing standardized clusterID for each sample
+#   - ctrls: a str list containing controls clusterID delimited by "," for each sample 
+#   - validityStatus: a boolean numpy array containing the validity status for each sample (1: valid, 0: invalid)
+
+def STDZAndCheckResPrivate(clusters, trgt2Ctrls, minSampsNbInCluster):
+    # extraction of two int numpy array
+    # uniqueClusterIDs: contains all clusterIDs
+    # countsSampsinCluster: contains all sample counts per clusterIDs 
+    uniqueClusterIDs, countsSampsinCluster = np.unique(clusters, return_counts=True)
+
+    # To Fill
+    ctrls = [""]*len(clusters)
+    validityStatus = np.ones(len(clusters), dtype=np.int)
+
+    # browse all unique cluster identifiers 
+    for newClusterID in range(len(uniqueClusterIDs)):
+        clusterID = uniqueClusterIDs[newClusterID]
+        # selection of sample indices associated with the old clusterID
+        Sindex=[i for i in range(len(clusters)) if clusters[i] == clusterID]
+        # replacement by the new
+        clusters[Sindex] = newClusterID   
+
+        # filling ctrls by replacing clusterIDs with new ones
+        if (clusterID in trgt2Ctrls):
+            emptylist = []
+            for i in trgt2Ctrls[clusterID]:
+                if (i in uniqueClusterIDs):
+                    emptylist.append(np.where(uniqueClusterIDs==i)[0][0])
+            emptylist = ",".join(map(str,emptylist)) 
+            for index in Sindex:
+                ctrls[index] = emptylist
+
+        # checking the validity of a cluster in case the cluster has no control and 
+        # its patients number is insufficient.
+        else:
+            if (countsSampsinCluster[newClusterID]<minSampsNbInCluster):
+                logger.warning("Cluster n°%s has an insufficient samples number = %s ",newClusterID, countsSampsinCluster[newClusterID])
+                validityStatus[Sindex]=0
+
+    return(clusters, ctrls, validityStatus)
 
 ###############################################################################
 # DendogramsPrivate: [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
