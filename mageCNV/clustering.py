@@ -248,7 +248,6 @@ def clustersBuilds(FPMarray, SOIs, minDist, maxDist, minSampsNbInCluster, figure
         # dist>0.25 we stop the loop of linksMatrix
         else:
             break
-    logger.infos("current",max(clusters))
     ###################################
     # part 3: Standardisation clusterID and create informative lists for populate final np.array 
     ###################################
@@ -484,48 +483,60 @@ def genderAttributionPrivate(kmeans, countsNorm, gonoIndexDict, genderInfoList):
     return(condition1L)
 
 ###############################################################################
-# clusterDendogramsPrivate: [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
+# DendogramsPrivate: [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
 # visualisation of clustering results
 # Args:
-# -resClustering: a list of list with dim: NbSOIs*4 columns 
-# ["sampleName"[str], "ClusterID"[int], "controlsClustID"[int], "ValiditySamps"[int]]
-# -maxClust: a int variable for maximum clusterNb obtained after clustering
-# -controlsDict: a dictionary key:controlsCluster[int], value:list of clusterID to Control[int]  
-# -sampleLinks: a 2D numpy array of floats, correspond to the linkage matrix, dim= NbSOIs-1*4. 
+# -clusters: an int numpy array containing standardized clusterID for each sample
+# -ctrls: a str list containing controls clusterID delimited by "," for each sample 
+# -linksMatrix: is a float numpy.ndarray of the hierarchical clustering encoded 
+#    as a linkage matrix, dim = (NbSOIs-1)*[clusterID1,clusterID2,distValue,NbSOIsInClust]
+# -minDist: is a float variable, sets a minimum threshold 1-|r| for the formation of the first clusters
 # -outputFile : full path to save the png 
-# Return a png to the user-defined output folder
+# Returns a png file in the output folder
+def DendogramsPrivate(clusters, ctrls, linksMatrix, minDist, outputFile):
+    # maxClust: int variable contains total clusters number
+    maxClust = max(clusters)
 
-def clusterDendogramsPrivate(resClustering, controlsDict,maxClust, sampleLinks, outputFile):
-    #initialization of a list of strings to complete
+    # To Fill
+    # labelArray: a str 2D numpy array, dim=NbSOIs*NbClusters 
+    # contains the status for each cluster as a character:
+    # " ": sample does not contribute to the cluster
+    # "x": sample contributes to the cluster
+    # "-": sample controls the cluster
+    labelArray = np.empty([len(clusters), maxClust+1], dtype="U1")
+    labelArray.fill(" ") 
+    # labelsGp: a str list containing the labels for each sample
+    # list to be passed when plotting the dendogram
     labelsGp=[]
 
-    # Fill labelsgp at each new sample/row in resClustering
-    # Cluster numbers link with the marking index in the label 
-    # 2 marking type: "*"= target cluster ,"-"= control cluster present in controlsDict
-    for sIndex in range(len(resClustering)):
-        # an empty str list of length of the maximum cluster found
-        tmpLabels=["   "]*maxClust
-        row=resClustering[sIndex] 
-        # select group-related position in tmplabels
-        #-1 because the group numbering starts at 1 and not 0
-        indexCluster=row[1]-1
-        # add symbol to say that this sample is a target 
-        tmpLabels[indexCluster]=" * "
-        # case the sample is part of a control group
-        # add symbol to the index of groups to be controlled in tmpLabels
-        if row[1] in controlsDict:
-            for gpToCTRL in controlsDict[row[1]]:
-                # symbol add to tmplabels for the current group index.
-                tmpLabels[gpToCTRL-1]=" - "
-        labelsGp.append("".join(tmpLabels))
+    # browse the different cluster identifiers
+    for clusterID in range(maxClust+1):
+        # retrieving the SOIs involved for the clusterID
+        SOIsindex=[i for i in range(len(clusters)) if clusters[i]==clusterID]
+        # associate the label for the samples contributing to the clusterID for the 
+        # associated cluster index position
+        labelArray[SOIsindex,clusterID]="x"    
+
+        # associate the label for the samples controlling the current clusterID  
+        if (ctrls[SOIsindex[0]] !=""):
+            listctrl = ctrls[SOIsindex[0]].split(",")
+            for ctrl in listctrl:
+                CTRLindex = [j for j in range(len(clusters)) if clusters[j]==np.int(ctrl)]
+                labelArray[CTRLindex,clusterID]="-"
+
+    # browse the np array of labels to build the str list
+    for i in labelArray:
+        # separtion of labels for readability
+        strToBind="  ".join(i)
+        labelsGp.append(strToBind)
 
     # dendogram plot
-    matplotlib.pyplot.figure(figsize=(5,15),facecolor="white")
-    matplotlib.pyplot.title("Complete linkage hierarchical clustering")
-    dn1 = scipy.cluster.hierarchy.dendrogram(sampleLinks,orientation='left',
-                                             labels=labelsGp, 
-                                             color_threshold=0.05)
-    
+    matplotlib.pyplot.figure(figsize=(5,20),facecolor="white")
+    matplotlib.pyplot.title("Average linkage hierarchical clustering")
+    dn1 = scipy.cluster.hierarchy.dendrogram(linksMatrix,orientation='left',
+                                            labels=labelsGp, 
+                                            color_threshold=minDist)
+
     matplotlib.pyplot.ylabel("Samples of interest")
-    matplotlib.pyplot.xlabel("Absolute Pearson distance (1-r)")
+    matplotlib.pyplot.xlabel("Absolute Pearson distance (1-|r|)")
     matplotlib.pyplot.savefig(outputFile, dpi=520, format="png", bbox_inches='tight')
