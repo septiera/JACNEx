@@ -482,6 +482,37 @@ def genderAttributionPrivate(kmeans, countsNorm, gonoIndexDict, genderInfoList):
         sys.exit(1)
     return(condition1L)
 
+################################
+# getParentsClustsInfosPrivate [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
+# Extract parents informations : SOIs indexes list and sample number 
+# Arg:
+#  - parentClustsIDs: a list containing the two cluster identifiers to be combined
+#  - links2Clusters: cluster formed thanks to the linksMatrix parsing associated with SOIs.
+#    key = current clusterID, value = list of SOIs indexes 
+#  - NbLinks: an int variable, links number in linksMatrix (row count)
+# Returns a tuple (SOIsIndexInParents, nbSOIsInParents), each is created here:
+#  - SOIsIndexInParents: an int list of parent clusters SOIs indexes 
+#  - nbSOIsInParents: an int list of samples number in each parent clusters
+
+def getParentsClustsInfosPrivate(parentClustsIDs, links2Clusters, NbLinks):
+    SOIsIndexInParents = []
+    nbSOIsInParents = []
+
+    for parentID in parentClustsIDs:
+        #####
+        # where it's a sample identifier not a cluster
+        # the clusterID corresponds to the SOI index
+        if (parentID<=NbLinks):
+            SOIsIndexInParents.append(parentID)
+            nbSOIsInParents.append(1)
+        #####
+        # where it's a cluster identifier
+        # we get index lists
+        else:
+            SOIsIndexInParents = SOIsIndexInParents+links2Clusters[parentID]
+            nbSOIsInParents.append(len(links2Clusters[parentID])) 
+    return(SOIsIndexInParents, nbSOIsInParents)
+
 ###############################################################################
 # DendogramsPrivate: [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
 # visualisation of clustering results
