@@ -74,11 +74,7 @@ def getGenderInfos(exons):
     return(gonoIndexDict, genderInfoList)
 
 ###############################################################################
-############################ PRIVATE FUNCTIONS ################################
-###############################################################################
-
-###############################################################################
-# genderAttributionPrivate: [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
+# genderAttribution:
 # Gender matching to groups predicted by Kmeans 
 # calcul of normalized count ratios per gonosomes and kmeans group
 # ratio = median (normalized count sums list for a gonosome and for all samples in a kmean group)
@@ -90,7 +86,7 @@ def getGenderInfos(exons):
 # Returns a list of genderID where the indexes match the groupID formed by the Kmeans.
 # e.g ["F","M"], KmeansGp 0 = Female and KmeansGp 1 = Male
 
-def genderAttributionPrivate(kmeans, countsNorm, gonoIndex, genderInfo):
+def genderAttribution(kmeans, countsNorm, gonoIndex, genderInfo):
     # first browse on gonosome names (limited to 2)
     for gonoID in gonoIndex.keys():
         # previousCount: a float variable, store the count ratio of the first Kmeans group
@@ -166,3 +162,6 @@ def genderAttributionPrivate(kmeans, countsNorm, gonoIndex, genderInfo):
         raise Exception
     return(sexePredSpeGono)
 
+###############################################################################
+############################ PRIVATE FUNCTIONS ################################
+###############################################################################
