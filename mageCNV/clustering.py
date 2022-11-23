@@ -1,16 +1,12 @@
 import sys
 import os
 import numpy as np
-import time
 import logging
 import matplotlib.pyplot
 
 # different scipy submodules are used for the application of hierachical clustering 
 import scipy.cluster.hierarchy 
 import scipy.spatial.distance  
-
-# import sklearn submodule for  Kmeans calculation
-import sklearn.cluster
 
 # prevent matplotlib DEBUG messages filling the logs when we are in DEBUG loglevel
 matplotlib_logger = logging.getLogger('matplotlib')
@@ -43,7 +39,6 @@ logger = logging.getLogger(os.path.basename(sys.argv[0]))
 # Returns a 2D numpy array, dim= NbSOIs*4 columns[SOIs[str],clusterID[int],controlledBy[str],validitySamps[int]] 
 
 def clustersBuilds(FPMarray, SOIs, minDist, maxDist, minSamps, figure, outputFile):
-    startTime = time.time()
     ###################################
     # part 1: Calcul distance between samples and apply hierachical clustering
     ###################################
@@ -191,93 +186,32 @@ def clustersBuilds(FPMarray, SOIs, minDist, maxDist, minSamps, figure, outputFil
     return(np.column_stack((SOIs, clusters, ctrls, validityStatus)))
 
 
-
-
 ###############################################################################
-# gonosomeProcessing: 
-# can distinguish gonosomes during clustering
-# identifies organism gender from exons
-# applies a no-priori approach (Kmeans) to separate samples into different group (only 2),
-# based on normalised fragment counts of gonosomes 
-# assigns gender to each predicted group
-# performs two independent clustering
+# printClustersFile:
+# print the different types of outputs expected
 # Args:
-#   -countsNorm: a float 2D numpy array of normalised counts, dim=NbExons*NbSOIs 
-#   -SOIs: a str list of sample identifier
-#   -gonoIndexDict: a dictionnary for correspondance between gonosomesID(key:str) and
-#          exons indexes list (value:int)
-#   -genderInfoList: a string list of lists, dim=NbGender*2columns [genderID[str], targetGonosomesID[str]]
-#   -minSamples: an int variable for restrict the minimum number of samples for cluster formation 
-#  - minDist: is a float variable (1-|r|), it's the minimal distance tolerated to start building clusters 
-#  - maxDist: is a float variable, it's the maximal distance to concedered 
-#   -outFolder: a str variable indicating the path to the folder containing the results
-#   -figure: a boolean variable to indicate that a graphical output is requested by the user
-
-# Returns a list of lists, dim=nbSOIs*5columns
-# [sampleID[str], clusterID[int], controlledBy[int list], validitySamps[int], genderPreds[str]]
-
-def gonosomeProcessing(countsNorm, SOIs, gonoIndexDict, genderInfoList, minSamples, minDist, maxDist, outFolder, figure):
-    # keeps counts of exons overlapping gonosomes
-    gonoIndex = np.unique([item for sublist in list(gonoIndexDict.values()) for item in sublist]) 
-    gonosomesFPM = np.take(countsNorm,gonoIndex,axis=0)
-    
-    ######################
-    # Kmeans with k=2 (always)
-    # transposition of gonosomesFPM to consider the samples
-    kmeans = sklearn.cluster.KMeans(n_clusters=len(genderInfoList), random_state=0).fit(gonosomesFPM.T)
-    #####################
-    # coverage ratio calcul for the different Kmeans groups and on the different gonosomes 
-    # can then associate group Kmeans with a gender
-    # get a str list where indices are important because identical to groupKmeansID, contains genderID
-    gender2KmeansGp=genderAttributionPrivate(kmeans, countsNorm,gonoIndexDict, genderInfoList)
-
-    ####################
-    # Independent clustering for the two Kmeans groups
-    # returns for each group a list of lists, dim=NbSOIsInKmeansGp*4columns 
-    # [sampleID[str], clusterID[int], controlledBy[int list], validitySamps[int]]
-    sampsIndexG1 = np.where(kmeans.labels_==0)[0]
-    gonosomesFPMG1 = gonosomesFPM[:,sampsIndexG1]
-    targetSOIsG1 = [SOIs[i] for i in sampsIndexG1]
-    outputFile = os.path.join(outFolder,"Dendogram_"+str(len(SOIs))+"Samps_gonosomes_"+gender2KmeansGp[0]+".png")
-    resGono1 = clustersBuilds(gonosomesFPMG1, targetSOIsG1, minDist, maxDist, minSamples, figure, outputFile)
-
-    sampsIndexG2 = np.where(kmeans.labels_==1)[0]
-    gonosomesFPMG2 = gonosomesFPM[:,sampsIndexG2]
-    targetSOIsG2 = [SOIs[i] for i in sampsIndexG2]
-    outputFile = os.path.join(outFolder,"Dendogram_"+str(len(SOIs))+"Samps_gonosomes_"+gender2KmeansGp[1]+".png")
-    resGono2 = clustersBuilds(gonosomesFPMG2, targetSOIsG2, minDist, maxDist, minSamples, figure, outputFile)
-
-    ####################
-    # Merge Results:
-    # creation of the output list, dim=NbSOIs*5columns
-    # browse the result tables independently but regulate according to the SOIs indices.
-    # the clusterID for the second group is changed to not conflict with the clusterID of the first group,
-    # add maxClusterIDGp1 to the identifier
-    GonoClusters=[[]*5]*len(SOIs)
-    maxClust=[]
-    for row in range(len(resGono1)):
-        sampID = resGono1[row][0]
-        sampIndex = SOIs.index(sampID)
-        rowToPrint = resGono1[row]
-        rowToPrint.append(gender2KmeansGp[0])
-        GonoClusters[sampIndex ] = rowToPrint
-        cluster = resGono1[row][1]
-        if (cluster in maxClust):
-            continue
-        else:
-            maxClust.append(cluster)
-
-    for row in range(len(resGono2)):
-        sampID = resGono2[row][0]
-        sampIndex = SOIs.index(sampID)
-        rowToPrint = resGono2[row]
-        rowToPrint[1] = max(maxClust)+rowToPrint[1]
-        if (rowToPrint[2]!=""):
-            for i in range(len(rowToPrint[2])):
-                rowToPrint[2][i] = max(maxClust)+rowToPrint[2][i]
-        rowToPrint.append(gender2KmeansGp[1])
-        GonoClusters[sampIndex ] = rowToPrint
-    return (GonoClusters)
+#   - resClustering: is a list of list, dim=NbSOIs*4columns 
+#       [sampleID[str], clusterID[int], controlledBy[int list], validitySamps[int]
+#       can be derived from clustering on all chromosomes or on the autosomes
+#   - outFolder: is a str variable, it's the results folder path  
+#   - resClusteringGonosomes: is a list of list, dim=NbSOIs*5columns
+#       [sampleID[str], clusterID[int], controlledBy[int list], validitySamps[int], genderPreds[str]]
+#       this argument is optional
+# Print this data to stdout as a 'clustersFile'
+def printClustersAGFile(resClustering, resClusteringGonosomes, outFolder):
+    # 8 columns expected
+    clusterFile=open(os.path.join(outFolder,"ResClustering_AutosomesAndGonosomes_"+str(len(resClustering))+"samples.tsv"),'w')
+    sys.stdout = clusterFile
+    toPrint = "samplesID\tclusterID_A\tcontrolledBy_A\tvaliditySamps_A\tgenderPreds\tclusterID_G\tcontrolledBy_G\tvaliditySamps_G"
+    print(toPrint)
+    for i in range(len(resClustering)):
+        # SOIsID + clusterInfo for autosomes and gonosomes
+        toPrint = resClustering[i][0]+"\t"+resClustering[i][1]+"\t"+resClustering[i][2]+\
+            "\t"+resClustering[i][3]+"\t"+resClusteringGonosomes[i][4]+"\t"+resClusteringGonosomes[i][1]+\
+                "\t"+resClusteringGonosomes[i][2]+"\t"+resClusteringGonosomes[i][3]
+        print(toPrint)
+    sys.stdout = sys.__stdout__
+    clusterFile.close()
 
 ###############################################################################
 # printClustersFile:
@@ -291,33 +225,18 @@ def gonosomeProcessing(countsNorm, SOIs, gonoIndexDict, genderInfoList, minSampl
 #       [sampleID[str], clusterID[int], controlledBy[int list], validitySamps[int], genderPreds[str]]
 #       this argument is optional
 # Print this data to stdout as a 'clustersFile'
-def printClustersFile(resClustering, outFolder, resClusteringGonosomes=False):
-    # 8 columns expected
-    if resClusteringGonosomes:
-        clusterFile=open(os.path.join(outFolder,"ResClustering_AutosomesAndGonosomes_"+str(len(resClustering))+"samples.tsv"),'w')
-        sys.stdout = clusterFile
-        toPrint = "samplesID\tclusterID_A\tcontrolledBy_A\tvaliditySamps_A\tgenderPreds\tclusterID_G\tcontrolledBy_G\tvaliditySamps_G"
-        print(toPrint)
-        for i in range(len(resClustering)):
-            # SOIsID + clusterInfo for autosomes and gonosomes
-            toPrint = resClustering[i][0]+"\t"+str(resClustering[i][1])+"\t"+",".join(map(str,resClustering[i][2]))+\
-                "\t"+str(resClustering[i][3])+"\t"+resClusteringGonosomes[i][4]+"\t"+str(resClusteringGonosomes[i][1])+\
-                    "\t"+",".join(map(str,resClusteringGonosomes[i][2]))+"\t"+str(resClusteringGonosomes[i][3])
-            print(toPrint)
-        sys.stdout = sys.__stdout__
-        clusterFile.close()
+def printClustersFile(resClustering, outFolder):
     # 4 columns expected
-    else:
-        clusterFile=open(os.path.join(outFolder,"ResClustering_"+str(len(resClustering))+"samples.tsv"),'w')
-        sys.stdout = clusterFile
-        toPrint = "samplesID\tclusterID\tcontrolledBy\tvaliditySamps"
+    clusterFile=open(os.path.join(outFolder,"ResClustering_"+str(len(resClustering))+"samples.tsv"),'w')
+    sys.stdout = clusterFile
+    toPrint = "samplesID\tclusterID\tcontrolledBy\tvaliditySamps"
+    print(toPrint)
+    for i in range(len(resClustering)):
+        # SOIsID + clusterInfo 
+        toPrint = resClustering[i][0]+"\t"+resClustering[i][1]+"\t"+resClustering[i][2]+"\t"+resClustering[i][3]
         print(toPrint)
-        for i in range(len(resClustering)):
-            # SOIsID + clusterInfo 
-            toPrint = resClustering[i][0]+"\t"+str(resClustering[i][1])+"\t"+",".join(map(str,resClustering[i][2]))+"\t"+str(resClustering[i][3])
-            print(toPrint)
-        sys.stdout = sys.__stdout__
-        clusterFile.close()
+    sys.stdout = sys.__stdout__
+    clusterFile.close()
 
 ###############################################################################
 ############################ PRIVATE FUNCTIONS ################################
