@@ -283,16 +283,16 @@ def gonosomeProcessing(countsNorm, SOIs, gonoIndexDict, genderInfoList, minSampl
 # printClustersFile:
 # print the different types of outputs expected
 # Args:
-#   - 'resClustering' is a list of list, dim=NbSOIs*4columns 
+#   - resClustering: is a list of list, dim=NbSOIs*4columns 
 #       [sampleID[str], clusterID[int], controlledBy[int list], validitySamps[int]
 #       can be derived from clustering on all chromosomes or on the autosomes
-#   - 'outFolder' is a str variable, it's the results folder path  
-#   - 'resClusteringGonosomes' is a list of list, dim=NbSOIs*5columns
+#   - outFolder: is a str variable, it's the results folder path  
+#   - resClusteringGonosomes: is a list of list, dim=NbSOIs*5columns
 #       [sampleID[str], clusterID[int], controlledBy[int list], validitySamps[int], genderPreds[str]]
 #       this argument is optional
-#
 # Print this data to stdout as a 'clustersFile'
 def printClustersFile(resClustering, outFolder, resClusteringGonosomes=False):
+    # 8 columns expected
     if resClusteringGonosomes:
         clusterFile=open(os.path.join(outFolder,"ResClustering_AutosomesAndGonosomes_"+str(len(resClustering))+"samples.tsv"),'w')
         sys.stdout = clusterFile
@@ -306,6 +306,7 @@ def printClustersFile(resClustering, outFolder, resClusteringGonosomes=False):
             print(toPrint)
         sys.stdout = sys.__stdout__
         clusterFile.close()
+    # 4 columns expected
     else:
         clusterFile=open(os.path.join(outFolder,"ResClustering_"+str(len(resClustering))+"samples.tsv"),'w')
         sys.stdout = clusterFile
