@@ -322,36 +322,67 @@ def printClustersFile(resClustering, outFolder, resClusteringGonosomes=False):
 ############################ PRIVATE FUNCTIONS ################################
 ###############################################################################
 
+###############################################################################
+# getParentsClustsInfosPrivate [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
+# Extract parents informations : SOIs indexes list and sample number 
+# Arg:
+#  - parentClustsIDs: a list containing the two cluster identifiers to be combined
+#  - links2Clusters: cluster formed thanks to the linksMatrix parsing associated with SOIs.
+#    key = current clusterID, value = list of SOIs indexes 
+#  - NbLinks: an int variable, links number in linksMatrix (row count)
+# Returns a tuple (SOIsIndexInParents, nbSOIsInParents), each is created here:
+#  - SOIsIndexInParents: an int list of parent clusters SOIs indexes 
+#  - nbSOIsInParents: an int list of samples number in each parent clusters
+
+def getParentsClustsInfosPrivate(parentClustsIDs, links2Clusters, NbLinks):
+    SOIsIndexInParents = []
+    nbSOIsInParents = []
+
+    for parentID in parentClustsIDs:
+        #####
+        # where it's a sample identifier not a cluster
+        # the clusterID corresponds to the SOI index
+        if (parentID<=NbLinks):
+            SOIsIndexInParents.append(parentID)
+            nbSOIsInParents.append(1)
+        #####
+        # where it's a cluster identifier
+        # we get indexes lists
+        else:
+            SOIsIndexInParents = SOIsIndexInParents+links2Clusters[parentID]
+            nbSOIsInParents.append(len(links2Clusters[parentID])) 
+    return(SOIsIndexInParents, nbSOIsInParents)
 
 ###############################################################################
 # STDZAndCheckResPrivate: [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
-# standardization: replacement of the clusterIDs deduced from linksMatrix by identifiers ranging from 0
+# Standardization: replacement of the clusterIDs deduced from linksMatrix by identifiers ranging from 0
 # to the total number of clusters.
-# the new identifiers are assigned according to the correlation level of the clusters 
-# (so the samples in first cluster have strong correlations)
-# check: the clusters formed have sufficient sizes. 
-# If not returns a wanring message and changes the validity status of the samples contributing to the cluster. 
+# the new identifiers are assigned according to the decreasing correlation level.
+# Checking: the samples are in a cluster with a sufficient size. 
+# if not returns a warning message and changes the validity status. 
 # Necessary for the calling step.
 # Args:
 #  - clusters: an int numpy array containing clusterID from linksMatrix for each sample
 #  - trgt2Ctrls: a dictionary for target cluster and controls clusters correspondance,
 #    key = target clusterID, value = list of controls clusterID 
-#  - minSampsNbInCluster: an int variable, defining the minimal sample number to validate a cluster
+#  - minSamps: an int variable, defining the minimal sample number to validate a cluster
 # Returns a tuple (clusters, ctrls, validityStatus), only ctrls and validityStatus are created here:
 #   - clusters: an int numpy array containing standardized clusterID for each sample
 #   - ctrls: a str list containing controls clusterID delimited by "," for each sample 
 #   - validityStatus: a boolean numpy array containing the validity status for each sample (1: valid, 0: invalid)
 
-def STDZAndCheckResPrivate(clusters, trgt2Ctrls, minSampsNbInCluster):
+def STDZAndCheckResPrivate(clusters, trgt2Ctrls, minSamps):
     # extraction of two int numpy array
     # uniqueClusterIDs: contains all clusterIDs
     # countsSampsinCluster: contains all sample counts per clusterIDs 
     uniqueClusterIDs, countsSampsinCluster = np.unique(clusters, return_counts=True)
 
+    ##########
     # To Fill
     ctrls = [""]*len(clusters)
     validityStatus = np.ones(len(clusters), dtype=np.int)
 
+    ##########
     # browse all unique cluster identifiers 
     for newClusterID in range(len(uniqueClusterIDs)):
         clusterID = uniqueClusterIDs[newClusterID]
@@ -370,10 +401,14 @@ def STDZAndCheckResPrivate(clusters, trgt2Ctrls, minSampsNbInCluster):
             for index in Sindex:
                 ctrls[index] = emptylist
 
-        # checking the validity of a cluster in case the cluster has no control and 
-        # its patients number is insufficient.
+        # checking the validity: 
         else:
-            if (countsSampsinCluster[newClusterID]<minSampsNbInCluster):
+            #the sample(s) were not clustered
+            if clusterID==newClusterID:
+                logger.warning("%s sample(s) were not clustered (maxDist to be reviewed).",len(Sindex))
+                validityStatus[Sindex]=0
+            # cluster samples number is not sufficient to establish a correct copies numbers call
+            elif (countsSampsinCluster[newClusterID]<minSamps):
                 logger.warning("Cluster n°%s has an insufficient samples number = %s ",newClusterID, countsSampsinCluster[newClusterID])
                 validityStatus[Sindex]=0
 
