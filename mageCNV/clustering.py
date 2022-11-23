@@ -1,6 +1,7 @@
 import sys
 import os
 import numpy as np
+import time
 import logging
 import matplotlib.pyplot
 
@@ -15,16 +16,181 @@ import sklearn.cluster
 matplotlib_logger = logging.getLogger('matplotlib')
 matplotlib_logger.setLevel(logging.WARNING)
 
-# prevent numba DEBUG messages filling the logs when we are in DEBUG loglevel
-numba_logger = logging.getLogger('numba')
-numba_logger.setLevel(logging.WARNING)
-
 # set up logger: we want scriptName rather than 'root'
 logger = logging.getLogger(os.path.basename(sys.argv[0]))
 
 ###############################################################################
 ############################ PUBLIC FUNCTIONS #################################
 ###############################################################################
+
+#############################
+# clustersBuilds
+# Groups the samples according to their distance obtained with the hierarchical clustering.
+# Several conditions for forming clusters:
+# -exceeding the minimum distance threshold ('minDist')
+# -below the allowed distance ('maxDist')
+# -number of samples greater than minSamps
+# Decremental correlation method, if a single sample is grouped with a control cluster it's possible to 
+# form a new cluster.
+# Args:
+#  - FPMarray: is a float numpy array, dim = NbExons x NbSOIs 
+#  - SOIs: is the str sample of interest name list 
+#  - minDist: is a float variable (1-|r|), it's the minimal distance tolerated to start building clusters 
+#  - maxDist: is a float variable, it's the maximal distance to concidered 
+#  - minSamps: is an int variable, defining the minimal sample number to validate a cluster
+#  - figure: is a boolean: "True" or "False" to generate a figure
+#  - outputFile: is a full path (+ file name) for saving a dendogram
+# Returns a 2D numpy array, dim= NbSOIs*4 columns[SOIs[str],clusterID[int],controlledBy[str],validitySamps[int]] 
+
+def clustersBuilds(FPMarray, SOIs, minDist, maxDist, minSamps, figure, outputFile):
+    startTime = time.time()
+    ###################################
+    # part 1: Calcul distance between samples and apply hierachical clustering
+    ###################################
+    # Euclidean distance (classical method) not used
+    # Absolute correlation distance is unlikely to be a sensible distance when 
+    # clustering samples. ( 1-|r| where r is the Pearson correlation)
+    correlation = np.round(np.corrcoef(FPMarray,rowvar=False),2)
+    dissimilarity = 1 - abs(correlation) 
+
+    # average linkage the best choice when there are different-sized groups
+    # "squareform" transform squared distance matrix in a triangular matrix
+    # "optimal_ordering": linkage matrix will be reordered so that the distance between
+    # successive leaves is minimal.
+    # linksMatrix: is a float numpy.ndarray of the hierarchical clustering encoded 
+    # as a linkage matrix, dim = (NbSOIs-1)*[clusterID1,clusterID2,distValue,NbSOIsInClust]
+    linksMatrix = scipy.cluster.hierarchy.linkage(scipy.spatial.distance.squareform(dissimilarity), 'average',optimal_ordering=True)
+
+    ###################################
+    # part 2: linksMatrix analysis, clusters formation and identification of controls/targets clusters
+    ###################################
+    ############
+    # To Fill
+    # clusters: an int 1D numpy array, clusterID associated to SOIsIndex
+    clusters=np.zeros(FPMarray.shape[1], dtype=np.int)
+    # trgt2Ctrls: target and controls clusters correspondance,
+    # key = target clusterID [int], value = list of controls clusterID [int list]
+    trgt2Ctrls={}  
+    # links2Clusters: cluster formed thanks to the linksMatrix parsing associated with SOIs.
+    # key = current clusterID [int], value = list of SOIs indexes [int list] 
+    links2Clusters={}
+
+    ############
+    # To increment
+    # identifies clusters
+    # e.g first formed samples cluster => NbRow from linksMatrix +1 (e.q NbSOIs) 
+    clusterID=len(linksMatrix)
+
+    ##########################################
+    # Main loop: populate clusters, trgt2Ctrls and links2Cluster from linkage matrix
+    for clusterLine in linksMatrix:
+        clusterID += 1    
+
+        # keep parent clusters ID and convert it to int for extract easily SOIs indexes
+        parentClustsIDs = [np.int(clusterLine[0]),np.int(clusterLine[1])]
+
+        distValue = clusterLine[2]
+        NbSOIsInClust = clusterLine[3]
+
+        # SOIsIndexInParents: an int list of parent clusters SOIs indexes 
+        # nbSOIsInParents: an int list of samples number in each parent clusters
+        SOIsIndexInParents,nbSOIsInParents = getParentsClustsInfosPrivate(parentClustsIDs, links2Clusters, len(linksMatrix))
+
+        ################ 
+        # CONTROL that the sample number calculation is correct
+        # TO REMOVE 
+        if (len(SOIsIndexInParents)!=NbSOIsInClust):
+            break
+
+        ################
+        # populate links2Clusters 
+        links2Clusters[clusterID] = SOIsIndexInParents
+        
+        ##########################
+        # CONDITIONS FOR CLUSTER CREATION
+        # Populate np.array clusters and dictionnary trgt2Ctrls 
+        ##########
+        # condition 1: group formation from a minimum to a maximum correlation distance
+        # replacement/overwriting of old clusterIDs with the new one for SOIs indexes in 
+        # np.array "clusters"
+        if (distValue<minDist):
+            clusters[SOIsIndexInParents] = clusterID
+        
+        # distance between minDist and maxDist 
+        # cluster selection is possible
+        elif ((distValue>=minDist) and (distValue<=maxDist)):
+
+            ##########
+            # condition 2: estimate the samples number to create a cluster 
+            # insufficient samples, we continue to replace the old ClusterId with the new one
+            if (len(SOIsIndexInParents)<minSamps):
+                clusters[SOIsIndexInParents] = clusterID
+
+            # sufficient samples number
+            else:
+                ###############
+                # Identification of the different cases 
+                # Knowing that we are dealing with two parent clusters 
+                
+                # Case 1: both parent clusters have sufficient numbers to be controls
+                # creation of a new target cluster with the current clusterID (trgt2Ctrls key)
+                # the controls are the parents clusterID and their previous control clusterID (trgt2Ctrls list value)
+                if ((nbSOIsInParents[0]>=minSamps) and (nbSOIsInParents[1]>=minSamps)):
+                    trgt2Ctrls[clusterID] = parentClustsIDs
+                    for parentID in parentClustsIDs:   
+                        if parentID in trgt2Ctrls:
+                                trgt2Ctrls[clusterID] = trgt2Ctrls[clusterID]+trgt2Ctrls[parentID]
+                
+                # Case 2: one parent has a sufficient number of samples not the second parent 
+                # creation of a new target cluster with the current clusterID (trgt2Ctrls key)
+                # controls list (trgt2Ctrls list value): the control parent clusterID and its own controls
+                # overwrite the old clusterID for the SOIs indexes from the none control parent by the new
+                # clusterID in np.array "clusters"
+                elif max(SOIsIndexInParents)>20:
+                    # the parent control index 
+                    # index corresponding to nbSOIsInParents and parentClustsIDs (e.g list: [parent1, parent2])
+                    indexCtrlParent = np.argmax(nbSOIsInParents)
+                    # the parent index with insufficient samples number
+                    indexNewParent = np.argmin(nbSOIsInParents)
+
+                    # populate trgt2Ctrl with the current clusterID (trgt2Ctrls key)
+                    # set controls clusterId can be retrieved from the control parent (trgt2Ctrls list value)
+                    if (parentClustsIDs[indexCtrlParent] in trgt2Ctrls): # parent control with previous controls
+                        trgt2Ctrls[clusterID] = trgt2Ctrls[parentClustsIDs[indexCtrlParent]]
+                        trgt2Ctrls[clusterID] = trgt2Ctrls[clusterID]+[parentClustsIDs[indexCtrlParent]]
+                    else:# parent control without previous controls
+                        trgt2Ctrls[clusterID] = [parentClustsIDs[indexCtrlParent]]
+
+                    # populate "clusters" for SOIs index from the parent with few sample
+                    if (indexNewParent==0):
+                        clusters[SOIsIndexInParents[:nbSOIsInParents[indexNewParent]]] = clusterID
+                    else:
+                        clusters[SOIsIndexInParents[-nbSOIsInParents[indexNewParent]:]] = clusterID
+                
+                # Case 3: each parent cluster has an insufficient number of samples.
+                # the current clusterID becomes a cluster control.
+                # replacement of all indexed SOIs with the current clusterID for the np.array "clusters"
+                else:
+                    clusters[SOIsIndexInParents] = clusterID     
+        
+        # dist>0.25 we stop the loop of linksMatrix
+        else:
+            break
+    ###################################
+    # part 3: Standardisation clusterID and create informative lists for populate final np.array 
+    ###################################
+    clusters, ctrls, validityStatus = STDZAndCheckResPrivate(clusters, trgt2Ctrls, minSamps)
+
+    ###################################
+    # part 4: Optionnal plot of a dendogram based on clustering results
+    ###################################
+    if figure:
+        DendogramsPrivate(clusters, ctrls, linksMatrix, minDist, outputFile)
+    
+    ##########
+    return(np.column_stack((SOIs, clusters, ctrls, validityStatus)))
+
+
 
 
 ###############################################################################
@@ -90,177 +256,7 @@ def getGenderInfos(exons):
         sys.exit(1) 
     return(gonoIndexDict, genderInfoList)
 
-#############################
-# clusterFromLinks
-# Groups the samples according to their distance obtained with the hierarchical clustering method Average.
-# Several conditions for forming clusters:
-# -exceeding the minimum distance threshold ('minDist')
-# -below the allowed distance ('maxDist')
-# -number of samples greater than minSampsNbInCluster
-# Decremental correlation method, if a single sample is grouped with a control cluster it is possible to 
-# form a new cluster.
-# Returns a negative validity status for clusters without control and without sufficient numbers.
 
-# Args:
-#  - FPMarray: is a float numpy array, dim = NbExons x NbSOIs 
-#  - SOIs: is the str sample of interest name list 
-#  - minDist: is a float variable (1-|r|), it's the minimal distance tolerated to start building clusters 
-#  - maxDist: is a float variable, it's the maximal distance to concedered 
-#  - minSampsInNbClust: is an int variable, defining the minimal sample number to validate a cluster
-#  - figure: is a boolean: True or false to generate a figure
-#  - outputFile: is a full path (+ file name) for saving a dendogram
-# 
-# Returns a 2D numpy array, dim= NbSOIs*3 columns: 
-# 1) SOIs [str], samples names
-# 2) clusterID [int], 
-# 3) controlledBy [str], 
-# 4) validitySamps [int], boolean 0: dubious sample and 1: valid sample
-
-def clustersBuilds(FPMarray, SOIs, minDist, maxDist, minSampsNbInCluster, figure, outputFile):
-    ###################################
-    # part 1: Calcul distance between samples and apply hierachical clustering
-    ###################################
-    # Euclidean distance (classical method) not used
-    # Absolute correlation distance is unlikely to be a sensible distance when 
-    # clustering samples. ( 1-|r| where r is the Pearson correlation)
-    correlation = np.round(np.corrcoef(FPMarray,rowvar=False),2)
-    dissimilarity = 1 - abs(correlation) 
-
-    # average linkage calcul
-    # XXXX WHY?
-    # squareform transform squared distance matrix in a triangular matrix
-    # optimal_ordering: linkage matrix will be reordered so that the distance between
-    # successive leaves is minimal.
-    linksMatrix = scipy.cluster.hierarchy.linkage(scipy.spatial.distance.squareform(dissimilarity), 'average',optimal_ordering=True)
-
-    ###################################
-    # part 2: linksMatrix analysis, cluster formation and identification of controls/targets clusters
-    ###################################
-    ############
-    # To Fill
-    # clusters: a 1D numpy array, clusterID associated to SOIsIndex
-    clusters=np.zeros(FPMarray.shape[1], dtype=np.int)
-    # trgt2Ctrls: target and controls clusters correspondance,
-    # key = target clusterID, value = list of controls clusterID 
-    trgt2Ctrls={}  
-    # links2Clusters: cluster formed thanks to the linksMatrix parsing associated with SOIs.
-    # key = current clusterID, value = list of SOIs indexes 
-    links2Clusters={}
-
-    ############
-    # To increment
-    # identifies clusters
-    # e.g first formed samples cluster in linksMatrix(NbSOIs-1) named 
-    clusterID=len(linksMatrix)
-
-    ##########################################
-    # Main loop: populate clusters, trgt2Ctrls and links2Cluster from linkage matrix
-    for clusterLine in linksMatrix:
-        clusterID += 1    
-
-        # keep parent clusters ID and convert it to int for extract easily SOIs indexes
-        parentClustsIDs = [np.int(clusterLine[0]),np.int(clusterLine[1])]
-
-        distValue = clusterLine[2]
-        NbSOIsInClust = clusterLine[3]
-
-        # SOIsIndexInParents: an int list of parent clusters SOIs indexes 
-        # nbSOIsInParents: an int list of samples number in each parent clusters
-        SOIsIndexInParents,nbSOIsInParents = getParentsClustsInfosPrivate(parentClustsIDs, links2Clusters, len(linksMatrix))
-
-        ################ 
-        # CONTROL that the sample number calculation is correct
-        # TO REMOVE 
-        if (len(SOIsIndexInParents)!=NbSOIsInClust):
-            break
-
-        ################
-        # populate links2Clusters 
-        links2Clusters[clusterID] = SOIsIndexInParents
-        
-        ##########################
-        # CONDITIONS FOR CLUSTER CREATION
-        # Populate np.array clusters and dictionnary trgt2Ctrls 
-        ##########
-        # condition 1: group formation from a minimum to a maximum correlation distance
-        # replacement/overwriting of old clusterIDs with the new one for SOIs indexes in 
-        # np.array "clusters"
-        if (distValue<minDist):
-            clusters[SOIsIndexInParents] = clusterID
-        
-        # distance between minDist and maxDist 
-        # cluster selection is possible
-        elif ((distValue>=minDist) and (distValue<=maxDist)):
-
-            ##########
-            # condition 2: estimate the samples number to create a cluster 
-            # insufficient samples, we continue to replace the old ClusterId with the new one
-            if (len(SOIsIndexInParents)<minSampsNbInCluster):
-                clusters[SOIsIndexInParents] = clusterID
-
-            # sufficient samples number
-            else:
-                ###############
-                # Identification of the different cases 
-                # Knowing that we are dealing with two parent clusters 
-                
-                # Case 1: both parent clusters have sufficient numbers to be controls
-                # creation of a new target cluster with the current clusterID (trgt2Ctrls key)
-                # the controls are the parents clusterID and their previous control clusterID (trgt2Ctrls list value)
-                if ((nbSOIsInParents[0]>=minSampsNbInCluster) and (nbSOIsInParents[1]>=minSampsNbInCluster)):
-                    trgt2Ctrls[clusterID] = parentClustsIDs
-                    for parentID in parentClustsIDs:   
-                        if parentID in trgt2Ctrls:
-                                trgt2Ctrls[clusterID] = trgt2Ctrls[clusterID]+trgt2Ctrls[parentID]
-                
-                # Case 2: one parent has a sufficient number of samples not the second parent 
-                # creation of a new target cluster with the current clusterID (trgt2Ctrls key)
-                # controls list (trgt2Ctrls list value): the control parent clusterID and its own controls
-                # overwrite the old clusterID for the SOIs indexes from the none control parent by the new
-                # clusterID in np.array "clusters"
-                elif max(SOIsIndexInParents)>20:
-                    # the parent control index 
-                    # index corresponding to nbSOIsInParents and parentClustsIDs (e.g list: [parent1, parent2])
-                    indexCtrlParent = np.argmax(nbSOIsInParents)
-                    # the parent index with insufficient samples number
-                    indexNewParent = np.argmin(nbSOIsInParents)
-
-                    # populate trgt2Ctrl with the current clusterID (trgt2Ctrls key)
-                    # set controls clusterId can be retrieved from the control parent (trgt2Ctrls list value)
-                    if (parentClustsIDs[indexCtrlParent] in trgt2Ctrls): # parent control with previous controls
-                        trgt2Ctrls[clusterID] = trgt2Ctrls[parentClustsIDs[indexCtrlParent]]
-                        trgt2Ctrls[clusterID] = trgt2Ctrls[clusterID]+[parentClustsIDs[indexCtrlParent]]
-                    else:# parent control without previous controls
-                        trgt2Ctrls[clusterID] = [parentClustsIDs[indexCtrlParent]]
-
-                    # populate "clusters" for SOIs index from the parent with few sample
-                    if (indexNewParent==0):
-                        clusters[SOIsIndexInParents[:nbSOIsInParents[indexNewParent]]] = clusterID
-                    else:
-                        clusters[SOIsIndexInParents[-nbSOIsInParents[indexNewParent]:]] = clusterID
-                
-                # Case 3: each parent cluster has an insufficient number of samples.
-                # the current clusterID becomes a cluster control.
-                # replacement of all indexed SOIs with the current clusterID for the np.array "clusters"
-                else:
-                    clusters[SOIsIndexInParents] = clusterID     
-        
-        # dist>0.25 we stop the loop of linksMatrix
-        else:
-            break
-    ###################################
-    # part 3: Standardisation clusterID and create informative lists for populate final np.array 
-    ###################################
-    clusters, ctrls, validityStatus = STDZAndCheckResPrivate(clusters, trgt2Ctrls, minSampsNbInCluster)
-
-    ###################################
-    # part 4: Optionnal plot of a dendogram based on clustering results
-    ###################################
-    if figure:
-        DendogramsPrivate(clusters, ctrls, linksMatrix, minDist, outputFile)
-    
-    ##########
-    return(np.column_stack((SOIs, clusters, ctrls, validityStatus)))
 
 ###############################################################################
 # gonosomeProcessing: 
