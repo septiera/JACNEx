@@ -62,23 +62,23 @@ Results are printed to stdout folder:
                           and does not have a sufficient number of individuals.
     5) "genderPreds": a string "M"=Male or "F"=Female deduced by kmeans,
 The columns 6, 7 and 8 are the same as 2, 3 and 4 but are specific to gonosomes.
-In case the user does not want to discriminate between genders, the output tsv will contain
+In case the user doesn't want to discriminate genders, the output tsv will contain
 the format of the first 4 columns for all chromosomes.
 - one or more png's illustrating the clustering performed by dendograms. [optionnal]
-    Legend : solid line = target clusters , thin line = control clusters
-    The clusters appear in decreasing order of distance (1-|r|).
+    Legend : solid line = control clusters , thin line = target clusters
+    The clusters appear in decreasing order of distance (1-|pearson correlation|).
 
 ARGUMENTS:
    --counts [str]: TSV file, first 4 columns hold the exon definitions, subsequent columns 
-                   hold the fragment counts.
+                   hold the fragment counts. File obtained from 1_countFrags.py.
    --out[str]: acces path to a pre-existing folder to save the output files
-   --minSamps [int]: samples minimum number for a cluster creation,
+   --minSamps [int]: samples minimum number for the cluster creation,
                   default : """+str(minSamps)+""".
    --minDist [float]: minimum distance (1-|pearson correlation|) threshold to start the 
                       cluster formation, default : """+str(minDist)+""".   
    --maxDist [float]: maximum distance (1-|pearson correlation|) threshold to stop the 
                       cluster formation, default : """+str(maxDist)+""".
-   --nogender[optionnal]: no autosomes and gonosomes discrimination for clustering. 
+   --nogender[optionnal]: no gender discrimination for clustering. 
    --figure[optionnal]: make dendogram(s) that will be present in the output in png format."""+"\n"
 
     try:
@@ -190,8 +190,8 @@ def main(argv):
     # Normalisation:
     ##################  
     # allocate a float numpy array countsNorm and populate it with normalised counts of countsArray
-    # same dimension for arrays in input/output: NbExons*NBSOIs
-    # Fragment Per Million normalisation
+    # same dimension for arrays in input/output: NbExons*NbSOIs
+    # Fragment Per Million normalisation:
     # NormCountOneExonForOneSample=(FragsOneExonOneSample*1x10^6)/(TotalFragsAllExonsOneSample)
     try :
         countsNorm = mageCNV.normalisation.FPMNormalisation(countsArray)
@@ -206,15 +206,16 @@ def main(argv):
     #####################################################
     # Clustering:
     ####################
-    # case where no discrimination between autosomes and gonosomes is made
-    # direct application of the clustering algorithm
+    # case where no discrimination between gender is made
+    # clustering algorithm direct application 
     if nogender:
         logger.info("### Sample clustering:")
         try: 
             outputFile=os.path.join(outFolder,"Dendogram_"+str(len(SOIs))+"Samps_FullChrom.png")
-            # clusters: an int numpy array containing standardized clusterID for each sample
-            # ctrls: a str list containing controls clusterID delimited by "," for each sample 
-            # validityStatus: a boolean numpy array containing the validity status for each sample (1: valid, 0: invalid)
+            # applying hierarchical clustering and obtaining 3 outputs:
+            # clusters: an int numpy array containing standardized clusterID for each SOIs
+            # ctrls: a str list containing controls clusterID delimited by "," for each SOIs
+            # validityStatus: a boolean numpy array containing the validity status for each SOIs(1: valid, 0: invalid)
             (clusters, ctrls, validityStatus) = mageCNV.clustering.clustersBuilds(countsNorm, minDist, maxDist, minSamps, figure, outputFile)
         except Exception: 
             logger.error("clusterBuilding failed")
@@ -237,6 +238,7 @@ def main(argv):
     # avoid grouping Male with Female which leads to dubious CNV calls 
     else:
         try: 
+            # parse exons to extract information related to the organisms studied and their gender
             # gonoIndex: is a dictionary where key=GonosomeID(e.g 'chrX')[str], 
             # value=list of gonosome exon index [int].
             # genderInfos: is a str list of lists, contains informations for the gender
@@ -251,7 +253,7 @@ def main(argv):
         startTime = thisTime
 
         # cutting normalized count data according to autosomal or gonosomal exons
-        # flat gonosome index list
+        # create flat gonosome index list
         gonoIndexFlat = np.unique([item for sublist in list(gonoIndex.values()) for item in sublist]) 
         autosomesFPM = np.delete(countsNorm,gonoIndexFlat,axis=0)
         gonosomesFPM = np.take(countsNorm,gonoIndexFlat,axis=0)
@@ -259,14 +261,13 @@ def main(argv):
         #####################################################
         # Get Autosomes Clusters
         ##################
-        # Application of hierarchical clustering on autosome count data to obtain :
         logger.info("### Autosomes, sample clustering:")
         try :
             outputFile = os.path.join(outFolder,"Dendogram_"+str(len(SOIs))+"Samps_autosomes.png")
-            # resClusteringAutosomes: a 2D numpy array with different columns typing, 
-            # extract clustering results based on normalised fragment count from exons overlapping autosomes
-            # dim= NbSOIs*4 columns: 
-            # 1) SOIs Names [str], 2)clusterID [int], 3)clusterIDToControl [str], 4) Sample validity for calling [int]
+            # applying hierarchical clustering and obtaining 3 outputs autosomes specific:
+            # clusters: an int numpy array containing standardized clusterID for each SOIs
+            # ctrls: a str list containing controls clusterID delimited by "," for each SOIs
+            # validityStatus: a boolean numpy array containing the validity status for each SOIs (1: valid, 0: invalid)
             (clusters, ctrls, validityStatus) = mageCNV.clustering.clustersBuilds(autosomesFPM, minDist, maxDist, minSamps, figure, outputFile)
         except Exception:
             logger.error("clusterBuilds for autosomes failed")
@@ -284,19 +285,21 @@ def main(argv):
         ##################
         # Performs an empirical method (kmeans) to dissociate male and female. 
         # Kmeans with k=2 (always)
-        # kmeans: an int 
+        # kmeans: a sklearn.cluster._kmeans.KMeans object where it is possible to extract 
+        # an int list (kmeans.labels_) indicating the groupID associated to each SOI.
         kmeans = sklearn.cluster.KMeans(n_clusters=len(genderInfo), random_state=0).fit(gonosomesFPM.T)
 
         #####################
-        # coverage ratio calcul for the different Kmeans groups and on the different gonosomes 
-        # can then associate group Kmeans with a gender
-        # gender2Kmeans: a str list of genderID (e.g ["M","F"]), the order correspond to KMeans groupID (gp1=M, gp2=F)
+        # calculation of a coverage rate for the different Kmeans groups and on 
+        # the different gonosomes to associate the Kmeans group with a gender
+        # gender2Kmeans: a str list of genderID (e.g ["M","F"]), the order 
+        # correspond to KMeans groupID (gp1=M, gp2=F)
         gender2Kmeans = mageCNV.genderDiscrimination.genderAttribution(kmeans, countsNorm,gonoIndex, genderInfo)
 
         ####################
         # Independent clustering for the two Kmeans groups
         ### To Fill
-        # clustersG: an int 1D numpy array, clusterID associated to SOIsIndex
+        # clustersG: an int 1D numpy array, clusterID associated for each SOIs
         clustersG = np.zeros(len(SOIs), dtype=np.int)
         # ctrlsG: a str list containing controls clusterID delimited by "," for each SOIs  
         ctrlsG = [""]*len(SOIs)
@@ -306,7 +309,7 @@ def main(argv):
         genderPred = [""]*len(SOIs)
 
         for genderGp in range(len(gender2Kmeans)):
-            sampsIndexGp=np.where(kmeans.labels_==genderGp)[0]
+            sampsIndexGp = np.where(kmeans.labels_==genderGp)[0]
             gonosomesFPMGp = gonosomesFPM[:,sampsIndexGp]
             try :
                 logger.info("### Clustering samples for gender %s",gender2Kmeans[genderGp])
