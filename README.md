@@ -6,7 +6,7 @@ For more information how obtaining the different files see https://github.com/nt
 
 ### EXAMPLE USAGE:
 
-* STEP 1 : Counting step  <br>
+## STEP 1 : Fragments counting <br>
 
 Given a BED of exons and one or more BAM files, count the number of sequenced fragments from each BAM that overlap each exon (+- padding).<br>
 Results are printed to stdout in TSV format: first 4 columns hold the exon definitions after padding and sorting, subsequent columns (one per BAM) hold the counts.<br>
@@ -20,26 +20,34 @@ BED="EnsemblCanonicalTranscripts.bed.gz"
 TMP="/mnt/RamDisk/"
 OUT="FragCount.tsv"
 ERR="step1.err"
-python STEP_1_CollectReadCounts_MAGE_CNV.py --bams-from $BAM --bed $BED --counts $COUNT --tmp $TMP --threads 20 --jobs 3 > $OUT 2> $ERR
+python 1_CountFrags.py --bams-from $BAM --bed $BED --counts $COUNT --tmp $TMP --threads 20 --jobs 3 > $OUT 2> $ERR
 
 ```
 
-* STEP 2 : Select Sample Group <br>
+# STEP 2 : Samples clustering <br>
 
-Given a TSV of exon fragment counts and a TSV of sample gender information, normalizes the counts (Fragment Per Million) and forms the reference groups for the call.<br>
-Results are printed to stdout folder : <br>
-- a TSV file format: first 4 columns hold the exon definitions, subsequent columns hold the normalised counts.<br>
-- a TSV file format: describe the distribution of samples in the reference groups (7 columns); first column sample of interest (SOIs), second reference group number for autosomes, third minimum group correlation level for autosomes, fourth sample valid status, fifth sixth and seventh identical but for sex chromosome.<br>
+Given a TSV of exon fragment counts, normalizes the counts (Fragment Per Million) and forms the reference clusters for the call. <br>
+By default, separation of autosomes ("A") and gonosomes ("G") for clustering, to avoid bias (chr accepted: X, Y, Z, W).<br>
+Results are printed to stdout folder:<br>
+- a TSV file format, describe the clustering results, dim = NbSOIs*8 columns:<br>
+    1) "sampleID": name of interest samples [str],<br>
+    2) "clusterID_A": clusters identifiers [int] obtained through the normalized fragment counts of exons on autosomes, <br>
+    3) "controlledBy_A": clusters identifiers controlling the sample cluster [str], a comma-separated string of int values (e.g "1,2"). If not controlled empty string.<br>
+    4) "validitySamps_A": a boolean specifying if a sample is dubious(0) or not(1)[int]. This score set to 0 in the case the cluster formed is validated and does not have a sufficient number of individuals.<br>
+    5) "genderPreds": a string "M"=Male or "F"=Female deduced by kmeans,<br>
+The columns 6, 7 and 8 are the same as 2, 3 and 4 but are specific to gonosomes.<br>
+In case the user doesn't want to discriminate genders, the output tsv will contain the format of the first 4 columns for all chromosomes.<br>
+- one or more png's illustrating the clustering performed by dendograms. [optionnal]<br>
+    Legend : solid line = control clusters , thin line = target clusters<br>
+    The clusters appear in decreasing order of distance (1-|pearson correlation|).<br>
 
 ```
 COUNT="FragCount.tsv"
-META="CohortInfo.csv"
 OUT="ResultFolder"
 ERR="step2.err"
-python STEP_2_CountNormalisation_SelectReferenceGroup_MAGE_CNV.py --counts $COUNT --metadata $META --out $OUT 2> $ERR
+python 2_clusterSamps.py --counts $COUNT --out $OUT --figure 2> $ERR
 ```
-
-* STEP 3 : CNV Calling<br>
+# STEP 3 : Copy numbers calls<br>
 
 ### CONFIGURATION:
 To launch the different stages of the pipeline it is necessary to be located in the folder where you want to obtain the outputs. <br>
