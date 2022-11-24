@@ -6,7 +6,7 @@ For more information how obtaining the different files see https://github.com/nt
 
 ### EXAMPLE USAGE:
 
-## STEP 1 : Fragments counting <br>
+##### STEP 1 : Fragments counting <br>
 
 Given a BED of exons and one or more BAM files, count the number of sequenced fragments from each BAM that overlap each exon (+- padding).<br>
 Results are printed to stdout in TSV format: first 4 columns hold the exon definitions after padding and sorting, subsequent columns (one per BAM) hold the counts.<br>
@@ -24,7 +24,7 @@ python 1_CountFrags.py --bams-from $BAM --bed $BED --counts $COUNT --tmp $TMP --
 
 ```
 
-# STEP 2 : Samples clustering <br>
+##### STEP 2 : Samples clustering <br>
 
 Given a TSV of exon fragment counts, normalizes the counts (Fragment Per Million) and forms the reference clusters for the call. <br>
 By default, separation of autosomes ("A") and gonosomes ("G") for clustering, to avoid bias (chr accepted: X, Y, Z, W).<br>
@@ -47,7 +47,7 @@ OUT="ResultFolder"
 ERR="step2.err"
 python 2_clusterSamps.py --counts $COUNT --out $OUT --figure 2> $ERR
 ```
-# STEP 3 : Copy numbers calls<br>
+##### STEP 3 : Copy numbers calls<br>
 
 ### CONFIGURATION:
 To launch the different stages of the pipeline it is necessary to be located in the folder where you want to obtain the outputs. <br>
