@@ -30,15 +30,17 @@ logger = logging.getLogger(os.path.basename(sys.argv[0]))
 # form a new cluster.
 # Args:
 #  - FPMarray: is a float numpy array, dim = NbExons x NbSOIs 
-#  - SOIs: is the str sample of interest name list 
 #  - minDist: is a float variable (1-|r|), it's the minimal distance tolerated to start building clusters 
 #  - maxDist: is a float variable, it's the maximal distance to concidered 
 #  - minSamps: is an int variable, defining the minimal sample number to validate a cluster
 #  - figure: is a boolean: "True" or "False" to generate a figure
 #  - outputFile: is a full path (+ file name) for saving a dendogram
-# Returns a 2D numpy array, dim= NbSOIs*4 columns[SOIs[str],clusterID[int],controlledBy[str],validitySamps[int]] 
+# Returns a tuple (clusters, ctrls, validityStatus), each is created here:
+#  - clusters: an int numpy array containing standardized clusterID for each sample
+#  - ctrls: a str list containing controls clusterID delimited by "," for each sample 
+#  - validityStatus: a boolean numpy array containing the validity status for each sample (1: valid, 0: invalid)
 
-def clustersBuilds(FPMarray, SOIs, minDist, maxDist, minSamps, figure, outputFile):
+def clustersBuilds(FPMarray, minDist, maxDist, minSamps, figure, outputFile):
     ###################################
     # part 1: Calcul distance between samples and apply hierachical clustering
     ###################################
@@ -89,7 +91,7 @@ def clustersBuilds(FPMarray, SOIs, minDist, maxDist, minSamps, figure, outputFil
 
         # SOIsIndexInParents: an int list of parent clusters SOIs indexes 
         # nbSOIsInParents: an int list of samples number in each parent clusters
-        SOIsIndexInParents,nbSOIsInParents = getParentsClustsInfosPrivate(parentClustsIDs, links2Clusters, len(linksMatrix))
+        (SOIsIndexInParents,nbSOIsInParents) = getParentsClustsInfosPrivate(parentClustsIDs, links2Clusters, len(linksMatrix))
 
         ################ 
         # CONTROL that the sample number calculation is correct
@@ -168,75 +170,63 @@ def clustersBuilds(FPMarray, SOIs, minDist, maxDist, minSamps, figure, outputFil
                 else:
                     clusters[SOIsIndexInParents] = clusterID     
         
-        # dist>0.25 we stop the loop of linksMatrix
+        # dist>maxDist we stop the loop on rows from linksMatrix
         else:
             break
     ###################################
     # part 3: Standardisation clusterID and create informative lists for populate final np.array 
     ###################################
-    clusters, ctrls, validityStatus = STDZAndCheckResPrivate(clusters, trgt2Ctrls, minSamps)
+    (clusters, ctrls, validityStatus) = STDZAndCheckResPrivate(clusters, trgt2Ctrls, minSamps)
 
     ###################################
-    # part 4: Optionnal plot of a dendogram based on clustering results
+    # part 4: Optionnal plot a dendogram based on clustering results
     ###################################
     if figure:
         DendogramsPrivate(clusters, ctrls, linksMatrix, minDist, outputFile)
     
     ##########
-    return(np.column_stack((SOIs, clusters, ctrls, validityStatus)))
+    return(clusters, ctrls, validityStatus)
 
 
 ###############################################################################
 # printClustersFile:
 # print the different types of outputs expected
 # Args:
-#   - resClustering: is a list of list, dim=NbSOIs*4columns 
-#       [sampleID[str], clusterID[int], controlledBy[int list], validitySamps[int]
-#       can be derived from clustering on all chromosomes or on the autosomes
-#   - outFolder: is a str variable, it's the results folder path  
-#   - resClusteringGonosomes: is a list of list, dim=NbSOIs*5columns
-#       [sampleID[str], clusterID[int], controlledBy[int list], validitySamps[int], genderPreds[str]]
-#       this argument is optional
+#  - SOIs: the list of sampleIDs (ie strings) copied from countsFile's header
+#  - clusters: an int numpy array containing standardized clusterID for each sample
+#  - ctrls: a str list containing controls clusterID delimited by "," for each sample 
+#  - validityStatus: a boolean numpy array containing the validity status for each sample (1: valid, 0: invalid)
+#  - outFolder: is a str variable, it's the results folder path 
+#  - nogender: no autosomes and gonosomes discrimination for clustering (True or default False)
+#  - clustersG, ctrlsG, validityStatusG same as autosomes or all chromosomes variables but for gonosomes (optionnal parameter) 
+#  - genderPred [optionnal]: the list of gender (ie strings, e.g "M" or "F"), for each sample
 # Print this data to stdout as a 'clustersFile'
-def printClustersAGFile(resClustering, resClusteringGonosomes, outFolder):
-    # 8 columns expected
-    clusterFile=open(os.path.join(outFolder,"ResClustering_AutosomesAndGonosomes_"+str(len(resClustering))+"samples.tsv"),'w')
-    sys.stdout = clusterFile
-    toPrint = "samplesID\tclusterID_A\tcontrolledBy_A\tvaliditySamps_A\tgenderPreds\tclusterID_G\tcontrolledBy_G\tvaliditySamps_G"
-    print(toPrint)
-    for i in range(len(resClustering)):
-        # SOIsID + clusterInfo for autosomes and gonosomes
-        toPrint = resClustering[i][0]+"\t"+resClustering[i][1]+"\t"+resClustering[i][2]+\
-            "\t"+resClustering[i][3]+"\t"+resClusteringGonosomes[i][4]+"\t"+resClusteringGonosomes[i][1]+\
-                "\t"+resClusteringGonosomes[i][2]+"\t"+resClusteringGonosomes[i][3]
+def printClustersFile(SOIs, clusters, ctrls, validityStatus, outFolder, nogender, clustersG=False, ctrlsG=False, validityStatusG=False, genderPred=False):
+    if nogender:
+        # 4 columns expected
+        clusterFile=open(os.path.join(outFolder,"ResClustering_"+str(len(SOIs))+"samples.tsv"),'w')
+        sys.stdout = clusterFile
+        toPrint = "samplesID\tclusterID\tcontrolledBy\tvaliditySamps"
         print(toPrint)
-    sys.stdout = sys.__stdout__
-    clusterFile.close()
-
-###############################################################################
-# printClustersFile:
-# print the different types of outputs expected
-# Args:
-#   - resClustering: is a list of list, dim=NbSOIs*4columns 
-#       [sampleID[str], clusterID[int], controlledBy[int list], validitySamps[int]
-#       can be derived from clustering on all chromosomes or on the autosomes
-#   - outFolder: is a str variable, it's the results folder path  
-#   - resClusteringGonosomes: is a list of list, dim=NbSOIs*5columns
-#       [sampleID[str], clusterID[int], controlledBy[int list], validitySamps[int], genderPreds[str]]
-#       this argument is optional
-# Print this data to stdout as a 'clustersFile'
-def printClustersFile(resClustering, outFolder):
-    # 4 columns expected
-    clusterFile=open(os.path.join(outFolder,"ResClustering_"+str(len(resClustering))+"samples.tsv"),'w')
-    sys.stdout = clusterFile
-    toPrint = "samplesID\tclusterID\tcontrolledBy\tvaliditySamps"
-    print(toPrint)
-    for i in range(len(resClustering)):
-        # SOIsID + clusterInfo 
-        toPrint = resClustering[i][0]+"\t"+resClustering[i][1]+"\t"+resClustering[i][2]+"\t"+resClustering[i][3]
+        for i in range(len(SOIs)):
+            # SOIsID + clusterInfo 
+            toPrint = SOIs[i]+"\t"+str(clusters[i])+"\t"+ctrls[i]+"\t"+str(validityStatus[i])
+            print(toPrint)
+        sys.stdout = sys.__stdout__
+        clusterFile.close()
+    else:
+        # 8 columns expected
+        clusterFile=open(os.path.join(outFolder,"ResClustering_AutosomesAndGonosomes_"+str(len(SOIs))+"samples.tsv"),'w')
+        sys.stdout = clusterFile
+        toPrint = "samplesID\tclusterID_A\tcontrolledBy_A\tvaliditySamps_A\tgenderPreds\tclusterID_G\tcontrolledBy_G\tvaliditySamps_G"
         print(toPrint)
-    sys.stdout = sys.__stdout__
-    clusterFile.close()
+        for i in range(len(SOIs)):
+            # SOIsID + clusterInfo for autosomes and gonosomes
+            toPrint = SOIs[i]+"\t"+str(clusters[i])+"\t"+ctrls[i]+"\t"+str(validityStatus[i])+\
+                "\t"+genderPred[i]+"\t"+str(clustersG[i])+"\t"+ctrlsG[i]+"\t"+str(validityStatusG[i])
+            print(toPrint)
+        sys.stdout = sys.__stdout__
+        clusterFile.close()
 
 ###############################################################################
 ############################ PRIVATE FUNCTIONS ################################

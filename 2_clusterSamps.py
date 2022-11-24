@@ -1,5 +1,5 @@
 ###############################################################################################
-######################################## MAGE-CNV step 2: Normalisation & clustering ##########
+######################################## MAGE-CNV step 2: Sample clustering  ##################
 ###############################################################################################
 # Given a TSV of exon fragment counts, normalizes the counts (Fragment Per Million) and 
 # forms the reference clusters for the call. 
@@ -177,7 +177,7 @@ def main(argv):
     # - SOIs: the list of sampleIDs (ie strings) copied from countsFile's header
     # - countsArray: an int numpy array, dim = NbExons x NbSOIs
     try:
-        exons, SOIs, countsArray = mageCNV.countsFile.parseCountsFile(countsFile)
+        (exons, SOIs, countsArray) = mageCNV.countsFile.parseCountsFile(countsFile)
     except Exception:
         logger.error("parseCountsFile failed")
         raise Exception()
@@ -209,12 +209,13 @@ def main(argv):
     # case where no discrimination between autosomes and gonosomes is made
     # direct application of the clustering algorithm
     if nogender:
+        logger.info("### Sample clustering:")
         try: 
             outputFile=os.path.join(outFolder,"Dendogram_"+str(len(SOIs))+"Samps_FullChrom.png")
-            # resClustering: a 2D numpy array with different columns typing, 
-            # extract clustering results, dim= NbSOIs*4 columns: 
-            # 1) SOIs Names [str], 2)clusterID [int], 3)clusterIDToControl [str], 4) Sample validity for calling [int] 
-            resClustering = mageCNV.clustering.clustersBuilds(countsNorm, SOIs, minDist, maxDist, minSamps, figure, outputFile)
+            # clusters: an int numpy array containing standardized clusterID for each sample
+            # ctrls: a str list containing controls clusterID delimited by "," for each sample 
+            # validityStatus: a boolean numpy array containing the validity status for each sample (1: valid, 0: invalid)
+            (clusters, ctrls, validityStatus) = mageCNV.clustering.clustersBuilds(countsNorm, minDist, maxDist, minSamps, figure, outputFile)
         except Exception: 
             logger.error("clusterBuilding failed")
             raise Exception()
@@ -225,7 +226,7 @@ def main(argv):
 
         #####################################################
         # print results
-        mageCNV.clustering.printClustersFile(resClustering,outFolder)
+        mageCNV.clustering.printClustersFile(SOIs, clusters, ctrls, validityStatus, outFolder, nogender)
 
         thisTime = time.time()
         logger.debug("Done printing results, in %.2f s", thisTime-startTime)
@@ -240,7 +241,7 @@ def main(argv):
             # value=list of gonosome exon index [int].
             # genderInfos: is a str list of lists, contains informations for the gender
             # identification, ie ["gender identifier","particular chromosome"].
-            gonoIndex, genderInfo = mageCNV.genderDiscrimination.getGenderInfos(exons)
+            (gonoIndex, genderInfo) = mageCNV.genderDiscrimination.getGenderInfos(exons)
         except Exception: 
             logger.error("getGenderInfos failed")
             raise Exception()
@@ -249,8 +250,8 @@ def main(argv):
         logger.debug("Done get gender informations in %.2f s", thisTime-startTime)
         startTime = thisTime
 
-        #division of normalized count data according to autosomal or gonosomal exons
-        #flat gonosome index list
+        # cutting normalized count data according to autosomal or gonosomal exons
+        # flat gonosome index list
         gonoIndexFlat = np.unique([item for sublist in list(gonoIndex.values()) for item in sublist]) 
         autosomesFPM = np.delete(countsNorm,gonoIndexFlat,axis=0)
         gonosomesFPM = np.take(countsNorm,gonoIndexFlat,axis=0)
@@ -259,14 +260,14 @@ def main(argv):
         # Get Autosomes Clusters
         ##################
         # Application of hierarchical clustering on autosome count data to obtain :
-        logger.info("### Autosomes, samples clustering:")
+        logger.info("### Autosomes, sample clustering:")
         try :
-            outputFile=os.path.join(outFolder,"Dendogram_"+str(len(SOIs))+"Samps_autosomes.png")
+            outputFile = os.path.join(outFolder,"Dendogram_"+str(len(SOIs))+"Samps_autosomes.png")
             # resClusteringAutosomes: a 2D numpy array with different columns typing, 
             # extract clustering results based on normalised fragment count from exons overlapping autosomes
             # dim= NbSOIs*4 columns: 
             # 1) SOIs Names [str], 2)clusterID [int], 3)clusterIDToControl [str], 4) Sample validity for calling [int]
-            resClusteringAutosomes = mageCNV.clustering.clustersBuilds(autosomesFPM, SOIs, minDist, maxDist, minSamps, figure, outputFile)
+            (clusters, ctrls, validityStatus) = mageCNV.clustering.clustersBuilds(autosomesFPM, minDist, maxDist, minSamps, figure, outputFile)
         except Exception:
             logger.error("clusterBuilds for autosomes failed")
             raise Exception()
@@ -278,8 +279,10 @@ def main(argv):
         #####################################################
         # Get Gonosomes Clusters
         ##################
+        logger.info("### Gonosomes, sample clustering:")
+
+        ##################
         # Performs an empirical method (kmeans) to dissociate male and female. 
-        ######################
         # Kmeans with k=2 (always)
         # kmeans: an int 
         kmeans = sklearn.cluster.KMeans(n_clusters=len(genderInfo), random_state=0).fit(gonosomesFPM.T)
@@ -292,19 +295,32 @@ def main(argv):
 
         ####################
         # Independent clustering for the two Kmeans groups
-        # returns for each group a 2D numpy array, dim=NbSOIsInKmeansGp*4columns 
-        # [sampleID[str], clusterID[int], controlledBy[int list], validitySamps[int]
-        logger.info("### Gonosomes, samples clustering:")
-        resClusteringGonosomes = np.zeros((len(SOIs),5), '<U21')
+        ### To Fill
+        # clustersG: an int 1D numpy array, clusterID associated to SOIsIndex
+        clustersG = np.zeros(len(SOIs), dtype=np.int)
+        # ctrlsG: a str list containing controls clusterID delimited by "," for each SOIs  
+        ctrlsG = [""]*len(SOIs)
+        # validityStatusG: a boolean numpy array containing the validity status for SOIs (1: valid, 0: invalid)
+        validityStatusG = np.ones(len(SOIs), dtype=np.int)
+        # genderPred: a str list containing genderID delimited for each SOIs (e.g: "M" or "F")
+        genderPred = [""]*len(SOIs)
+
         for genderGp in range(len(gender2Kmeans)):
             sampsIndexGp=np.where(kmeans.labels_==genderGp)[0]
             gonosomesFPMGp = gonosomesFPM[:,sampsIndexGp]
-            SOIsGp = [SOIs[i] for i in sampsIndexGp]
-            outputFile = os.path.join(outFolder,"Dendogram_"+str(len(SOIsGp))+"Samps_gonosomes_"+gender2Kmeans[genderGp]+".png")
-            resClustGp = mageCNV.clustering.clustersBuilds(gonosomesFPMGp, SOIsGp, minDist, maxDist, minSamps, figure, outputFile)
+            try :
+                logger.info("### Clustering samples for gender %s",gender2Kmeans[genderGp])
+                outputFile = os.path.join(outFolder,"Dendogram_"+str(len(sampsIndexGp))+"Samps_gonosomes_"+gender2Kmeans[genderGp]+".png")
+                (tmpClusters, tmpCtrls, tmpValidityStatus)  = mageCNV.clustering.clustersBuilds(gonosomesFPMGp, minDist, maxDist, minSamps, figure, outputFile)
+            except Exception:
+                logger.error("clusterBuilds for gonosome failed for gender %s",gender2Kmeans[genderGp])
+                raise Exception()
+            # populate clusterG, ctrlsG, validityStatusG, genderPred
             for index in range(len(sampsIndexGp)):
-                addGender=np.append(resClustGp[index],gender2Kmeans[genderGp])
-                resClusteringGonosomes[sampsIndexGp[index]]=addGender         
+                clustersG[sampsIndexGp[index]] = tmpClusters[index]
+                ctrlsG[sampsIndexGp[index]] = tmpCtrls[index]
+                validityStatusG[sampsIndexGp[index]] = tmpValidityStatus[index]
+                genderPred[sampsIndexGp[index]] = gender2Kmeans[genderGp]  
 
         thisTime = time.time()
         logger.debug("Done samples clustering for gonosomes : in %.2f s", thisTime-startTime)
@@ -313,7 +329,7 @@ def main(argv):
         #####################################################
         # print results
         ##################
-        mageCNV.clustering.printClustersAGFile(resClusteringAutosomes, resClusteringGonosomes, outFolder)
+        mageCNV.clustering.printClustersFile(SOIs, clusters, ctrls, validityStatus, outFolder, nogender, clustersG, ctrlsG, validityStatusG, genderPred)
         
         thisTime = time.time()
         logger.debug("Done printing results, in %.2f s", thisTime-startTime)
