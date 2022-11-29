@@ -1,6 +1,6 @@
 import os
 import numpy as np
-import numba # make python faster
+import numba  # make python faster
 import re
 # nested containment lists, similar to interval trees but faster (https://github.com/biocore-ntnu/ncls)
 from ncls import NCLS
@@ -35,11 +35,11 @@ def countFrags(bamFile, exons, maxGap, tmpDir, samtools, samThreads):
     # NOTE: we would like to build this once in the caller and use it for each BAM,
     # but the multiprocessing module doesn't allow this... We therefore rebuild the
     # NCLs for each BAM, wasteful but it's OK, createExonNCLs() is fast
-    exonNCLs=createExonNCLs(exons)
+    exonNCLs = createExonNCLs(exons)
 
     thisTime = time.time()
     logger.debug("Done createExonNCLs for %s, in %.2f s",os.path.basename(bamFile), thisTime-startTime)
-    startTime =thisTime
+    startTime = thisTime
 
     # We need to process all alignments for a given qname simultaneously
     # => ALGORITHM:
@@ -64,7 +64,7 @@ def countFrags(bamFile, exons, maxGap, tmpDir, samtools, samThreads):
     qFirstOnForward=0
     # qBad==True if qname must be skipped (e.g. alis on bad or multiple chroms, or alis
     # disagree regarding the strand on which the first/last read-in-pair aligns, or...)
-    qBad=False
+    qBad = False
 
     # To Fill:
     # 1D numpy array containing the sample fragment counts for all exons
@@ -107,12 +107,12 @@ def countFrags(bamFile, exons, maxGap, tmpDir, samtools, samThreads):
         if (qname!=align[0]) and (qname!=""):  # align[0] is the qname
             if not qBad:
                 # if we have 2 alis on a strand, make sure they are in "read" order (switch them if needed)
-                if (len(startFList)==2) and (qstartOnReadF[0] > qstartOnReadF[1]):
-                    startFList.reverse()
-                    endFList.reverse()
-                if (len(startRList)==2) and (qstartOnReadR[0] > qstartOnReadR[1]):
-                    startRList.reverse()
-                    endRList.reverse()
+                if (len(qstartF)==2) and (qstartOnReadF[0] > qstartOnReadF[1]):
+                    qstartF.reverse()
+                    qendF.reverse()
+                if (len(qstartR)==2) and (qstartOnReadR[0] > qstartOnReadR[1]):
+                    qstartR.reverse()
+                    qendR.reverse()
                 Qname2ExonCount(qstartF,qendF,qstartR,qendR,exonNCLs[qchrom],sampleCounts,maxGap)
             qname, qchrom = "", ""
             qstartF, qstartR, qendF, qendR = [], [], [], []
@@ -184,12 +184,12 @@ def countFrags(bamFile, exons, maxGap, tmpDir, samtools, samThreads):
     # process last Qname
     if (qname!="") and not qBad:
         # if we have 2 alis on a strand, make sure they are in "read" order (switch them if needed)
-        if (len(startFList)==2) and (qstartOnReadF[0] > qstartOnReadF[1]):
-            startFList.reverse()
-            endFList.reverse()
-        if (len(startRList)==2) and (qstartOnReadR[0] > qstartOnReadR[1]):
-            startRList.reverse()
-            endRList.reverse()
+        if (len(qstartF)==2) and (qstartOnReadF[0] > qstartOnReadF[1]):
+            qstartF.reverse()
+            qendF.reverse()
+        if (len(qstartR)==2) and (qstartOnReadR[0] > qstartOnReadR[1]):
+            qstartR.reverse()
+            qendR.reverse()
         Qname2ExonCount(qstartF,qendF,qstartR,qendR,exonNCLs[qchrom],sampleCounts,maxGap)
 
     # wait for samtools to finish cleanly and check exit code
@@ -285,9 +285,6 @@ def createExonNCLs(exons):
 #     a longer gap are ignored (putative structural variant or alignment error)
 # Nothing is returned, this function just updates countsVec
 def Qname2ExonCount(startFList,endFList,startRList,endRList,exonNCL,countsVec,maxGap):
-    #######################################################
-    # apply QC filters
-    #######################################################
     # skip Qnames that don't have alignments on both strands
     if (len(startFList)==0) or (len(startRList)==0):
         return
@@ -296,8 +293,8 @@ def Qname2ExonCount(startFList,endFList,startRList,endRList,exonNCL,countsVec,ma
         return
 
     # if we have 2 alis on one strand and they overlap: merge them
-    # (there could be a short indel or other SV, not trying to detect this but we still
-    # cover this genomic region with this qname)
+    # (there could be a short indel or other SV, not trying to detect
+    # this but we still cover this genomic region with this qname)
     if (len(startFList)==2) and (min(endFList) > max(startFList)):
         startFList = [min(startFList)]
         endFList = [max(endFList)]
