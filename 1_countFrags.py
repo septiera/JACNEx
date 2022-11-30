@@ -27,16 +27,6 @@ import mageCNV.countFragments
 ###############################################################################
 
 ####################################################
-# mergeCounts
-# fill column at index sampleIndex in countsArray (numpy array of ints,
-# dim = numberOfExons x numberOfSamples) with counts for this sample, stored
-# in sampleCounts (1D np array of ints, dim = numberOfExons)
-def mergeCounts(countsArray, sampleIndex, sampleCounts):
-    for exonIndex in range(len(sampleCounts)):
-        countsArray[exonIndex, sampleIndex] = sampleCounts[exonIndex]
-
-
-####################################################
 # parseArgs:
 # Parse and sanity check the command+arguments, provided as a list of
 # strings (eg sys.argv).
@@ -249,22 +239,29 @@ def main(argv):
     startTime = thisTime
 
     #####################################################
-    # Process remaining (new) BAMs
-    # data structure in the form of a queue where each result is stored
-    # if countFrags is completed (np array 1D counts stored for each sample)
-    results = []
+    # Define nested callback functions for apply_async (so countsArray et al
+    # are in their scope)
 
-    # if countFrags is completed save the samples indexes
-    processedBams = []
+    # mergeCounts:
+    # can only accept one arg: the return value of mageCNV.countFragments.countFrags();
+    # this must be a 2-element tuple (sampleIndex, sampleCounts).
+    # Fill column at index sampleIndex in countsArray with counts stored in sampleCounts
+    def mergeCounts(sample_counts):
+        for exonIndex in range(len(sample_counts[1])):
+            countsArray[exonIndex, sample_counts[0]] = sample_counts[1][exonIndex]
 
-    # if countFrags fails for any BAMs, we have to remember their indexes
-    # and only expunge them at the end, after exiting the for bamIndex loop
-    # -> save their indexes in failedBams
+    # error callback: if countFrags fails for any BAMs, we have to remember their indexes
+    # and only expunge them at the end -> save their indexes in failedBams
     failedBams = []
 
-    # The pool function allows to define the number of jobs to run.
-    # WARNING : don't forget that the countFrags function parallels the samtools processes
-    # By default countsJobs = 3 jobs ; 3x10 threads = 30 cpu for samtools at the same times
+    def jobError(ex):
+        logger.warning("Failed to count fragments for sample %s, skipping it - exception: %s", sample, ex)
+        failedBams.append(bamIndex)
+
+    #####################################################
+    # Process remaining (new) BAMs, up to countJobs in parallel
+    # Careful: each BAM gets collated by samtools using samThreads threads before being processed
+    # single-threaded by python code, so this can consume up to samThreads*countJobs cores
     with Pool(countJobs) as pool:
         for bamIndex in range(len(bamsToProcess)):
             bam = bamsToProcess[bamIndex]
@@ -274,21 +271,8 @@ def main(argv):
                 continue
             else:
                 logger.info('Processing BAM for sample %s', sample)
-                ####################
-                # Fragment counting parallelization
-                # apply module allows to set several arguments
-                # async module allows not to block processes when finished
-                # The output count np array results are placed in a queue which can then be
-                # retrieved by the get() command.
-                # Note: that all bam's must be processed to retrieve the results.
-                try:
-                    results.append(pool.apply_async(mageCNV.countFragments.countFrags, args=(bam, exons, maxGap, tmpDir, samtools, samThreads)))
-                    processedBams.append(bamIndex)
-
-                # Raise an exception if counting error and storage the failed sample index in failedBams.
-                except Exception as e:
-                    logger.warning("Failed to count fragments for sample %s, skipping it - exception: %s", sample, e)
-                    failedBams.append(bamIndex)
+                pool.apply_async(mageCNV.countFragments.countFrags,
+                                 (bam, exons, maxGap, tmpDir, samtools, samThreads, bamIndex), {}, mergeCounts, jobError)
         pool.close()
         pool.join()
 
@@ -296,16 +280,12 @@ def main(argv):
     logger.debug("Done processing all BAMs, in %.2f s", thisTime - startTime)
     startTime = thisTime
 
-    # Copy sample results into local counts array
-    for ListIndex in range(len(processedBams)):
-        mergeCounts(countsArray, processedBams[ListIndex], results[ListIndex].get())
-
+    #####################################################
     # Expunge samples for which countFrags failed
     for failedI in reversed(failedBams):
         del(samples[failedI])
-        countsArray = np.delete(countsArray, failedI, 1)
+    countsArray = np.delete(countsArray, failedBams, axis=1)
 
-    #####################################################
     # Print exon defs + counts to stdout
     mageCNV.countsFile.printCountsFile(exons, samples, countsArray)
 

@@ -27,9 +27,11 @@ logger = logging.getLogger(__name__)
 #   - a fast tmp dir with enough space for samtools collate
 #   - the samtools binary, with path
 #   - the number of cpu threads that samtools can use
+#   - an int (sampleIndex) that is not used but is simply returned (for multiprocessing)
 #
-# Return a 1D numpy int array, dim = len(exons), with the fragment counts for this sample
-def countFrags(bamFile, exons, maxGap, tmpDir, samtools, samThreads):
+# Return a 2-element tuple (sampleIndex, sampleCounts) where sampleCounts is a 1D numpy
+# int array allocated here, dim = len(exons), with the fragment counts for this sample
+def countFrags(bamFile, exons, maxGap, tmpDir, samtools, samThreads, sampleIndex):
     startTime = time.time()
     # for each chrom, build an NCL holding the exons
     # NOTE: we would like to build this once in the caller and use it for each BAM,
@@ -203,7 +205,7 @@ def countFrags(bamFile, exons, maxGap, tmpDir, samtools, samThreads):
     os.sync()
     thisTime = time.time()
     logger.debug("Done countFrags for %s, in %.2f s", os.path.basename(bamFile), thisTime - startTime)
-    return(sampleCounts)
+    return(sampleIndex, sampleCounts)
 
 
 ###############################################################################
