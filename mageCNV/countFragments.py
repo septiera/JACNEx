@@ -273,8 +273,9 @@ def createExonNCLs(exons):
 
 ####################################################
 # Qname2ExonCount :
-# Given data representing all alignments for a single qname (must all map to the same chrom):
-# - apply QC filters to ignore aberrant or unusual alignments / qnames;
+# Given data representing all alignments for a single qname (must all map
+# to the same chrom):
+# - apply QC filters to ignore qnames that are impossible to interpret;
 # - identify the genomic intervals that are covered by the sequenced fragment;
 # - identify exons overlapped by these intervals, and increment their count.
 # Args:
@@ -302,56 +303,6 @@ def Qname2ExonCount(startFList,endFList,startRList,endRList,exonNCL,countsVec,ma
         startRList = [min(startRList)]
         endRList = [max(endRList)]
     
-    # if we have 2 alis on one strand (eg F) and one ali on the other (R),
-    # discard the rightmost F ali if it is back-to-back with the R ali
-    # 2F 1R
-    if (len(startFList)==2) and (len(startRList)==1):
-        if max(startFList) > endRList[0]:
-            startFList = [min(startFList)]
-            endFList = [min(endFList)]
-    # 1F 2R
-    if (len(startFList)==1) and (len(startRList)==2):
-        if min(endRList) < startFList[0]:
-            startRList = [max(startRList)]
-            endRList = [max(endRList)]
-
-    if (len(startFList)==1) and (len(startRList)==1): # 1F1R
-        if startFList[0] > endRList[0]:
-            # alignments are back-to-back (SV? Dup? alignment error?)
-            return
-    # elif (len(startFList+startRList)==3)
-    # 1F2R and 2F1R have either become 1F1R, or they can't have any back-to-back pair
-    elif (len(startFList)==2) and (len(startRList)==2): #2F2R
-        if (min(startFList) > min(endRList)) or (min(endFList) < min(startRList)):
-            # leftmost F and R alignments are back-to-back, or they don't
-            # overlap - but what could explain this? aberrant
-            return
-        elif (max(startFList) > max(endRList)) or (max(endFList) < max(startRList)):
-            # rightmost F and R alignments are back-to-back or don't overlap
-            return
-
-    # Examine gap length between the two reads (negative if overlapping).
-    # maxGap should be set so that the sequencing library fragments are rarely
-    # longer than maxGap+2*readLength, otherwise some informative qnames will be skipped
-    if (len(startFList)==1) and (len(startRList)==1): # 1F1R
-        if (startRList[0] - endFList[0] > maxGap):
-            # large gap between forward and reverse reads, could be a DEL but
-            # we don't have reads spanning it -> insufficient evidence, skip qname
-            return
-    elif (len(startFList+startRList)==3): # 2F1R or 1F2R
-        if (min(startRList)-max(endFList) > maxGap):
-            # eg 2F1R: the R ali is too far from the rightmost F ali, so
-            # a fortiori it is too far from the leftmost F ali => ignore qname
-            return
-        elif (max(startRList)-min(endFList) > maxGap):
-            # eg 2F1R: the R ali is too far from the leftmost F ali => ignore this F ali
-            if (len(startFList)==2): #2F1R
-                startFList = [max(startFList)]
-                endFList = [max(endFList)]
-            else: #1F2R
-                startRList = [min(startRList)]
-                endRList = [min(endRList)]
-                 
     #######################################################
     # identify genomic regions covered by the fragment
     #######################################################
@@ -361,70 +312,160 @@ def Qname2ExonCount(startFList,endFList,startRList,endRList,exonNCL,countsVec,ma
     # overlapping) , but if the fragment spans a DEL there can be up to 3
     fragStarts = []
     fragEnds = []
-    # algo: merge F-R pairs of alis only if they overlap
+
+    ##########################
+    # 1F1R
     if (len(startFList)==1) and (len(startRList)==1):
-        if (startRList[0] - endFList[0] < 0): # overlap => merge
-            fragStarts = [min(startFList + startRList)]
-            fragEnds = [max(endFList + endRList)]
+        if (startFList[0] < endRList[0]):
+            # face to face
+            if (endFList[0] >= startRList[0]):
+                # overlap => merge into a single interval
+                fragStarts = [min(startFList[0], startRList[0])]
+                fragEnds = [max(endFList[0], endRList[0])]
+            elif (startRList[0] - endFList[0] <= maxGap):
+                # no overlap but small gap between reads, assume no-CNV with library
+                # fragment slightly longer than readLength*2 -> 2 intervals
+                fragStarts = [startFList[0], startRList[0]]
+                fragEnds = [endFList[0], endRList[0]]
+            else:
+                # large gap between reads: could be a DEL but without spanning reads,
+                # so no clear evidence -> ignore qname
+                return
         else:
+            # back to back, could be a DUP but no spanning reads -> ignore qname
+            return
+
+    ##########################
+    # 2F1R
+    elif (len(startFList)==2) and (len(startRList)==1):
+        if (startFList[1] <= endRList[0]) and (endFList[1] >= startRList[0]):
+            # second F ali overlaps with R ali, build an interval by merging them
+            fragStarts = [min(startFList[1],startRList[0])]
+            fragEnds = [max(endFList[1],endRList[0])]
+        elif (startFList[1] <= endRList[0]) and (startRList[0] - endFList[1] <= maxGap):
+            # second F ali and R ali are face-to-face, they don't overlap but gap
+            # is small -> build 2 intervals
+            fragStarts = [startFList[1], startRList[0]]
+            fragEnds = [endFList[1], endRList[0]]
+        else:
+            # second F ali and R ali are face-to-face but far apart, or they are back-to-back,
+            # in both cases we can't interpret -> ignore qname
+            return
+
+        if (startFList[0] < startFList[1]):
+            # F alis are in read order: spanning a DEL?
+            if (endFList[0] < fragStarts[0]):
+                # indeed this looks like a DEL, with first F ali an interval on its own (on the left)
+                fragStarts.insert(0, startFList[0])
+                fragEnds.insert(0, endFList[0])
+                # this is a suspected DEL with BPs: fragEnds[0], fragStarts[1]
+            else:
+                # Both F alis are overlapped by R ali, doesn't make sense, ignore this qname
+                return
+        else:
+            # F alis are inverted, ie beginning of read aligns after end of read on 
+            # the genome: spanning a DUP?
+            if (fragEnds[-1] < startFList[0]):
+                # indeed this looks like a DUP, with first F ali (==start of F read) an interval on
+                # its own (on the right)
+                fragStarts.append(startFList[0])
+                fragEnds.append(endFList[0])
+                # this is a suspected DUP with BPs: fragStarts[0], fragEnds[-1]
+            elif (fragStarts[-1] < endFList[0]):
+                # first F ali overlaps R ali, very small DUP? suspicious, but merge them
+                fragStarts[-1] = min(fragStarts[-1], startFList[0])
+                fragEnds[-1] = max(fragEnds[-1], endFList[0])
+                 # this is a suspected DUP with BPs: fragStarts[0], fragEnds[-1]
+            else:
+                # F alis suggest a DUP but R ali doesn't agree, ignore this qname
+                return
+
+    ##########################
+    # 1F2R
+    elif (len(startFList)==1) and (len(startRList)==2):
+        if (startFList[0] <= endRList[0]) and (endFList[0] >= startRList[0]):
+            # first R ali overlaps with F ali, build an interval by merging them
+            fragStarts = [min(startFList[0],startRList[0])]
+            fragEnds = [max(endFList[0],endRList[0])]
+        elif (startFList[0] <= endRList[0]) and (startRList[0] - endFList[0] <= maxGap):
+            # first R ali and F ali are face-to-face, they don't overlap but gap
+            # is small -> build 2 intervals
             fragStarts = [startFList[0], startRList[0]]
             fragEnds = [endFList[0], endRList[0]]
-
-    elif (len(startFList)==2) and (len(startRList)==1): #2F1R
-        if (startRList[0] < min(endFList)): 
-            # leftmost F ali overlaps R ali => merge into a single interval (because we know
-            # that the rightmost F ali overlaps the R ali
-            fragStarts = [min(startRList + startFList)]
-            fragEnds = [max(endRList + endFList)]
         else:
-            # leftmost F ali is an interval by itself
-            fragStarts = [min(startFList)]
-            fragEnds = [min(endFList)]
-            if (startRList[0] < max(endFList)):
-                # rightmost F ali overlaps R ali => merge
-                fragStarts.append(min(max(startFList),startRList[0]))
-                fragEnds.append(max(endFList + endRList))
-            else:
-                # no overlap, add 2 more intervals
-                fragStarts.extend([max(startFList), startRList[0]])
-                fragEnds.extend([max(endFList), endRList[0]])
+            # first R ali and F ali are face-to-face but far apart, or they are back-to-back,
+            # in both cases we can't interpret -> ignore qname
+            return
 
-    elif (len(startFList)==1) and (len(startRList)==2): #1F2R
-        if (max(startRList) < endFList[0]): 
-            # rightmost R ali overlaps F ali => merge into a single interval
-            fragStarts = [min(startRList + startFList)]
-            fragEnds = [max(endRList + endFList)]
+        if (startRList[0] < startRList[1]):
+            # R alis are in read order: spanning a DEL?
+            if (fragEnds[-1] < startRList[1]):
+                # indeed this looks like a DEL, with second R ali an interval on its own (on the right)
+                fragStarts.append(startRList[1])
+                fragEnds.append(endRList[1])
+                 # this is a suspected DEL with BPs: fragEnds[-2], fragStarts[-1]
+            else:
+                # Both R alis are overlapped by F ali, doesn't make sense, ignore this qname
+                return
         else:
-            # rightmost R ali is an interval by itself
-            fragStarts = [max(startRList)]
-            fragEnds = [max(endRList)]
-            if (min(startRList) < endFList[0]):
-                # leftmost R ali overlaps F ali => merge
-                fragStarts.append(min(startFList + startRList))
-                fragEnds.append(max(min(endRList),endFList[0]))
+            # R alis are inverted: spanning a DUP?
+            if (endRList[1] < fragStarts[0]):
+                # indeed this looks like a DUP, with second R ali (==start of R read) an interval on
+                # its own (on the left)
+                fragStarts.insert(0, startRList[1])
+                fragEnds.insert(0, endRList[1])
+                # this is a suspected DUP with BPs: fragStarts[0], fragEnds[-1]
+            elif (fragStarts[0] < endRList[1]):
+                # F ali overlaps second R ali, very small DUP? suspicious, but merge them
+                fragStarts[0] = min(fragStarts[0], startRList[1])
+                fragEnds[0] = max(fragEnds[0], endRList[1])
+                # this is a suspected DUP with BPs: fragStarts[0], fragEnds[-1]
             else:
-                # no overlap, add 2 more intervals
-                fragStarts.extend([min(startRList), startFList[0]])
-                fragEnds.extend([min(endRList), endFList[0]])
+                # R alis suggest a DUP but F ali doesn't agree, ignore this qname
+                return
 
-    elif(len(startFList)==2) and (len(startRList)==2): #2F2R
-        # we already checked that each pair of F-R alis overlaps
-        fragStarts.extend([min(startFList + startRList), min(max(startFList),max(startRList))])
-        fragEnds.extend([max(min(endFList),min(endRList)), max(endFList + endRList)])
+    ##########################
+    # 2F2R
+    elif(len(startFList)==2) and (len(startRList)==2):
+        if (startFList[0] < startFList[1]) and (startRList[0] < startRList[1]):
+            # both F and R pairs of alis are in order: spanning a DEL?
+            if ((startFList[0] <= endRList[0]) and (endFList[0] >= startRList[0]) and
+                (startFList[1] <= endRList[1]) and (endFList[1] >= startRList[1])):
+                # OK: first F+R reads overlap and same for second pair of F+R reads -> merge each pair
+                fragStarts = [min(startFList[0],startRList[0]), min(startFList[1],startRList[1])]
+                fragEnds = [max(endFList[0],endRList[0]), max(endFList[1],endRList[1])]
+                # this is a suspected DEL with BPs: fragEnds[0], fragStarts[1]
+            else:
+                # at least one pair of F+R reads doesn't overlap, how? ignore qname
+                return
 
-    #######################################################
+        elif (startFList[1] < startFList[0]) and (startRList[1] < startRList[0]):
+            # both F and R pairs of alis are inverted: spanning a DUP?
+            if ((startFList[1] <= endRList[1]) and (endFList[1] >= startRList[1]) and
+                (startFList[0] <= endRList[0]) and (endFList[0] >= startRList[0])):
+                # OK: first F+R reads overlap and same for second pair of F+R reads -> merge each pair
+                fragStarts = [min(startFList[1],startRList[1]), min(startFList[0],startRList[0])]
+                fragEnds = [max(endFList[1],endRList[1]), max(endFList[0],endRList[0])]
+                 # this is a suspected DUP with BPs: fragStarts[0], fragEnds[-1]
+            else:
+                # at least one pair of F+R reads doesn't overlap, how? ignore qname
+                return
+
+        else:
+            # one pair is in order but the other is not, doesn't make sense
+            return
+        
+   #######################################################
     # find exons overlapped by the fragment and increment counters
     #######################################################
     # we want to increment countsVec at most once per exon, even if
-    # we have two intervals and they both overlap the same exon
+    # we have several intervals that overlap the same exon
     exonsSeen = []
     for fi in range(len(fragStarts)):
         overlappedExons = exonNCL.find_overlap(fragStarts[fi],fragEnds[fi])
         for exon in overlappedExons:
             exonIndex = exon[2]
-            if (exonIndex in exonsSeen):
-                continue
-            else:
+            if (exonIndex not in exonsSeen):
                 exonsSeen.append(exonIndex)
                 incrementCount(countsVec, exonIndex)
                 # countsVec[exonIndex] += 1
