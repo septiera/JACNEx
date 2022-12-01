@@ -102,8 +102,8 @@ ARGUMENTS:
             if not os.path.isdir(outDir):
                 try:
                     os.mkdir(outDir)
-                except Exception as e:
-                    sys.stderr.write("ERROR : outDir %s doesn't exist and can't be mkdir'd: %s", outDir, e)
+                except Exception:
+                    sys.stderr.write("ERROR : outDir " + outDir + " doesn't exist and can't be mkdir'd\n")
                     raise Exception()
         elif opt in ("--counts"):
             countsFile = value
