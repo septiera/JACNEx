@@ -29,8 +29,12 @@ logger = logging.getLogger(__name__)
 #   - the number of cpu threads that samtools can use
 #   - an int (sampleIndex) that is not used but is simply returned (for multiprocessing)
 #
-# Return a 2-element tuple (sampleIndex, sampleCounts) where sampleCounts is a 1D numpy
-# int array allocated here, dim = len(exons), with the fragment counts for this sample
+# Return a 3-element tuple (sampleIndex, sampleCounts, breakPoints) where:
+# - sampleCounts is a 1D numpy int array dim = len(exons) allocated here and filled with
+#   the counts for this sample,
+# - breakPoints is a list of 5-element lists [CHR, BP1, BP2, CNVTYPE, QNAME], where
+#   BP1 and BP2 are the coordinates of the putative breakpoints, CNVTYPE is 'DEL' or 'DUP',
+#   and QNAME is the supporting fragment
 def countFrags(bamFile, exons, maxGap, tmpDir, samtools, samThreads, sampleIndex):
     startTime = time.time()
     # for each chrom, build an NCL holding the exons
@@ -71,6 +75,8 @@ def countFrags(bamFile, exons, maxGap, tmpDir, samtools, samThreads, sampleIndex
     # To Fill:
     # 1D numpy array containing the sample fragment counts for all exons
     sampleCounts = np.zeros(len(exons), dtype=np.uint32)
+    # list of lists with info about breakpoints support
+    breakPoints = []
 
     ############################################
     # Preprocessing:
@@ -115,7 +121,11 @@ def countFrags(bamFile, exons, maxGap, tmpDir, samtools, samThreads, sampleIndex
                 if (len(qstartR) == 2) and (qstartOnReadR[0] > qstartOnReadR[1]):
                     qstartR.reverse()
                     qendR.reverse()
-                Qname2ExonCount(qstartF, qendF, qstartR, qendR, exonNCLs[qchrom], sampleCounts, maxGap)
+                BPs = Qname2ExonCount(qstartF, qendF, qstartR, qendR, exonNCLs[qchrom], sampleCounts, maxGap)
+                if (BPs is not None):
+                    BPs.insert(0, qchrom)
+                    BPs.append(qname)
+                    breakPoints.append(BPs)
             qname, qchrom = "", ""
             qstartF, qstartR, qendF, qendR = [], [], [], []
             qstartOnReadF, qstartOnReadR = [], []
@@ -192,7 +202,11 @@ def countFrags(bamFile, exons, maxGap, tmpDir, samtools, samThreads, sampleIndex
         if (len(qstartR) == 2) and (qstartOnReadR[0] > qstartOnReadR[1]):
             qstartR.reverse()
             qendR.reverse()
-        Qname2ExonCount(qstartF, qendF, qstartR, qendR, exonNCLs[qchrom], sampleCounts, maxGap)
+        BPs = Qname2ExonCount(qstartF, qendF, qstartR, qendR, exonNCLs[qchrom], sampleCounts, maxGap)
+        if (BPs is not None):
+            BPs.insert(0, qchrom)
+            BPs.append(qname)
+            breakPoints.append(BPs)
 
     # wait for samtools to finish cleanly and check exit code
     if (samproc.wait() != 0):
@@ -203,9 +217,12 @@ def countFrags(bamFile, exons, maxGap, tmpDir, samtools, samThreads, sampleIndex
     # tmpDirObj should get cleaned up automatically but sometimes samtools tempfiles
     # are in the process of being deleted => sync to avoid race
     os.sync()
+    # we want breakpoints sorted by chrom (but not caring that chr10 comes before chr2),
+    # then BP1 then BP2 then CNVTYPE
+    breakPoints.sort(key=lambda row: (row[0], row[1], row[2], row[3]))
     thisTime = time.time()
     logger.debug("Done countFrags for %s, in %.2f s", os.path.basename(bamFile), thisTime - startTime)
-    return(sampleIndex, sampleCounts)
+    return(sampleIndex, sampleCounts, breakPoints)
 
 
 ###############################################################################
@@ -289,7 +306,9 @@ def createExonNCLs(exons):
 #   - the counts vector to update (1D numpy int array)
 #   - the maximum accepted gap length between a pair of mate reads, pairs separated by
 #     a longer gap are ignored (putative structural variant or alignment error)
-# Nothing is returned, this function just updates countsVec
+# This function updates countsVec, and returns a 3-element list [BP1, BP2, CNVTYPE] if
+# the QNAME supports the presence of a CNV (CNVTYPE == 'DEL' or 'DUP') with breakpoints
+# BP1 & BP2 (ie a read spans the breakpoints), None otherwise.
 def Qname2ExonCount(startFList, endFList, startRList, endRList, exonNCL, countsVec, maxGap):
     # skip Qnames that don't have alignments on both strands
     if (len(startFList) == 0) or (len(startRList) == 0):
@@ -297,6 +316,9 @@ def Qname2ExonCount(startFList, endFList, startRList, endRList, exonNCL, countsV
     # skip Qnames that have at least 3 alignments on a strand
     if (len(startFList) > 2) or (len(startRList) > 2):
         return
+
+    # declare list that will be returned
+    breakPoints = None
 
     # if we have 2 alis on one strand and they overlap: merge them
     # (there could be a short indel or other SV, not trying to detect
@@ -364,6 +386,7 @@ def Qname2ExonCount(startFList, endFList, startRList, endRList, exonNCL, countsV
                 fragStarts.insert(0, startFList[0])
                 fragEnds.insert(0, endFList[0])
                 # this is a suspected DEL with BPs: fragEnds[0], fragStarts[1]
+                breakPoints = [fragEnds[0], fragStarts[1], 'DEL']
             else:
                 # Both F alis are overlapped by R ali, doesn't make sense, ignore this qname
                 return
@@ -376,11 +399,13 @@ def Qname2ExonCount(startFList, endFList, startRList, endRList, exonNCL, countsV
                 fragStarts.append(startFList[0])
                 fragEnds.append(endFList[0])
                 # this is a suspected DUP with BPs: fragStarts[0], fragEnds[-1]
+                breakPoints = [fragStarts[0], fragEnds[-1], 'DUP']
             elif (fragStarts[-1] < endFList[0]):
-                # first F ali overlaps R ali, very small DUP? suspicious, but merge them
+                # first F ali overlaps R ali, very small DUP and/or large fragment? suspicious, but merge them
                 fragStarts[-1] = min(fragStarts[-1], startFList[0])
                 fragEnds[-1] = max(fragEnds[-1], endFList[0])
                 # this is a suspected DUP with BPs: fragStarts[0], fragEnds[-1]
+                breakPoints = [fragStarts[0], fragEnds[-1], 'DUP']
             else:
                 # F alis suggest a DUP but R ali doesn't agree, ignore this qname
                 return
@@ -409,6 +434,7 @@ def Qname2ExonCount(startFList, endFList, startRList, endRList, exonNCL, countsV
                 fragStarts.append(startRList[1])
                 fragEnds.append(endRList[1])
                 # this is a suspected DEL with BPs: fragEnds[-2], fragStarts[-1]
+                breakPoints = [fragEnds[-2], fragStarts[-1], 'DEL']
             else:
                 # Both R alis are overlapped by F ali, doesn't make sense, ignore this qname
                 return
@@ -420,11 +446,13 @@ def Qname2ExonCount(startFList, endFList, startRList, endRList, exonNCL, countsV
                 fragStarts.insert(0, startRList[1])
                 fragEnds.insert(0, endRList[1])
                 # this is a suspected DUP with BPs: fragStarts[0], fragEnds[-1]
+                breakPoints = [fragStarts[0], fragEnds[-1], 'DUP']
             elif (fragStarts[0] < endRList[1]):
-                # F ali overlaps second R ali, very small DUP? suspicious, but merge them
+                # first F ali overlaps R ali, very small DUP and/or large fragment? suspicious, but merge them
                 fragStarts[0] = min(fragStarts[0], startRList[1])
                 fragEnds[0] = max(fragEnds[0], endRList[1])
                 # this is a suspected DUP with BPs: fragStarts[0], fragEnds[-1]
+                breakPoints = [fragStarts[0], fragEnds[-1], 'DUP']
             else:
                 # R alis suggest a DUP but F ali doesn't agree, ignore this qname
                 return
@@ -440,6 +468,7 @@ def Qname2ExonCount(startFList, endFList, startRList, endRList, exonNCL, countsV
                 fragStarts = [min(startFList[0], startRList[0]), min(startFList[1], startRList[1])]
                 fragEnds = [max(endFList[0], endRList[0]), max(endFList[1], endRList[1])]
                 # this is a suspected DEL with BPs: fragEnds[0], fragStarts[1]
+                breakPoints = [fragEnds[0], fragStarts[1], 'DEL']
             else:
                 # at least one pair of F+R reads doesn't overlap, how? ignore qname
                 return
@@ -452,6 +481,7 @@ def Qname2ExonCount(startFList, endFList, startRList, endRList, exonNCL, countsV
                 fragStarts = [min(startFList[1], startRList[1]), min(startFList[0], startRList[0])]
                 fragEnds = [max(endFList[1], endRList[1]), max(endFList[0], endRList[0])]
                 # this is a suspected DUP with BPs: fragStarts[0], fragEnds[-1]
+                breakPoints = [fragStarts[0], fragEnds[-1], 'DUP']
             else:
                 # at least one pair of F+R reads doesn't overlap, how? ignore qname
                 return
@@ -473,7 +503,7 @@ def Qname2ExonCount(startFList, endFList, startRList, endRList, exonNCL, countsV
             if (exonIndex not in exonsSeen):
                 exonsSeen.append(exonIndex)
                 incrementCount(countsVec, exonIndex)
-                # countsVec[exonIndex] += 1
+    return(breakPoints)
 
 
 ####################################################

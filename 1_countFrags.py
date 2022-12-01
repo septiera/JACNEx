@@ -39,6 +39,7 @@ def parseArgs(argv):
     bamsFrom = ""
     bedFile = ""
     # optional args with default values
+    outDir = "./"
     padding = 10
     maxGap = 1000
     countsFile = ""
@@ -54,11 +55,13 @@ Results are printed to stdout in TSV format: first 4 columns hold the exon defin
 padding and sorting, subsequent columns (one per BAM) hold the counts.
 If a pre-existing counts file produced by this program with the same BED is provided (with --counts),
 counts for requested BAMs are copied from this file and counting is only performed for the new BAM(s).
+In addition, any support for putative breakpoints is printed to sample-specific TSV files created in outDir.
 ARGUMENTS:
    --bams [str]: comma-separated list of BAM files
    --bams-from [str]: text file listing BAM files, one per line
    --bed [str]: BED file, possibly gzipped, containing exon definitions (format: 4-column
            headerless tab-separated file, columns contain CHR START END EXON_ID)
+   --outDir [str]: subdir (created if needed) where breakpoint files will be produced, default :  """ + str(outDir) + """
    --counts [str] optional: pre-existing counts file produced by this program, possibly gzipped,
            coounts for requested BAMs will be copied from this file if present
    --padding [int] : number of bps used to pad the exon coordinates, default : """ + str(padding) + """
@@ -70,7 +73,7 @@ ARGUMENTS:
    --jobs [int] : number of threads to allocate for counting step, default:""" + str(countJobs) + "\n"
 
     try:
-        opts, args = getopt.gnu_getopt(argv[1:], 'h', ["help", "bams=", "bams-from=", "bed=", "counts=",
+        opts, args = getopt.gnu_getopt(argv[1:], 'h', ["help", "bams=", "bams-from=", "bed=", "outDir=", "counts=",
                                                        "padding=", "maxGap=", "tmp=", "samtools=", "samthreads=", "jobs="])
     except getopt.GetoptError as e:
         sys.stderr.write("ERROR : " + e.msg + ". Try " + scriptName + " --help\n")
@@ -94,6 +97,14 @@ ARGUMENTS:
             if not os.path.isfile(bedFile):
                 sys.stderr.write("ERROR : bedFile " + bedFile + " doesn't exist.\n")
                 raise Exception()
+        elif opt in ("--outDir"):
+            outDir = value
+            if not os.path.isdir(outDir):
+                try:
+                    os.mkdir(outDir)
+                except Exception as e:
+                    sys.stderr.write("ERROR : outDir %s doesn't exist and can't be mkdir'd: %s", outDir, e)
+                    raise Exception()
         elif opt in ("--counts"):
             countsFile = value
             if not os.path.isfile(countsFile):
@@ -193,7 +204,7 @@ ARGUMENTS:
             sampleName = re.sub(r"\.[bs]am$", "", sampleName)
             samples.append(sampleName)
     # AOK, return everything that's needed
-    return(bamsToProcess, samples, bedFile, padding, maxGap, countsFile, tmpDir, samtools, samThreads, countJobs)
+    return(bamsToProcess, samples, bedFile, outDir, padding, maxGap, countsFile, tmpDir, samtools, samThreads, countJobs)
 
 
 ###############################################################################
@@ -206,7 +217,7 @@ ARGUMENTS:
 # If anything goes wrong, print error message to stderr and raise exception.
 def main(argv):
     # parse, check and preprocess arguments - exceptions must be caught by caller
-    (bamsToProcess, samples, bedFile, padding, maxGap, countsFile, tmpDir, samtools, samThreads, countJobs) = parseArgs(argv)
+    (bamsToProcess, samples, bedFile, outDir, padding, maxGap, countsFile, tmpDir, samtools, samThreads, countJobs) = parseArgs(argv)
 
     # args seem OK, start working
     logger.info("starting to work")
@@ -244,18 +255,38 @@ def main(argv):
 
     # mergeCounts:
     # can only accept one arg: the return value of mageCNV.countFragments.countFrags();
-    # this must be a 2-element tuple (sampleIndex, sampleCounts).
-    # Fill column at index sampleIndex in countsArray with counts stored in sampleCounts
-    def mergeCounts(sample_counts):
-        for exonIndex in range(len(sample_counts[1])):
-            countsArray[exonIndex, sample_counts[0]] = sample_counts[1][exonIndex]
+    # this must be a 3-element tuple (sampleIndex, sampleCounts, breakPoints).
+    # Fill column at index sampleIndex in countsArray with counts stored in sampleCounts,
+    # and print info about putative CNVs with alignment-supported breakpoints as TSV
+    # to outDir/sample.breakPoints.tsv
+    def mergeCounts(countFragsRes):
+        for exonIndex in range(len(countFragsRes[1])):
+            countsArray[exonIndex, countFragsRes[0]] = countFragsRes[1][exonIndex]
+        if (len(countFragsRes[2]) > 0):
+            # openOK is True iff we successfully opened bpFile for writing
+            openOK = True
+            try:
+                bpFile = outDir + '/' + sample + '.breakPoints.tsv'
+                BPFH = open(bpFile, mode='w')
+            except Exception as e:
+                logger.error("Cannot open breakpoints file %s for writing - %s", bpFile, e)
+                logger.error("-> printing available breakpoint info for %s to stderr", sample)
+                BPFH = sys.stderr
+                openOK = False
+            for thisBP in countFragsRes[2]:
+                toPrint = thisBP[0] + "\t" + str(thisBP[1]) + "\t" + str(thisBP[2]) + "\t" + thisBP[3] + "\t" + thisBP[4]
+                print(toPrint, file=BPFH)
+            if openOK:
+                BPFH.close()
+            else:
+                logger.error("Done printing breakpoint info for %s", sample)
 
     # error callback: if countFrags fails for any BAMs, we have to remember their indexes
     # and only expunge them at the end -> save their indexes in failedBams
     failedBams = []
 
-    def jobError(ex):
-        logger.warning("Failed to count fragments for sample %s, skipping it - exception: %s", sample, ex)
+    def jobError(e):
+        logger.warning("Failed to count fragments for sample %s, skipping it - exception: %s", sample, e)
         failedBams.append(bamIndex)
 
     #####################################################
