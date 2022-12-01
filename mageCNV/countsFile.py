@@ -1,5 +1,5 @@
 import numpy as np
-import numba # make python faster
+import numba  # make python faster
 import gzip
 import logging
 
@@ -37,17 +37,17 @@ logger = logging.getLogger(__name__)
 def extractCountsFromPrev(exons, SOIs, prevCountsFile):
     # numpy arrays to be returned:
     # countsArray[exonIndex,sampleIndex] will store the specified count
-    countsArray = allocateCountsArray(len(exons),len(SOIs))
-    # countsFilled: same size and order as sampleNames, value will be set 
+    countsArray = allocateCountsArray(len(exons), len(SOIs))
+    # countsFilled: same size and order as sampleNames, value will be set
     # to True iff counts were filled from countsFile
-    countsFilled = np.array([False]*len(SOIs))
+    countsFilled = np.array([False] * len(SOIs))
 
     if (prevCountsFile != ''):
         # we have a prevCounts file, parse it
         (prevExons, prevSamples, prevCountsList) = parseCountsFilePrivate(prevCountsFile)
         # compare exon definitions
         if (exons != prevExons):
-            logger.error("exon definitions disagree between prevCountsFile and BED file...\n\tIf the BED file changed "+
+            logger.error("exon definitions disagree between prevCountsFile and BED file...\n\tIf the BED file changed " +
                          "you cannot re-use a previous countsFile: all counts must be recalculated from scratch")
             raise Exception('mismatched exon definitions')
 
@@ -87,12 +87,13 @@ def extractCountsFromPrev(exons, SOIs, prevCountsFile):
 def parseCountsFile(countsFile):
     (exons, samples, countsList) = parseCountsFilePrivate(countsFile)
     # countsArray[exonIndex,sampleIndex] will store the specified count
-    countsArray = allocateCountsArray(len(exons),len(samples))
+    countsArray = allocateCountsArray(len(exons), len(samples))
     # Fill countsArray from CountsList
     for i in range(len(exons)):
         countsVec2array(countsArray, i, countsList[i])
 
     return(exons, samples, countsArray)
+
 
 #############################################################
 # printCountsFile:
@@ -104,12 +105,12 @@ def parseCountsFile(countsFile):
 #
 # Print this data to stdout as a 'countsFile' (same format parsed by extractCountsFromPrev).
 def printCountsFile(exons, samples, countsArray):
-    toPrint = "CHR\tSTART\tEND\tEXON_ID\t"+"\t".join(samples)
+    toPrint = "CHR\tSTART\tEND\tEXON_ID\t" + "\t".join(samples)
     print(toPrint)
     for i in range(len(exons)):
         # exon def + counts
-        toPrint = exons[i][0]+"\t"+str(exons[i][1])+"\t"+str(exons[i][2])+"\t"+exons[i][3]
-        toPrint += counts2str(countsArray,i)
+        toPrint = exons[i][0] + "\t" + str(exons[i][1]) + "\t" + str(exons[i][2]) + "\t" + exons[i][3]
+        toPrint += counts2str(countsArray, i)
         print(toPrint)
 
 
@@ -134,7 +135,7 @@ def parseCountsFilePrivate(countsFile):
         if countsFile.endswith(".gz"):
             countsFH = gzip.open(countsFile, "rt")
         else:
-            countsFH = open(countsFile,"r")
+            countsFH = open(countsFile, "r")
     except Exception as e:
         logger.error("Opening provided countsFile %s: %s", countsFile, e)
         raise Exception('cannot open countsFile')
@@ -152,7 +153,7 @@ def parseCountsFilePrivate(countsFile):
     # populate exons and counts from data lines
     for line in countsFH:
         # split into 4 exon definition strings + one string containing all the counts
-        splitLine=line.rstrip().split("\t",maxsplit=4)
+        splitLine = line.rstrip().split("\t", maxsplit=4)
         # convert START-END to ints and save
         exon = [splitLine[0], int(splitLine[1]), int(splitLine[2]), splitLine[3]]
         exons.append(exon)
@@ -161,7 +162,7 @@ def parseCountsFilePrivate(countsFile):
         countsList.append(counts)
     return(exons, samples, countsList)
 
-        
+
 #############################################################
 # allocateCountsArray:
 # Args:
@@ -190,8 +191,9 @@ def allocateCountsArray(numExons, numSamples):
 @numba.njit
 def prevCountsVec2CountsArray(countsArray, exonIndex, prevCounts, prev2new):
     for i in numba.prange(len(prev2new)):
-        if prev2new[i]!=-1:
-            countsArray[exonIndex,prev2new[i]] = prevCounts[i]
+        if prev2new[i] != -1:
+            countsArray[exonIndex, prev2new[i]] = prevCounts[i]
+
 
 #################################################
 # countsVec2array
@@ -203,7 +205,8 @@ def prevCountsVec2CountsArray(countsArray, exonIndex, prevCounts, prev2new):
 @numba.njit
 def countsVec2array(countsArray, exonIndex, countsVector):
     for i in numba.prange(len(countsVector)):
-        countsArray[exonIndex,i] = countsVector[i]
+        countsArray[exonIndex, i] = countsVector[i]
+
 
 #################################################
 # counts2str:
@@ -213,5 +216,5 @@ def countsVec2array(countsArray, exonIndex, countsVector):
 def counts2str(countsArray, exonIndex):
     toPrint = ""
     for i in range(countsArray.shape[1]):
-        toPrint += "\t" + str(countsArray[exonIndex,i])
+        toPrint += "\t" + str(countsArray[exonIndex, i])
     return(toPrint)
