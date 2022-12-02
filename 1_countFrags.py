@@ -39,7 +39,7 @@ def parseArgs(argv):
     bamsFrom = ""
     bedFile = ""
     # optional args with default values
-    outDir = "./"
+    outDir = "./breakPoints/"
     padding = 10
     maxGap = 1000
     countsFile = ""
