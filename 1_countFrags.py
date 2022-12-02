@@ -261,26 +261,20 @@ def main(argv):
     # and print info about putative CNVs with alignment-supported breakpoints as TSV
     # to outDir/sample.breakPoints.tsv
     def mergeCounts(countFragsRes):
+        si = countFragsRes[0]
         for exonIndex in range(len(countFragsRes[1])):
-            countsArray[exonIndex, countFragsRes[0]] = countFragsRes[1][exonIndex]
+            countsArray[exonIndex, si] = countFragsRes[1][exonIndex]
         if (len(countFragsRes[2]) > 0):
-            # openOK is True iff we successfully opened bpFile for writing
-            openOK = True
             try:
-                bpFile = outDir + '/' + samples[countFragsRes[0]] + '.breakPoints.tsv'
+                bpFile = outDir + '/' + samples[si] + '.breakPoints.tsv'
                 BPFH = open(bpFile, mode='w')
-            except Exception as e:
-                logger.error("Cannot open breakpoints file %s for writing - %s", bpFile, e)
-                logger.error("-> printing available breakpoint info for %s to stderr", samples[countFragsRes[0]])
-                BPFH = sys.stderr
-                openOK = False
-            for thisBP in countFragsRes[2]:
-                toPrint = thisBP[0] + "\t" + str(thisBP[1]) + "\t" + str(thisBP[2]) + "\t" + thisBP[3] + "\t" + thisBP[4]
-                print(toPrint, file=BPFH)
-            if openOK:
+                for thisBP in countFragsRes[2]:
+                    toPrint = thisBP[0] + "\t" + str(thisBP[1]) + "\t" + str(thisBP[2]) + "\t" + thisBP[3] + "\t" + thisBP[4]
+                    print(toPrint, file=BPFH)
                 BPFH.close()
-            else:
-                logger.error("Done printing breakpoint info for %s", samples[countFragsRes[0]])
+                logger.info("Done printing breakpoint info for %s", samples[si])
+            except Exception as e:
+                logger.warning("Discarding breakpoints info for %s because cannot open %s for writing - %s", samples[si], bpFile, e)
 
     # error callback: if countFrags fails for any BAMs, we have to remember their indexes
     # and only expunge them at the end -> save their indexes in failedBams
