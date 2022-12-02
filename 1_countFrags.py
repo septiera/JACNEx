@@ -68,8 +68,8 @@ ARGUMENTS:
    --maxGap [int] : maximum accepted gap length (bp) between reads pairs, pairs separated by a longer gap
            are assumed to possibly result from a structural variant and are ignored, default : """ + str(maxGap) + """
    --tmp [str]: pre-existing dir for temp files, faster is better (eg tmpfs), default: """ + tmpDir + """
-   --samtools [str]: samtools binary (with path if not in $PATH), default: """ + str(samtools) + """"
-   --samthreads [int]: number of threads for samtools, default: """ + str(samThreads) + """"
+   --samtools [str]: samtools binary (with path if not in $PATH), default: """ + str(samtools) + """
+   --samthreads [int]: number of threads for samtools, default: """ + str(samThreads) + """
    --jobs [int] : number of threads to allocate for counting step, default:""" + str(countJobs) + "\n"
 
     try:
