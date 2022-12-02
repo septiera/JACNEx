@@ -71,7 +71,7 @@ def countFrags(bamFile, exons, maxGap, tmpDir, samtools, samThreads, sampleIndex
         # qFirstOnForward==1 if the first-in-pair read of this qname is on the
         # forward reference strand, -1 if it's on the reverse strand, 0 if we don't yet know
         qFirstOnForward = 0
-        # qBad==True if qname must be skipped (e.g. alis on bad or multiple chroms, or alis
+        # qBad==True if qname must be skipped (e.g. alis on multiple chroms, or alis
         # disagree regarding the strand on which the first/last read-in-pair aligns, or...)
         qBad = False
 
@@ -116,7 +116,8 @@ def countFrags(bamFile, exons, maxGap, tmpDir, samtools, samThreads, sampleIndex
             ######################################################################
             # If we are done with previous qname: process it and reset accumulators
             if (qname != align[0]) and (qname != ""):  # align[0] is the qname
-                if not qBad:
+                # qchrom == "" is possible if all alis for qname mapped to non-main chroms
+                if (not qBad) and (qchrom != ""):
                     # if we have 2 alis on a strand, make sure they are in "read" order (switch them if needed)
                     if (len(qstartF) == 2) and (qstartOnReadF[0] > qstartOnReadF[1]):
                         qstartF.reverse()
@@ -145,9 +146,12 @@ def countFrags(bamFile, exons, maxGap, tmpDir, samtools, samThreads, sampleIndex
 
             # align[2] == chrom
             if align[2] not in exonNCLs:
-                # ignore qname if ali not on a chromosome where we have at least one exon;
-                # importantly this skips non-main GRCh38 "chroms" (eg ALT contigs)
-                qBad = True
+                # ignore alis that don't map to a chromosome where we have at least one exon;
+                # importantly this skips alis on non-main GRCh38 "chroms" (eg ALT contigs)
+                # Note: we ignore the ali but don't set qBad, because some tools report alignments to
+                # ALT contigs in the XA tag ("secondary alignemnt") of the main chrom ali (as expected),
+                # but also produce the alignements to ALTs as full alignement records with flag 0x800
+                # "supplementary alignment" set, this is contradictory but we have to deal with it...
                 continue
             elif qchrom == "":
                 qchrom = align[2]
