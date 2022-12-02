@@ -267,11 +267,11 @@ def main(argv):
             # openOK is True iff we successfully opened bpFile for writing
             openOK = True
             try:
-                bpFile = outDir + '/' + sample + '.breakPoints.tsv'
+                bpFile = outDir + '/' + samples[countFragsRes[0]] + '.breakPoints.tsv'
                 BPFH = open(bpFile, mode='w')
             except Exception as e:
                 logger.error("Cannot open breakpoints file %s for writing - %s", bpFile, e)
-                logger.error("-> printing available breakpoint info for %s to stderr", sample)
+                logger.error("-> printing available breakpoint info for %s to stderr", samples[countFragsRes[0]])
                 BPFH = sys.stderr
                 openOK = False
             for thisBP in countFragsRes[2]:
@@ -280,15 +280,17 @@ def main(argv):
             if openOK:
                 BPFH.close()
             else:
-                logger.error("Done printing breakpoint info for %s", sample)
+                logger.error("Done printing breakpoint info for %s", samples[countFragsRes[0]])
 
     # error callback: if countFrags fails for any BAMs, we have to remember their indexes
     # and only expunge them at the end -> save their indexes in failedBams
     failedBams = []
 
     def jobError(e):
-        logger.warning("Failed to count fragments for sample %s, skipping it - exception: %s", sample, e)
-        failedBams.append(bamIndex)
+        #  exceptions raised by countFrags are always Exception(str(sampleIndex))
+        si = int(str(e))
+        logger.warning("Failed to count fragments for sample %s, skipping it", samples[si])
+        failedBams.append(si)
 
     #####################################################
     # Process remaining (new) BAMs, up to countJobs in parallel

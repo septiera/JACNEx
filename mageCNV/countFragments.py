@@ -35,194 +35,201 @@ logger = logging.getLogger(__name__)
 # - breakPoints is a list of 5-element lists [CHR, BP1, BP2, CNVTYPE, QNAME], where
 #   BP1 and BP2 are the coordinates of the putative breakpoints, CNVTYPE is 'DEL' or 'DUP',
 #   and QNAME is the supporting fragment
+# If anything goes wrong, log info on exception and then always raise Exception(str(sampleIndex)),
+# so caller can catch it and know which sampleIndex we were working on.
 def countFrags(bamFile, exons, maxGap, tmpDir, samtools, samThreads, sampleIndex):
-    startTime = time.time()
-    # for each chrom, build an NCL holding the exons
-    # NOTE: we would like to build this once in the caller and use it for each BAM,
-    # but the multiprocessing module doesn't allow this... We therefore rebuild the
-    # NCLs for each BAM, wasteful but it's OK, createExonNCLs() is fast
-    exonNCLs = createExonNCLs(exons)
+    try:
+        startTime = time.time()
+        # for each chrom, build an NCL holding the exons
+        # NOTE: we would like to build this once in the caller and use it for each BAM,
+        # but the multiprocessing module doesn't allow this... We therefore rebuild the
+        # NCLs for each BAM, wasteful but it's OK, createExonNCLs() is fast
+        exonNCLs = createExonNCLs(exons)
 
-    thisTime = time.time()
-    logger.debug("Done createExonNCLs for %s, in %.2f s", os.path.basename(bamFile), thisTime - startTime)
-    startTime = thisTime
+        thisTime = time.time()
+        logger.debug("Done createExonNCLs for %s, in %.2f s", os.path.basename(bamFile), thisTime - startTime)
+        startTime = thisTime
 
-    # We need to process all alignments for a given qname simultaneously
-    # => ALGORITHM:
-    # parse alignements from BAM, grouped by qname;
-    # if qname didn't change -> just apply some QC and if AOK store the
-    #   data we need in accumulators,
-    # if the qname changed -> process accumulated data for the previous
-    #   qname (with Qname2ExonCount), then reset accumulators and store
-    #   data for new qname.
+        # We need to process all alignments for a given qname simultaneously
+        # => ALGORITHM:
+        # parse alignements from BAM, grouped by qname;
+        # if qname didn't change -> just apply some QC and if AOK store the
+        #   data we need in accumulators,
+        # if the qname changed -> process accumulated data for the previous
+        #   qname (with Qname2ExonCount), then reset accumulators and store
+        #   data for new qname.
 
-    # Accumulators:
-    # QNAME and CHR
-    qname, qchrom = "", ""
-    # START and END coordinates on the genome of each alignment for this qname,
-    # aligning on the Forward or Reverse genomic strands
-    qstartF, qstartR, qendF, qendR = [], [], [], []
-    # coordinate of the leftmost non-clipped base on the read, alis in the same order
-    # as in qstartF/R and qendF/R
-    qstartOnReadF, qstartOnReadR = [], []
-    # qFirstOnForward==1 if the first-in-pair read of this qname is on the
-    # forward reference strand, -1 if it's on the reverse strand, 0 if we don't yet know
-    qFirstOnForward = 0
-    # qBad==True if qname must be skipped (e.g. alis on bad or multiple chroms, or alis
-    # disagree regarding the strand on which the first/last read-in-pair aligns, or...)
-    qBad = False
+        # Accumulators:
+        # QNAME and CHR
+        qname, qchrom = "", ""
+        # START and END coordinates on the genome of each alignment for this qname,
+        # aligning on the Forward or Reverse genomic strands
+        qstartF, qstartR, qendF, qendR = [], [], [], []
+        # coordinate of the leftmost non-clipped base on the read, alis in the same order
+        # as in qstartF/R and qendF/R
+        qstartOnReadF, qstartOnReadR = [], []
+        # qFirstOnForward==1 if the first-in-pair read of this qname is on the
+        # forward reference strand, -1 if it's on the reverse strand, 0 if we don't yet know
+        qFirstOnForward = 0
+        # qBad==True if qname must be skipped (e.g. alis on bad or multiple chroms, or alis
+        # disagree regarding the strand on which the first/last read-in-pair aligns, or...)
+        qBad = False
 
-    # To Fill:
-    # 1D numpy array containing the sample fragment counts for all exons
-    sampleCounts = np.zeros(len(exons), dtype=np.uint32)
-    # list of lists with info about breakpoints support
-    breakPoints = []
+        # To Fill:
+        # 1D numpy array containing the sample fragment counts for all exons
+        sampleCounts = np.zeros(len(exons), dtype=np.uint32)
+        # list of lists with info about breakpoints support
+        breakPoints = []
 
-    ############################################
-    # Preprocessing:
-    # - need to parse the alignements grouped by qname, "samtools collate" allows this;
-    # - we can also immediately filter out poorly mapped (low MAPQ) or dubious/bad
-    #   alignments based on the SAM flags
-    # Requiring:
-    #   1 0x1 read paired
-    # Discarding when any if the below is set:
-    #   4 0x4 read unmapped
-    #   8 0x8 mate unmapped
-    #   256 0x80 not primary alignment
-    #   512 0x200 read fails platform/vendor quality checks
-    #   1024 0x400 read is PCR or optical duplicate
-    #   -> sum == 1804
-    # For more details on FLAGs read the SAM spec: http://samtools.github.io/hts-specs/
-    tmpDirObj = tempfile.TemporaryDirectory(dir=tmpDir)
-    tmpDirPrefix = tmpDirObj.name + "/tmpcoll"
+        ############################################
+        # Preprocessing:
+        # - need to parse the alignements grouped by qname, "samtools collate" allows this;
+        # - we can also immediately filter out poorly mapped (low MAPQ) or dubious/bad
+        #   alignments based on the SAM flags
+        # Requiring:
+        #   1 0x1 read paired
+        # Discarding when any if the below is set:
+        #   4 0x4 read unmapped
+        #   8 0x8 mate unmapped
+        #   256 0x80 not primary alignment
+        #   512 0x200 read fails platform/vendor quality checks
+        #   1024 0x400 read is PCR or optical duplicate
+        #   -> sum == 1804
+        # For more details on FLAGs read the SAM spec: http://samtools.github.io/hts-specs/
+        tmpDirObj = tempfile.TemporaryDirectory(dir=tmpDir)
+        tmpDirPrefix = tmpDirObj.name + "/tmpcoll"
 
-    cmd = [samtools, 'collate', '-O', '--output-fmt', 'SAM', '--threads', str(samThreads)]
-    cmd.extend(['--input-fmt-option', 'filter=(mapq >= 20) && flag.paired && !(flag & 1804)'])
-    cmd.extend([bamFile, tmpDirPrefix])
-    samproc = subprocess.Popen(cmd, stdout=subprocess.PIPE, universal_newlines=True)
+        cmd = [samtools, 'collate', '-O', '--output-fmt', 'SAM', '--threads', str(samThreads)]
+        cmd.extend(['--input-fmt-option', 'filter=(mapq >= 20) && flag.paired && !(flag & 1804)'])
+        cmd.extend([bamFile, tmpDirPrefix])
+        samproc = subprocess.Popen(cmd, stdout=subprocess.PIPE, universal_newlines=True)
 
-    ############################################
-    # Main loop: parse each alignment
-    for line in samproc.stdout:
-        # skip header
-        if re.match('^@', line):
-            continue
+        ############################################
+        # Main loop: parse each alignment
+        for line in samproc.stdout:
+            # skip header
+            if re.match('^@', line):
+                continue
 
-        align = line.split('\t', maxsplit=6)
+            align = line.split('\t', maxsplit=6)
 
-        ######################################################################
-        # If we are done with previous qname: process it and reset accumulators
-        if (qname != align[0]) and (qname != ""):  # align[0] is the qname
-            if not qBad:
-                # if we have 2 alis on a strand, make sure they are in "read" order (switch them if needed)
-                if (len(qstartF) == 2) and (qstartOnReadF[0] > qstartOnReadF[1]):
-                    qstartF.reverse()
-                    qendF.reverse()
-                if (len(qstartR) == 2) and (qstartOnReadR[0] > qstartOnReadR[1]):
-                    qstartR.reverse()
-                    qendR.reverse()
-                BPs = Qname2ExonCount(qstartF, qendF, qstartR, qendR, exonNCLs[qchrom], sampleCounts, maxGap)
-                if (BPs is not None):
-                    BPs.insert(0, qchrom)
-                    BPs.append(qname)
-                    breakPoints.append(BPs)
-            qname, qchrom = "", ""
-            qstartF, qstartR, qendF, qendR = [], [], [], []
-            qstartOnReadF, qstartOnReadR = [], []
-            qFirstOnForward = 0
-            qBad = False
-        elif qBad:  # same qname as previous ali but we know it's bad -> skip
-            continue
+            ######################################################################
+            # If we are done with previous qname: process it and reset accumulators
+            if (qname != align[0]) and (qname != ""):  # align[0] is the qname
+                if not qBad:
+                    # if we have 2 alis on a strand, make sure they are in "read" order (switch them if needed)
+                    if (len(qstartF) == 2) and (qstartOnReadF[0] > qstartOnReadF[1]):
+                        qstartF.reverse()
+                        qendF.reverse()
+                    if (len(qstartR) == 2) and (qstartOnReadR[0] > qstartOnReadR[1]):
+                        qstartR.reverse()
+                        qendR.reverse()
+                    BPs = Qname2ExonCount(qstartF, qendF, qstartR, qendR, exonNCLs[qchrom], sampleCounts, maxGap)
+                    if (BPs is not None):
+                        BPs.insert(0, qchrom)
+                        BPs.append(qname)
+                        breakPoints.append(BPs)
+                qname, qchrom = "", ""
+                qstartF, qstartR, qendF, qendR = [], [], [], []
+                qstartOnReadF, qstartOnReadR = [], []
+                qFirstOnForward = 0
+                qBad = False
+            elif qBad:  # same qname as previous ali but we know it's bad -> skip
+                continue
 
-        ######################################################################
-        # Either we're in the same qname and it's not bad, or we changed qname
-        # -> in both cases update accumulators with current line
-        if qname == "":
-            qname = align[0]
+            ######################################################################
+            # Either we're in the same qname and it's not bad, or we changed qname
+            # -> in both cases update accumulators with current line
+            if qname == "":
+                qname = align[0]
 
-        # align[2] == chrom
-        if align[2] not in exonNCLs:
-            # ignore qname if ali not on a chromosome where we have at least one exon;
-            # importantly this skips non-main GRCh38 "chroms" (eg ALT contigs)
-            qBad = True
-            continue
-        elif qchrom == "":
-            qchrom = align[2]
-        elif qchrom != align[2]:
-            # qname has alignments on different chroms, ignore it
-            qBad = True
-            continue
-        # else same chrom, keep going
+            # align[2] == chrom
+            if align[2] not in exonNCLs:
+                # ignore qname if ali not on a chromosome where we have at least one exon;
+                # importantly this skips non-main GRCh38 "chroms" (eg ALT contigs)
+                qBad = True
+                continue
+            elif qchrom == "":
+                qchrom = align[2]
+            elif qchrom != align[2]:
+                # qname has alignments on different chroms, ignore it
+                qBad = True
+                continue
+            # else same chrom, keep going
 
-        # Retrieving flags for STRAND and first/second read
-        currentFlag = int(align[1])
+            # Retrieving flags for STRAND and first/second read
+            currentFlag = int(align[1])
 
-        # currentFirstOnForward==1 if according to this ali, the first-in-pair
-        # read is on the forward strand, -1 otherwise
-        currentFirstOnForward = -1
-        # flag 16 the alignment is on the reverse strand
-        # flag 64 the alignment is first in pair, otherwise 128
-        if ((currentFlag & 80) == 64) or ((currentFlag & 144) == 144):
-            currentFirstOnForward = 1
-        if qFirstOnForward == 0:
-            # first ali for this qname
-            qFirstOnForward = currentFirstOnForward
-        elif qFirstOnForward != currentFirstOnForward:
-            qBad = True
-            continue
-        # else this ali agrees with previous alis for qname -> NOOP
+            # currentFirstOnForward==1 if according to this ali, the first-in-pair
+            # read is on the forward strand, -1 otherwise
+            currentFirstOnForward = -1
+            # flag 16 the alignment is on the reverse strand
+            # flag 64 the alignment is first in pair, otherwise 128
+            if ((currentFlag & 80) == 64) or ((currentFlag & 144) == 144):
+                currentFirstOnForward = 1
+            if qFirstOnForward == 0:
+                # first ali for this qname
+                qFirstOnForward = currentFirstOnForward
+            elif qFirstOnForward != currentFirstOnForward:
+                qBad = True
+                continue
+            # else this ali agrees with previous alis for qname -> NOOP
 
-        # START and END coordinates of current alignment on REF (ignoring any clipped bases)
-        currentStart = int(align[3])
-        # END depends on CIGAR
-        currentCigar = align[5]
-        currentAliLength = aliLengthOnRef(currentCigar)
-        currentEnd = currentStart + currentAliLength - 1
-        # coord of leftmost non-clipped base on read
-        currentStartOnRead = firstNonClipped(currentCigar)
-        if (currentFlag & 16) == 0:
-            # flag 16 off => forward strand
-            qstartF.append(currentStart)
-            qendF.append(currentEnd)
-            qstartOnReadF.append(currentStartOnRead)
-        else:
-            qstartR.append(currentStart)
-            qendR.append(currentEnd)
-            qstartOnReadR.append(currentStartOnRead)
+            # START and END coordinates of current alignment on REF (ignoring any clipped bases)
+            currentStart = int(align[3])
+            # END depends on CIGAR
+            currentCigar = align[5]
+            currentAliLength = aliLengthOnRef(currentCigar)
+            currentEnd = currentStart + currentAliLength - 1
+            # coord of leftmost non-clipped base on read
+            currentStartOnRead = firstNonClipped(currentCigar)
+            if (currentFlag & 16) == 0:
+                # flag 16 off => forward strand
+                qstartF.append(currentStart)
+                qendF.append(currentEnd)
+                qstartOnReadF.append(currentStartOnRead)
+            else:
+                qstartR.append(currentStart)
+                qendR.append(currentEnd)
+                qstartOnReadR.append(currentStartOnRead)
 
-    #################################################################################################
-    # Done reading lines from BAM
+        #################################################################################################
+        # Done reading lines from BAM
 
-    # process last Qname
-    if (qname != "") and not qBad:
-        # if we have 2 alis on a strand, make sure they are in "read" order (switch them if needed)
-        if (len(qstartF) == 2) and (qstartOnReadF[0] > qstartOnReadF[1]):
-            qstartF.reverse()
-            qendF.reverse()
-        if (len(qstartR) == 2) and (qstartOnReadR[0] > qstartOnReadR[1]):
-            qstartR.reverse()
-            qendR.reverse()
-        BPs = Qname2ExonCount(qstartF, qendF, qstartR, qendR, exonNCLs[qchrom], sampleCounts, maxGap)
-        if (BPs is not None):
-            BPs.insert(0, qchrom)
-            BPs.append(qname)
-            breakPoints.append(BPs)
+        # process last Qname
+        if (qname != "") and not qBad:
+            # if we have 2 alis on a strand, make sure they are in "read" order (switch them if needed)
+            if (len(qstartF) == 2) and (qstartOnReadF[0] > qstartOnReadF[1]):
+                qstartF.reverse()
+                qendF.reverse()
+            if (len(qstartR) == 2) and (qstartOnReadR[0] > qstartOnReadR[1]):
+                qstartR.reverse()
+                qendR.reverse()
+            BPs = Qname2ExonCount(qstartF, qendF, qstartR, qendR, exonNCLs[qchrom], sampleCounts, maxGap)
+            if (BPs is not None):
+                BPs.insert(0, qchrom)
+                BPs.append(qname)
+                breakPoints.append(BPs)
 
-    # wait for samtools to finish cleanly and check exit code
-    if (samproc.wait() != 0):
-        logger.error("in countFrags, while processing %s, samtools exited with code %s",
-                     bamFile, samproc.returncode)
-        raise Exception("samtools failed")
+        # wait for samtools to finish cleanly and check exit code
+        if (samproc.wait() != 0):
+            logger.error("in countFrags, while processing %s, samtools exited with code %s",
+                         bamFile, samproc.returncode)
+            raise Exception("samtools failed")
 
-    # tmpDirObj should get cleaned up automatically but sometimes samtools tempfiles
-    # are in the process of being deleted => sync to avoid race
-    os.sync()
-    # we want breakpoints sorted by chrom (but not caring that chr10 comes before chr2),
-    # then BP1 then BP2 then CNVTYPE
-    breakPoints.sort(key=lambda row: (row[0], row[1], row[2], row[3]))
-    thisTime = time.time()
-    logger.debug("Done countFrags for %s, in %.2f s", os.path.basename(bamFile), thisTime - startTime)
-    return(sampleIndex, sampleCounts, breakPoints)
+        # tmpDirObj should get cleaned up automatically but sometimes samtools tempfiles
+        # are in the process of being deleted => sync to avoid race
+        os.sync()
+        # we want breakpoints sorted by chrom (but not caring that chr10 comes before chr2),
+        # then BP1 then BP2 then CNVTYPE
+        breakPoints.sort(key=lambda row: (row[0], row[1], row[2], row[3]))
+        thisTime = time.time()
+        logger.debug("Done countFrags for %s, in %.2f s", os.path.basename(bamFile), thisTime - startTime)
+        return(sampleIndex, sampleCounts, breakPoints)
+
+    except Exception as e:
+        logger.error(repr(e))
+        raise Exception(str(sampleIndex))
 
 
 ###############################################################################
