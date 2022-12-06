@@ -39,16 +39,13 @@ logger = logging.getLogger(__name__)
 # so caller can catch it and know which sampleIndex we were working on.
 def countFrags(bamFile, exons, maxGap, tmpDir, samtools, samThreads, sampleIndex):
     try:
+        logger.info('Processing BAM %s', os.path.basename(bamFile))
         startTime = time.time()
         # for each chrom, build an NCL holding the exons
         # NOTE: we would like to build this once in the caller and use it for each BAM,
         # but the multiprocessing module doesn't allow this... We therefore rebuild the
         # NCLs for each BAM, wasteful but it's OK, createExonNCLs() is fast
         exonNCLs = createExonNCLs(exons)
-
-        thisTime = time.time()
-        logger.debug("Done createExonNCLs for %s, in %.2f s", os.path.basename(bamFile), thisTime - startTime)
-        startTime = thisTime
 
         # We need to process all alignments for a given qname simultaneously
         # => ALGORITHM:

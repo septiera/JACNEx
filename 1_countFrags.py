@@ -272,7 +272,7 @@ def main(argv):
                     toPrint = thisBP[0] + "\t" + str(thisBP[1]) + "\t" + str(thisBP[2]) + "\t" + thisBP[3] + "\t" + thisBP[4]
                     print(toPrint, file=BPFH)
                 BPFH.close()
-                logger.info("Done printing breakpoint info for %s", samples[si])
+                logger.info("Done processing %s", samples[si])
             except Exception as e:
                 logger.warning("Discarding breakpoints info for %s because cannot open %s for writing - %s", samples[si], bpFile, e)
 
@@ -298,7 +298,6 @@ def main(argv):
                 logger.info('Sample %s already filled from countsFile', sample)
                 continue
             else:
-                logger.info('Processing BAM for sample %s', sample)
                 pool.apply_async(mageCNV.countFragments.countFrags,
                                  (bam, exons, maxGap, tmpDir, samtools, samThreads, bamIndex), {}, mergeCounts, jobError)
         pool.close()
@@ -318,7 +317,7 @@ def main(argv):
     mageCNV.countsFile.printCountsFile(exons, samples, countsArray)
 
     thisTime = time.time()
-    logger.debug("Done merging and printing results for all samples, in %.2f s", thisTime - startTime)
+    logger.debug("Done printing results for all samples, in %.2f s", thisTime - startTime)
     logger.info("ALL DONE")
 
 
