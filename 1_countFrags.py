@@ -40,9 +40,9 @@ def parseArgs(argv):
     bedFile = ""
     # optional args with default values
     outDir = "./breakPoints/"
+    countsFile = ""
     padding = 10
     maxGap = 1000
-    countsFile = ""
     tmpDir = "/tmp/"
     samtools = "samtools"
     samThreads = 10
@@ -86,30 +86,14 @@ ARGUMENTS:
             raise Exception()
         elif opt in ("--bams"):
             bams = value
-            # bams is checked later, along with bamsFrom content
         elif opt in ("--bams-from"):
             bamsFrom = value
-            if not os.path.isfile(bamsFrom):
-                sys.stderr.write("ERROR : bams-from file " + bamsFrom + " doesn't exist.\n")
-                raise Exception()
         elif opt in ("--bed"):
             bedFile = value
-            if not os.path.isfile(bedFile):
-                sys.stderr.write("ERROR : bedFile " + bedFile + " doesn't exist.\n")
-                raise Exception()
         elif opt in ("--outDir"):
             outDir = value
-            if not os.path.isdir(outDir):
-                try:
-                    os.mkdir(outDir)
-                except Exception:
-                    sys.stderr.write("ERROR : outDir " + outDir + " doesn't exist and can't be mkdir'd\n")
-                    raise Exception()
         elif opt in ("--counts"):
             countsFile = value
-            if not os.path.isfile(countsFile):
-                sys.stderr.write("ERROR : countsFile " + countsFile + " doesn't exist.\n")
-                raise Exception()
         elif opt in ("--padding"):
             try:
                 padding = int(value)
@@ -128,14 +112,8 @@ ARGUMENTS:
                 raise Exception()
         elif opt in ("--tmp"):
             tmpDir = value
-            if not os.path.isdir(tmpDir):
-                sys.stderr.write("ERROR : tmp directory " + tmpDir + " doesn't exist.\n")
-                raise Exception()
         elif opt in ("--samtools"):
             samtools = value
-            if shutil.which(samtools) is None:
-                sys.stderr.write("ERROR : samtools program '" + samtools + "' cannot be run (wrong path, or binary not in $PATH?).\n")
-                raise Exception()
         elif opt in ("--samthreads"):
             try:
                 samThreads = int(value)
@@ -157,16 +135,11 @@ ARGUMENTS:
             raise Exception()
 
     #####################################################
-    # Check that the mandatory parameters are present
+    # Check and clean up list of BAMs
     if (bams == "" and bamsFrom == "") or (bams != "" and bamsFrom != ""):
         sys.stderr.write("ERROR : You must use either --bams or --bams-from but not both. Try " + scriptName + " --help.\n")
         raise Exception()
-    if bedFile == "":
-        sys.stderr.write("ERROR : You must provide a BED file with --bed. Try " + scriptName + " --help.\n")
-        raise Exception()
-
-    # Check and clean up the provided list of BAMs
-    # bamsTmp is user-supplied and may have dupes
+    # bamsTmp will store user-supplied BAMs
     bamsTmp = []
     # bamsNoDupe: tmp dictionary for removing dupes if any: key==bam, value==1
     bamsNoDupe = {}
@@ -177,6 +150,9 @@ ARGUMENTS:
 
     if bams != "":
         bamsTmp = bams.split(",")
+    elif not os.path.isfile(bamsFrom):
+        sys.stderr.write("ERROR : bams-from file " + bamsFrom + " doesn't exist.\n")
+        raise Exception()
     else:
         try:
             bamsList = open(bamsFrom, "r")
@@ -203,6 +179,36 @@ ARGUMENTS:
             sampleName = os.path.basename(bam)
             sampleName = re.sub(r"\.[bs]am$", "", sampleName)
             samples.append(sampleName)
+
+    #####################################################
+    # Check other args
+    if bedFile == "":
+        sys.stderr.write("ERROR : You must provide a BED file with --bed. Try " + scriptName + " --help.\n")
+        raise Exception()
+    elif not os.path.isfile(bedFile):
+        sys.stderr.write("ERROR : bedFile " + bedFile + " doesn't exist.\n")
+        raise Exception()
+
+    if (countsFile != "") and (not os.path.isfile(countsFile)):
+        sys.stderr.write("ERROR : countsFile " + countsFile + " doesn't exist.\n")
+        raise Exception()
+
+    if not os.path.isdir(tmpDir):
+        sys.stderr.write("ERROR : tmp directory " + tmpDir + " doesn't exist.\n")
+        raise Exception()
+
+    if shutil.which(samtools) is None:
+        sys.stderr.write("ERROR : samtools program '" + samtools + "' cannot be run (wrong path, or binary not in $PATH?).\n")
+        raise Exception()
+
+    # test outDir last so we don't mkdir unless all other args are OK
+    if not os.path.isdir(outDir):
+        try:
+            os.mkdir(outDir)
+        except Exception:
+            sys.stderr.write("ERROR : outDir " + outDir + " doesn't exist and can't be mkdir'd\n")
+            raise Exception()
+
     # AOK, return everything that's needed
     return(bamsToProcess, samples, bedFile, outDir, padding, maxGap, countsFile, tmpDir, samtools, samThreads, countJobs)
 
