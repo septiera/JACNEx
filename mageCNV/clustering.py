@@ -31,8 +31,8 @@ logger = logging.getLogger(os.path.basename(sys.argv[0]))
 # form a new cluster.
 # Args:
 #  - FPMarray: is a float numpy array, dim = NbExons x NbSOIs
-#  - minDist: is a float variable (1-|r|), it's the minimal distance tolerated to start building clusters
-#  - maxDist: is a float variable, it's the maximal distance to concidered
+#  - maxCorr: is a float variable, it's the maximal Pearson correlation score to start build clusters
+#  - minCorr: is a float variable, it's the minimal Pearson correlation score to end build clusters
 #  - minSamps: is an int variable, defining the minimal sample number to validate a cluster
 #  - figure: is a boolean: "True" or "False" to generate a figure
 #  - outputFile: is a full path (+ file name) for saving a dendogram
@@ -40,15 +40,22 @@ logger = logging.getLogger(os.path.basename(sys.argv[0]))
 #  - clusters: an int numpy array containing standardized clusterID for each sample
 #  - ctrls: a str list containing controls clusterID delimited by "," for each sample
 #  - validityStatus: a boolean numpy array containing the validity status for each sample (1: valid, 0: invalid)
-def clustersBuilds(FPMarray, minDist, maxDist, minSamps, figure, outputFile):
+def clustersBuilds(FPMarray, maxCorr, minCorr, minSamps, figure, outputFile):
     ###################################
     # part 1: Calcul distance between samples and apply hierachical clustering
     ###################################
     # Euclidean distance (classical method) not used
-    # Absolute correlation distance is unlikely to be a sensible distance when
-    # clustering samples. ( 1-|r| where r is the Pearson correlation)
+    # Pearson correlation distance  (sqrt(1-r)) is unlikely to be a sensible 
+    # distance when clustering samples.
     correlation = np.round(np.corrcoef(FPMarray, rowvar=False), 2)
     dissimilarity = 1 - abs(correlation)
+
+    # calculation of distance thresholds for cluster construction
+    # depends on user-defined correlation levels
+    # minDist: is the average distance to start cluster construction [float].
+    minDist=(1-abs(maxCorr))
+    # maxDist: is the average distance to finalise the cluster construction [float].
+    maxDist=(1-abs(minCorr))
 
     # average linkage the best choice when there are different-sized groups
     # "squareform" transform squared distance matrix in a triangular matrix
