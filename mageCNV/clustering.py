@@ -381,9 +381,8 @@ def DendogramsPrivate(clusters, ctrls, linksMatrix, minDist, outputFile):
         labelsGp.append(strToBind)
 
     # dendogram plot
-    matplotlib.pyplot.figure(figsize=(5, 20), facecolor="white")
+    matplotlib.pyplot.figure(figsize=(15, 5), facecolor="white")
     matplotlib.pyplot.title("Average linkage hierarchical clustering")
-    dn1 = scipy.cluster.hierarchy.dendrogram(linksMatrix, orientation='left', labels=labelsGp, color_threshold=minDist)
-    matplotlib.pyplot.ylabel("Samples of interest")
-    matplotlib.pyplot.xlabel("Absolute Pearson distance (1-|r|)")
+    dn1 = scipy.cluster.hierarchy.dendrogram(linksMatrix, labels=labelsGp, color_threshold=minDist)
+    matplotlib.pyplot.ylabel("Distance √(1-ρ) ")
     matplotlib.pyplot.savefig(outputFile, dpi=520, format="png", bbox_inches='tight')
