@@ -38,8 +38,8 @@ def parseArgs(argv):
     outFolder = ""
     # optionnal args with default values
     minSamps = 20
-    minDist = 0.05  # 95% pearson correlation
-    maxDist = 0.15  # 85% pearson correlation
+    maxCorr = 0.95
+    minCorr = 0.85
     # boolean args with False status by default
     nogender = False
     figure = False
@@ -74,15 +74,13 @@ ARGUMENTS:
    --out[str]: acces path to a pre-existing folder to save the output files
    --minSamps [int]: samples minimum number for the cluster creation,
                   default : """ + str(minSamps) + """
-   --minDist [float]: minimum distance (1-|pearson correlation|) threshold to start the
-                      cluster formation, default : """ + str(minDist) + """
-   --maxDist [float]: maximum distance (1-|pearson correlation|) threshold to stop the
-                      cluster formation, default : """ + str(maxDist) + """
+   --maxCorr [float]: Pearson correlation threshold to start building clusters, default: """ + str(maxCorr) + """
+   --minCorr [float]: Pearson correlation threshold to end building clusters, default: """ + str(minCorr) + """
    --nogender[optionnal]: no gender discrimination for clustering
    --figure[optionnal]: make dendogram(s) that will be present in the output in png format\n"""
 
     try:
-        opts, args = getopt.gnu_getopt(sys.argv[1:], 'h', ["help", "counts=", "out=", "minSamps=", "minDist=", "maxDist=", "nogender", "figure"])
+        opts, args = getopt.gnu_getopt(sys.argv[1:], 'h', ["help", "counts=", "out=", "minSamps=", "maxCorr=", "minCorr=", "nogender", "figure"])
     except getopt.GetoptError as e:
         sys.stderr.write("ERROR : " + e.msg + ". Try " + scriptName + " --help\n")
         raise Exception()
@@ -109,21 +107,21 @@ ARGUMENTS:
             except Exception:
                 sys.stderr.write("ERROR : minSamps must be a non-negative integer, not '" + value + "'.\n")
                 raise Exception()
-        elif (opt in ("--minDist")):
+        elif (opt in ("--maxCorr")):
             try:
-                minDist = np.float(value)
-                if (minDist > 1 or minDist < 0):
+                maxCorr = np.float(value)
+                if (maxCorr > 1 or maxCorr < 0):
                     raise Exception()
             except Exception:
-                sys.stderr.write("ERROR : minDist must be a float between 0 and 1, not '" + value + "'.\n")
+                sys.stderr.write("ERROR : maxCorr must be a float between 0 and 1, not '" + value + "'.\n")
                 raise Exception()
-        elif (opt in ("--maxDist")):
+        elif (opt in ("--maxCorr")):
             try:
-                maxDist = np.float(value)
-                if (maxDist > 1 or maxDist < 0):
+                maxCorr = np.float(value)
+                if (maxCorr > 1 or maxCorr < 0):
                     raise Exception()
             except Exception:
-                sys.stderr.write("ERROR : maxDist must be a float between 0 and 1, not '" + value + "'.\n")
+                sys.stderr.write("ERROR : maxCorr must be a float between 0 and 1, not '" + value + "'.\n")
                 raise Exception()
         elif (opt in ("--nogender")):
             nogender = True
@@ -137,7 +135,7 @@ ARGUMENTS:
     if countsFile == "":
         sys.exit("ERROR : You must use --counts.\n" + usage)
     # AOK, return everything that's needed
-    return(countsFile, outFolder, minSamps, minDist, maxDist, nogender, figure)
+    return(countsFile, outFolder, minSamps, maxCorr, minCorr, nogender, figure)
 
 
 ###############################################################################
@@ -150,7 +148,7 @@ ARGUMENTS:
 # If anything goes wrong, print error message to stderr and raise exception.
 def main(argv):
     # parse, check and preprocess arguments - exceptions must be caught by caller
-    (countsFile, outFolder, minSamps, minDist, maxDist, nogender, figure) = parseArgs(argv)
+    (countsFile, outFolder, minSamps, maxCorr, minCorr, nogender, figure) = parseArgs(argv)
 
     ################################################
     # args seem OK, start working
@@ -203,7 +201,7 @@ def main(argv):
             # clusters: an int numpy array containing standardized clusterID for each SOIs
             # ctrls: a str list containing controls clusterID delimited by "," for each SOIs
             # validityStatus: a boolean numpy array containing the validity status for each SOIs(1: valid, 0: invalid)
-            (clusters, ctrls, validityStatus) = mageCNV.clustering.clustersBuilds(countsNorm, minDist, maxDist, minSamps, figure, outputFile)
+            (clusters, ctrls, validityStatus) = mageCNV.clustering.clustersBuilds(countsNorm, maxCorr, minCorr, minSamps, figure, outputFile)
         except Exception:
             logger.error("clusterBuilding failed")
             raise Exception()
@@ -255,7 +253,7 @@ def main(argv):
             # clusters: an int numpy array containing standardized clusterID for each SOIs
             # ctrls: a str list containing controls clusterID delimited by "," for each SOIs
             # validityStatus: a boolean numpy array containing the validity status for each SOIs (1: valid, 0: invalid)
-            (clusters, ctrls, validityStatus) = mageCNV.clustering.clustersBuilds(autosomesFPM, minDist, maxDist, minSamps, figure, outputFile)
+            (clusters, ctrls, validityStatus) = mageCNV.clustering.clustersBuilds(autosomesFPM, maxCorr, minCorr, minSamps, figure, outputFile)
         except Exception:
             logger.error("clusterBuilds for autosomes failed")
             raise Exception()
@@ -301,7 +299,7 @@ def main(argv):
             try:
                 logger.info("### Clustering samples for gender %s", gender2Kmeans[genderGp])
                 outputFile = os.path.join(outFolder, "Dendogram_" + str(len(sampsIndexGp)) + "Samps_gonosomes_" + gender2Kmeans[genderGp] + ".png")
-                (tmpClusters, tmpCtrls, tmpValidityStatus) = mageCNV.clustering.clustersBuilds(gonosomesFPMGp, minDist, maxDist, minSamps, figure, outputFile)
+                (tmpClusters, tmpCtrls, tmpValidityStatus) = mageCNV.clustering.clustersBuilds(gonosomesFPMGp, maxCorr, minCorr, minSamps, figure, outputFile)
             except Exception:
                 logger.error("clusterBuilds for gonosome failed for gender %s", gender2Kmeans[genderGp])
                 raise Exception()
