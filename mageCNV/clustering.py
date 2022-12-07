@@ -48,14 +48,14 @@ def clustersBuilds(FPMarray, maxCorr, minCorr, minSamps, figure, outputFile):
     # Pearson correlation distance  (sqrt(1-r)) is unlikely to be a sensible 
     # distance when clustering samples.
     correlation = np.round(np.corrcoef(FPMarray, rowvar=False), 2)
-    dissimilarity = 1 - abs(correlation)
+    dissimilarity = (1 -correlation)**0.5
 
     # calculation of distance thresholds for cluster construction
     # depends on user-defined correlation levels
     # minDist: is the average distance to start cluster construction [float].
-    minDist=(1-abs(maxCorr))
+    minDist=(1-maxCorr)**0.5
     # maxDist: is the average distance to finalise the cluster construction [float].
-    maxDist=(1-abs(minCorr))
+    maxDist=(1-minCorr)**0.5
 
     # average linkage the best choice when there are different-sized groups
     # "squareform" transform squared distance matrix in a triangular matrix
