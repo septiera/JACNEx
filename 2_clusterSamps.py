@@ -37,6 +37,7 @@ def parseArgs(argv):
     countsFile = ""
     outFolder = ""
     # optionnal args with default values
+    windowSize = 40
     minSamps = 20
     maxCorr = 0.95
     minCorr = 0.85
@@ -72,6 +73,7 @@ ARGUMENTS:
    --counts [str]: TSV file, first 4 columns hold the exon definitions, subsequent columns
                    hold the fragment counts. File obtained from 1_countFrags.py
    --out[str]: acces path to a pre-existing folder to save the output files
+   --windowSize [int]: deck bins number for the sliding window during quality control, default: """ + str(windowSize) + """
    --minSamps [int]: samples minimum number for the cluster creation,
                   default : """ + str(minSamps) + """
    --maxCorr [float]: Pearson correlation threshold to start building clusters, default: """ + str(maxCorr) + """
@@ -98,6 +100,14 @@ ARGUMENTS:
             outFolder = value
             if (not os.path.isdir(outFolder)):
                 sys.stderr.write("ERROR : outFolder " + outFolder + " doesn't exist.\n")
+                raise Exception()
+        elif (opt in ("--windowSize")):
+            try:
+                windowSize = np.int(value)
+                if (windowSize < 1):
+                    raise Exception()
+            except Exception:
+                sys.stderr.write("ERROR : windowSize must be a non-negative integer and must be greater than or equal to 1, not '" + value + "'.\n")
                 raise Exception()
         elif (opt in ("--minSamps")):
             try:
@@ -135,7 +145,7 @@ ARGUMENTS:
     if countsFile == "":
         sys.exit("ERROR : You must use --counts.\n" + usage)
     # AOK, return everything that's needed
-    return(countsFile, outFolder, minSamps, maxCorr, minCorr, nogender, figure)
+    return(countsFile, outFolder, windowSize, minSamps, maxCorr, minCorr, nogender, figure)
 
 
 ###############################################################################
@@ -148,7 +158,7 @@ ARGUMENTS:
 # If anything goes wrong, print error message to stderr and raise exception.
 def main(argv):
     # parse, check and preprocess arguments - exceptions must be caught by caller
-    (countsFile, outFolder, minSamps, maxCorr, minCorr, nogender, figure) = parseArgs(argv)
+    (countsFile, outFolder, windowSize, minSamps, maxCorr, minCorr, nogender, figure) = parseArgs(argv)
 
     ################################################
     # args seem OK, start working
@@ -186,6 +196,26 @@ def main(argv):
 
     thisTime = time.time()
     logger.debug("Done fragments counts normalisation, in %.2f s", thisTime - startTime)
+    startTime = thisTime
+
+    #####################################################
+    # Quality control:
+    ##################
+    # allocates a numpy array of int "validityStatus", score 1 associated with a valid sample 
+    # for clustering and 0 an invalid sample.
+    # The validity of a sample is evaluated according to its fragment coverage profile. 
+    # If the profile does not allow to distinguish between poorly covered and covered exons, 
+    # it is assigned the status of invalid.
+    # create a not covered exons index list "exons2RM"[int], for all samples kept to perform 
+    # the most robust clustering by keeping only the exons with signals.  
+    try:
+        (validityStatus, exons2RM) = mageCNV.qualityControl.SampQC(countsNorm, SOIs, windowSize)
+    except Exception:
+        logger.error("SampQC failed")
+        raise Exception()
+
+    thisTime = time.time()
+    logger.debug("Done samples quality control, in %.2f s", thisTime - startTime)
     startTime = thisTime
 
     #####################################################
