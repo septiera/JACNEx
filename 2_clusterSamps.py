@@ -82,7 +82,7 @@ ARGUMENTS:
    --figure[optionnal]: make dendogram(s) that will be present in the output in png format\n"""
 
     try:
-        opts, args = getopt.gnu_getopt(sys.argv[1:], 'h', ["help", "counts=", "out=", "minSamps=", "maxCorr=", "minCorr=", "nogender", "figure"])
+        opts, args = getopt.gnu_getopt(sys.argv[1:], 'h', ["help", "counts=", "out=", "windowSize=", "minSamps=", "maxCorr=", "minCorr=", "nogender", "figure"])
     except getopt.GetoptError as e:
         sys.stderr.write("ERROR : " + e.msg + ". Try " + scriptName + " --help\n")
         raise Exception()
@@ -209,7 +209,7 @@ def main(argv):
     # create a not covered exons index list "exons2RM"[int], for all samples kept to perform 
     # the most robust clustering by keeping only the exons with signals.  
     try:
-        (validityStatus, exons2RM) = mageCNV.qualityControl.SampQC(countsNorm, SOIs, windowSize)
+        (validityStatus, exons2RM, listtest) = mageCNV.qualityControl.SampsQC(countsNorm, SOIs, windowSize)
     except Exception:
         logger.error("SampQC failed")
         raise Exception()
