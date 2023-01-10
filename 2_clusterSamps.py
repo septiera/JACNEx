@@ -37,7 +37,7 @@ def parseArgs(argv):
     countsFile = ""
     outFolder = ""
     # optionnal args with default values
-    windowSize = 50
+    windowSize = 40
     minSamps = 20
     maxCorr = 0.95
     minCorr = 0.85
@@ -205,15 +205,15 @@ def main(argv):
     # for clustering and 0 an invalid sample.
     # The validity of a sample is evaluated according to its fragment coverage profile.
     # If the profile does not allow to distinguish between poorly covered and covered exons,
-    # it is assigned the status of invalid.
-    # create a not covered exons index list "exons2RM"[int], for all samples kept to perform
-    # the most robust clustering by keeping only the exons with signals.
+    # it's assigned invalid status.
+    # validCounts (np.ndarray[float]): counts for exons covered for all samples that passed 
+    # quality control
     try:
         if figure:
             outputFile = os.path.join(outFolder, "CoverageProfilChecking_" + str(len(SOIs)) + "samps.pdf")
-            (validityStatus, exons2RM, listtest) = mageCNV.qualityControl.SampsQC(countsNorm, SOIs, windowSize, outputFile)
+            (validityStatus, validCountsNorm, listtest) = mageCNV.qualityControl.SampsQC(countsNorm, SOIs, windowSize, outputFile)
         else:
-            (validityStatus, exons2RM, listtest) = mageCNV.qualityControl.SampsQC(countsNorm, SOIs, windowSize)
+            (validityStatus, validCountsNorm, listtest) = mageCNV.qualityControl.SampsQC(countsNorm, SOIs, windowSize)
     except Exception as e :
         logger.error("SampQC failed %s", e)
         raise Exception()
@@ -221,8 +221,7 @@ def main(argv):
     thisTime = time.time()
     logger.debug("Done samples quality control, in %.2f s", thisTime - startTime)
     startTime = thisTime
-
-    """
+"""
     #####################################################
     # Clustering:
     ####################

@@ -14,27 +14,32 @@ logger = logging.getLogger(__name__)
 
 ###################################
 # SampsQC :
-# evaluates the coverage profile of the samples and identifies the uncovered exons for all samples.
+# evaluates the coverage profile of the samples and identifies the uncovered 
+# exons for all samples.
 # Args:
-#  - counts (np.ndarray[float]): normalised fragment counts. dim = NbExons x NbSOIs
+#  - counts (np.ndarray[float]): normalised fragment counts. 
 #  - SOIs (list[str]): samples of interest names
 #  - windowSize (int): number of bins in a window
 #  - outputFile (optionnal str): full path to save the pdf
 # Returns a tupple (validityStatus, exons2RMAllSamps), each variable is created here:
-#  - validityStatus (np.array[int]): the validity status for each sample (1: valid, 0: invalid), dim = NbSOIs
-#  - exons2RMAllSamps (list[int]): indexes of uncovered exons common for all samples with a valid status
+#  - validityStatus (np.array[int]): the validity status for each sample 
+# (1: valid, 0: invalid), dim = NbSOIs
+#  - validCounts (np.ndarray[float]): counts for exons covered for all samples 
+# that passed quality control
 def SampsQC(counts, SOIs, windowSize, outputFile=None):
     
     # To Fill:
     validityStatus = np.ones(len(SOIs), dtype=np.int)
 
     # Accumulator:
+    # a list[int] storing the indixes of uncovered exons in all valid samples
     exons2RM = []
-    validSampsCounter = 0
 
-    # To remove not use only for dev control
+    #### To remove not use only for dev control
     listtest = []
 
+    # create a matplotlib object for saving the output pdf if the figure option is 
+    # true in the main script
     if outputFile:
         pdf = matplotlib.backends.backend_pdf.PdfPages(outputFile)
         
@@ -42,7 +47,8 @@ def SampsQC(counts, SOIs, windowSize, outputFile=None):
         # extract sample counts
         sampCounts = counts[:, sampleIndex]
 
-        # densities calculation by a histogram with a sufficiently accurate range (e.g: 0.05)
+        # densities calculation by a histogram with a sufficiently accurate range 
+        # (e.g: 0.05)
         start = 0
         stop = max(sampCounts)
         binEdges = np.linspace(start, stop, int(stop * 100))  # !!! hardcode
@@ -77,19 +83,20 @@ def SampsQC(counts, SOIs, windowSize, outputFile=None):
         if outputFile:
             coverageProfilPlotPrivate(SOIs[sampleIndex], densities, middleWindowIndexes, densityMeans, minIndex, maxIndex, pdf)
             
-            
+        
+        #### fill list control   
         listtest.append([SOIs[sampleIndex], minIndex, minDensityMean, maxIndex, maxDensityMean])
 
-        # sample removed where the minimum sum (corresponding to the limit of the poorly covered exons)
-        # is less than 20% different from the maximum sum (corresponding to the profile of the most covered exons).
+        # sample removed where the minimum sum (corresponding to the limit of the 
+        # poorly covered exons) is less than 20% different from the maximum sum 
+        # (corresponding to the profile of the most covered exons).
         if (((maxDensityMean - minDensityMean) / maxDensityMean) < 0.20):
             logger.warning("Sample %s has a coverage profile doesn't distinguish between covered and uncovered exons.", 
                            SOIs[sampleIndex])
             validityStatus[sampleIndex] = 0
-        # If not, then the indices of exons below the minimum threshold are kept and only those common
-        # to the previous sample analysed are kept.
+        # If not, then the indices of exons below the minimum threshold are kept 
+        # and only those common to the previous sample analysed are kept.
         else:
-            validSampsCounter += 1
             exons2RMSamp = np.where(sampCounts <= fpmBins[minIndex])
             if (len(exons2RM) != 0):
                 exons2RM = np.intersect1d(exons2RM, exons2RMSamp)
@@ -97,9 +104,15 @@ def SampsQC(counts, SOIs, windowSize, outputFile=None):
                 exons2RM = exons2RMSamp
                 
     pdf.close()
-    logger.info("Uncovered exons number %s to be deleted before clustering for %s/%s valid samples.", 
-                len(exons2RM), validSampsCounter, len(SOIs))
-    return(validityStatus, exons2RM, listtest)
+    
+    logger.info("%s/%s uncovered exons number deleted before clustering for %s/%s valid samples.", 
+                len(exons2RM),len(counts), len(np.where(validityStatus==1)[0]), len(SOIs))
+    
+    # filtering the coverage data to recover valid samples and covered exons 
+    validCounts = np.delete(counts, np.where(validityStatus==0)[0], axis=1)
+    validCounts = np.delete(validCounts, exons2RM, axis=0)
+        
+    return(validityStatus, validCounts, listtest)
 
 
 ###############################################################################
@@ -113,9 +126,9 @@ def SampsQC(counts, SOIs, windowSize, outputFile=None):
 # Args:
 #  - middleWindowIndexes (list[int]): the middle indices of each window 
 #  - densityMeans (list[float]): mean density for each window covered
-# this arguments are from the smoothingCoverProfile function.
+# this arguments are from the slidingWindow.smoothingCoverProfile function.
 #  - minIndex (int): index associated with the first lowest observed mean 
-# this argument is from the findLocalMin function.
+# this argument is from the slidingWindow.findLocalMin function.
 # Returns a tupple (minIndex, minDensity), each variable is created here:
 #  - maxIndex (int): index associated with the maximum density mean observed 
 #  - maxDensity (float): maximum density mean 
@@ -127,7 +140,9 @@ def findLocalMaxPrivate(middleWindowIndexes, densityMeans, minDensityMean):
 
 ####################################
 # coverageProfilPlotPrivate:
-# 
+# generates two plots per patient, one with the raw coverage density 
+# (looks like a histogram but not, many values at 0 because range of 0.01),
+# the other is the smoothed profile with the min and max FPM indices associated
 # Args:
 # - densities (list of floats): list of coverage densities
 # - fpmBins (list of floats): list of corresponding bin values
@@ -135,7 +150,7 @@ def findLocalMaxPrivate(middleWindowIndexes, densityMeans, minDensityMean):
 # - densityMeans (list[float]): mean density for each window covered
 # - minIndex (int): index associated with the first lowest observed mean 
 # - maxIndex (int): index associated with the maximum density mean observed 
-# - pdf 
+# - pdf (matplotlib object): allows you to store plots in a single pdf
 # Returns a pdf file in the output folder
 def coverageProfilPlotPrivate(sampleName, densities, middleWindowIndexes, densityMeans, minIndex, maxIndex, pdf):
     # Disable interactive mode
