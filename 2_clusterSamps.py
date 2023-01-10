@@ -18,9 +18,9 @@ import sklearn.cluster
 ####### MAGE-CNV modules
 import mageCNV.countsFile
 import mageCNV.normalisation
-import mageCNV.clustering
+import mageCNV.qualityControl
 import mageCNV.genderDiscrimination
-
+import mageCNV.clustering
 
 ###############################################################################
 ############################ PRIVATE FUNCTIONS ################################
@@ -37,7 +37,7 @@ def parseArgs(argv):
     countsFile = ""
     outFolder = ""
     # optionnal args with default values
-    windowSize = 40
+    windowSize = 50
     minSamps = 20
     maxCorr = 0.95
     minCorr = 0.85
@@ -201,23 +201,28 @@ def main(argv):
     #####################################################
     # Quality control:
     ##################
-    # allocates a numpy array of int "validityStatus", score 1 associated with a valid sample 
+    # allocates a numpy array of int "validityStatus", score 1 associated with a valid sample
     # for clustering and 0 an invalid sample.
-    # The validity of a sample is evaluated according to its fragment coverage profile. 
-    # If the profile does not allow to distinguish between poorly covered and covered exons, 
+    # The validity of a sample is evaluated according to its fragment coverage profile.
+    # If the profile does not allow to distinguish between poorly covered and covered exons,
     # it is assigned the status of invalid.
-    # create a not covered exons index list "exons2RM"[int], for all samples kept to perform 
-    # the most robust clustering by keeping only the exons with signals.  
+    # create a not covered exons index list "exons2RM"[int], for all samples kept to perform
+    # the most robust clustering by keeping only the exons with signals.
     try:
-        (validityStatus, exons2RM, listtest) = mageCNV.qualityControl.SampsQC(countsNorm, SOIs, windowSize)
-    except Exception:
-        logger.error("SampQC failed")
+        if figure:
+            outputFile = os.path.join(outFolder, "CoverageProfilChecking_" + str(len(SOIs)) + "samps.pdf")
+            (validityStatus, exons2RM, listtest) = mageCNV.qualityControl.SampsQC(countsNorm, SOIs, windowSize, outputFile)
+        else:
+            (validityStatus, exons2RM, listtest) = mageCNV.qualityControl.SampsQC(countsNorm, SOIs, windowSize)
+    except Exception as e :
+        logger.error("SampQC failed %s", e)
         raise Exception()
 
     thisTime = time.time()
     logger.debug("Done samples quality control, in %.2f s", thisTime - startTime)
     startTime = thisTime
 
+    """
     #####################################################
     # Clustering:
     ####################
@@ -225,6 +230,12 @@ def main(argv):
     # clustering algorithm direct application
     if nogender:
         logger.info("### Samples clustering:")
+        
+        # remove invalid samples and uncovered exons => better clustering
+        bestCountsNorm = 
+        
+        bestCountsNorm = np.delete(bestCountsNorm, exons2RM, axis=0)
+        
         try:
             outputFile = os.path.join(outFolder, "Dendogram_" + str(len(SOIs)) + "Samps_FullChrom.png")
             # applying hierarchical clustering and obtaining 3 outputs:
@@ -353,7 +364,7 @@ def main(argv):
         logger.debug("Done printing results, in %.2f s", thisTime - startTime)
         logger.info("ALL DONE")
 
-
+        """
 ####################################################################################
 ######################################## Main ######################################
 ####################################################################################
