@@ -27,12 +27,16 @@ logger = logging.getLogger(__name__)
 #  - validCounts (np.ndarray[float]): counts for exons covered for all samples
 # that passed quality control
 def SampsQC(counts, SOIs, windowSize, outputFile=None):
-    #### Set parameter:
+    #### Fixed parameters:
     # FPM threshold limitation with signal to be analysed
     # exons uncovered and most exons covered
     FPMSignal = 10
     # number of bins to create a sufficiently precise range for the FPM (0.1)
     binsNb = 100
+    # threshold to assess the validity of the sample coverage profile.
+    # if the difference between the average density of uncovered exons and 
+    # the average density of covered exons is less than 20%, the sample is invalid.
+    signalThreshold = 0.20
 
     #### To Fill:
     validityStatus = np.ones(len(SOIs), dtype=np.int)
@@ -44,7 +48,7 @@ def SampsQC(counts, SOIs, windowSize, outputFile=None):
     #### To remove not use only for dev control
     listtest = []
 
-    # create a matplotlib object for saving the output pdf if the figure option is
+    # create a matplotlib object and open a pdf if the figure option is
     # true in the main script
     if outputFile:
         pdf = matplotlib.backends.backend_pdf.PdfPages(outputFile)
@@ -90,15 +94,11 @@ def SampsQC(counts, SOIs, windowSize, outputFile=None):
         #### fill list control
         listtest.append([SOIs[sampleIndex], minIndex, minDensityMean, maxIndex, maxDensityMean])
 
-        # sample removed where the minimum sum (corresponding to the limit of the
-        # poorly covered exons) is less than 20% different from the maximum sum
-        # (corresponding to the profile of the most covered exons).
-        if (((maxDensityMean - minDensityMean) / maxDensityMean) < 0.20):
+        # sample validity assessment
+        if (((maxDensityMean - minDensityMean) / maxDensityMean) < signalThreshold):
             logger.warning("Sample %s has a coverage profile doesn't distinguish between covered and uncovered exons.",
                            SOIs[sampleIndex])
             validityStatus[sampleIndex] = 0
-        # If not, then the indices of exons below the minimum threshold are kept
-        # and only those common to the previous sample analysed are kept.
         else:
             exons2RMSamp = np.where(sampCounts <= binEdges[minIndex])
             if (len(exons2RM) != 0):
@@ -106,14 +106,16 @@ def SampsQC(counts, SOIs, windowSize, outputFile=None):
             else:
                 exons2RM = exons2RMSamp
 
-    pdf.close()
-
-    logger.info("%s/%s uncovered exons number deleted before clustering for %s/%s valid samples.",
-                len(exons2RM), len(counts), len(np.where(validityStatus == 1)[0]), len(SOIs))
+    # close the open pdf 
+    if outputFile:
+        pdf.close()
 
     # filtering the coverage data to recover valid samples and covered exons
     validCounts = np.delete(counts, np.where(validityStatus == 0)[0], axis=1)
     validCounts = np.delete(validCounts, exons2RM, axis=0)
+
+    logger.info("%s/%s uncovered exons number deleted before clustering for %s/%s valid samples.",
+                len(exons2RM), len(counts), len(np.where(validityStatus == 1)[0]), len(SOIs))
 
     return(validityStatus, validCounts, listtest)
 
