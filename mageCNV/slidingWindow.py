@@ -11,11 +11,13 @@ logger = logging.getLogger(__name__)
 ###################################
 # smoothingCoverageProfile:
 # smooth the coverage profile from a sliding window.
+#
 # Args:
-#  - densities (np.ndarray[float]): number of elements in the bin/(bin width*total number of elements)
+#  - densities (np.ndarray[float]): exons densities obtained from a FPM range 
 #  - windowSize (int): number of bins in a window
+#
 # Returns:
-#  - densityMeans (np.ndarray[float]): mean density for each window covered. dim = len(densities)
+#  - densityMeans (np.ndarray[float]): mean density for each window covered. dim=len(densities)
 def smoothingCoverageProfile(densities, windowSize):
     # check if window_size is even, if so add 1 to make it odd
     if windowSize % 2 == 0:
@@ -65,46 +67,45 @@ def smoothingCoverageProfile(densities, windowSize):
 
 ###################################
 # findLocalMin:
-# recover the threshold of the minimum density averages before an increase
+# find the threshold of the minimum density averages before an increase
 # allowing to differentiate covered and uncovered exons.
+#
 # Args:
-# all arguments are from the smoothingCoverProfile function.
-#  - middleWindowIndexes (list[int]): the middle indices of each window
-#    (in agreement with the fpmBins indexes)
 #  - densityMeans (list[float]): average density for each window covered
+#
 # Returns a tupple (minIndex, minDensity), each variable is created here:
-#  - minIndex (int): index associated with the first lowest observed average
-#   (in agreement with the fpmBins indexes)
+#  - minIndex (int): index from densityMean associated with the first lowest 
+#    observed average
 #  - minDensitySum (float): first lowest observed average
-def findLocalMin(middleWindowIndexes, densityMeans):
-    # threshold for number of windows observed with densities mean greater than the
-    # current minimum density mean
+def findLocalMin( densityMeans):
+    #### Fixed parameter
+    # threshold number of observed windows with density average above the current
+    # minimum average
     subseqWindowSupMin = 20
 
-    # To Fill:
+    #### To Fill:
     # initialize variables for minimum density mean and index
-    minDensityMean = densityMeans[0]
-    minDensityIndex = 0
+    minMean = densityMeans[0]
+    minIndex = 0
 
-    # Accumulator:
+    #### Accumulator:
     # counter for number of windows with densities greater than the current
     # minimum density
     counter = 0
 
     for i in range(1, len(densityMeans)):
         # current density is lower than the minimum density found so far
-        if densityMeans[i] < minDensityMean:
-            minDensityMean = densityMeans[i]
-            minDensityIndex = i
+        if densityMeans[i] < minMean:
+            minMean = densityMeans[i]
+            minIndex = i
             # reset counter
             counter = 0
         # current density is greater than the minimum density found so far
-        elif densityMeans[i] > minDensityMean:
+        elif densityMeans[i] > minMean:
             counter += 1
 
         # the counter has reached the threshold, exit the loop
         if counter >= subseqWindowSupMin:
             break
 
-    minIndex = middleWindowIndexes[minDensityIndex]
-    return (minIndex, minDensityMean)
+    return (minIndex, minMean)
