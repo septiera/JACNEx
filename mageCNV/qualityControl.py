@@ -27,11 +27,17 @@ logger = logging.getLogger(__name__)
 #  - validCounts (np.ndarray[float]): counts for exons covered for all samples
 # that passed quality control
 def SampsQC(counts, SOIs, windowSize, outputFile=None):
+    #### Set parameter:
+    # FPM threshold limitation with signal to be analysed
+    # exons uncovered and most exons covered
+    FPMSignal = 10
+    # number of bins to create a sufficiently precise range for the FPM (0.1)
+    binsNb = 100
 
-    # To Fill:
+    #### To Fill:
     validityStatus = np.ones(len(SOIs), dtype=np.int)
 
-    # Accumulator:
+    #### Accumulator:
     # a list[int] storing the indixes of uncovered exons in all valid samples
     exons2RM = []
 
@@ -46,42 +52,39 @@ def SampsQC(counts, SOIs, windowSize, outputFile=None):
     for sampleIndex in range(len(SOIs)):
         # extract sample counts
         sampCounts = counts[:, sampleIndex]
+        # FPM threshold limitation
+        sampCounts = sampCounts[sampCounts <= FPMSignal]
 
-        # densities calculation by a histogram with a sufficiently accurate range
-        # (e.g: 0.05)
+        # FPM range creation
         start = 0
-        stop = max(sampCounts)
-        binEdges = np.linspace(start, stop, int(stop * 20))  # !!! hardcode
-        binEdges = np.around(binEdges, 2)
+        stop = FPMSignal
+        # binEdges (np.ndarray[floats]): values at which each FPM bin starts and ends
+        binEdges = np.linspace(start, stop, num=binsNb)
+        # limitation of decimal points to avoid float approximations
+        binEdges = np.around(binEdges, 1)
 
-        # np.histogram function takes in the data to be histogrammed and a number of bins
-        # - densities (np.array[floats]): number of elements in the bin / (bin width * total number of elements)
-        # - fpmBins (np.array[floats]): values at which each bin starts and ends
-        densities, fpmBins = np.histogram(sampCounts, bins=binEdges, density=True)
+        # densities (np.ndarray[floats]): number of elements in the bin/(bin width*total number of elements)
+        densities = np.histogram(sampCounts, bins=binEdges, density=True)[0]
 
         # smooth the coverage profile from a sliding window.
-        # - middleWindowIndexes (list[int]): the middle indices of each window
-        #    (in agreement with the fpmBins indexes)
-        # - densityMeans (list[float]): mean density for each window covered
-        (middleWindowIndexes, densityMeans) = mageCNV.slidingWindow.smoothingCoverageProfile(densities, windowSize)
+        # densityMeans (list[float]): mean density for each window covered
+        densityMeans = mageCNV.slidingWindow.smoothingCoverageProfile(densities, windowSize)
 
         # recover the threshold of the minimum density means before an increase
-        # - minIndex (int): index associated with the first lowest observed mean
-        #   (in agreement with the fpmBins indexes)
-        # - minDensitySum (float): first lowest observed mean
-        (minIndex, minDensityMean) = mageCNV.slidingWindow.findLocalMin(middleWindowIndexes, densityMeans)
+        # minIndex (int): index from "densityMeans" associated with the first lowest observed mean
+        # minDensitySum (float): first lowest observed mean
+        (minIndex, minDensityMean) = mageCNV.slidingWindow.findLocalMin(densityMeans)
 
-        # recover the threshold of the maximum density means after the
-        # minimum density means which is associated with the largest covered exons number.
-        # - maxIndex (int): index associated with the maximum density mean observed
-        #   (in agreement with the fpmBins indexes)
-        # - maxDensity (float): maximum density mean
-        (maxIndex, maxDensityMean) = findLocalMaxPrivate(middleWindowIndexes, densityMeans, minDensityMean)
+        # recover the threshold of the maximum density means after the minimum 
+        # density means which is associated with the largest covered exons number.
+        # maxIndex (int): index from "densityMeans" associated with the maximum density mean observed
+        # maxDensity (float): maximum density mean
+        (maxIndex, maxDensityMean) = findLocalMaxPrivate(densityMeans, minDensityMean)
 
         # graphic representation of coverage profiles.
         # returns a pdf in the output folder
         if outputFile:
-            coverageProfilPlotPrivate(SOIs[sampleIndex], densities, middleWindowIndexes, densityMeans, minIndex, maxIndex, pdf)
+            coverageProfilPlotPrivate(SOIs[sampleIndex], binEdges, densities, densityMeans, minIndex, maxIndex, pdf)
 
 
         #### fill list control
@@ -97,7 +100,7 @@ def SampsQC(counts, SOIs, windowSize, outputFile=None):
         # If not, then the indices of exons below the minimum threshold are kept
         # and only those common to the previous sample analysed are kept.
         else:
-            exons2RMSamp = np.where(sampCounts <= fpmBins[minIndex])
+            exons2RMSamp = np.where(sampCounts <= binEdges[minIndex])
             if (len(exons2RM) != 0):
                 exons2RM = np.intersect1d(exons2RM, exons2RMSamp)
             else:
@@ -124,18 +127,17 @@ def SampsQC(counts, SOIs, windowSize, outputFile=None):
 # recover the threshold of the maximum density means after the
 # minimum density means which is associated with the largest covered exons number.
 # Args:
-#  - middleWindowIndexes (list[int]): the middle indices of each window
-#  - densityMeans (list[float]): mean density for each window covered
+#  - minDensityMean (list[float]): mean density for each window covered
 # this arguments are from the slidingWindow.smoothingCoverProfile function.
 #  - minIndex (int): index associated with the first lowest observed mean
 # this argument is from the slidingWindow.findLocalMin function.
 # Returns a tupple (minIndex, minDensity), each variable is created here:
-#  - maxIndex (int): index associated with the maximum density mean observed
+#  - maxIndex (int): index from "densityMeans" associated with the maximum density mean observed
 #  - maxDensity (float): maximum density mean
-def findLocalMaxPrivate(middleWindowIndexes, densityMeans, minDensityMean):
+def findLocalMaxPrivate(densityMeans, minDensityMean):
     minMeanIndex = densityMeans.index(minDensityMean)
     maxDensityMean = max(densityMeans[minMeanIndex:])
-    maxIndex = middleWindowIndexes[minMeanIndex + densityMeans[minMeanIndex:].index(maxDensityMean)]
+    maxIndex = densityMeans.index(maxDensityMean)
     return (maxIndex, maxDensityMean)
 
 
