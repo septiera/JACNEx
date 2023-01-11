@@ -80,15 +80,15 @@ def SampsQC(counts, SOIs, windowSize, outputFile=None):
         # recover the threshold of the minimum density means before an increase
         # minIndex (int): index from "densityMeans" associated with the first lowest 
         # observed mean
-        # minDensitySum (float): first lowest observed mean
-        (minIndex, minDensityMean) = mageCNV.slidingWindow.findLocalMin(densityMeans)
+        # minMean (float): first lowest observed mean
+        (minIndex, minMean) = mageCNV.slidingWindow.findLocalMin(densityMeans)
 
         # recover the threshold of the maximum density means after the minimum 
         # density means which is associated with the largest covered exons number.
         # maxIndex (int): index from "densityMeans" associated with the maximum density 
         # mean observed
-        # maxDensity (float): maximum density mean
-        (maxIndex, maxDensityMean) = findLocalMaxPrivate(densityMeans, minDensityMean)
+        # maxMean (float): maximum density mean
+        (maxIndex, maxMean) = findLocalMaxPrivate(densityMeans, minIndex)
 
         # graphic representation of coverage profiles.
         # returns a pdf in the output folder
@@ -97,10 +97,10 @@ def SampsQC(counts, SOIs, windowSize, outputFile=None):
 
 
         #### fill list control
-        listtest.append([SOIs[sampleIndex], minIndex, minDensityMean, maxIndex, maxDensityMean])
+        listtest.append([SOIs[sampleIndex], minIndex, minMean, maxIndex, maxMean])
 
         # sample validity assessment
-        if (((maxDensityMean - minDensityMean) / maxDensityMean) < signalThreshold):
+        if (((maxMean - minMean) / maxMean) < signalThreshold):
             logger.warning("Sample %s has a coverage profile doesn't distinguish between covered and uncovered exons.",
                            SOIs[sampleIndex])
             validityStatus[sampleIndex] = 0
@@ -143,12 +143,11 @@ def SampsQC(counts, SOIs, windowSize, outputFile=None):
 # Returns a tupple (minIndex, minDensity), each variable is created here:
 #  - maxIndex (int): index from "densityMeans" associated with the maximum density
 #    mean observed
-#  - maxDensity (float): maximum density mean
-def findLocalMaxPrivate(densityMeans, minDensityMean):
-    minMeanIndex = densityMeans.index(minDensityMean)
-    maxDensityMean = max(densityMeans[minMeanIndex:])
-    maxIndex = densityMeans.index(maxDensityMean)
-    return (maxIndex, maxDensityMean)
+#  - maxMean (float): maximum density mean
+def findLocalMaxPrivate(densityMeans, minIndex):
+    maxMean = np.max(densityMeans[minIndex:])
+    maxIndex = np.where(densityMeans == maxMean)[0]
+    return (maxIndex, maxMean)
 
 
 ####################################
