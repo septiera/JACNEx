@@ -11,41 +11,56 @@ logger = logging.getLogger(__name__)
 ###################################
 # smoothingCoverageProfile:
 # smooth the coverage profile from a sliding window.
-# Takes an odd window size to obtain indices consistent with the calculated density averages.
 # Args:
-#  - densities (np.array[float]): number of elements in the bin / (bin width * total number of elements)
+#  - densities (np.ndarray[float]): number of elements in the bin/(bin width*total number of elements)
 #  - windowSize (int): number of bins in a window
-# Returns a tupple (middleIndexes , densityMeans), each variable is created here:
-#  - middleWindowIndexes (list[int]): the middle indices of each window
-#    (in agreement with the fpmBins indexes)
-#  - densityMeans (list[float]): mean density for each window covered
+# Returns:
+#  - densityMeans (np.ndarray[float]): mean density for each window covered. dim = len(densities)
 def smoothingCoverageProfile(densities, windowSize):
     # check if window_size is even, if so add 1 to make it odd
     if windowSize % 2 == 0:
         windowSize += 1
 
-    # Accumulators:
-    middleWindowIndexes = []
-    densityMeans = []
+    # To fill:
+    densityMeans = np.zeros(len(densities), dtype=np.float)
 
-    # calculate the density sum of the first window
-    initial_sum = sum(densities[:windowSize]) 
-    # storage of the density mean and indice associated with the first window
-    densityMeans.append(initial_sum / windowSize)
-    middleWindowIndexes.append((windowSize // 2) + 1)  # ceil not floor
+    # an index (i) is the middle of the windowSize (e.g windowSize=5, index=3)
+    for i in range(0, len(densities)):
+        # case 1: the starting indexes don't include all the window bins
+        if (i <= windowSize // 2):
+            # Initialization of the sum at index 0.
+            # Only the window bins larger than the index are considered
+            # e.g windowSize=5, middle window=0, sum -> densities[0,1,2]
+            if (i == 0):
+                # recall correct values range selection in an np.ndarray[0:n+1]
+                rollingSum = sum(densities[:(windowSize // 2) + 1])
+                # add index to denominator (+1) for mean computation
+                densityMeans[i] = rollingSum / ((windowSize // 2) + 1)
+            # the following indexes keep the previous density values
+            # e.g windowSize=5, middle window=1, sum -> densities[0,1,2,3]
+            else:
+                # add new density value in accordance with the window offset
+                rollingSum += densities[i + (windowSize // 2)]
+                # the index value is equal to the number of values kept so it's
+                # added to the denominator for mean computation
+                densityMeans[i] = rollingSum / (i + windowSize // 2 + 1)
 
-    # calculate density mean for rest of the windows
-    for i in range(1, len(densities) - windowSize + 1):
-        # add middle index of each window to the list
-        middleWindowIndexes.append(i + (windowSize - 1 // 2) + 1)
-        # remove the first element of the previous window
-        initial_sum -= densities[i - 1]
-        # add the last element of the next window
-        initial_sum += densities[i + windowSize - 1]
-        # calculate the density mean of the current window
-        densityMeans.append(initial_sum / windowSize)
+        # case 2: all window bins can be taken
+        # len(densities) is a count so doesn't consider the index 0 (-1)
+        elif (i <= ((len(densities) - 1) - (windowSize // 2))):
+            rollingSum -= densities[i - (windowSize // 2) - 1]
+            rollingSum += densities[i + (windowSize // 2)]
+            densityMeans[i] = rollingSum / windowSize
 
-    return(middleWindowIndexes, densityMeans)
+        # case 3: the latest indexes don't include all the window bins
+        else:
+            # remove old density value in accordance with the window offset
+            rollingSum -= densities[i - (windowSize // 2) - 1]
+            # the denominator is the number of bins remaining
+            # "(len(density)-i" is a contraction of "(len(density)-1)-(i+1)"
+            densityMeans[i] = rollingSum / (windowSize // 2 + (len(densities) - i))
+
+    return(densityMeans)
 
 
 ###################################
