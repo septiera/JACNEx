@@ -146,7 +146,7 @@ def SampsQC(counts, SOIs, windowSize, outputFile=None):
 #  - maxMean (float): maximum density mean
 def findLocalMaxPrivate(densityMeans, minIndex):
     maxMean = np.max(densityMeans[minIndex:])
-    maxIndex = np.where(densityMeans == maxMean)[0]
+    maxIndex = np.where(densityMeans == maxMean)[0][0]
     return (maxIndex, maxMean)
 
 
@@ -178,13 +178,13 @@ def coverageProfilPlotPrivate(sampleName, binEdges, densities, densityMeans, min
     fig=plt.figure(figsize=(6, 6))
     # binEdges defines a bin by its start and end, as an index in densities corresponds 
     # to a bin. So total size of both np.ndarray are not equivalent.
-    plt.plot(binEdges[:-1], densities, color='mediumblue', label='raw density' )
-    plt.plot(binEdges[:-1], densityMeans, color='coral', label='smoothed density')
-    
-    plt.axvline(minIndex, color='crimson', linestyle='dashdot', linewidth=2,
-                 label="minFPM="+"{:.1f}".format(binEdges[minIndex]))
-    plt.axvline(maxIndex, color='darkorange', linestyle='dashdot', linewidth=2,
-                 label="maxFPM="+"{:.1f}".format(binEdges[maxIndex]))
+    plt.plot(binEdges[:-1], densities, color='black', label='raw density' )
+    plt.plot(binEdges[:-1], densityMeans, color='mediumblue', label='smoothed density')
+
+    plt.axvline(binEdges[minIndex], color='crimson', linestyle='dashdot', linewidth=2,
+                 label="minFPM="+'{:0.1f}'.format(binEdges[minIndex]))
+    plt.axvline(binEdges[maxIndex], color='darkorange', linestyle='dashdot', linewidth=2,
+                 label="maxFPM="+'{:0.1f}'.format(binEdges[maxIndex]))
 
     plt.ylim(0, 0.5)
     plt.ylabel("Exon densities")
