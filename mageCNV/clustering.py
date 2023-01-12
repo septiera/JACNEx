@@ -76,41 +76,80 @@ def clustersBuilds(FPMarray, maxCorr, minCorr, minSamps, outputFile=None):
 
 ###############################################################################
 # printClustersFile:
-# print the different types of outputs expected
+#
 # Args:
-#  - SOIs: the list of sampleIDs (ie strings) copied from countsFile's header
-#  - clusters: an int numpy array containing standardized clusterID for each sample
-#  - ctrls: a str list containing controls clusterID delimited by "," for each sample
-#  - validityStatus: a boolean numpy array containing the validity status for each sample (1: valid, 0: invalid)
-#  - outFolder: is a str variable, it's the results folder path
-#  - nogender: no autosomes and gonosomes discrimination for clustering (True or default False)
-#  - clustersG, ctrlsG, validityStatusG same as autosomes or all chromosomes variables but for gonosomes (optionnal parameter)
-#  - genderPred [optionnal]: the list of gender (ie strings, e.g "M" or "F"), for each sample
-# Print this data to stdout as a 'clustersFile'
-def printClustersFile(SOIs, clusters, ctrls, validityStatus, outFolder, nogender, clustersG=False, ctrlsG=False, validityStatusG=False, genderPred=False):
+# - nogender (boolean): Sex discrimination for clustering (default: False)
+# - SOIs (list[str]): sampleIDs
+# - validSampQC (np.ndarray(boolean)): validity status for each SOIs index after
+# quality control (1: valid, 0: invalid)
+# - clusters (np.ndarray[int]): clusterID for each sample
+# - ctrls (list[str]): controls clusterID delimited by "," for each sample
+# - validSampClust (np.ndarray[boolean]): validity status for each SOIs
+# validated by quality control after clustering (1: valid, 0: invalid)
+# - outFolder (str): output folder path
+# - clustersG, ctrlsG, validSampsClustG [optionnal]: same as previous but for gonosomes
+# - genderPred (list[str])[optionnal]:  gender (e.g "M" or "F"), for each sample
+#
+# Results are printed to stdout folder:
+# - a TSV file format, describe the clustering results,
+# Case the user doesn't want to discriminate genders dim = NbSOIs*5 columns:
+#    1) "sampleID" (str): name of interest samples,
+#    2) "validQC" (int): specifying if a sample pass quality control (valid=1) or not (dubious=0)
+#    3) "validCluster" (int): specifying if a sample is valid (1) or dubious doesn't pass
+#                                QC step (0) or doesn't pass clustering validation (0).
+#    4) "clusterID" (int): clusters identifiers obtained through the normalized fragment counts.
+#    5) "controlledBy" (str): clusters identifiers controlling the sample cluster, a
+#                               comma-separated string of int values (e.g "1,2").
+#                               If not controlled empty string.
+# Case the user want discriminate genders dim = NbSOIs*9 columns:
+# The columns 3-5 are from the analysis of autosome coverage profiles (A)
+#    6) "genderPreds" (str): "M"=Male or "F"=Female deduced by kmeans,
+# The columns 7-9 are the same as 3-5 but are from the analysis of gonosome coverage profiles (G)
+def printClustersFile(nogender, SOIs, validSampClust, validSampQC, clusters, ctrls, outFolder, validSampsClustG=False, clustersG=False, ctrlsG=False, genderPred=False):
+
     if nogender:
-        # 4 columns expected
+        # 5 columns expected
         clusterFile = open(os.path.join(outFolder, "ResClustering_" + str(len(SOIs)) + "samples.tsv"), 'w')
         sys.stdout = clusterFile
-        toPrint = "samplesID\tclusterID\tcontrolledBy\tvaliditySamps"
+        toPrint = "samplesID\tvalidQC\tvalidCluster\tclusterID\tcontrolledBy"
         print(toPrint)
+
+        counter = 0
         for i in range(len(SOIs)):
             # SOIsID + clusterInfo
-            toPrint = SOIs[i] + "\t" + str(clusters[i]) + "\t" + ctrls[i] + "\t" + str(validityStatus[i])
-            print(toPrint)
+            if validSampQC[i] != 0:
+                toPrint = SOIs[i] + "\t" + str(validSampQC[i]) + "\t" + str(validSampClust[counter]) + "\t" + str(clusters[counter]) + "\t" + ctrls[counter]
+                print(toPrint)
+                counter += 1
+            else:
+                toPrint = SOIs[i] + "\t" + str(validSampQC[i]) + "\t" + str(0) + "\t" + "" + "\t" + ""
+                print(toPrint)
+
         sys.stdout = sys.__stdout__
         clusterFile.close()
+
     else:
-        # 8 columns expected
+        # 9 columns expected
         clusterFile = open(os.path.join(outFolder, "ResClustering_AutosomesAndGonosomes_" + str(len(SOIs)) + "samples.tsv"), 'w')
         sys.stdout = clusterFile
-        toPrint = "samplesID\tclusterID_A\tcontrolledBy_A\tvaliditySamps_A\tgenderPreds\tclusterID_G\tcontrolledBy_G\tvaliditySamps_G"
+        toPrint = "samplesID\tvalidQC\tvalidCluster_A\tclusterID_A\tcontrolledBy_A\tgenderPreds\tvalidCluster_G\tclusterID_G\tcontrolledBy_G"
         print(toPrint)
+
+        counter = 0
         for i in range(len(SOIs)):
-            # SOIsID + clusterInfo for autosomes and gonosomes
-            toPrint = SOIs[i] + "\t" + str(clusters[i]) + "\t" + ctrls[i] + "\t" + str(validityStatus[i]) + \
-                "\t" + genderPred[i] + "\t" + str(clustersG[i]) + "\t" + ctrlsG[i] + "\t" + str(validityStatusG[i])
-            print(toPrint)
+            if validSampQC[i] != 0:
+                # SOIsID + clusterInfo for autosomes and gonosomes
+                toPrint = SOIs[i] + "\t" + str(validSampQC[i]) + "\t" + str(validSampClust[counter]) + \
+                    "\t" + str(clusters[counter]) + "\t" + ctrls[counter] + "\t" + genderPred[counter] + \
+                    "\t" + str(validSampClust[counter]) + "\t" + str(clustersG[counter]) + "\t" + ctrlsG[counter]
+                print(toPrint)
+                counter += 1
+            else:
+                toPrint = SOIs[i] + "\t" + str(validSampQC[i]) + "\t" + str(0) + \
+                    "\t" + "" + "\t" + "" + "\t" + "" + \
+                    "\t" + str(0) + "\t" + "" + "\t" + ""
+                print(toPrint)
+
         sys.stdout = sys.__stdout__
         clusterFile.close()
 
@@ -375,30 +414,27 @@ def STDZAndCheckPrivate(clusters, trgt2Ctrls, minSamps):
 
 
 ###############################################################################
-# DendogramsPrivate: [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
+# DendogramsPrivate [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
 # visualisation of clustering results
 # Args:
-# -clusters: an int numpy array containing standardized clusterID for each sample
-# -ctrls: a str list containing controls clusterID delimited by "," for each sample
-# -linksMatrix: is a float numpy.ndarray of the hierarchical clustering encoded
-#    as a linkage matrix, dim = (NbSOIs-1)*[clusterID1,clusterID2,distValue,NbSOIsInClust]
-# -minDist: is a float variable, sets a minimum threshold 1-|r| for the formation of the first clusters
-# -outputFile : full path to save the png
+# - clusters (np.ndarray[int]): standardized clusterID for each sample
+# - ctrls (list[str]): controls clusterID delimited by "," for each sample
+# - linksMatrix (np.ndarray[float])
+# - minDist (float): is the distance to start cluster construction
+# - outputFile (str): full path to save the png
 # Returns a png file in the output folder
 def DendogramsPrivate(clusters, ctrls, linksMatrix, minDist, outputFile):
     # maxClust: int variable contains total clusters number
     maxClust = max(clusters)
 
     # To Fill
-    # labelArray: a str 2D numpy array, dim=NbSOIs*NbClusters
-    # contains the status for each cluster as a character:
+    # labelArray (np.ndarray[str]): status for each cluster as a character, dim=NbSOIs*NbClusters
     # " ": sample does not contribute to the cluster
     # "x": sample contributes to the cluster
     # "-": sample controls the cluster
     labelArray = np.empty([len(clusters), maxClust + 1], dtype="U1")
     labelArray.fill(" ")
-    # labelsGp: a str list containing the labels for each sample
-    # list to be passed when plotting the dendogram
+    # labelsGp (list[str]): labels for each sample list to be passed when plotting the dendogram
     labelsGp = []
 
     # browse the different cluster identifiers
@@ -418,7 +454,7 @@ def DendogramsPrivate(clusters, ctrls, linksMatrix, minDist, outputFile):
 
     # browse the np array of labels to build the str list
     for i in labelArray:
-        # separtion of labels for readability
+        # separation of labels for readability
         strToBind = "  ".join(i)
         labelsGp.append(strToBind)
 
