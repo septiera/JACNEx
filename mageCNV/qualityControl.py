@@ -36,7 +36,7 @@ def SampsQC(counts, SOIs, windowSize, outputFile=None):
     # number of bins to create a sufficiently precise range for the FPM (0.1)
     binsNb = 100
     # threshold to assess the validity of the sample coverage profile.
-    # if the difference between the average density of uncovered exons and 
+    # if the difference between the average density of uncovered exons and
     # the average density of covered exons is less than 20%, the sample is invalid.
     signalThreshold = 0.20
 
@@ -69,7 +69,7 @@ def SampsQC(counts, SOIs, windowSize, outputFile=None):
         # limitation of decimal points to avoid float approximations
         binEdges = np.around(binEdges, 1)
 
-        # densities (np.ndarray[floats]): 
+        # densities (np.ndarray[floats]):
         # number of elements in the bin/(bin width*total number of elements)
         densities = np.histogram(sampCounts, bins=binEdges, density=True)[0]
 
@@ -78,14 +78,14 @@ def SampsQC(counts, SOIs, windowSize, outputFile=None):
         densityMeans = mageCNV.slidingWindow.smoothingCoverageProfile(densities, windowSize)
 
         # recover the threshold of the minimum density means before an increase
-        # minIndex (int): index from "densityMeans" associated with the first lowest 
+        # minIndex (int): index from "densityMeans" associated with the first lowest
         # observed mean
         # minMean (float): first lowest observed mean
         (minIndex, minMean) = mageCNV.slidingWindow.findLocalMin(densityMeans)
 
-        # recover the threshold of the maximum density means after the minimum 
+        # recover the threshold of the maximum density means after the minimum
         # density means which is associated with the largest covered exons number.
-        # maxIndex (int): index from "densityMeans" associated with the maximum density 
+        # maxIndex (int): index from "densityMeans" associated with the maximum density
         # mean observed
         # maxMean (float): maximum density mean
         (maxIndex, maxMean) = findLocalMaxPrivate(densityMeans, minIndex)
@@ -94,7 +94,6 @@ def SampsQC(counts, SOIs, windowSize, outputFile=None):
         # returns a pdf in the output folder
         if outputFile:
             coverageProfilPlotPrivate(SOIs[sampleIndex], binEdges, densities, densityMeans, minIndex, maxIndex, pdf)
-
 
         #### fill list control
         listtest.append([SOIs[sampleIndex], minIndex, minMean, maxIndex, maxMean])
@@ -111,7 +110,7 @@ def SampsQC(counts, SOIs, windowSize, outputFile=None):
             else:
                 exons2RM = exons2RMSamp
 
-    # close the open pdf 
+    # close the open pdf
     if outputFile:
         pdf.close()
 
@@ -155,16 +154,16 @@ def findLocalMaxPrivate(densityMeans, minIndex):
 # generates a plot per patient
 # x-axis: the range of FPM bins (every 0.1 between 0 and 10)
 # y-axis: exons densities
-# blue curve: raw density data 
+# blue curve: raw density data
 # orange curve: density data smoothed by moving average.
 # red vertical line: minimum FPM threshold, all uncovered exons are below this threshold
-# orange vertical line: maximum FPM, corresponds to the FPM value where the density of 
-# covered exons is the highest. 
+# orange vertical line: maximum FPM, corresponds to the FPM value where the density of
+# covered exons is the highest.
 #
 # Args:
 # - sampleName (str): sample exact name
 # - binEdges (np.ndarray[floats]): values at which each FPM bin starts and ends
-# - densities (np.ndarray[floats]): exons densities for each binEdges 
+# - densities (np.ndarray[floats]): exons densities for each binEdges
 # - densityMeans (list[float]): mean density for each window covered
 # - minIndex (int): index associated with the first lowest observed mean
 # - maxIndex (int): index associated with the maximum density mean observed
@@ -175,16 +174,16 @@ def coverageProfilPlotPrivate(sampleName, binEdges, densities, densityMeans, min
     # Disable interactive mode
     plt.ioff()
 
-    fig=plt.figure(figsize=(6, 6))
-    # binEdges defines a bin by its start and end, as an index in densities corresponds 
+    fig = plt.figure(figsize=(6, 6))
+    # binEdges defines a bin by its start and end, as an index in densities corresponds
     # to a bin. So total size of both np.ndarray are not equivalent.
-    plt.plot(binEdges[:-1], densities, color='black', label='raw density' )
+    plt.plot(binEdges[:-1], densities, color='black', label='raw density')
     plt.plot(binEdges[:-1], densityMeans, color='mediumblue', label='smoothed density')
 
     plt.axvline(binEdges[minIndex], color='crimson', linestyle='dashdot', linewidth=2,
-                 label="minFPM="+'{:0.1f}'.format(binEdges[minIndex]))
+                label="minFPM=" + '{:0.1f}'.format(binEdges[minIndex]))
     plt.axvline(binEdges[maxIndex], color='darkorange', linestyle='dashdot', linewidth=2,
-                 label="maxFPM="+'{:0.1f}'.format(binEdges[maxIndex]))
+                label="maxFPM=" + '{:0.1f}'.format(binEdges[maxIndex]))
 
     plt.ylim(0, 0.5)
     plt.ylabel("Exon densities")
