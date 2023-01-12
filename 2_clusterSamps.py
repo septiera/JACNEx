@@ -50,21 +50,7 @@ Given a TSV of exon fragment counts, normalizes the counts (Fragment Per Million
 forms the reference clusters for the call.
 By default, separation of autosomes ("A") and gonosomes ("G") for clustering, to avoid
 bias (chr accepted: X, Y, Z, W).
-Results are printed to stdout folder:
-- a TSV file format, describe the clustering results, dim = NbSOIs*8 columns:
-    1) "sampleID": name of interest samples [str],
-    2) "clusterID_A": clusters identifiers [int] obtained through the normalized fragment
-                      counts of exons on autosomes,
-    3) "controlledBy_A": clusters identifiers controlling the sample cluster [str], a
-                         comma-separated string of int values (e.g "1,2").
-                         If not controlled empty string.
-    4) "validitySamps_A": a boolean specifying if a sample is dubious(0) or not(1)[int].
-                          This score set to 0 in the case the cluster formed is validated
-                          and does not have a sufficient number of individuals.
-    5) "genderPreds": a string "M"=Male or "F"=Female deduced by kmeans,
-The columns 6, 7 and 8 are the same as 2, 3 and 4 but are specific to gonosomes.
-In case the user doesn't want to discriminate genders, the output tsv will contain
-the format of the first 4 columns for all chromosomes.
+XXXXXXXXXXXX
 - one or more png's illustrating the clustering performed by dendograms. [optionnal]
     Legend : solid line = control clusters , thin line = target clusters
     The clusters appear in decreasing order of distance (1-|pearson correlation|).
@@ -252,7 +238,7 @@ def main(argv):
 
         #####################################################
         # print results
-        mageCNV.clustering.printClustersFile(nogender, SOIs, validSampQC, clusters, ctrls, validSampClust, outFolder)
+        mageCNV.clustering.printClustersFile(nogender, SOIs, validSampQC, validSampClust, clusters, ctrls, outFolder)
 
         thisTime = time.time()
         logger.debug("Done printing results, in %.2f s", thisTime - startTime)
