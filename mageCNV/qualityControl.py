@@ -23,11 +23,11 @@ logger = logging.getLogger(__name__)
 #  - windowSize (int): number of bins in a window
 #  - outputFile (optionnal str): full path to save the pdf
 #
-# Returns a tupple (validityStatus, exons2RMAllSamps), each variable is created here:
-#  - validityStatus (np.array[int]): the validity status for each sample
-# (1: valid, 0: invalid), dim = NbSOIs
+# Returns a tupple (validCounts, validSampQC), each variable is created here:
 #  - validCounts (np.ndarray[float]): counts for exons covered for all samples
 # that passed quality control
+#  - validSampQC (np.array[int]): validity status for each sample passed quality
+#  control (1: valid, 0: invalid), dim = NbSOIs
 def SampsQC(counts, SOIs, windowSize, outputFile=None):
     #### Fixed parameters:
     # FPM threshold limitation with signal to be analysed
@@ -41,7 +41,7 @@ def SampsQC(counts, SOIs, windowSize, outputFile=None):
     signalThreshold = 0.20
 
     #### To Fill:
-    validityStatus = np.ones(len(SOIs), dtype=np.int)
+    validSampQC = np.ones(len(SOIs), dtype=np.int)
 
     #### Accumulator:
     # a list[int] storing the indixes of uncovered exons in all valid samples
@@ -102,7 +102,7 @@ def SampsQC(counts, SOIs, windowSize, outputFile=None):
         if (((maxMean - minMean) / maxMean) < signalThreshold):
             logger.warning("Sample %s has a coverage profile doesn't distinguish between covered and uncovered exons.",
                            SOIs[sampleIndex])
-            validityStatus[sampleIndex] = 0
+            validSampQC[sampleIndex] = 0
         else:
             exons2RMSamp = np.where(sampCounts <= binEdges[minIndex])
             if (len(exons2RM) != 0):
@@ -115,13 +115,13 @@ def SampsQC(counts, SOIs, windowSize, outputFile=None):
         pdf.close()
 
     # filtering the coverage data to recover valid samples and covered exons
-    validCounts = np.delete(counts, np.where(validityStatus == 0)[0], axis=1)
+    validCounts = np.delete(counts, np.where(validSampQC == 0)[0], axis=1)
     validCounts = np.delete(validCounts, exons2RM, axis=0)
 
     logger.info("%s/%s uncovered exons number deleted before clustering for %s/%s valid samples.",
-                len(exons2RM), len(counts), len(np.where(validityStatus == 1)[0]), len(SOIs))
+                len(exons2RM), len(counts), len(np.where(validSampQC == 1)[0]), len(SOIs))
 
-    return(validityStatus, validCounts, listtest)
+    return(validCounts, validSampQC, listtest)
 
 
 ###############################################################################
