@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 # smooth the coverage profile from a sliding window.
 #
 # Args:
-#  - densities (np.ndarray[float]): exons densities obtained from a FPM range 
+#  - densities (np.ndarray[float]): exons densities obtained from a FPM range
 #  - windowSize (int): number of bins in a window
 #
 # Returns:
@@ -74,14 +74,14 @@ def smoothingCoverageProfile(densities, windowSize):
 #  - densityMeans (list[float]): average density for each window covered
 #
 # Returns a tupple (minIndex, minDensity), each variable is created here:
-#  - minIndex (int): index from densityMean associated with the first lowest 
+#  - minIndex (int): index from densityMean associated with the first lowest
 #    observed average
 #  - minDensitySum (float): first lowest observed average
-def findLocalMin( densityMeans):
+def findLocalMin(densityMeans):
     #### Fixed parameter
     # threshold number of observed windows with density average above the current
-    # minimum average
-    subseqWindowSupMin = 20
+    # minimum average (order of magnitude 0.5 FPM)
+    subseqWindowSupMin = 5
 
     #### To Fill:
     # initialize variables for minimum density mean and index
