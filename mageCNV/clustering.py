@@ -22,61 +22,155 @@ logger = logging.getLogger(os.path.basename(sys.argv[0]))
 
 #############################
 # clustersBuilds
-# Groups the samples according to their distance obtained with the hierarchical clustering.
-# Several conditions for forming clusters:
-# - exceeding the minimum distance threshold ('minDist')
-# - below the allowed distance ('maxDist')
-# - number of samples greater than minSamps
-# Decremental correlation method, if a single sample is grouped with a control cluster it's possible to
-# form a new cluster.
+# Groups the QC validated samples according to their distance obtained with a
+# hierarchical clustering.
+#
 # Args:
-#  - FPMarray: is a float numpy array, dim = NbExons x NbSOIs
-#  - maxCorr: is a float variable, it's the maximal Pearson correlation score to start build clusters
-#  - minCorr: is a float variable, it's the minimal Pearson correlation score to end build clusters
-#  - minSamps: is an int variable, defining the minimal sample number to validate a cluster
-#  - figure: is a boolean: "True" or "False" to generate a figure
-#  - outputFile: is a full path (+ file name) for saving a dendogram
-# Returns a tuple (clusters, ctrls, validityStatus), each is created here:
+#  - FPMarray (np.ndarray[float]): normalised fragment counts for QC validated samples,
+#  dim = NbCoveredExons x NbSOIsQCValidated
+#  - maxCorr (float): maximal Pearson correlation score tolerated by the user to start
+#   build clusters
+#  - minCorr (float): minimal Pearson correlation score tolerated by the user to end
+#   build clusters
+#  - minSamps (int): minimal sample number to validate a cluster
+#  - figure (boolean): "True" => produce a figure
+#  - outputFile (str): full path (+ file name) for saving a dendogram
+#
+# Returns a tuple (clusters, ctrls, validSampClust):
+#  - clusters (np.ndarray[int]): clusterID for each sample
+#  - ctrls (list[str]): controls clusterID delimited by "," for each sample
+#  - validSampClust (np.ndarray[int]): validity status for each sample passed
+#   quality control (1: valid, 0: invalid), dim = NbSOIs
+def clustersBuilds(FPMarray, maxCorr, minCorr, minSamps, outputFile=None):
+    # compute distance thresholds for cluster construction
+    # depends on user-defined correlation levels
+    # - minDist (float): is the distance to start cluster construction
+    minDist = (1 - maxCorr)**0.5
+    # - maxDist (float): is the distance to finalise the cluster construction
+    maxDist = (1 - minCorr)**0.5
+
+    # Compute distances between samples and apply hierachical clustering
+    # - linksMatrix (np.ndarray[float]): the hierarchical clustering encoded as a linkage
+    #  matrix, dim = (NbSOIs-1)*[clusterID1,clusterID2,distValue,NbSOIsInClust]
+    linksMatrix = computeSampLinksPrivate(FPMarray)
+
+    # linksMatrix analysis, clusters formation and identification of controls/targets clusters
+    # - clusters (np.ndarray[int]): clusterID associated to SOIsIndex
+    # - trgt2Ctrls (dict(int : list[int])): target and controls clusters correspondance,
+    #   key = target clusterID, value = list of controls clusterID
+    (clusters, trgt2Ctrls) = links2ClustersFormationPrivate(FPMarray.shape[1], linksMatrix, minDist, maxDist, minSamps)
+
+    # Standardisation clusterID and create informative lists for populate final np.array
+    # - clusters (np.ndarray[int]): clusterID associated to SOIsIndex
+    # - trgt2Ctrls (dict(int : list[int])): target and controls clusters correspondance,
+    #   key = target clusterID, value = list of controls clusterID
+    (clusters, ctrls, validSampClust) = STDZAndCheckPrivate(clusters, trgt2Ctrls, minSamps)
+
+    # Optionnal plot a dendogram based on clustering results
+    if outputFile:
+        DendogramsPrivate(clusters, ctrls, linksMatrix, minDist, outputFile)
+
+    ##########
+    return(clusters, ctrls, validSampClust)
+
+
+###############################################################################
+# printClustersFile:
+# print the different types of outputs expected
+# Args:
+#  - SOIs: the list of sampleIDs (ie strings) copied from countsFile's header
 #  - clusters: an int numpy array containing standardized clusterID for each sample
 #  - ctrls: a str list containing controls clusterID delimited by "," for each sample
 #  - validityStatus: a boolean numpy array containing the validity status for each sample (1: valid, 0: invalid)
-def clustersBuilds(FPMarray, maxCorr, minCorr, minSamps, figure, outputFile):
-    ###################################
-    # part 1: Calcul distance between samples and apply hierachical clustering
-    ###################################
-    # Euclidean distance (classical method) not used
-    # Pearson correlation distance  (sqrt(1-r)) is unlikely to be a sensible 
-    # distance when clustering samples.
-    correlation = np.round(np.corrcoef(FPMarray, rowvar=False), 2)
-    dissimilarity = (1 -correlation)**0.5
+#  - outFolder: is a str variable, it's the results folder path
+#  - nogender: no autosomes and gonosomes discrimination for clustering (True or default False)
+#  - clustersG, ctrlsG, validityStatusG same as autosomes or all chromosomes variables but for gonosomes (optionnal parameter)
+#  - genderPred [optionnal]: the list of gender (ie strings, e.g "M" or "F"), for each sample
+# Print this data to stdout as a 'clustersFile'
+def printClustersFile(SOIs, clusters, ctrls, validityStatus, outFolder, nogender, clustersG=False, ctrlsG=False, validityStatusG=False, genderPred=False):
+    if nogender:
+        # 4 columns expected
+        clusterFile = open(os.path.join(outFolder, "ResClustering_" + str(len(SOIs)) + "samples.tsv"), 'w')
+        sys.stdout = clusterFile
+        toPrint = "samplesID\tclusterID\tcontrolledBy\tvaliditySamps"
+        print(toPrint)
+        for i in range(len(SOIs)):
+            # SOIsID + clusterInfo
+            toPrint = SOIs[i] + "\t" + str(clusters[i]) + "\t" + ctrls[i] + "\t" + str(validityStatus[i])
+            print(toPrint)
+        sys.stdout = sys.__stdout__
+        clusterFile.close()
+    else:
+        # 8 columns expected
+        clusterFile = open(os.path.join(outFolder, "ResClustering_AutosomesAndGonosomes_" + str(len(SOIs)) + "samples.tsv"), 'w')
+        sys.stdout = clusterFile
+        toPrint = "samplesID\tclusterID_A\tcontrolledBy_A\tvaliditySamps_A\tgenderPreds\tclusterID_G\tcontrolledBy_G\tvaliditySamps_G"
+        print(toPrint)
+        for i in range(len(SOIs)):
+            # SOIsID + clusterInfo for autosomes and gonosomes
+            toPrint = SOIs[i] + "\t" + str(clusters[i]) + "\t" + ctrls[i] + "\t" + str(validityStatus[i]) + \
+                "\t" + genderPred[i] + "\t" + str(clustersG[i]) + "\t" + ctrlsG[i] + "\t" + str(validityStatusG[i])
+            print(toPrint)
+        sys.stdout = sys.__stdout__
+        clusterFile.close()
 
-    # calculation of distance thresholds for cluster construction
-    # depends on user-defined correlation levels
-    # minDist: is the average distance to start cluster construction [float].
-    minDist=(1-maxCorr)**0.5
-    # maxDist: is the average distance to finalise the cluster construction [float].
-    maxDist=(1-minCorr)**0.5
+
+###############################################################################
+############################ PRIVATE FUNCTIONS ################################
+###############################################################################
+
+##################################################################
+# computeSampLinksPrivate [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
+# compute distances between samples and apply hierachical clustering
+#
+# Args:
+# - FPMarray (np.ndarray[float]): normalised fragment counts for QC validated
+#  samples, dim = NbCoveredExons x NbSOIsQCValidated
+#
+# Return:
+# - linksMatrix (np.ndarray[float]): the hierarchical clustering encoded as a linkage
+#  matrix, dim = (NbSOIs-1)*[clusterID1,clusterID2,distValue,NbSOIsInClust]
+def computeSampLinksPrivate(FPMarray):
+    # Pearson correlation distance (sqrt(1-r)) is unlikely to be a sensible
+    # distance when clustering samples.
+    # (sqrt(1-r)) is a true distance respecting symmetry, separation and triangular
+    # inequality
+    correlation = np.round(np.corrcoef(FPMarray, rowvar=False), 2)
+    dissimilarity = (1 - correlation)**0.5
 
     # average linkage the best choice when there are different-sized groups
     # "squareform" transform squared distance matrix in a triangular matrix
     # "optimal_ordering": linkage matrix will be reordered so that the distance between
     # successive leaves is minimal.
-    # linksMatrix: is a float numpy.ndarray of the hierarchical clustering encoded
-    # as a linkage matrix, dim = (NbSOIs-1)*[clusterID1,clusterID2,distValue,NbSOIsInClust]
     linksMatrix = scipy.cluster.hierarchy.linkage(scipy.spatial.distance.squareform(dissimilarity), 'average', optimal_ordering=True)
+    return(linksMatrix)
 
-    ###################################
-    # part 2: linksMatrix analysis, clusters formation and identification of controls/targets clusters
-    ###################################
+
+###################################################################
+# links2ClustersFormationPrivate [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
+# linksMatrix analysis, clusters formation and identification of controls/targets clusters
+#
+# Args:
+# - nbSamps2Clust [int]: number of samples analysed
+# - linksMatrix (np.ndarray[float])
+# - minDist (float): is the distance to start cluster construction
+# - maxDist (float): is the distance to stop cluster construction
+# - minSamps (int): minimal sample number to validate a cluster
+#
+# Returns a tupple (clusters, trgt2Ctrls), each is created here:
+# - clusters (np.ndarray[int]): clusterID associated to SOIsIndex
+# - trgt2Ctrls (dict(int : list[int])): target and controls clusters correspondance,
+#   key = target clusterID, value = list of controls clusterID
+def links2ClustersFormationPrivate(nbSamps2Clust, linksMatrix, minDist, maxDist, minSamps):
     ############
-    # To Fill
-    # clusters: an int 1D numpy array, clusterID associated to SOIsIndex
-    clusters = np.zeros(FPMarray.shape[1], dtype=np.int)
-    # trgt2Ctrls: target and controls clusters correspondance,
-    # key = target clusterID [int], value = list of controls clusterID [int list]
+    # To Fill and to returns
+    clusters = np.zeros(nbSamps2Clust, dtype=np.int)
     trgt2Ctrls = {}
-    # links2Clusters: cluster formed thanks to the linksMatrix parsing associated with SOIs.
-    # key = current clusterID [int], value = list of SOIs indexes [int list]
+
+    # To Fill, not returns
+    # - links2Clusters (dict(int : list[int])): cluster formed thanks to the linksMatrix
+    #   parsing associated with SOIs.
+    #   key = current clusterID, value = list of SOIs indexes
     links2Clusters = {}
 
     ############
@@ -96,8 +190,8 @@ def clustersBuilds(FPMarray, maxCorr, minCorr, minSamps, figure, outputFile):
         distValue = clusterLine[2]
         NbSOIsInClust = clusterLine[3]
 
-        # SOIsIndexInParents: an int list of parent clusters SOIs indexes
-        # nbSOIsInParents: an int list of samples number in each parent clusters
+        # SOIsIndexInParents (list[int]): parent clusters SOIs indexes
+        # nbSOIsInParents (list[int]): samples number in each parent clusters
         (SOIsIndexInParents, nbSOIsInParents) = getParentsClustsInfosPrivate(parentClustsIDs, links2Clusters, len(linksMatrix))
 
         ################
@@ -112,7 +206,7 @@ def clustersBuilds(FPMarray, maxCorr, minCorr, minSamps, figure, outputFile):
 
         ##########################
         # CONDITIONS FOR CLUSTER CREATION
-        # Populate np.array clusters and dictionnary trgt2Ctrls
+        # Populate "clusters" and "trgt2Ctrls"
         ##########
         # condition 1: group formation from a minimum to a maximum correlation distance
         # replacement/overwriting of old clusterIDs with the new one for SOIs indexes in
@@ -120,7 +214,7 @@ def clustersBuilds(FPMarray, maxCorr, minCorr, minSamps, figure, outputFile):
         if (distValue < minDist):
             clusters[SOIsIndexInParents] = clusterID
 
-        # distance between minDist and maxDist
+        # current distance is between minDist and maxDist
         # cluster selection is possible
         elif ((distValue >= minDist) and (distValue <= maxDist)):
 
@@ -177,80 +271,27 @@ def clustersBuilds(FPMarray, maxCorr, minCorr, minSamps, figure, outputFile):
                 else:
                     clusters[SOIsIndexInParents] = clusterID
 
-        # dist>maxDist we stop the loop on rows from linksMatrix
+        # current distance larger than maxDist we stop the loop on rows from linksMatrix
         else:
             break
-    ###################################
-    # part 3: Standardisation clusterID and create informative lists for populate final np.array
-    ###################################
-    (clusters, ctrls, validityStatus) = STDZAndCheckResPrivate(clusters, trgt2Ctrls, minSamps)
+    return(clusters, trgt2Ctrls)
 
-    ###################################
-    # part 4: Optionnal plot a dendogram based on clustering results
-    ###################################
-    if figure:
-        DendogramsPrivate(clusters, ctrls, linksMatrix, minDist, outputFile)
-
-    ##########
-    return(clusters, ctrls, validityStatus)
-
-
-###############################################################################
-# printClustersFile:
-# print the different types of outputs expected
-# Args:
-#  - SOIs: the list of sampleIDs (ie strings) copied from countsFile's header
-#  - clusters: an int numpy array containing standardized clusterID for each sample
-#  - ctrls: a str list containing controls clusterID delimited by "," for each sample
-#  - validityStatus: a boolean numpy array containing the validity status for each sample (1: valid, 0: invalid)
-#  - outFolder: is a str variable, it's the results folder path
-#  - nogender: no autosomes and gonosomes discrimination for clustering (True or default False)
-#  - clustersG, ctrlsG, validityStatusG same as autosomes or all chromosomes variables but for gonosomes (optionnal parameter)
-#  - genderPred [optionnal]: the list of gender (ie strings, e.g "M" or "F"), for each sample
-# Print this data to stdout as a 'clustersFile'
-def printClustersFile(SOIs, clusters, ctrls, validityStatus, outFolder, nogender, clustersG=False, ctrlsG=False, validityStatusG=False, genderPred=False):
-    if nogender:
-        # 4 columns expected
-        clusterFile = open(os.path.join(outFolder, "ResClustering_" + str(len(SOIs)) + "samples.tsv"), 'w')
-        sys.stdout = clusterFile
-        toPrint = "samplesID\tclusterID\tcontrolledBy\tvaliditySamps"
-        print(toPrint)
-        for i in range(len(SOIs)):
-            # SOIsID + clusterInfo
-            toPrint = SOIs[i] + "\t" + str(clusters[i]) + "\t" + ctrls[i] + "\t" + str(validityStatus[i])
-            print(toPrint)
-        sys.stdout = sys.__stdout__
-        clusterFile.close()
-    else:
-        # 8 columns expected
-        clusterFile = open(os.path.join(outFolder, "ResClustering_AutosomesAndGonosomes_" + str(len(SOIs)) + "samples.tsv"), 'w')
-        sys.stdout = clusterFile
-        toPrint = "samplesID\tclusterID_A\tcontrolledBy_A\tvaliditySamps_A\tgenderPreds\tclusterID_G\tcontrolledBy_G\tvaliditySamps_G"
-        print(toPrint)
-        for i in range(len(SOIs)):
-            # SOIsID + clusterInfo for autosomes and gonosomes
-            toPrint = SOIs[i] + "\t" + str(clusters[i]) + "\t" + ctrls[i] + "\t" + str(validityStatus[i]) + \
-                "\t" + genderPred[i] + "\t" + str(clustersG[i]) + "\t" + ctrlsG[i] + "\t" + str(validityStatusG[i])
-            print(toPrint)
-        sys.stdout = sys.__stdout__
-        clusterFile.close()
-
-
-###############################################################################
-############################ PRIVATE FUNCTIONS ################################
-###############################################################################
 
 ###############################################################################
 # getParentsClustsInfosPrivate [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
+# function used in another private function links2ClustersFormationPrivate
 # Extract parents informations : SOIs indexes list and sample number
-# Arg:
-#  - parentClustsIDs: a list containing the two cluster identifiers to be combined
-#  - links2Clusters: cluster formed thanks to the linksMatrix parsing associated with SOIs.
-#    key = current clusterID, value = list of SOIs indexes
-#  - NbLinks: an int variable, links number in linksMatrix (row count)
+#
+# Args:
+# - parentClustsIDs (list[int]): two parents clusters identifiers to be combined
+# - links2Clusters (dict(int : list[int])): cluster formed thanks to the linksMatrix
+#   parsing associated with SOIs.
+#   key = current clusterID, value = list of SOIs indexes
+# - nbLinks (int): links number in linksMatrix (row count)
+#
 # Returns a tuple (SOIsIndexInParents, nbSOIsInParents), each is created here:
-#  - SOIsIndexInParents: an int list of parent clusters SOIs indexes
-#  - nbSOIsInParents: an int list of samples number in each parent clusters
+# - SOIsIndexInParents (list[int]): parent clusters SOIs indexes
+# - nbSOIsInParents (list[int]): samples number in each parent clusters
 def getParentsClustsInfosPrivate(parentClustsIDs, links2Clusters, NbLinks):
     SOIsIndexInParents = []
     nbSOIsInParents = []
@@ -272,43 +313,44 @@ def getParentsClustsInfosPrivate(parentClustsIDs, links2Clusters, NbLinks):
 
 
 ###############################################################################
-# STDZAndCheckResPrivate: [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
-# Standardization: replacement of the clusterIDs deduced from linksMatrix by identifiers ranging from 0
-# to the total number of clusters.
+# STDZAndCheckPrivate: [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
+# Standardization: replacement of the clusterIDs deduced from linksMatrix by identifiers
+# ranging from 0 to the total number of clusters.
 # the new identifiers are assigned according to the decreasing correlation level.
 # Checking: the samples are in a cluster with a sufficient size.
 # if not returns a warning message and changes the validity status.
 # Necessary for the calling step.
+#
 # Args:
-#  - clusters: an int numpy array containing clusterID from linksMatrix for each sample
-#  - trgt2Ctrls: a dictionary for target cluster and controls clusters correspondance,
-#    key = target clusterID, value = list of controls clusterID
-#  - minSamps: an int variable, defining the minimal sample number to validate a cluster
-# Returns a tuple (clusters, ctrls, validityStatus), only ctrls and validityStatus are created here:
-#   - clusters: an int numpy array containing standardized clusterID for each sample
-#   - ctrls: a str list containing controls clusterID delimited by "," for each sample
-#   - validityStatus: a boolean numpy array containing the validity status for each sample (1: valid, 0: invalid)
-def STDZAndCheckResPrivate(clusters, trgt2Ctrls, minSamps):
-    # extraction of two int numpy array
-    # uniqueClusterIDs: contains all clusterIDs
-    # countsSampsinCluster: contains all sample counts per clusterIDs
+# - clusters (np.ndarray[int]): clusterID associated to SOIsIndex
+# - trgt2Ctrls (dict(int : list[int])): target and controls clusters correspondance,
+#   key = target clusterID, value = list of controls clusterID
+# - minSamps (int): minimal sample number to validate a cluster
+#
+# Returns a tuple (clusters, ctrls, validSampClust), only ctrls and validSampClust are created here:
+# - clusters (np.ndarray[int]): standardized clusterID for each sample
+# - ctrls (list[str]): controls clusterID delimited by "," for each sample
+# - validSampClust (np.ndarray[int]): validity status for each sample passed
+#   quality control (1: valid, 0: invalid), dim = NbSOIs
+def STDZAndCheckPrivate(clusters, trgt2Ctrls, minSamps):
+    # - uniqueClusterIDs (np.ndarray[int]): contains all clusterIDs
+    # - countsSampsinCluster (np.ndarray[int]): contains all sample counts per clusterIDs
     uniqueClusterIDs, countsSampsinCluster = np.unique(clusters, return_counts=True)
 
     ##########
     # To Fill
     ctrls = [""] * len(clusters)
-    validityStatus = np.ones(len(clusters), dtype=np.int)
+    validSampClust = np.ones(len(clusters), dtype=np.int)
 
-    ##########
     # browse all unique cluster identifiers
     for newClusterID in range(len(uniqueClusterIDs)):
         clusterID = uniqueClusterIDs[newClusterID]
-        # selection of sample indices associated with the old clusterID
+        # selection of sample indexes associated with the old clusterID
         Sindex = [i for i in range(len(clusters)) if clusters[i] == clusterID]
         # replacement by the new
         clusters[Sindex] = newClusterID
 
-        # filling ctrls by replacing clusterIDs with new ones
+        # fill ctrls by replacing clusterIDs with new ones
         if (clusterID in trgt2Ctrls):
             emptylist = []
             for i in trgt2Ctrls[clusterID]:
@@ -318,18 +360,18 @@ def STDZAndCheckResPrivate(clusters, trgt2Ctrls, minSamps):
             for index in Sindex:
                 ctrls[index] = emptylist
 
-        # checking the validity:
+        # check the validity:
         else:
             # the sample(s) were not clustered
             if clusterID == newClusterID:
                 logger.warning("%s sample(s) were not clustered (maxDist to be reviewed).", len(Sindex))
-                validityStatus[Sindex] = 0
+                validSampClust[Sindex] = 0
             # cluster samples number is not sufficient to establish a correct copies numbers call
             elif (countsSampsinCluster[newClusterID] < minSamps):
                 logger.warning("Cluster n°%s has an insufficient samples number = %s ", newClusterID, countsSampsinCluster[newClusterID])
-                validityStatus[Sindex] = 0
+                validSampClust[Sindex] = 0
 
-    return(clusters, ctrls, validityStatus)
+    return(clusters, ctrls, validSampClust)
 
 
 ###############################################################################
