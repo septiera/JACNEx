@@ -37,7 +37,7 @@ def parseArgs(argv):
     countsFile = ""
     outFolder = ""
     # optionnal args with default values
-    windowSize = 40
+    windowSize = 4
     minSamps = 20
     maxCorr = 0.95
     minCorr = 0.85
@@ -201,27 +201,27 @@ def main(argv):
     #####################################################
     # Quality control:
     ##################
-    # allocates a numpy array of int "validityStatus", score 1 associated with a valid sample
-    # for clustering and 0 an invalid sample.
     # The validity of a sample is evaluated according to its fragment coverage profile.
     # If the profile does not allow to distinguish between poorly covered and covered exons,
     # it's assigned invalid status.
-    # validCounts (np.ndarray[float]): counts for exons covered for all samples that passed 
+    # - validCounts (np.ndarray[float]): counts for exons covered for all samples that passed
     # quality control
+    # - validSampQC (np.ndarray(boolean)): validity status for each SOIs index after quality control
+    # (1: valid, 0: invalid)
     try:
         if figure:
             outputFile = os.path.join(outFolder, "CoverageProfilChecking_" + str(len(SOIs)) + "samps.pdf")
-            (validityStatus, validCountsNorm, listtest) = mageCNV.qualityControl.SampsQC(countsNorm, SOIs, windowSize, outputFile)
+            (validCounts, validSampQC, listtest) = mageCNV.qualityControl.SampsQC(countsNorm, SOIs, windowSize, outputFile)
         else:
-            (validityStatus, validCountsNorm, listtest) = mageCNV.qualityControl.SampsQC(countsNorm, SOIs, windowSize)
-    except Exception as e :
+            (validCounts, validSampQC, listtest) = mageCNV.qualityControl.SampsQC(countsNorm, SOIs, windowSize)
+    except Exception as e:
         logger.error("SampQC failed %s", e)
         raise Exception()
 
     thisTime = time.time()
     logger.debug("Done samples quality control, in %.2f s", thisTime - startTime)
     startTime = thisTime
-"""
+
     #####################################################
     # Clustering:
     ####################
@@ -229,19 +229,19 @@ def main(argv):
     # clustering algorithm direct application
     if nogender:
         logger.info("### Samples clustering:")
-        
-        # remove invalid samples and uncovered exons => better clustering
-        bestCountsNorm = 
-        
-        bestCountsNorm = np.delete(bestCountsNorm, exons2RM, axis=0)
-        
+
         try:
-            outputFile = os.path.join(outFolder, "Dendogram_" + str(len(SOIs)) + "Samps_FullChrom.png")
-            # applying hierarchical clustering and obtaining 3 outputs:
-            # clusters: an int numpy array containing standardized clusterID for each SOIs
-            # ctrls: a str list containing controls clusterID delimited by "," for each SOIs
-            # validityStatus: a boolean numpy array containing the validity status for each SOIs(1: valid, 0: invalid)
-            (clusters, ctrls, validityStatus) = mageCNV.clustering.clustersBuilds(countsNorm, maxCorr, minCorr, minSamps, figure, outputFile)
+            if figure:
+                outputFile = os.path.join(outFolder, "Dendogram_" + str(len(SOIs)) + "Samps_FullChrom.png")
+                # applying hierarchical clustering and obtaining 3 outputs:
+                # - clusters (np.ndarray[int]): standardized clusterID for each SOIs
+                # - ctrls (list[str]): controls clusterID delimited by "," for each SOIs
+                # - validSampClust (np.ndarray[boolean]): validity status for each SOIs
+                # validated by quality control after clustering (1: valid, 0: invalid)
+                (clusters, ctrls, validSampClust) = mageCNV.clustering.clustersBuilds(validCounts, maxCorr, minCorr, minSamps, outputFile)
+            else:
+                (clusters, ctrls, validSampClust) = mageCNV.clustering.clustersBuilds(validCounts, maxCorr, minCorr, minSamps)
+
         except Exception:
             logger.error("clusterBuilding failed")
             raise Exception()
@@ -252,12 +252,12 @@ def main(argv):
 
         #####################################################
         # print results
-        mageCNV.clustering.printClustersFile(SOIs, clusters, ctrls, validityStatus, outFolder, nogender)
+        mageCNV.clustering.printClustersFile(nogender, SOIs, validSampQC, clusters, ctrls, validSampClust, outFolder)
 
         thisTime = time.time()
         logger.debug("Done printing results, in %.2f s", thisTime - startTime)
         logger.info("ALL DONE")
-
+    """
     ###################
     # cases where discrimination is made
     # avoid grouping Male with Female which leads to dubious CNV calls
@@ -362,8 +362,8 @@ def main(argv):
         thisTime = time.time()
         logger.debug("Done printing results, in %.2f s", thisTime - startTime)
         logger.info("ALL DONE")
+"""
 
-        """
 ####################################################################################
 ######################################## Main ######################################
 ####################################################################################
