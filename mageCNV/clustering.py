@@ -82,10 +82,10 @@ def clustersBuilds(FPMarray, maxCorr, minCorr, minSamps, outputFile=None):
 # - SOIs (list[str]): sampleIDs
 # - validSampQC (np.ndarray(boolean)): validity status for each SOIs index after
 # quality control (1: valid, 0: invalid)
-# - clusters (np.ndarray[int]): clusterID for each sample
-# - ctrls (list[str]): controls clusterID delimited by "," for each sample
 # - validSampClust (np.ndarray[boolean]): validity status for each SOIs
 # validated by quality control after clustering (1: valid, 0: invalid)
+# - clusters (np.ndarray[int]): clusterID for each sample
+# - ctrls (list[str]): controls clusterID delimited by "," for each sample
 # - outFolder (str): output folder path
 # - clustersG, ctrlsG, validSampsClustG [optionnal]: same as previous but for gonosomes
 # - genderPred (list[str])[optionnal]:  gender (e.g "M" or "F"), for each sample
@@ -105,7 +105,7 @@ def clustersBuilds(FPMarray, maxCorr, minCorr, minSamps, outputFile=None):
 # The columns 3-5 are from the analysis of autosome coverage profiles (A)
 #    6) "genderPreds" (str): "M"=Male or "F"=Female deduced by kmeans,
 # The columns 7-9 are the same as 3-5 but are from the analysis of gonosome coverage profiles (G)
-def printClustersFile(nogender, SOIs, validSampClust, validSampQC, clusters, ctrls, outFolder, validSampsClustG=False, clustersG=False, ctrlsG=False, genderPred=False):
+def printClustersFile(nogender, SOIs, validSampQC, validSampClust, clusters, ctrls, outFolder, validSampsClustG=False, clustersG=False, ctrlsG=False, genderPred=False):
 
     if nogender:
         # 5 columns expected
@@ -118,13 +118,11 @@ def printClustersFile(nogender, SOIs, validSampClust, validSampQC, clusters, ctr
         for i in range(len(SOIs)):
             # SOIsID + clusterInfo
             if validSampQC[i] != 0:
-                toPrint = SOIs[i] + "\t" + str(validSampQC[i]) + "\t" + str(validSampClust[counter]) + "\t" + str(clusters[counter]) + "\t" + ctrls[counter]
-                print(toPrint)
+                toPrint = SOIs[i] + "\t" + str(validSampQC[i]) + "\t" + str(validSampClust[counter]) + "\t" + str(clusters[counter]) + "\t" + str(ctrls[counter])
                 counter += 1
             else:
                 toPrint = SOIs[i] + "\t" + str(validSampQC[i]) + "\t" + str(0) + "\t" + "" + "\t" + ""
-                print(toPrint)
-
+            print(toPrint)
         sys.stdout = sys.__stdout__
         clusterFile.close()
 
@@ -140,16 +138,14 @@ def printClustersFile(nogender, SOIs, validSampClust, validSampQC, clusters, ctr
             if validSampQC[i] != 0:
                 # SOIsID + clusterInfo for autosomes and gonosomes
                 toPrint = SOIs[i] + "\t" + str(validSampQC[i]) + "\t" + str(validSampClust[counter]) + \
-                    "\t" + str(clusters[counter]) + "\t" + ctrls[counter] + "\t" + genderPred[counter] + \
-                    "\t" + str(validSampClust[counter]) + "\t" + str(clustersG[counter]) + "\t" + ctrlsG[counter]
-                print(toPrint)
+                    "\t" + str(clusters[counter]) + "\t" + str(ctrls[counter]) + "\t" + genderPred[counter] + \
+                    "\t" + str(validSampClust[counter]) + "\t" + str(clustersG[counter]) + "\t" + str(ctrlsG[counter])
                 counter += 1
             else:
                 toPrint = SOIs[i] + "\t" + str(validSampQC[i]) + "\t" + str(0) + \
                     "\t" + "" + "\t" + "" + "\t" + "" + \
                     "\t" + str(0) + "\t" + "" + "\t" + ""
-                print(toPrint)
-
+            print(toPrint)
         sys.stdout = sys.__stdout__
         clusterFile.close()
 
