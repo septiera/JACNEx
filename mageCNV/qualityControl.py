@@ -135,36 +135,32 @@ def findLocalMaxPrivate(densityMeans, minIndex):
     return (maxIndex, maxMean)
 
 
-####################################
+###################################
 # coverageProfilPlotPrivate:
 # generates a plot per patient
 # x-axis: the range of FPM bins (every 0.1 between 0 and 10)
 # y-axis: exons densities
-# blue curve: raw density data
-# orange curve: density data smoothed by moving average.
+# black curve: density data smoothed with kernel-density estimate using Gaussian kernels
 # red vertical line: minimum FPM threshold, all uncovered exons are below this threshold
 # orange vertical line: maximum FPM, corresponds to the FPM value where the density of
 # covered exons is the highest.
 #
 # Args:
 # - sampleName (str): sample exact name
-# - binEdges (np.ndarray[floats]): values at which each FPM bin starts and ends
-# - densities (np.ndarray[floats]): exons densities for each binEdges
-# - densityMeans (list[float]): mean density for each window covered
+# - binEdges (np.ndarray[floats]): FPM range
+# - densityOnFPMRange (np.ndarray[float]): probability density for all bins in the FPM range
+#   dim= len(binEdges)
 # - minIndex (int): index associated with the first lowest observed mean
 # - maxIndex (int): index associated with the maximum density mean observed
-# - pdf (matplotlib object): allows you to store plots in a single pdf
+# - pdf (matplotlib object): store plots in a single pdf
 #
 # Returns a pdf file in the output folder
-def coverageProfilPlotPrivate(sampleName, binEdges, densities, densityMeans, minIndex, maxIndex, pdf):
+def coverageProfilPlotPrivate(sampleName, binEdges, densityOnFPMRange, minIndex, maxIndex, pdf):
     # Disable interactive mode
     plt.ioff()
 
     fig = plt.figure(figsize=(6, 6))
-    # binEdges defines a bin by its start and end, as an index in densities corresponds
-    # to a bin. So total size of both np.ndarray are not equivalent.
-    plt.plot(binEdges[:-1], densities, color='black', label='raw density')
-    plt.plot(binEdges[:-1], densityMeans, color='mediumblue', label='smoothed density')
+    plt.plot(binEdges, densityOnFPMRange, color='black', label='smoothed densities')
 
     plt.axvline(binEdges[minIndex], color='crimson', linestyle='dashdot', linewidth=2,
                 label="minFPM=" + '{:0.1f}'.format(binEdges[minIndex]))
