@@ -16,9 +16,10 @@ logger = logging.getLogger(__name__)
 # SampsQC :
 # evaluates the coverage profile of the samples and identifies the uncovered
 # exons for all samples.
-#
+# i.e. to identify the optimal information for clustering.
+# 
 # Args:
-#  - counts (np.ndarray[float]): normalised fragment counts.
+#  - counts (np.ndarray[float]): normalised fragment counts
 #  - SOIs (list[str]): samples of interest names
 #  - outputFile (optionnal str): full path to save the pdf
 #
@@ -30,19 +31,16 @@ logger = logging.getLogger(__name__)
 def SampsQC(counts, SOIs, outputFile=None):
     #### Fixed parameter:
     # threshold to assess the validity of the sample coverage profile.
-    # if the difference between the average density of uncovered exons and
-    # the average density of covered exons is less than 20%, the sample is invalid.
+    # if the difference between the density of uncovered exons and
+    # the density of covered exons is less than 20%, the sample is declared invalid.
     signalThreshold = 0.20
 
     #### To Fill:
     validSampQC = np.ones(len(SOIs), dtype=np.int)
 
     #### Accumulator:
-    # a list[int] storing the indixes of uncovered exons in all valid samples
+    # a list[int] storing the indexes of uncovered exons in all valid samples
     exons2RM = []
-
-    #### To remove not use only for dev control
-    listtest = []
 
     # create a matplotlib object and open a pdf if the figure option is
     # true in the main script
@@ -77,25 +75,24 @@ def SampsQC(counts, SOIs, outputFile=None):
         if outputFile:
             coverageProfilPlotPrivate(SOIs[sampleIndex], binEdges, densityOnFPMRange, minIndex, maxIndex, pdf)
 
+        #############
         # sample validity assessment
-        if (((maxMean - minMean) / maxMean) < signalThreshold):
+        if (((maxMean - minMean) / maxMean) <= signalThreshold):
             logger.warning("Sample %s doesn't pass quality control.",
                            SOIs[sampleIndex])
             validSampQC[sampleIndex] = 0
 
-            #### fill list control
-            listtest.append([SOIs[sampleIndex], minIndex, minMean, maxIndex, maxMean, binEdges[minIndex], 0])
-
+        # difference between the two densities greater than signalThreshold, 
+        # storage of exons with little or no coverage (all exons with MPF < minimum MPF threshold)
+        # intersection between the current list of uncovered exons and the previous one to retain 
+        # only the uncovered exons for all samples validated by quality control.
         else:
             exons2RMSamp = np.where(sampFragCounts <= binEdges[minIndex])[0]
             if (len(exons2RM) != 0):
                 exons2RM = np.intersect1d(exons2RM, exons2RMSamp)
             else:
                 exons2RM = exons2RMSamp
-
-            #### fill list control
-            listtest.append([SOIs[sampleIndex], minIndex, minMean, maxIndex, maxMean, binEdges[minIndex], len(exons2RMSamp), len(exons2RM)])
-
+                
     # close the open pdf
     if outputFile:
         pdf.close()
@@ -104,10 +101,11 @@ def SampsQC(counts, SOIs, outputFile=None):
     validCounts = np.delete(counts, np.where(validSampQC == 0)[0], axis=1)
     validCounts = np.delete(validCounts, exons2RM, axis=0)
 
+    # returns in stderr the results on the filtered data
     logger.info("%s/%s uncovered exons number deleted before clustering for %s/%s valid samples.",
                 len(exons2RM), len(counts), len(np.where(validSampQC == 1)[0]), len(SOIs))
 
-    return(validCounts, validSampQC, listtest)
+    return(validCounts, validSampQC)
 
 
 ###############################################################################
@@ -149,8 +147,8 @@ def findLocalMaxPrivate(densityOnFPMRange, minIndex):
 # - binEdges (np.ndarray[floats]): FPM range
 # - densityOnFPMRange (np.ndarray[float]): probability density for all bins in the FPM range
 #   dim= len(binEdges)
-# - minIndex (int): index associated with the first lowest observed mean
-# - maxIndex (int): index associated with the maximum density mean observed
+# - minIndex (int): index associated with the first lowest density observed
+# - maxIndex (int): index associated with the maximum density observed
 # - pdf (matplotlib object): store plots in a single pdf
 #
 # Returns a pdf file in the output folder
