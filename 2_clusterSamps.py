@@ -37,7 +37,6 @@ def parseArgs(argv):
     countsFile = ""
     outFolder = ""
     # optionnal args with default values
-    windowSize = 4
     minSamps = 20
     maxCorr = 0.95
     minCorr = 0.85
@@ -59,7 +58,6 @@ ARGUMENTS:
    --counts [str]: TSV file, first 4 columns hold the exon definitions, subsequent columns
                    hold the fragment counts. File obtained from 1_countFrags.py
    --out[str]: acces path to a pre-existing folder to save the output files
-   --windowSize [int]: deck bins number for the sliding window during quality control, default: """ + str(windowSize) + """
    --minSamps [int]: samples minimum number for the cluster creation,
                   default : """ + str(minSamps) + """
    --maxCorr [float]: Pearson correlation threshold to start building clusters, default: """ + str(maxCorr) + """
@@ -86,14 +84,6 @@ ARGUMENTS:
             outFolder = value
             if (not os.path.isdir(outFolder)):
                 sys.stderr.write("ERROR : outFolder " + outFolder + " doesn't exist.\n")
-                raise Exception()
-        elif (opt in ("--windowSize")):
-            try:
-                windowSize = np.int(value)
-                if (windowSize < 1):
-                    raise Exception()
-            except Exception:
-                sys.stderr.write("ERROR : windowSize must be a non-negative integer and must be greater than or equal to 1, not '" + value + "'.\n")
                 raise Exception()
         elif (opt in ("--minSamps")):
             try:
@@ -131,7 +121,7 @@ ARGUMENTS:
     if countsFile == "":
         sys.exit("ERROR : You must use --counts.\n" + usage)
     # AOK, return everything that's needed
-    return(countsFile, outFolder, windowSize, minSamps, maxCorr, minCorr, nogender, figure)
+    return(countsFile, outFolder, minSamps, maxCorr, minCorr, nogender, figure)
 
 
 ###############################################################################
@@ -144,7 +134,7 @@ ARGUMENTS:
 # If anything goes wrong, print error message to stderr and raise exception.
 def main(argv):
     # parse, check and preprocess arguments - exceptions must be caught by caller
-    (countsFile, outFolder, windowSize, minSamps, maxCorr, minCorr, nogender, figure) = parseArgs(argv)
+    (countsFile, outFolder, minSamps, maxCorr, minCorr, nogender, figure) = parseArgs(argv)
 
     ################################################
     # args seem OK, start working
@@ -190,16 +180,16 @@ def main(argv):
     # The validity of a sample is evaluated according to its fragment coverage profile.
     # If the profile does not allow to distinguish between poorly covered and covered exons,
     # it's assigned invalid status.
-    # - validCounts (np.ndarray[float]): counts for exons covered for all samples that passed
-    # quality control
-    # - validSampQC (np.ndarray(boolean)): validity status for each SOIs index after quality control
-    # (1: valid, 0: invalid)
+    # - validSampQC (np.array[int]): validity status for each sample passed quality
+    #   control (1: valid, 0: invalid), dim = NbSOIs
+    # - exonsFewFPM (list[int]): exons indexes with little or no coverage common
+    #   to all samples passing quality control
     try:
         if figure:
             outputFile = os.path.join(outFolder, "CoverageProfilChecking_" + str(len(SOIs)) + "samps.pdf")
-            (validCounts, validSampQC, listtest) = mageCNV.qualityControl.SampsQC(countsNorm, SOIs, windowSize, outputFile)
+            (validSampQC, exonsFewFPM) = mageCNV.qualityControl.SampsQC(countsNorm, SOIs, outputFile)
         else:
-            (validCounts, validSampQC, listtest) = mageCNV.qualityControl.SampsQC(countsNorm, SOIs, windowSize)
+            (validSampQC, exonsFewFPM) = mageCNV.qualityControl.SampsQC(countsNorm, SOIs)
     except Exception as e:
         logger.error("SampQC failed %s", e)
         raise Exception()
@@ -210,6 +200,11 @@ def main(argv):
 
     #####################################################
     # Clustering:
+    ####################
+    # filtering the coverage data to recover valid samples and covered exons
+    validCounts = np.delete(countsNorm, np.where(validSampQC == 0)[0], axis=1)
+    validCounts = np.delete(validCounts, exonsFewFPM, axis=0)
+    
     ####################
     # case where no discrimination between gender is made
     # clustering algorithm direct application
@@ -243,7 +238,8 @@ def main(argv):
         thisTime = time.time()
         logger.debug("Done printing results, in %.2f s", thisTime - startTime)
         logger.info("ALL DONE")
-    """
+
+"""
     ###################
     # cases where discrimination is made
     # avoid grouping Male with Female which leads to dubious CNV calls
