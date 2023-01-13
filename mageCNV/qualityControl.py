@@ -20,7 +20,6 @@ logger = logging.getLogger(__name__)
 # Args:
 #  - counts (np.ndarray[float]): normalised fragment counts.
 #  - SOIs (list[str]): samples of interest names
-#  - windowSize (int): number of bins in a window
 #  - outputFile (optionnal str): full path to save the pdf
 #
 # Returns a tupple (validCounts, validSampQC), each variable is created here:
@@ -28,13 +27,8 @@ logger = logging.getLogger(__name__)
 # that passed quality control
 #  - validSampQC (np.array[int]): validity status for each sample passed quality
 #  control (1: valid, 0: invalid), dim = NbSOIs
-def SampsQC(counts, SOIs, windowSize, outputFile=None):
-    #### Fixed parameters:
-    # FPM threshold limitation with signal to be analysed
-    # exons uncovered and most exons covered
-    FPMSignal = 10
-    # number of bins to create a sufficiently precise range for the FPM (0.1)
-    binsNb = 100
+def SampsQC(counts, SOIs, outputFile=None):
+    #### Fixed parameter:
     # threshold to assess the validity of the sample coverage profile.
     # if the difference between the average density of uncovered exons and
     # the average density of covered exons is less than 20%, the sample is invalid.
@@ -57,58 +51,50 @@ def SampsQC(counts, SOIs, windowSize, outputFile=None):
 
     for sampleIndex in range(len(SOIs)):
         # extract sample counts
-        sampCounts = counts[:, sampleIndex]
-        # FPM threshold limitation
-        sampCounts = sampCounts[sampCounts <= FPMSignal]
+        sampFragCounts = counts[:, sampleIndex]
 
-        # FPM range creation
-        start = 0
-        stop = FPMSignal
-        # binEdges (np.ndarray[floats]): values at which each FPM bin starts and ends
-        binEdges = np.linspace(start, stop, num=binsNb)
-        # limitation of decimal points to avoid float approximations
-        binEdges = np.around(binEdges, 1)
-
-        # densities (np.ndarray[floats]):
-        # number of elements in the bin/(bin width*total number of elements)
-        densities = np.histogram(sampCounts, bins=binEdges, density=True)[0]
-
-        # smooth the coverage profile from a sliding window.
-        # densityMeans (list[float]): mean density for each window covered
-        densityMeans = mageCNV.slidingWindow.smoothingCoverageProfile(densities, windowSize)
+        # smooth the coverage profile with kernel-density estimate using Gaussian kernels
+        # - binEdges (np.ndarray[floats]): FPM range
+        # - densityOnFPMRange (np.ndarray[float]): probability density for all bins in the FPM range
+        #   dim= len(binEdges)
+        binEdges, densityOnFPMRange = mageCNV.slidingWindow.smoothingCoverageProfile(sampFragCounts)
 
         # recover the threshold of the minimum density means before an increase
-        # minIndex (int): index from "densityMeans" associated with the first lowest
+        # - minIndex (int): index from "densityMeans" associated with the first lowest
         # observed mean
-        # minMean (float): first lowest observed mean
-        (minIndex, minMean) = mageCNV.slidingWindow.findLocalMin(densityMeans)
+        # - minMean (float): first lowest observed mean
+        (minIndex, minMean) = mageCNV.slidingWindow.findLocalMin(densityOnFPMRange)
 
         # recover the threshold of the maximum density means after the minimum
         # density means which is associated with the largest covered exons number.
-        # maxIndex (int): index from "densityMeans" associated with the maximum density
+        # - maxIndex (int): index from "densityMeans" associated with the maximum density
         # mean observed
-        # maxMean (float): maximum density mean
-        (maxIndex, maxMean) = findLocalMaxPrivate(densityMeans, minIndex)
+        # - maxMean (float): maximum density mean
+        (maxIndex, maxMean) = findLocalMaxPrivate(densityOnFPMRange, minIndex)
 
         # graphic representation of coverage profiles.
         # returns a pdf in the output folder
         if outputFile:
-            coverageProfilPlotPrivate(SOIs[sampleIndex], binEdges, densities, densityMeans, minIndex, maxIndex, pdf)
-
-        #### fill list control
-        listtest.append([SOIs[sampleIndex], minIndex, minMean, maxIndex, maxMean])
+            coverageProfilPlotPrivate(SOIs[sampleIndex], binEdges, densityOnFPMRange, minIndex, maxIndex, pdf)
 
         # sample validity assessment
         if (((maxMean - minMean) / maxMean) < signalThreshold):
-            logger.warning("Sample %s has a coverage profile doesn't distinguish between covered and uncovered exons.",
+            logger.warning("Sample %s doesn't pass quality control.",
                            SOIs[sampleIndex])
             validSampQC[sampleIndex] = 0
+
+            #### fill list control
+            listtest.append([SOIs[sampleIndex], minIndex, minMean, maxIndex, maxMean, binEdges[minIndex], 0])
+
         else:
-            exons2RMSamp = np.where(sampCounts <= binEdges[minIndex])
+            exons2RMSamp = np.where(sampFragCounts <= binEdges[minIndex])[0]
             if (len(exons2RM) != 0):
                 exons2RM = np.intersect1d(exons2RM, exons2RMSamp)
             else:
                 exons2RM = exons2RMSamp
+
+            #### fill list control
+            listtest.append([SOIs[sampleIndex], minIndex, minMean, maxIndex, maxMean, binEdges[minIndex], len(exons2RMSamp), len(exons2RM)])
 
     # close the open pdf
     if outputFile:
