@@ -1,5 +1,6 @@
 import logging
 import numpy as np
+import scipy.stats as st
 # set up logger, using inherited config
 logger = logging.getLogger(__name__)
 
@@ -10,59 +11,50 @@ logger = logging.getLogger(__name__)
 
 ###################################
 # smoothingCoverageProfile:
-# smooth the coverage profile from a sliding window.
+# smooth the coverage profile with kernel-density estimate using Gaussian kernel
 #
 # Args:
-#  - densities (np.ndarray[float]): exons densities obtained from a FPM range
-#  - windowSize (int): number of bins in a window
+# - sampFragCounts (np.ndarray[float]): FPM by exon for a sample, dim=NbExons
 #
 # Returns:
-#  - densityMeans (np.ndarray[float]): mean density for each window covered. dim=len(densities)
-def smoothingCoverageProfile(densities, windowSize):
-    # check if window_size is even, if so add 1 to make it odd
-    if windowSize % 2 == 0:
-        windowSize += 1
+# - binEdges (np.ndarray[floats]): FPM range
+# - densityOnFPMRange (np.ndarray[float]): probability density for all bins in the FPM range
+#   dim= len(binEdges)
+def smoothingCoverageProfile(sampFragCounts):
 
-    # To fill:
-    densityMeans = np.zeros(len(densities), dtype=np.float)
+    #### Fixed parameters:
+    # - FPMSignal (int): FPM threshold for extracts the exons with the most coverage
+    # signals, i.e. with high density and interpretable values.
+    # this cutoff is applicable on coverage data from different capture kits
+    FPMSignal = 10
+    # -binsNb (int); number of bins to create a sufficiently precise range for the FPM
+    # in this case the size of a bin is 0.1
+    binsNb = FPMSignal * 10
 
-    # an index (i) is the middle of the windowSize (e.g windowSize=5, index=3)
-    for i in range(0, len(densities)):
-        # case 1: the starting indexes don't include all the window bins
-        if (i <= windowSize // 2):
-            # Initialization of the sum at index 0.
-            # Only the window bins larger than the index are considered
-            # e.g windowSize=5, middle window=0, sum -> densities[0,1,2]
-            if (i == 0):
-                # recall correct values range selection in an np.ndarray[0:n+1]
-                rollingSum = sum(densities[:(windowSize // 2) + 1])
-                # add index to denominator (+1) for mean computation
-                densityMeans[i] = rollingSum / ((windowSize // 2) + 1)
-            # the following indexes keep the previous density values
-            # e.g windowSize=5, middle window=1, sum -> densities[0,1,2,3]
-            else:
-                # add new density value in accordance with the window offset
-                rollingSum += densities[i + (windowSize // 2)]
-                # the index value is equal to the number of values kept so it's
-                # added to the denominator for mean computation
-                densityMeans[i] = rollingSum / (i + windowSize // 2 + 1)
+    # FPM data threshold limitation
+    sampFragCountsReduced = sampFragCounts[sampFragCounts <= FPMSignal]
+    # FPM range creation
+    binEdges = np.linspace(0, FPMSignal, num=binsNb)
+    # limitation of decimal points to avoid float approximations
+    binEdges = np.around(binEdges, 1)
 
-        # case 2: all window bins can be taken
-        # len(densities) is a count so doesn't consider the index 0 (-1)
-        elif (i <= ((len(densities) - 1) - (windowSize // 2))):
-            rollingSum -= densities[i - (windowSize // 2) - 1]
-            rollingSum += densities[i + (windowSize // 2)]
-            densityMeans[i] = rollingSum / windowSize
+    # scipy.stats.gaussian_kde creates and uses a Gaussian probability density estimate
+    # (KDE) from data.
+    # the bandwidth determines the width of the Gaussian used to smooth the data when
+    # estimating the probability density.
+    # it is calculated automatically by scipy.stats.gaussian_kde using Scott's method.
+    # bandwidth = n^(-1/(d+4)) * sigma
+    #  - n is the number of elements in the data
+    #  - d is the dimension of the data
+    #  - sigma is the standard deviation of the data
+    #
+    # - density (scipy.stats.kde.gaussian_kde object): probability density for sampFragCountsReduced
+    density = st.kde.gaussian_kde(sampFragCountsReduced)
 
-        # case 3: the latest indexes don't include all the window bins
-        else:
-            # remove old density value in accordance with the window offset
-            rollingSum -= densities[i - (windowSize // 2) - 1]
-            # the denominator is the number of bins remaining
-            # "(len(density)-i" is a contraction of "(len(density)-1)-(i+1)"
-            densityMeans[i] = rollingSum / (windowSize // 2 + (len(densities) - i))
+    # compute density probabilities for each bins in the predefined range
+    densityOnFPMRange = density(binEdges)
 
-    return(densityMeans)
+    return(binEdges, densityOnFPMRange)
 
 
 ###################################
