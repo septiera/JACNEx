@@ -51,7 +51,7 @@ def smoothingCoverageProfile(sampFragCounts):
     # - density (scipy.stats.kde.gaussian_kde object): probability density for sampFragCountsReduced
     density = st.kde.gaussian_kde(sampFragCountsReduced)
 
-    # compute density probabilities for each bins in the predefined range
+    # compute density probabilities for each bins in the predefined FPM range
     densityOnFPMRange = density(binEdges)
 
     return(binEdges, densityOnFPMRange)
@@ -59,25 +59,26 @@ def smoothingCoverageProfile(sampFragCounts):
 
 ###################################
 # findLocalMin:
-# find the threshold of the minimum density averages before an increase
-# allowing to differentiate covered and uncovered exons.
+# identifies the first minimum density and the associated index in
+# densityOnFPMRnage (identical in binEdges).
+# This minimum density corresponds to the threshold separating exons
+# with little or no coverage from covered exons.
 #
 # Args:
-#  - densityMeans (list[float]): average density for each window covered
+#  - densityOnFPMRange (np.ndarray[float]): probability density for all bins in the FPM range
 #
 # Returns a tupple (minIndex, minDensity), each variable is created here:
-#  - minIndex (int): index from densityMean associated with the first lowest
-#    observed average
-#  - minDensitySum (float): first lowest observed average
-def findLocalMin(densityMeans):
+#  - minIndex (int): index with the first lowest density observed
+#  - minDensity (float): first lowest density observed
+def findLocalMin(densityOnFPMRange):
     #### Fixed parameter
-    # threshold number of observed windows with density average above the current
-    # minimum average (order of magnitude 0.5 FPM)
+    # threshold number of observed windows with density above the current
+    # minimum density (order of magnitude 0.5 FPM)
     subseqWindowSupMin = 5
 
     #### To Fill:
-    # initialize variables for minimum density mean and index
-    minMean = densityMeans[0]
+    # initialize variables for minimum density and index
+    minDensity = densityOnFPMRange[0]
     minIndex = 0
 
     #### Accumulator:
@@ -85,19 +86,19 @@ def findLocalMin(densityMeans):
     # minimum density
     counter = 0
 
-    for i in range(1, len(densityMeans)):
+    for i in range(1, len(densityOnFPMRange)):
         # current density is lower than the minimum density found so far
-        if densityMeans[i] < minMean:
-            minMean = densityMeans[i]
+        if densityOnFPMRange[i] < minDensity:
+            minDensity = densityOnFPMRange[i]
             minIndex = i
             # reset counter
             counter = 0
         # current density is greater than the minimum density found so far
-        elif densityMeans[i] > minMean:
+        elif densityOnFPMRange[i] > minDensity:
             counter += 1
 
         # the counter has reached the threshold, exit the loop
         if counter >= subseqWindowSupMin:
             break
 
-    return (minIndex, minMean)
+    return (minIndex, minDensity)
