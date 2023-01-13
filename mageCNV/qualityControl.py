@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 # evaluates the coverage profile of the samples and identifies the uncovered
 # exons for all samples.
 # i.e. to identify the optimal information for clustering.
-# 
+#
 # Args:
 #  - counts (np.ndarray[float]): normalised fragment counts
 #  - SOIs (list[str]): samples of interest names
@@ -82,9 +82,9 @@ def SampsQC(counts, SOIs, outputFile=None):
                            SOIs[sampleIndex])
             validSampQC[sampleIndex] = 0
 
-        # difference between the two densities greater than signalThreshold, 
+        # difference between the two densities greater than signalThreshold,
         # storage of exons with little or no coverage (all exons with MPF < minimum MPF threshold)
-        # intersection between the current list of uncovered exons and the previous one to retain 
+        # intersection between the current list of uncovered exons and the previous one to retain
         # only the uncovered exons for all samples validated by quality control.
         else:
             exons2RMSamp = np.where(sampFragCounts <= binEdges[minIndex])[0]
@@ -92,7 +92,7 @@ def SampsQC(counts, SOIs, outputFile=None):
                 exons2RM = np.intersect1d(exons2RM, exons2RMSamp)
             else:
                 exons2RM = exons2RMSamp
-                
+
     # close the open pdf
     if outputFile:
         pdf.close()
@@ -116,21 +116,22 @@ def SampsQC(counts, SOIs, outputFile=None):
 # findLocalMaxPrivate:
 #
 # Args:
-#  - densityOnFPMRange (np.ndarray[float]): probability density for all bins 
+#  - densityOnFPMRange (np.ndarray[float]): probability density for all bins
 #   in the FPM range
 # this arguments is from the slidingWindow.smoothingCoverageProfile function.
-#  - minIndex (int): index associated with the first lowest observed density 
+#  - minIndex (int): index associated with the first lowest observed density
 #   in np.ndarray "densityOnFPMRange"
 # this arguments is from the slidingWindow.findLocalMin function.
 #
 # Returns a tupple (maxIndex, maxDensity), each variable is created here:
-#  - maxIndex (int): index from np.ndarray "densityOnFPMRange" associated with 
+#  - maxIndex (int): index from np.ndarray "densityOnFPMRange" associated with
 #   the maximum density observed occurring after the minimum density
-#  - maxDensity (float): maximum density 
+#  - maxDensity (float): maximum density
 def findLocalMaxPrivate(densityOnFPMRange, minIndex):
     maxDensity = np.max(densityOnFPMRange[minIndex:])
     maxIndex = np.where(densityOnFPMRange == maxDensity)[0][0]
     return (maxIndex, maxDensity)
+
 
 ###################################
 # coverageProfilPlotPrivate:
@@ -172,3 +173,4 @@ def coverageProfilPlotPrivate(sampleName, binEdges, densityOnFPMRange, minIndex,
 
     pdf.savefig(fig)
     plt.close()
+    
