@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 ###################################
 # SampsQC :
 # evaluates the coverage profile of the samples and identifies the uncovered
-# exons for all samples.
+# exons for all valid samples.
 # i.e. to identify the optimal information for clustering.
 #
 # Args:
@@ -24,10 +24,11 @@ logger = logging.getLogger(__name__)
 #  - outputFile (optionnal str): full path to save the pdf
 #
 # Returns a tupple (validCounts, validSampQC), each variable is created here:
-#  - validCounts (np.ndarray[float]): counts for exons covered for all samples
-# that passed quality control
 #  - validSampQC (np.array[int]): validity status for each sample passed quality
-#  control (1: valid, 0: invalid), dim = NbSOIs
+#   control (1: valid, 0: invalid), dim = NbSOIs
+#  - exonsFewFPM (list[int]): exons indexes with little or no coverage common
+#   to all samples passing quality control
+
 def SampsQC(counts, SOIs, outputFile=None):
     #### Fixed parameter:
     # threshold to assess the validity of the sample coverage profile.
@@ -40,14 +41,14 @@ def SampsQC(counts, SOIs, outputFile=None):
 
     #### Accumulator:
     # a list[int] storing the indexes of uncovered exons in all valid samples
-    exons2RM = []
+    exonsFewFPM = []
 
     # create a matplotlib object and open a pdf if the figure option is
     # true in the main script
     if outputFile:
         pdf = matplotlib.backends.backend_pdf.PdfPages(outputFile)
 
-    for sampleIndex in range(len(SOIs)):
+    for sampleIndex in range(len(SOIs)):        
         # extract sample counts
         sampFragCounts = counts[:, sampleIndex]
 
@@ -88,24 +89,20 @@ def SampsQC(counts, SOIs, outputFile=None):
         # only the uncovered exons for all samples validated by quality control.
         else:
             exons2RMSamp = np.where(sampFragCounts <= binEdges[minIndex])[0]
-            if (len(exons2RM) != 0):
-                exons2RM = np.intersect1d(exons2RM, exons2RMSamp)
+            if (len(exonsFewFPM) != 0):
+                exonsFewFPM = np.intersect1d(exonsFewFPM, exons2RMSamp)
             else:
-                exons2RM = exons2RMSamp
+                exonsFewFPM = exons2RMSamp
 
     # close the open pdf
     if outputFile:
         pdf.close()
 
-    # filtering the coverage data to recover valid samples and covered exons
-    validCounts = np.delete(counts, np.where(validSampQC == 0)[0], axis=1)
-    validCounts = np.delete(validCounts, exons2RM, axis=0)
-
     # returns in stderr the results on the filtered data
     logger.info("%s/%s uncovered exons number deleted before clustering for %s/%s valid samples.",
-                len(exons2RM), len(counts), len(np.where(validSampQC == 1)[0]), len(SOIs))
+                len(exonsFewFPM), len(counts), len(np.where(validSampQC == 1)[0]), len(SOIs))
 
-    return(validCounts, validSampQC)
+    return(validSampQC, exonsFewFPM)
 
 
 ###############################################################################
