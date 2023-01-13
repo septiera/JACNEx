@@ -116,24 +116,23 @@ def SampsQC(counts, SOIs, outputFile=None):
 
 ###################################
 # findLocalMaxPrivate:
-# recover the threshold of the maximum density means after the
-# minimum density means which is associated with the largest covered exons number.
 #
 # Args:
-#  - minDensityMean (list[float]): mean density for each window covered
-# this arguments are from the slidingWindow.smoothingCoverProfile function.
-#  - minIndex (int): index associated with the first lowest observed mean
-# this argument is from the slidingWindow.findLocalMin function.
+#  - densityOnFPMRange (np.ndarray[float]): probability density for all bins 
+#   in the FPM range
+# this arguments is from the slidingWindow.smoothingCoverageProfile function.
+#  - minIndex (int): index associated with the first lowest observed density 
+#   in np.ndarray "densityOnFPMRange"
+# this arguments is from the slidingWindow.findLocalMin function.
 #
-# Returns a tupple (minIndex, minDensity), each variable is created here:
-#  - maxIndex (int): index from "densityMeans" associated with the maximum density
-#    mean observed
-#  - maxMean (float): maximum density mean
-def findLocalMaxPrivate(densityMeans, minIndex):
-    maxMean = np.max(densityMeans[minIndex:])
-    maxIndex = np.where(densityMeans == maxMean)[0][0]
-    return (maxIndex, maxMean)
-
+# Returns a tupple (maxIndex, maxDensity), each variable is created here:
+#  - maxIndex (int): index from np.ndarray "densityOnFPMRange" associated with 
+#   the maximum density observed occurring after the minimum density
+#  - maxDensity (float): maximum density 
+def findLocalMaxPrivate(densityOnFPMRange, minIndex):
+    maxDensity = np.max(densityOnFPMRange[minIndex:])
+    maxIndex = np.where(densityOnFPMRange == maxDensity)[0][0]
+    return (maxIndex, maxDensity)
 
 ###################################
 # coverageProfilPlotPrivate:
