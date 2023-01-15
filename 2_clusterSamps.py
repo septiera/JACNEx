@@ -12,8 +12,6 @@ import os
 import numpy as np
 import time
 import logging
-# import sklearn submodule for Kmeans calculation
-import sklearn.cluster
 
 ####### MAGE-CNV modules
 import mageCNV.countsFile
@@ -21,6 +19,7 @@ import mageCNV.normalisation
 import mageCNV.qualityControl
 import mageCNV.genderDiscrimination
 import mageCNV.clustering
+
 
 ###############################################################################
 ############################ PRIVATE FUNCTIONS ################################
@@ -202,6 +201,8 @@ def main(argv):
     # Clustering:
     ####################
     # filtering the coverage data to recover valid samples and covered exons
+    # - validCounts (np.ndarray[float]): normalized fragment counts for exons covered 
+    # for all samples that passed quality control
     validCounts = np.delete(countsNorm, np.where(validSampQC == 0)[0], axis=1)
     validCounts = np.delete(validCounts, exonsFewFPM, axis=0)
     
@@ -239,18 +240,22 @@ def main(argv):
         logger.debug("Done printing results, in %.2f s", thisTime - startTime)
         logger.info("ALL DONE")
 
-"""
+
     ###################
     # cases where discrimination is made
     # avoid grouping Male with Female which leads to dubious CNV calls
     else:
+        
+        # - exonsToKeep (list of list[str,int,int,str]): contains information about the covered exons
+        exonsToKeep = [val for i, val in enumerate(exons) if i not in exonsFewFPM]
+        
         try:
             # parse exons to extract information related to the organisms studied and their gender
-            # gonoIndex: is a dictionary where key=GonosomeID(e.g 'chrX')[str],
-            # value=list of gonosome exon index [int].
-            # genderInfos: is a str list of lists, contains informations for the gender
-            # identification, ie ["gender identifier","particular chromosome"].
-            (gonoIndex, genderInfo) = mageCNV.genderDiscrimination.getGenderInfos(exons)
+            # - gonoIndex (dict(str: list(int))): is a dictionary where key=GonosomeID(e.g 'chrX'),
+            # value=list of gonosome exon index.
+            # - genderInfos (list of list[str]):contains informations for the gender
+            # identification, ie ["gender identifier","specific chromosome"].
+            (gonoIndex, genderInfo) = mageCNV.genderDiscrimination.getGenderInfos(exonsToKeep)
         except Exception:
             logger.error("getGenderInfos failed")
             raise Exception()
@@ -260,22 +265,25 @@ def main(argv):
         startTime = thisTime
 
         # cutting normalized count data according to autosomal or gonosomal exons
-        # create flat gonosome index list
+        # - gonoIndexFlat (np.ndarray[int]): flat gonosome exon indexes list
         gonoIndexFlat = np.unique([item for sublist in list(gonoIndex.values()) for item in sublist])
-        autosomesFPM = np.delete(countsNorm, gonoIndexFlat, axis=0)
-        gonosomesFPM = np.take(countsNorm, gonoIndexFlat, axis=0)
+        # - autosomesFPM (np.ndarray[float]): normalized fragment counts for valid samples, exons covered
+        # in autosomes
+        autosomesFPM = np.delete(validCounts, gonoIndexFlat, axis=0)
+        # - gonosomesFPM (np.ndarray[float]): normalized fragment counts for valid samples, exons covered
+        # in gonosomes
+        gonosomesFPM = np.take(validCounts, gonoIndexFlat, axis=0)
 
         #####################################################
         # Get Autosomes Clusters
         ##################
         logger.info("### Autosomes, sample clustering:")
         try:
-            outputFile = os.path.join(outFolder, "Dendogram_" + str(len(SOIs)) + "Samps_autosomes.png")
-            # applying hierarchical clustering and obtaining 3 outputs autosomes specific:
-            # clusters: an int numpy array containing standardized clusterID for each SOIs
-            # ctrls: a str list containing controls clusterID delimited by "," for each SOIs
-            # validityStatus: a boolean numpy array containing the validity status for each SOIs (1: valid, 0: invalid)
-            (clusters, ctrls, validityStatus) = mageCNV.clustering.clustersBuilds(autosomesFPM, maxCorr, minCorr, minSamps, figure, outputFile)
+            if figure:
+                outputFile = os.path.join(outFolder, "Dendogram_" + str(len(SOIs)) + "Samps_autosomes.png")
+                (clusters, ctrls, validSampClust) = mageCNV.clustering.clustersBuilds(autosomesFPM, maxCorr, minCorr, minSamps, outputFile)
+            else:
+                (clusters, ctrls, validSampClust) = mageCNV.clustering.clustersBuilds(autosomesFPM, maxCorr, minCorr, minSamps, outputFile)
         except Exception:
             logger.error("clusterBuilds for autosomes failed")
             raise Exception()
@@ -288,49 +296,14 @@ def main(argv):
         # Get Gonosomes Clusters
         ##################
         logger.info("### Gonosomes, sample clustering:")
-
-        ##################
-        # Performs an empirical method (kmeans) to dissociate male and female.
-        # Kmeans with k=2 (always)
-        # kmeans: a sklearn.cluster._kmeans.KMeans object where it is possible to extract
-        # an int list (kmeans.labels_) indicating the groupID associated to each SOI.
-        kmeans = sklearn.cluster.KMeans(n_clusters=len(genderInfo), random_state=0).fit(gonosomesFPM.T)
-
-        #####################
-        # calculation of a coverage rate for the different Kmeans groups and on
-        # the different gonosomes to associate the Kmeans group with a gender
-        # gender2Kmeans: a str list of genderID (e.g ["M","F"]), the order
-        # correspond to KMeans groupID (gp1=M, gp2=F)
-        gender2Kmeans = mageCNV.genderDiscrimination.genderAttribution(kmeans, countsNorm, gonoIndex, genderInfo)
-
-        ####################
-        # Independent clustering for the two Kmeans groups
-        ### To Fill
-        # clustersG: an int 1D numpy array, clusterID associated for each SOIs
-        clustersG = np.zeros(len(SOIs), dtype=np.int)
-        # ctrlsG: a str list containing controls clusterID delimited by "," for each SOIs
-        ctrlsG = [""] * len(SOIs)
-        # validityStatusG: a boolean numpy array containing the validity status for SOIs (1: valid, 0: invalid)
-        validityStatusG = np.ones(len(SOIs), dtype=np.int)
-        # genderPred: a str list containing genderID delimited for each SOIs (e.g: "M" or "F")
-        genderPred = [""] * len(SOIs)
-
-        for genderGp in range(len(gender2Kmeans)):
-            sampsIndexGp = np.where(kmeans.labels_ == genderGp)[0]
-            gonosomesFPMGp = gonosomesFPM[:, sampsIndexGp]
-            try:
-                logger.info("### Clustering samples for gender %s", gender2Kmeans[genderGp])
-                outputFile = os.path.join(outFolder, "Dendogram_" + str(len(sampsIndexGp)) + "Samps_gonosomes_" + gender2Kmeans[genderGp] + ".png")
-                (tmpClusters, tmpCtrls, tmpValidityStatus) = mageCNV.clustering.clustersBuilds(gonosomesFPMGp, maxCorr, minCorr, minSamps, figure, outputFile)
-            except Exception:
-                logger.error("clusterBuilds for gonosome failed for gender %s", gender2Kmeans[genderGp])
-                raise Exception()
-            # populate clusterG, ctrlsG, validityStatusG, genderPred
-            for index in range(len(sampsIndexGp)):
-                clustersG[sampsIndexGp[index]] = tmpClusters[index]
-                ctrlsG[sampsIndexGp[index]] = tmpCtrls[index]
-                validityStatusG[sampsIndexGp[index]] = tmpValidityStatus[index]
-                genderPred[sampsIndexGp[index]] = gender2Kmeans[genderGp]
+        try:
+            if figure:
+                (clustersG, ctrlsG, validSampClustG, genderPred) = mageCNV.clustering.GonosomesClustersBuilds(genderInfo, gonosomesFPM, gonoIndex, maxCorr, minCorr, minSamps, outFolder)
+            else:
+                (clustersG, ctrlsG, validSampClustG, genderPred) = mageCNV.clustering.GonosomesClustersBuilds(genderInfo, gonosomesFPM, gonoIndex, maxCorr, minCorr, minSamps)
+        except Exception:
+            logger.error("clusterBuilds for gonosomes failed")
+            raise Exception()
 
         thisTime = time.time()
         logger.debug("Done samples clustering for gonosomes : in %.2f s", thisTime - startTime)
@@ -338,13 +311,12 @@ def main(argv):
 
         #####################################################
         # print results
-        ##################
-        mageCNV.clustering.printClustersFile(SOIs, clusters, ctrls, validityStatus, outFolder, nogender, clustersG, ctrlsG, validityStatusG, genderPred)
+        ################## (nogender, SOIs, validSampQC, validSampClust, clusters, ctrls, outFolder)
+        mageCNV.clustering.printClustersFile(SOIs, clusters, ctrls, validSampClust, outFolder, nogender, clustersG, ctrlsG, validSampClustG, genderPred)
 
         thisTime = time.time()
         logger.debug("Done printing results, in %.2f s", thisTime - startTime)
         logger.info("ALL DONE")
-"""
 
 ####################################################################################
 ######################################## Main ######################################
