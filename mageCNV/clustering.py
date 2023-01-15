@@ -3,6 +3,10 @@ import os
 import numpy as np
 import logging
 import matplotlib.pyplot
+# import sklearn submodule for Kmeans calculation
+import sklearn.cluster
+
+import mageCNV.genderDiscrimination
 
 # different scipy submodules are used for the application of hierachical clustering
 import scipy.cluster.hierarchy
@@ -33,7 +37,6 @@ logger = logging.getLogger(os.path.basename(sys.argv[0]))
 #  - minCorr (float): minimal Pearson correlation score tolerated by the user to end
 #   build clusters
 #  - minSamps (int): minimal sample number to validate a cluster
-#  - figure (boolean): "True" => produce a figure
 #  - outputFile (str): full path (+ file name) for saving a dendogram
 #
 # Returns a tuple (clusters, ctrls, validSampClust):
@@ -74,7 +77,7 @@ def clustersBuilds(FPMarray, maxCorr, minCorr, minSamps, outputFile=None):
     return(clusters, ctrls, validSampClust)
 
 
-###############################################################################
+#############################
 # printClustersFile:
 #
 # Args:
@@ -139,7 +142,7 @@ def printClustersFile(nogender, SOIs, validSampQC, validSampClust, clusters, ctr
                 # SOIsID + clusterInfo for autosomes and gonosomes
                 toPrint = SOIs[i] + "\t" + str(validSampQC[i]) + "\t" + str(validSampClust[counter]) + \
                     "\t" + str(clusters[counter]) + "\t" + str(ctrls[counter]) + "\t" + genderPred[counter] + \
-                    "\t" + str(validSampClust[counter]) + "\t" + str(clustersG[counter]) + "\t" + str(ctrlsG[counter])
+                    "\t" + str(validSampsClustG[counter]) + "\t" + str(clustersG[counter]) + "\t" + str(ctrlsG[counter])
                 counter += 1
             else:
                 toPrint = SOIs[i] + "\t" + str(validSampQC[i]) + "\t" + str(0) + \
@@ -150,11 +153,88 @@ def printClustersFile(nogender, SOIs, validSampQC, validSampClust, clusters, ctr
         clusterFile.close()
 
 
+#############################
+# GonosomesClustersBuilds:
+# - Performs a kmeans on the coverages of the exons present in the gonosomes, 
+# to identify two groups normally associated with the gender.
+# - Assigns gender to each group of Kmeans based on their coverage ratios.
+# - Performs two clustering analysis
+# - aggregates the results for all valid samples. 
+# Warning: the male and female groups IDs all start with 0, so it is necessary 
+# to refer to the genderPred list/column to avoid integrating males with females. 
+#
+# Args:
+# - genderInfo (list of list[str]):contains informations for the gender
+# identification, ie ["gender identifier","specific chromosome"].
+# - gonosomesFPM (np.ndarray[float]): normalized fragment counts for valid samples,
+#  exons covered in gonosomes
+# - gonoIndex (dict(str: list(int))): key=GonosomeID(e.g 'chrX'),
+# value=list of gonosome exon index.
+# - maxCorr (float): maximal Pearson correlation score tolerated by the user to start
+#   build clusters
+# - minCorr (float): minimal Pearson correlation score tolerated by the user to end
+#   build clusters
+# - minSamps (int): minimal sample number to validate a cluster
+# - outFolder (str): output folder path
+# - figure (boolean): "True" => produce a figure
+#
+# Returns a tuple (clusters, ctrls, validSampClust, genderPred), all objects are created here:
+# - clusters (np.ndarray[int]): clusterID for each sample
+# - ctrls (list[str]): controls clusterID delimited by "," for each sample
+# - validSampClust (np.ndarray[int]): validity status for each sample passed
+#   quality control (1: valid, 0: invalid), dim = NbSOIs
+# - genderPred (list[str]): genderID delimited for each SOIs (e.g: "M" or "F")
+
+def GonosomesClustersBuilds(genderInfo, gonosomesFPM, gonoIndex, maxCorr, minCorr, minSamps, outFolder, figure):
+    ### To Fill and returns
+    clusters = np.zeros(len(gonosomesFPM.shape[1]), dtype=np.int)
+    ctrls = [""] * len(gonosomesFPM.shape[1])
+    validSampClust = np.ones(len(gonosomesFPM.shape[1]), dtype=np.int)
+    genderPred = [""] * len(gonosomesFPM.shape[1])
+    
+    # Performs an empirical method (kmeans) to dissociate male and female.
+    # consider only the coverage for the exons present in the gonosomes
+    # Kmeans with k=2 (always)
+    # - kmeans (list[int]): groupID predicted by Kmeans ordered on SOIsIndex
+    kmeans = sklearn.cluster.KMeans(n_clusters=len(genderInfo), random_state=0).fit(gonosomesFPM.T).predict(gonosomesFPM.T)
+
+    # compute coverage rate for the different Kmeans groups and on
+    # the different gonosomes to associate the Kmeans group with a gender
+    # - gender2Kmeans (list[str]): genderID (e.g ["M","F"]), the order
+    # correspond to KMeans groupID (gp1=M, gp2=F)
+    gender2Kmeans = mageCNV.genderDiscrimination.genderAttribution(kmeans, gonosomesFPM, gonoIndex, genderInfo)
+
+    ####################
+    # Independent clustering for the two Kmeans groups
+    for genderGp in range(len(gender2Kmeans)):
+        # - sampsIndexGp (np.ndarray[int]): indexes of samples of interest for a given gender
+        sampsIndexGp = np.where(kmeans.labels_ == genderGp)[0]
+        # - gonosomesFPMGp (np.ndarray[float]): extraction of fragment counts data only for samples
+        #  of the selected gender 
+        gonosomesFPMGp = gonosomesFPM[:, sampsIndexGp]
+        
+        # if the user wants the dendograms in the output 
+        if figure:
+            outputFile = os.path.join(outFolder, "Dendogram_" + str(len(sampsIndexGp)) + "Samps_gonosomes_" + gender2Kmeans[genderGp] + ".png")
+            (tmpClusters, tmpCtrls, tmpValidityStatus) = clustersBuilds(gonosomesFPMGp, maxCorr, minCorr, minSamps, outputFile)
+        else:
+            (tmpClusters, tmpCtrls, tmpValidityStatus) = clustersBuilds(gonosomesFPMGp, maxCorr, minCorr, minSamps)
+
+        # populate clusterG, ctrlsG, validityStatusG, genderPred
+        for index in range(len(sampsIndexGp)):
+            clusters[sampsIndexGp[index]] = tmpClusters[index]
+            ctrls[sampsIndexGp[index]] = tmpCtrls[index]
+            validSampClust[sampsIndexGp[index]] = tmpValidityStatus[index]
+            genderPred[sampsIndexGp[index]] = gender2Kmeans[genderGp]
+            
+    return (clusters, ctrls, validSampClust, genderPred)
+
+
 ###############################################################################
 ############################ PRIVATE FUNCTIONS ################################
 ###############################################################################
 
-##################################################################
+#############################
 # computeSampLinksPrivate [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
 # compute distances between samples and apply hierachical clustering
 #
@@ -181,9 +261,10 @@ def computeSampLinksPrivate(FPMarray):
     return(linksMatrix)
 
 
-###################################################################
+#############################
 # links2ClustersFormationPrivate [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
 # linksMatrix analysis, clusters formation and identification of controls/targets clusters
+# list of filtering:
 #
 # Args:
 # - nbSamps2Clust [int]: number of samples analysed
@@ -198,7 +279,7 @@ def computeSampLinksPrivate(FPMarray):
 #   key = target clusterID, value = list of controls clusterID
 def links2ClustersFormationPrivate(nbSamps2Clust, linksMatrix, minDist, maxDist, minSamps):
     ############
-    # To Fill and to returns
+    # To Fill and returns
     clusters = np.zeros(nbSamps2Clust, dtype=np.int)
     trgt2Ctrls = {}
 
@@ -312,7 +393,7 @@ def links2ClustersFormationPrivate(nbSamps2Clust, linksMatrix, minDist, maxDist,
     return(clusters, trgt2Ctrls)
 
 
-###############################################################################
+#############################
 # getParentsClustsInfosPrivate [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
 # function used in another private function links2ClustersFormationPrivate
 # Extract parents informations : SOIs indexes list and sample number
@@ -347,7 +428,7 @@ def getParentsClustsInfosPrivate(parentClustsIDs, links2Clusters, NbLinks):
     return(SOIsIndexInParents, nbSOIsInParents)
 
 
-###############################################################################
+#############################
 # STDZAndCheckPrivate: [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
 # Standardization: replacement of the clusterIDs deduced from linksMatrix by identifiers
 # ranging from 0 to the total number of clusters.
@@ -409,7 +490,7 @@ def STDZAndCheckPrivate(clusters, trgt2Ctrls, minSamps):
     return(clusters, ctrls, validSampClust)
 
 
-###############################################################################
+#############################
 # DendogramsPrivate [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
 # visualisation of clustering results
 # Args:
