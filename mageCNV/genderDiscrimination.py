@@ -71,9 +71,8 @@ def getGenderInfos(exons):
 #
 # Args:
 # - kmeans (list[int]): groupID predicted by Kmeans ordered on SOIsIndex
-# - gonosomesFPM (np.ndarray[float]): normalized fragment counts for valid samples,
-#  exons covered in gonosomes
-# - gonoIndexDict (dict([str]:list[int])): associated the gonosome names with the
+# - validCounts (np.ndarray[float]): normalized fragment counts for valid samples
+# - gonoIndex (dict([str]:list[int])): associated the gonosome names with the
 #  corresponding exon indexes
 # - gendersInfos (list of lists[str]): information for identified genders,
 #   dim=["gender identifier","particular chromosome"]*2
@@ -81,7 +80,7 @@ def getGenderInfos(exons):
 # Returns:
 # - Kmeans2Gender (list[str]): genderID (e.g ["M","F"]), the order
 # correspond to KMeans groupID (gp1=M, gp2=F)
-def genderAttribution(kmeans, gonosomesFPM, gonoIndex, genderInfo):
+def genderAttribution(kmeans, validCounts, gonoIndex, genderInfo):
     # To fill
     # str list, index 0 => kmeansGroup1, index 1 => kmeansGroup2
     # contain the gender predicted by the ratio count ("M" or "F")
@@ -93,7 +92,6 @@ def genderAttribution(kmeans, gonosomesFPM, gonoIndex, genderInfo):
         # previousCount: a float variable, store the count ratio of the first Kmeans group
         # for a given gonosome
         previousCount = None
-
         # second browse on the kmean groups (only 2)
         for kmeanGroup in np.unique(kmeans):
             # SOIsIndexKGp: an int list corresponding to the sample indexes in the current Kmean group
@@ -101,7 +99,8 @@ def genderAttribution(kmeans, gonosomesFPM, gonoIndex, genderInfo):
 
             #####################
             # selection of specifics normalized count data
-            gonoTmpArray = gonosomesFPM[gonoIndex[gonoID], ][:, SOIsIndexKGp]
+            gonoTmpArray = validCounts[gonoIndex[gonoID], ]  # gonosome exons
+            gonoTmpArray = gonoTmpArray[:, SOIsIndexKGp]  # Kmean group samples
 
             #####################
             # ratio calcul (axis=0, sum all row/exons for each sample)
