@@ -20,8 +20,10 @@ logger = logging.getLogger(__name__)
 # For each sample :
 # FPM = (Number of fragments mapped to an exon * 1e6)/Total number of mapped fragments
 # Arg:
-#   -countsArray : an int numpy array of counts, Dim=NbExons*NbSOIs
-# Return a float numpy array of normalised counts, Dim=NbExon*NbSOIs
+# - countsArray (np.ndarray[int]): fragment counts, Dim=NbExons*NbSOIs
+# Returns:
+# - countsNorm (np.ndarray[float]): normalised counts of countsArray same dimension 
+# for arrays in input/output: NbExons*NbSOIs
 @numba.njit
 def FPMNormalisation(countsArray):
     # create an empty array to filled with the normalized counts
