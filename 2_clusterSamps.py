@@ -1,8 +1,8 @@
 ###############################################################################################
 ######################################## MAGE-CNV step 2: Sample clustering  ##################
 ###############################################################################################
-# Given a TSV of exon fragment counts, normalizes the counts (Fragment Per Million) and
-# forms the reference clusters for the call.
+# Given a TSV of exon fragment counts, normalizes the counts (Fragment Per Million), performs
+# quality control on the samples and forms the reference clusters for the call.
 # Prints results in a folder defined by the user.
 # See usage for more details.
 ###############################################################################################
@@ -44,28 +44,36 @@ def parseArgs(argv):
     figure = False
 
     usage = """\nCOMMAND SUMMARY:
-Given a TSV of exon fragment counts, normalizes the counts (Fragment Per Million) and
-forms the reference clusters for the call.
-By default, separation of autosomes ("A") and gonosomes ("G") for clustering, to avoid
-bias (chr accepted: X, Y, Z, W).
-XXXXXXXXXXXX
-- one or more png's illustrating the clustering performed by dendograms. [optionnal]
-    Legend : solid line = control clusters , thin line = target clusters
-    The clusters appear in decreasing order of distance (1-|pearson correlation|).
+Given a TSV of exon fragment counts, normalizes the counts (Fragment Per Million), performs
+quality control on the samples and forms the reference clusters for the call.
+The execution of the default command, separates autosomes ("A") and gonosomes ("G") for
+clustering, to avoid bias (accepted sex chromosomes: X, Y, Z, W).
+Produces a single TSV file listing the clustering results.
+By default no result figure is obtained, otherwise a pdf illustrating the data used for QC
+is generated as well as one or more png's with the clustering dendogram(s) obtained.
 
 ARGUMENTS:
    --counts [str]: TSV file, first 4 columns hold the exon definitions, subsequent columns
                    hold the fragment counts. File obtained from 1_countFrags.py
    --out[str]: acces path to a pre-existing folder to save the output files
-   --minSamps [int]: samples minimum number for the cluster creation,
-                  default : """ + str(minSamps) + """
-   --maxCorr [float]: Pearson correlation threshold to start building clusters, default: """ + str(maxCorr) + """
-   --minCorr [float]: Pearson correlation threshold to end building clusters, default: """ + str(minCorr) + """
+   --minSamps [int]: minimum number of samples to validate the creation of a cluster,
+                     default : """ + str(minSamps) + """
+   --maxCorr [float]: allows to define a Pearson correlation threshold according to which
+                      the formation of clusters can start. Beware that a too small threshold
+                      will lead to the formation of too small preliminary clusters, while a
+                      too large threshold will lead to the formation of few but large clusters.
+                      default: """ + str(maxCorr) + """
+   --minCorr [float]: same principle as maxCorr but aims to complete the clustering.
+                      Be careful, a low threshold will allow all the samples to be integrated
+                      into clusters even if they are significantly different from the rest of
+                      the clusters. A too high threshold will lead to a massive elimination of
+                      non-clustered samples. default: """ + str(minCorr) + """
    --nogender[optionnal]: no gender discrimination for clustering
-   --figure[optionnal]: make dendogram(s) that will be present in the output in png format\n"""
+   --figure[optionnal]: make histogramms and dendogram(s) that will be present in the output in
+                        pdf and png format\n"""
 
     try:
-        opts, args = getopt.gnu_getopt(sys.argv[1:], 'h', ["help", "counts=", "out=", "windowSize=", "minSamps=", "maxCorr=", "minCorr=", "nogender", "figure"])
+        opts, args = getopt.gnu_getopt(sys.argv[1:], 'h', ["help", "counts=", "out=", "minSamps=", "maxCorr=", "minCorr=", "nogender", "figure"])
     except getopt.GetoptError as e:
         sys.stderr.write("ERROR : " + e.msg + ". Try " + scriptName + " --help\n")
         raise Exception()
@@ -100,13 +108,13 @@ ARGUMENTS:
             except Exception:
                 sys.stderr.write("ERROR : maxCorr must be a float between 0 and 1, not '" + value + "'.\n")
                 raise Exception()
-        elif (opt in ("--maxCorr")):
+        elif (opt in ("--minCorr")):
             try:
                 maxCorr = np.float(value)
                 if (maxCorr > 1 or maxCorr < 0):
                     raise Exception()
             except Exception:
-                sys.stderr.write("ERROR : maxCorr must be a float between 0 and 1, not '" + value + "'.\n")
+                sys.stderr.write("ERROR : minCorr must be a float between 0 and 1, not '" + value + "'.\n")
                 raise Exception()
         elif (opt in ("--nogender")):
             nogender = True
@@ -141,11 +149,9 @@ def main(argv):
     startTime = time.time()
 
     # parse counts from TSV to obtain :
-    # - exons: a list of exons same as returned by processBed, ie each
-    #    exon is a lists of 4 scalars (types: str,int,int,str) containing CHR,START,END,EXON_ID
-    #    copied from the first 4 columns of countsFile, in the same order
-    # - SOIs: the list of sampleIDs (ie strings) copied from countsFile's header
-    # - countsArray: an int numpy array, dim = NbExons x NbSOIs
+    # - exons (list of lists[str,int,int,str]): information on exon, containing CHR,START,END,EXON_ID
+    # - SOIs (list[str]): sampleIDs copied from countsFile's header
+    # - countsArray (np.ndarray[int]): fragment counts, dim = NbExons x NbSOIs
     try:
         (exons, SOIs, countsArray) = mageCNV.countsFile.parseCountsFile(countsFile)
     except Exception:
@@ -159,10 +165,11 @@ def main(argv):
     #####################################################
     # Normalisation:
     ##################
-    # allocate a float numpy array countsNorm and populate it with normalised counts of countsArray
-    # same dimension for arrays in input/output: NbExons*NbSOIs
     # Fragment Per Million normalisation:
     # NormCountOneExonForOneSample=(FragsOneExonOneSample*1x10^6)/(TotalFragsAllExonsOneSample)
+    # this normalisation allows the samples to be compared
+    # - countsNorm (np.ndarray[float]): normalised counts of countsArray same dimension
+    # for arrays in input/output: NbExons*NbSOIs
     try:
         countsNorm = mageCNV.normalisation.FPMNormalisation(countsArray)
     except Exception:
@@ -200,14 +207,18 @@ def main(argv):
     #####################################################
     # Clustering:
     ####################
+    # objective: establish the most optimal clustering(s) from the data validated
+    # (exons and samples) by the quality control.
+
+    ####################
     # filtering the coverage data to recover valid samples and covered exons
-    # - validCounts (np.ndarray[float]): normalized fragment counts for exons covered 
+    # - validCounts (np.ndarray[float]): normalized fragment counts for exons covered
     # for all samples that passed quality control
     validCounts = np.delete(countsNorm, np.where(validSampQC == 0)[0], axis=1)
     validCounts = np.delete(validCounts, exonsFewFPM, axis=0)
-    
-    ####################
-    # case where no discrimination between gender is made
+
+    ###########################
+    #### no gender discrimination
     # clustering algorithm direct application
     if nogender:
         logger.info("### Samples clustering:")
@@ -240,20 +251,19 @@ def main(argv):
         logger.debug("Done printing results, in %.2f s", thisTime - startTime)
         logger.info("ALL DONE")
 
-
-    ###################
-    # cases where discrimination is made
+    ###########################
+    #### gender discrimination
     # avoid grouping Male with Female which leads to dubious CNV calls
     else:
-        
+
         # - exonsToKeep (list of list[str,int,int,str]): contains information about the covered exons
         exonsToKeep = [val for i, val in enumerate(exons) if i not in exonsFewFPM]
-        
+
         try:
             # parse exons to extract information related to the organisms studied and their gender
             # - gonoIndex (dict(str: list(int))): is a dictionary where key=GonosomeID(e.g 'chrX'),
             # value=list of gonosome exon index.
-            # - genderInfos (list of list[str]):contains informations for the gender
+            # - genderInfo (list of list[str]):contains informations for the gender
             # identification, ie ["gender identifier","specific chromosome"].
             (gonoIndex, genderInfo) = mageCNV.genderDiscrimination.getGenderInfos(exonsToKeep)
         except Exception:
@@ -264,26 +274,23 @@ def main(argv):
         logger.debug("Done get gender informations in %.2f s", thisTime - startTime)
         startTime = thisTime
 
-        # cutting normalized count data according to autosomal or gonosomal exons
-        # - gonoIndexFlat (np.ndarray[int]): flat gonosome exon indexes list
-        gonoIndexFlat = np.unique([item for sublist in list(gonoIndex.values()) for item in sublist])
-        # - autosomesFPM (np.ndarray[float]): normalized fragment counts for valid samples, exons covered
-        # in autosomes
-        autosomesFPM = np.delete(validCounts, gonoIndexFlat, axis=0)
-        # - gonosomesFPM (np.ndarray[float]): normalized fragment counts for valid samples, exons covered
-        # in gonosomes
-        gonosomesFPM = np.take(validCounts, gonoIndexFlat, axis=0)
-
         #####################################################
         # Get Autosomes Clusters
         ##################
         logger.info("### Autosomes, sample clustering:")
         try:
+            # cutting normalized count data according to autosomal exons
+            # - gonoIndexFlat (np.ndarray[int]): flat gonosome exon indexes list
+            gonoIndexFlat = np.unique([item for sublist in list(gonoIndex.values()) for item in sublist])
+            # - autosomesFPM (np.ndarray[float]): normalized fragment counts for valid samples, exons covered
+            # in autosomes
+            autosomesFPM = np.delete(validCounts, gonoIndexFlat, axis=0)
+            
             if figure:
                 outputFile = os.path.join(outFolder, "Dendogram_" + str(len(SOIs)) + "Samps_autosomes.png")
                 (clusters, ctrls, validSampClust) = mageCNV.clustering.clustersBuilds(autosomesFPM, maxCorr, minCorr, minSamps, outputFile)
             else:
-                (clusters, ctrls, validSampClust) = mageCNV.clustering.clustersBuilds(autosomesFPM, maxCorr, minCorr, minSamps, outputFile)
+                (clusters, ctrls, validSampClust) = mageCNV.clustering.clustersBuilds(autosomesFPM, maxCorr, minCorr, minSamps)
         except Exception:
             logger.error("clusterBuilds for autosomes failed")
             raise Exception()
@@ -295,12 +302,25 @@ def main(argv):
         #####################################################
         # Get Gonosomes Clusters
         ##################
+        # In contrast to all chromosomes and autosomes where only one clustering
+        # analysis is expected, for gonosomes it is preferable to perform clustering
+        # analyses by separating the genders.
+        # This avoids, among other things, future copy number calling errors.
+        # e.g. in humans compared males and females: it is possible to observe
+        # heterodel calls on the X chromosome in males and homodel calls on the Y
+        # chromosome in females.
         logger.info("### Gonosomes, sample clustering:")
         try:
             if figure:
-                (clustersG, ctrlsG, validSampClustG, genderPred) = mageCNV.clustering.GonosomesClustersBuilds(genderInfo, gonosomesFPM, gonoIndex, maxCorr, minCorr, minSamps, outFolder)
+                # applying hierarchical clustering and obtaining 4 outputs:
+                # - clusters (np.ndarray[int]): standardized clusterID for each SOIs
+                # - ctrls (list[str]): controls clusterID delimited by "," for each SOIs
+                # - validSampsClust (np.ndarray[boolean]): validity status for each SOIs
+                # validated by quality control after clustering (1: valid, 0: invalid)
+                # - genderPred (list[str]): genderID delimited for each SOIs (e.g: "M" or "F")
+                (clustersG, ctrlsG, validSampsClustG, genderPred) = mageCNV.clustering.GonosomesClustersBuilds(genderInfo, validCounts, gonoIndex, maxCorr, minCorr, minSamps, figure, outFolder)
             else:
-                (clustersG, ctrlsG, validSampClustG, genderPred) = mageCNV.clustering.GonosomesClustersBuilds(genderInfo, gonosomesFPM, gonoIndex, maxCorr, minCorr, minSamps)
+                (clustersG, ctrlsG, validSampsClustG, genderPred) = mageCNV.clustering.GonosomesClustersBuilds(genderInfo, validCounts, gonoIndex, maxCorr, minCorr, minSamps)
         except Exception:
             logger.error("clusterBuilds for gonosomes failed")
             raise Exception()
@@ -311,12 +331,13 @@ def main(argv):
 
         #####################################################
         # print results
-        ################## (nogender, SOIs, validSampQC, validSampClust, clusters, ctrls, outFolder)
-        mageCNV.clustering.printClustersFile(SOIs, clusters, ctrls, validSampClust, outFolder, nogender, clustersG, ctrlsG, validSampClustG, genderPred)
+        ##################
+        mageCNV.clustering.printClustersFile(nogender, SOIs, validSampQC, validSampClust, clusters, ctrls, outFolder, validSampsClustG, clustersG, ctrlsG, genderPred)
 
         thisTime = time.time()
         logger.debug("Done printing results, in %.2f s", thisTime - startTime)
         logger.info("ALL DONE")
+
 
 ####################################################################################
 ######################################## Main ######################################
