@@ -13,33 +13,40 @@ logger = logging.getLogger(os.path.basename(sys.argv[0]))
 
 ###############################################################################
 # getGenderInfos:
-# From a list of exons, identification of gonosomes and genders.
-# These gonosomes are predefined and limited to the X,Y,Z,W chromosomes present
-# in most species (mammals, birds, fish, reptiles).
-# The number of genders is therefore limited to 2, i.e. Male and Female
-# Arg:
-#  - exons: is a list of exons, ie each exon is a lists of 4 scalars
-#           (types: str,int,int,str) containing CHR,START,END,EXON_ID
+# - identifies the sex chromosomes (gonosomes) operating in the input data. 
+# Please note that in this script only the X, Y, Z and W chromosomes can be found. 
+# This is largely sufficient to cover a large part of the living world 
+# => mammals, birds, fish, reptiles.
+# - associates the expected combinations for each gender. 
+# The number of genus is limited to 2 for male and female.
+# - finds the exons indexes associated with the gonosomes 
+#
+# Args:
+#  - exons (list of lists[str,int,int,str]): information on exon, containing CHR,START,END,EXON_ID
+#
 # Returns a tuple (gonoIndexDict, gendersInfos), each are created here:
-#   - gonoIndexDict: is a dictionary where key=GonosomeID(e.g 'chrX')[str],
-#                   value= gonosome exon index list [int].
-#   - gendersInfos: is a str list of lists, contains informations for the gender
-#                   identification, ie ["gender identifier","particular chromosome"].
-# The indexes of the different lists are important:
-# index 0: gender carrying a unique gonosome not present in the other gender (e.g. human => M:XY)
-# index 1: gender carrying two copies of the same gonosome (e.g. human => F:XX)
+#   - gonoIndexDict (dict([str]:list[int])): associated the gonosome names with the 
+#  corresponding exon indexes
+#   - gendersInfos (list of lists[str]): information for identified genders, 
+#   dim=["gender identifier","particular chromosome"]*2
+#   Warning: The indexes of the different lists are important:
+#   index 0: gender carrying a unique gonosome not present in the other gender (e.g. human => M:XY)
+#   index 1: gender carrying two copies of the same gonosome (e.g. human => F:XX)
 def getGenderInfos(exons):
+    # step 1: identification of target gonosomes and extraction of associated exon indexes.
+    #### To Fill and returns
+    gonoIndexDict = {}
+
     # pre-defined list of gonosomes
     # combinations: X with Y and Z with W + alphabetical order
     gonoChromList = ["X", "Y", "W", "Z"]
-    # reading the first line of "exons" for add "chr" to 'gonoChromList' in case
-    # of this line have it
+
+    # Chromosome information in "exons" starts with "chr", add this to gonoChromList.
+    # else don't touch 
     if (exons[0][0].startswith("chr")):
         gonoChromList = ["chr" + letter for letter in gonoChromList]
 
-    # add exon index in int list value for the
-    # correspondant gonosome identifier (str key).
-    gonoIndexDict = {}
+    # Filling gonoIndexDict
     for exonIndex in range(len(exons)):
         if (exons[exonIndex][0] in gonoChromList):
             if (exons[exonIndex][0] in gonoIndexDict):
@@ -52,8 +59,9 @@ def getGenderInfos(exons):
         else:
             continue
 
+    # step 2: deduction of the gender list to be used for the analyses.
     # the dictionary keys may not be sorted alphabetically
-    # needed to compare with gonoChromList
+    # which is necessary to compare with gonoChromList
     sortKeyGonoList = list(gonoIndexDict.keys())
     sortKeyGonoList.sort()
     if (sortKeyGonoList == gonoChromList[:2]):
@@ -68,8 +76,8 @@ def getGenderInfos(exons):
         genderInfoList = [["F", sortKeyGonoList[0]], ["M", sortKeyGonoList[1]]]
     else:
         logger.error("No predefined gonosomes are present in the exon list (X, Y, Z, W ).\n \
-        Please check that the exon file initially a BED file matches the gonosomes processed here.")
-        raise Exception
+        Please check that the original BED file containing the exon information matches the gonosomes processed here.")
+        raise Exception()
     return(gonoIndexDict, genderInfoList)
 
 
@@ -78,14 +86,21 @@ def getGenderInfos(exons):
 # Gender matching to groups predicted by Kmeans
 # calcul of normalized count ratios per gonosomes and kmeans group
 # ratio = median (normalized count sums list for a gonosome and for all samples in a kmean group)
+#
 # Args:
-#  -kmeans: an int list of groupID predicted by Kmeans ordered on SOIsIndex
-#  -countsNorm: a float 2D numpy array of normalized count, dim=NbExons*NbSOIs
-#  -gonoIndexDict: a dictionary of correspondence between gonosomeID[key:str] and exonsIndex[value:int list]
-#  -genderInfoList: a list of list, dim=NbGender*2columns ([genderID, specificChr])
-# Returns a list of genderID where the indexes match the groupID formed by the Kmeans.
-# e.g ["F","M"], KmeansGp 0 = Female and KmeansGp 1 = Male
-def genderAttribution(kmeans, countsNorm, gonoIndex, genderInfo):
+# - kmeans (list[int]): groupID predicted by Kmeans ordered on SOIsIndex
+# - gonosomesFPM (np.ndarray[float]): normalized fragment counts for valid samples,
+#  exons covered in gonosomes
+# - gonoIndexDict (dict([str]:list[int])): associated the gonosome names with the 
+#  corresponding exon indexes
+# - gendersInfos (list of lists[str]): information for identified genders, 
+#   dim=["gender identifier","particular chromosome"]*2
+#
+# Returns:
+# - Kmeans2Gender (list[str]): genderID (e.g ["M","F"]), the order
+# correspond to KMeans groupID (gp1=M, gp2=F)
+
+def genderAttribution(kmeans, gonosomesFPM, gonoIndex, genderInfo):
     # first browse on gonosome names (limited to 2)
     for gonoID in gonoIndex.keys():
         # previousCount: a float variable, store the count ratio of the first Kmeans group
@@ -93,13 +108,13 @@ def genderAttribution(kmeans, countsNorm, gonoIndex, genderInfo):
         previousCount = None
 
         # second browse on the kmean groups (only 2)
-        for kmeanGroup in np.unique(kmeans.labels_):
+        for kmeanGroup in np.unique(kmeans):
             # SOIsIndexKGp: an int list corresponding to the sample indexes in the current Kmean group
-            SOIsIndexKGp, = list(np.where(kmeans.labels_ == kmeanGroup))
+            SOIsIndexKGp, = list(np.where(kmeans == kmeanGroup))
 
             #####################
             # selection of specifics normalized count data
-            gonoTmpArray = countsNorm[gonoIndex[gonoID], ]  # gonosome exons
+            gonoTmpArray = gonosomesFPM[gonoIndex[gonoID], ]  # gonosome exons
             gonoTmpArray = gonoTmpArray[:, SOIsIndexKGp]  # Kmean group samples
 
             #####################
@@ -158,7 +173,7 @@ def genderAttribution(kmeans, countsNorm, gonoIndex, genderInfo):
         logger.error("The conditions for gender prediction are not in agreement.\n \
             condition n°1, one gender is characterised by a specific gonosome: %s \n \
                 condition n°2 that the other gender is characterised by 2 same gonosome copies: %s ", sexePredSpeGono, sexePredDupGono)
-        raise Exception
+        raise Exception()
     return(sexePredSpeGono)
 
 ###############################################################################
