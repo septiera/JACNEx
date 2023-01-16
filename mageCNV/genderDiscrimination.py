@@ -13,63 +13,45 @@ logger = logging.getLogger(os.path.basename(sys.argv[0]))
 
 ###############################################################################
 # getGenderInfos:
-# - identifies the sex chromosomes (gonosomes) operating in the input data. 
-# Please note that in this script only the X, Y, Z and W chromosomes can be found. 
-# This is largely sufficient to cover a large part of the living world 
+# - identifies the sex chromosomes (gonosomes) operating in the input data.
+# Please note that in this script only the X, Y, Z and W chromosomes can be found.
+# This is largely sufficient to cover a large part of the living world
 # => mammals, birds, fish, reptiles.
-# - associates the expected combinations for each gender. 
+# - associates the expected combinations for each gender.
 # The number of genus is limited to 2 for male and female.
-# - finds the exons indexes associated with the gonosomes 
+# - finds the exons indexes associated with the gonosomes
 #
 # Args:
 #  - exons (list of lists[str,int,int,str]): information on exon, containing CHR,START,END,EXON_ID
 #
 # Returns a tuple (gonoIndexDict, gendersInfos), each are created here:
-#   - gonoIndexDict (dict([str]:list[int])): associated the gonosome names with the 
+#   - gonoIndexDict (dict([str]:list[int])): associated the gonosome names with the
 #  corresponding exon indexes
-#   - gendersInfos (list of lists[str]): information for identified genders, 
+#   - gendersInfos (list of lists[str]): information for identified genders,
 #   dim=["gender identifier","particular chromosome"]*2
 #   Warning: The indexes of the different lists are important:
 #   index 0: gender carrying a unique gonosome not present in the other gender (e.g. human => M:XY)
 #   index 1: gender carrying two copies of the same gonosome (e.g. human => F:XX)
 def getGenderInfos(exons):
     # step 1: identification of target gonosomes and extraction of associated exon indexes.
-    #### To Fill and returns
-    gonoIndexDict = {}
-
-    # pre-defined list of gonosomes
-    # combinations: X with Y and Z with W + alphabetical order
     gonoChromList = ["X", "Y", "W", "Z"]
-
-    # Chromosome information in "exons" starts with "chr", add this to gonoChromList.
-    # else don't touch 
-    if (exons[0][0].startswith("chr")):
+    if exons[0][0].startswith("chr"):
         gonoChromList = ["chr" + letter for letter in gonoChromList]
 
-    # Filling gonoIndexDict
-    for exonIndex in range(len(exons)):
-        if (exons[exonIndex][0] in gonoChromList):
-            if (exons[exonIndex][0] in gonoIndexDict):
-                gonoIndexDict[exons[exonIndex][0]].append(exonIndex)
-            # key initialization
-            else:
-                gonoIndexDict[exons[exonIndex][0]] = [exonIndex]
-        # exon in an autosome
-        # no process next
-        else:
-            continue
+    gonoIndexDict = {}
+    for chr in gonoChromList:
+        gono_indexes = [i for i, exon in enumerate(exons) if exon[0] == chr]
+        if gono_indexes:
+            gonoIndexDict[chr] = gono_indexes
+    sortKeyGonoList = sorted(gonoIndexDict.keys())
 
     # step 2: deduction of the gender list to be used for the analyses.
-    # the dictionary keys may not be sorted alphabetically
-    # which is necessary to compare with gonoChromList
-    sortKeyGonoList = list(gonoIndexDict.keys())
-    sortKeyGonoList.sort()
-    if (sortKeyGonoList == gonoChromList[:2]):
+    if sortKeyGonoList == gonoChromList[:2]:
         # Human case:
         # index 0 => Male with unique gonosome chrY
         # index 1 => Female with 2 chrX
         genderInfoList = [["M", sortKeyGonoList[1]], ["F", sortKeyGonoList[0]]]
-    elif (sortKeyGonoList == gonoChromList[2:]):
+    elif sortKeyGonoList == gonoChromList[2:]:
         # Reptile case:
         # index 0 => Female with unique gonosome chrW
         # index 1 => Male with 2 chrZ
@@ -78,7 +60,7 @@ def getGenderInfos(exons):
         logger.error("No predefined gonosomes are present in the exon list (X, Y, Z, W ).\n \
         Please check that the original BED file containing the exon information matches the gonosomes processed here.")
         raise Exception()
-    return(gonoIndexDict, genderInfoList)
+    return gonoIndexDict, genderInfoList
 
 
 ###############################################################################
@@ -91,16 +73,21 @@ def getGenderInfos(exons):
 # - kmeans (list[int]): groupID predicted by Kmeans ordered on SOIsIndex
 # - gonosomesFPM (np.ndarray[float]): normalized fragment counts for valid samples,
 #  exons covered in gonosomes
-# - gonoIndexDict (dict([str]:list[int])): associated the gonosome names with the 
+# - gonoIndexDict (dict([str]:list[int])): associated the gonosome names with the
 #  corresponding exon indexes
-# - gendersInfos (list of lists[str]): information for identified genders, 
+# - gendersInfos (list of lists[str]): information for identified genders,
 #   dim=["gender identifier","particular chromosome"]*2
 #
 # Returns:
 # - Kmeans2Gender (list[str]): genderID (e.g ["M","F"]), the order
 # correspond to KMeans groupID (gp1=M, gp2=F)
-
 def genderAttribution(kmeans, gonosomesFPM, gonoIndex, genderInfo):
+    # To fill
+    # str list, index 0 => kmeansGroup1, index 1 => kmeansGroup2
+    # contain the gender predicted by the ratio count ("M" or "F")
+    sexePredSpeGono = [""] * 2
+    sexePredDupGono = [""] * 2
+
     # first browse on gonosome names (limited to 2)
     for gonoID in gonoIndex.keys():
         # previousCount: a float variable, store the count ratio of the first Kmeans group
@@ -114,16 +101,11 @@ def genderAttribution(kmeans, gonosomesFPM, gonoIndex, genderInfo):
 
             #####################
             # selection of specifics normalized count data
-            gonoTmpArray = gonosomesFPM[gonoIndex[gonoID], ]  # gonosome exons
-            gonoTmpArray = gonoTmpArray[:, SOIsIndexKGp]  # Kmean group samples
+            gonoTmpArray = gonosomesFPM[gonoIndex[gonoID], ][:, SOIsIndexKGp]
 
             #####################
             # ratio calcul (axis=0, sum all row/exons for each sample)
             countRatio = np.median(np.sum(gonoTmpArray, axis=0))
-
-            # Keep gender names in str variables
-            g1 = genderInfo[0][0]  # e.g human g1="M"
-            g2 = genderInfo[1][0]  # e.g human g2="F"
 
             #####################
             # filling two 1D string list (e.g ["M","F"])
@@ -136,6 +118,9 @@ def genderAttribution(kmeans, gonosomesFPM, gonoIndex, genderInfo):
                 # row order in genderInfo is important
                 # 0 : gender with specific gonosome not present in other gender
                 # 1 : gender with 2 copies of same gonosome
+                # Keep gender names in str variables
+                g1, g2 = genderInfo[0][0], genderInfo[1][0]
+
                 if (gonoID == genderInfo[0][1]):  # e.g human => M:chrY
                     #####################
                     # condition assignment gender number 1:
