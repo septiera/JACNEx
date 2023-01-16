@@ -22,17 +22,17 @@ logger = logging.getLogger(__name__)
 def processBed(bedFile, padding):
     # list of exons to be returned
     exons = []
-    
+
     # for sorting we'll need a numerical version of CHR, but we must read the whole file
     # beforehand => fill a CHR -> CHR_NUM dictionary
     chr2num = {}
     # dict to store all non-numeric chromosomes, key is the CHR stripped of 'chr' if
     # present and value is the CHR (e.g 'Y'->'chrY')
     nonNumChrs = {}
-    #maxCHR: max int value in CHR column (after stripping 'chr' if present)
-    maxCHR=0
+    # maxCHR: max int value in CHR column (after stripping 'chr' if present)
+    maxCHR = 0
 
-    # dictionary for checking that EXON_IDs are unique (key='EXON_ID', value=1) 
+    # dictionary for checking that EXON_IDs are unique (key='EXON_ID', value=1)
     exonIDs = {}
 
     try:
@@ -49,7 +49,7 @@ def processBed(bedFile, padding):
         #############################
         # sanity checks + preprocess START+END
         # need exactly 4 fields
-        if len(fields) != 4 :
+        if len(fields) != 4:
             logger.error("In BED file %s, line doesn't have 4 fields:\n%s",
                          bedFile, line)
             raise Exception()
@@ -98,7 +98,7 @@ def processBed(bedFile, padding):
     #########################
     # map non-numerical chromosomes to maxCHR+1, maxCHR+2 etc
     # first deal with X, Y, M/MT in that order
-    for chrom in ["X","Y","M","MT"]:
+    for chrom in ["X", "Y", "M", "MT"]:
         if chrom in nonNumChrs:
             maxCHR += 1
             chr2num[nonNumChrs[chrom]] = maxCHR
@@ -111,14 +111,8 @@ def processBed(bedFile, padding):
     for line in range(len(exons)):
         exons[line].append(chr2num[exons[line][0]])
     # sort exons by CHR_NUM, then START, then END, then EXON_ID
-    exons.sort(key = lambda row: (row[4],row[1],row[2],row[3]))
+    exons.sort(key=lambda row: (row[4], row[1], row[2], row[3]))
     # delete the tmp column, and return result
     for line in range(len(exons)):
         exons[line].pop()
     return(exons)
-
-
-###############################################################################
-############################ PRIVATE FUNCTIONS ################################
-###############################################################################
-
