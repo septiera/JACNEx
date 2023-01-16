@@ -208,6 +208,7 @@ def GonosomesClustersBuilds(genderInfo, validCounts, gonoIndex, maxCorr, minCorr
     ####################
     # Independent clustering for the two Kmeans groups
     for genderGp in range(len(gender2Kmeans)):
+        logger.info("clustering for  %s", gender2Kmeans[genderGp])
         # - sampsIndexGp (np.ndarray[int]): indexes of samples of interest for a given gender
         sampsIndexGp = np.where(kmeans == genderGp)[0]
         # - gonosomesFPMGp (np.ndarray[float]): extraction of fragment counts data only for samples
