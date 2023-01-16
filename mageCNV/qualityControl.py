@@ -48,7 +48,7 @@ def SampsQC(counts, SOIs, outputFile=None):
     if outputFile:
         pdf = matplotlib.backends.backend_pdf.PdfPages(outputFile)
 
-    for sampleIndex in range(len(SOIs)):        
+    for sampleIndex in range(len(SOIs)):
         # extract sample counts
         sampFragCounts = counts[:, sampleIndex]
 
@@ -170,4 +170,3 @@ def coverageProfilPlotPrivate(sampleName, binEdges, densityOnFPMRange, minIndex,
 
     pdf.savefig(fig)
     plt.close()
-    
