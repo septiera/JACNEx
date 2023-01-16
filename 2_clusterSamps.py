@@ -287,7 +287,7 @@ def main(argv):
             autosomesFPM = np.delete(validCounts, gonoIndexFlat, axis=0)
             
             if figure:
-                outputFile = os.path.join(outFolder, "Dendogram_" + str(len(SOIs)) + "Samps_autosomes.png")
+                outputFile = os.path.join(outFolder, "Dendogram_" + str(autosomesFPM.shape[1]) + "Samps_autosomes.png")
                 (clusters, ctrls, validSampClust) = mageCNV.clustering.clustersBuilds(autosomesFPM, maxCorr, minCorr, minSamps, outputFile)
             else:
                 (clusters, ctrls, validSampClust) = mageCNV.clustering.clustersBuilds(autosomesFPM, maxCorr, minCorr, minSamps)
