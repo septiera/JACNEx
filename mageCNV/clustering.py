@@ -116,10 +116,11 @@ def printClustersFile(nogender, SOIs, validSampQC, validSampClust, clusters, ctr
         cluster_file = open(os.path.join(outFolder, file_name), 'w')
         to_print = "samplesID\tvalidQC\tvalidCluster\tclusterID\tcontrolledBy"
         cluster_file.write(to_print + '\n')
-
+        counter = 0
         for i in range(len(SOIs)):
             if validSampQC[i] != 0:
-                to_print = "{}\t{}\t{}\t{}\t{}".format(SOIs[i], validSampQC[i], validSampClust[i], clusters[i], ctrls[i])
+                to_print = "{}\t{}\t{}\t{}\t{}".format(SOIs[i], validSampQC[i], validSampClust[counter], clusters[counter], ctrls[counter])
+                counter += 1
             else:
                 to_print = "{}\t{}\t{}\t{}\t{}".format(SOIs[i], validSampQC[i], 0, "", "")
             cluster_file.write(to_print + '\n')
@@ -131,15 +132,18 @@ def printClustersFile(nogender, SOIs, validSampQC, validSampClust, clusters, ctr
         cluster_file = open(os.path.join(outFolder, file_name), 'w')
         to_print = "samplesID\tvalidQC\tvalidCluster_A\tclusterID_A\tcontrolledBy_A\tgenderPreds\tvalidCluster_G\tclusterID_G\tcontrolledBy_G"
         cluster_file.write(to_print + '\n')
-
+        counter = 0
         for i in range(len(SOIs)):
             if validSampQC[i] != 0:
                 # SOIsID + clusterInfo for autosomes and gonosomes
-                to_print = "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}".format(SOIs[i], validSampQC[i], validSampClust[i], clusters[i], ctrls[i], genderPred[i], validSampsClustG[i], clustersG[i], ctrlsG[i])
+                to_print = "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}".format(SOIs[i], validSampQC[i], validSampClust[counter], 
+                                                                       clusters[counter], ctrls[counter], genderPred[counter],
+                                                                       validSampsClustG[counter], clustersG[counter], ctrlsG[counter])
+                counter += 1
             else:
                 to_print = "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}".format(SOIs[i], validSampQC[i], 0, "", "", "", 0, "", "")
-        cluster_file.write(to_print + '\n')
-    cluster_file.close()
+            cluster_file.write(to_print + '\n')
+        cluster_file.close()
 
 
 #############################
@@ -155,8 +159,8 @@ def printClustersFile(nogender, SOIs, validSampQC, validSampClust, clusters, ctr
 # Args:
 # - genderInfo (list of list[str]):contains informations for the gender
 # identification, ie ["gender identifier","specific chromosome"].
-# - gonosomesFPM (np.ndarray[float]): normalized fragment counts for valid samples,
-#  exons covered in gonosomes
+# - validCounts (np.ndarray[float]): normalised fragment counts for QC validated samples,
+#  dim = NbCoveredExons x NbSOIsQCValidated
 # - gonoIndex (dict(str: list(int))): key=GonosomeID(e.g 'chrX'),
 # value=list of gonosome exon index.
 # - maxCorr (float): maximal Pearson correlation score tolerated by the user to start
@@ -174,13 +178,20 @@ def printClustersFile(nogender, SOIs, validSampQC, validSampClust, clusters, ctr
 # - validSampClust (np.ndarray[int]): validity status for each sample passed
 #   quality control (1: valid, 0: invalid), dim = NbSOIs
 # - genderPred (list[str]): genderID delimited for each SOIs (e.g: "M" or "F")
+def GonosomesClustersBuilds(genderInfo, validCounts, gonoIndex, maxCorr, minCorr, minSamps, figure, outFolder):
 
-def GonosomesClustersBuilds(genderInfo, gonosomesFPM, gonoIndex, maxCorr, minCorr, minSamps, figure, outFolder):
+    # cutting normalized count data according to gonosomal exons
+    # - gonoIndexFlat (np.ndarray[int]): flat gonosome exon indexes list
+    gonoIndexFlat = np.unique([item for sublist in list(gonoIndex.values()) for item in sublist])
+    # - gonosomesFPM (np.ndarray[float]): normalized fragment counts for valid samples, exons covered
+    # in gonosomes
+    gonosomesFPM = np.take(validCounts, gonoIndexFlat, axis=0)
+
     ### To Fill and returns
-    clusters = np.zeros(len(gonosomesFPM.shape[1]), dtype=np.int)
-    ctrls = [""] * len(gonosomesFPM.shape[1])
-    validSampClust = np.ones(len(gonosomesFPM.shape[1]), dtype=np.int)
-    genderPred = [""] * len(gonosomesFPM.shape[1])
+    clusters = np.zeros(gonosomesFPM.shape[1], dtype=np.int)
+    ctrls = [""] * gonosomesFPM.shape[1]
+    validSampClust = np.ones(gonosomesFPM.shape[1], dtype=np.int)
+    genderPred = [""] * gonosomesFPM.shape[1]
 
     # Performs an empirical method (kmeans) to dissociate male and female.
     # consider only the coverage for the exons present in the gonosomes
@@ -192,13 +203,13 @@ def GonosomesClustersBuilds(genderInfo, gonosomesFPM, gonoIndex, maxCorr, minCor
     # the different gonosomes to associate the Kmeans group with a gender
     # - gender2Kmeans (list[str]): genderID (e.g ["M","F"]), the order
     # correspond to KMeans groupID (gp1=M, gp2=F)
-    gender2Kmeans = mageCNV.genderDiscrimination.genderAttribution(kmeans, gonosomesFPM, gonoIndex, genderInfo)
+    gender2Kmeans = mageCNV.genderDiscrimination.genderAttribution(kmeans, validCounts, gonoIndex, genderInfo)
 
     ####################
     # Independent clustering for the two Kmeans groups
     for genderGp in range(len(gender2Kmeans)):
         # - sampsIndexGp (np.ndarray[int]): indexes of samples of interest for a given gender
-        sampsIndexGp = np.where(kmeans.labels_ == genderGp)[0]
+        sampsIndexGp = np.where(kmeans == genderGp)[0]
         # - gonosomesFPMGp (np.ndarray[float]): extraction of fragment counts data only for samples
         #  of the selected gender
         gonosomesFPMGp = gonosomesFPM[:, sampsIndexGp]
