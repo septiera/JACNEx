@@ -139,7 +139,23 @@ def main(argv):
     logger.debug("Done parsing clustsFile, in %.2f s", thisTime - startTime)
     startTime = thisTime
 
+    #####################################################
+    # Normalisation:
+    ##################  
+    # allocate a float numpy array countsNorm and populate it with normalised counts of countsArray
+    # same dimension for arrays in input/output: NbExons*NbSOIs
+    # Fragment Per Million normalisation:
+    # NormCountOneExonForOneSample=(FragsOneExonOneSample*1x10^6)/(TotalFragsAllExonsOneSample)
+    try :
+        counts_norm = mageCNV.normalisation.FPMNormalisation(countsArray)
+    except Exception:
+        logger.error("FPMNormalisation failed")
+        raise Exception()
 
+    thisTime = time.time()
+    logger.debug("Done fragments counts normalisation, in %.2f s", thisTime-startTime)
+    startTime = thisTime
+    
 ####################################################################################
 ######################################## Main ######################################
 ####################################################################################
