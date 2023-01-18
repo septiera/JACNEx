@@ -277,7 +277,7 @@ def main(argv):
 
     #####################################################
     # Define nested callback for processing countFrags() result (so countsArray et al
-    # are in their scope)
+    # are in its scope)
 
     # if countFrags fails for any BAMs, we have to remember their indexes
     # and only expunge them at the end -> save their indexes in failedBams

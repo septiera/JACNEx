@@ -1,14 +1,14 @@
 import os
-import numpy as np
-import numba  # make python faster
 import re
-# nested containment lists, similar to interval trees but faster (https://github.com/biocore-ntnu/ncls)
-from ncls import NCLS
 import subprocess
 import tempfile
 import time
-from multiprocessing import Pool
 import logging
+import numba  # make python faster
+import numpy as np
+# nested containment lists, similar to interval trees but faster (https://github.com/biocore-ntnu/ncls)
+from ncls import NCLS
+from concurrent.futures import ProcessPoolExecutor
 
 # set up logger, using inherited config
 logger = logging.getLogger(__name__)
@@ -135,28 +135,31 @@ def countFrags(bamFile, nbOfExons, maxGap, tmpDir, samtools, jobs, sampleIndex):
         samproc = subprocess.Popen(cmd, stdout=subprocess.PIPE, universal_newlines=True)
 
         #####################################################
-        # Define nested callback functions for apply_async (so sampleCounts and breakPoints
-        # are in their scope)
+        # Define nested callback for processing processBatch() result (so sampleCounts
+        # and breakPoints are in its scope)
 
-        # batchOK:
-        # can only accept one arg: the return value of processBatch();
-        # this must be a 2-element tuple (batchCounts, batchBPs).
-        # Add batchCounts to sampleCounts (these are np arrays of same size),
+        # batchDone:
+        # arg: a Future object returned by ProcessPoolExecutor.submit(processBatch).
+        # processBatch() returns a 2-element tuple (batchCounts, batchBPs).
+        # If something went wrong, log and propagate exception;
+        # otherwise add batchCounts to sampleCounts (these are np arrays of same size),
         # and append batchBPs to breakPoints
-        def batchOK(procBatchRes):
-            # nonlocal declaration means += updates sampleCounts from enclosing scope
-            nonlocal sampleCounts
-            sampleCounts += procBatchRes[0]
-            breakPoints.extend(procBatchRes[1])
-
-        def batchError(e):
-            #  not expecting any exceptions, if any it should be fatal for bamFile
-            logger.error("Failed to process a batch for %s", os.path.basename(bamFile))
-            raise(e)
+        def batchDone(futureProcBatchRes):
+            e = futureProcBatchRes.exception()
+            if e is not None:
+                #  not expecting any exceptions, if any it should be fatal for bamFile
+                logger.error("Failed to process a batch for %s", os.path.basename(bamFile))
+                raise(e)
+            else:
+                procBatchRes = futureProcBatchRes.result()
+                # nonlocal declaration means += updates sampleCounts from enclosing scope
+                nonlocal sampleCounts
+                sampleCounts += procBatchRes[0]
+                breakPoints.extend(procBatchRes[1])
 
         ############################################
         # parse alignments
-        with Pool(realJobs) as pool:
+        with ProcessPoolExecutor(realJobs) as pool:
             # next line to examine
             nextLine = samproc.stdout.readline()
 
@@ -187,7 +190,8 @@ def countFrags(bamFile, nbOfExons, maxGap, tmpDir, samtools, jobs, sampleIndex):
                         # this batch is full and we changed QNAME => ''-terminate batch (as expected by
                         # processBatch), process it and start a new batch
                         thisBatch.append('')
-                        pool.apply_async(processBatch, (thisBatch, nbOfExons, maxGap), {}, batchOK, batchError)
+                        futureRes = pool.submit(processBatch, thisBatch, nbOfExons, maxGap)
+                        futureRes.add_done_callback(batchDone)
                         thisBatch = [nextLine]
                         thisBatchSize = 1
                         prevQname = ''
@@ -196,10 +200,8 @@ def countFrags(bamFile, nbOfExons, maxGap, tmpDir, samtools, jobs, sampleIndex):
             # process last batch (unless bamFile had zero alignments)
             if thisBatchSize > 0:
                 thisBatch.append('')
-                pool.apply_async(processBatch, (thisBatch, nbOfExons, maxGap), {}, batchOK, batchError)
-
-            pool.close()
-            pool.join()
+                futureRes = pool.submit(processBatch, thisBatch, nbOfExons, maxGap)
+                futureRes.add_done_callback(batchDone)
 
         # wait for samtools to finish cleanly and check exit code
         if (samproc.wait() != 0):
