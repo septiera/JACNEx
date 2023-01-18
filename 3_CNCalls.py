@@ -142,10 +142,11 @@ def main(argv):
     #####################################################
     # Normalisation:
     ##################  
-    # allocate a float numpy array countsNorm and populate it with normalised counts of countsArray
-    # same dimension for arrays in input/output: NbExons*NbSOIs
     # Fragment Per Million normalisation:
     # NormCountOneExonForOneSample=(FragsOneExonOneSample*1x10^6)/(TotalFragsAllExonsOneSample)
+    # this normalisation allows the samples to be compared
+    # - countsNorm (np.ndarray[float]): normalised counts of countsArray same dimension
+    # for arrays in input/output: NbExons*NbSOIs
     try :
         counts_norm = mageCNV.normalisation.FPMNormalisation(countsArray)
     except Exception:
@@ -153,8 +154,27 @@ def main(argv):
         raise Exception()
 
     thisTime = time.time()
-    logger.debug("Done fragments counts normalisation, in %.2f s", thisTime-startTime)
+    logger.debug("Done fragments counts normalisation, in %.2f s", thisTime - startTime)
     startTime = thisTime
+    
+    #######################################################
+    # Extract Gender Informations
+    ##################
+    # parse exons to extract information related to the organisms studied and their gender
+    # - gonoIndex (dict(str: list(int))): is a dictionary where key=GonosomeID(e.g 'chrX'),
+    # value=list of gonosome exon index.
+    # - genderInfo (list of list[str]):contains informations for the gender
+    # identification, ie ["gender identifier","specific chromosome"].
+    try: 
+        (gonosome_index, gender_info) = mageCNV.genderDiscrimination.getGenderInfos(exons)
+    except Exception: 
+        logger.error("getGenderInfos failed")
+        raise Exception()
+
+    thisTime = time.time()
+    logger.debug("Done get gender informations in %.2f s", thisTime - startTime)
+    startTime = thisTime
+    
     
 ####################################################################################
 ######################################## Main ######################################
