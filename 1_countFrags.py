@@ -9,12 +9,13 @@
 import sys
 import getopt
 import os
-import numpy as np
+import math
 import re
 import time
 import shutil
-from multiprocessing import Pool
 import logging
+import numpy as np
+from concurrent.futures import ProcessPoolExecutor
 
 ####### MAGE-CNV modules
 import mageCNV.bed
@@ -45,8 +46,7 @@ def parseArgs(argv):
     maxGap = 1000
     tmpDir = "/tmp/"
     samtools = "samtools"
-    samThreads = 10
-    countJobs = 3
+    jobs = 20
 
     usage = """\nCOMMAND SUMMARY:
 Given a BED of exons and one or more BAM files, count the number of sequenced fragments
@@ -69,12 +69,11 @@ ARGUMENTS:
            are assumed to possibly result from a structural variant and are ignored, default : """ + str(maxGap) + """
    --tmp [str]: pre-existing dir for temp files, faster is better (eg tmpfs), default: """ + tmpDir + """
    --samtools [str]: samtools binary (with path if not in $PATH), default: """ + str(samtools) + """
-   --samthreads [int]: number of threads for samtools, default: """ + str(samThreads) + """
-   --jobs [int] : number of threads to allocate for counting step, default:""" + str(countJobs) + "\n"
+   --jobs [int] : approximate number of cores that we can use, default:""" + str(jobs) + "\n"
 
     try:
         opts, args = getopt.gnu_getopt(argv[1:], 'h', ["help", "bams=", "bams-from=", "bed=", "outDir=", "counts=",
-                                                       "padding=", "maxGap=", "tmp=", "samtools=", "samthreads=", "jobs="])
+                                                       "padding=", "maxGap=", "tmp=", "samtools=", "jobs="])
     except getopt.GetoptError as e:
         sys.stderr.write("ERROR : " + e.msg + ". Try " + scriptName + " --help\n")
         raise Exception()
@@ -114,18 +113,10 @@ ARGUMENTS:
             tmpDir = value
         elif opt in ("--samtools"):
             samtools = value
-        elif opt in ("--samthreads"):
-            try:
-                samThreads = int(value)
-                if (samThreads <= 0):
-                    raise Exception()
-            except Exception:
-                sys.stderr.write("ERROR : samthreads must be a positive integer, not '" + value + "'.\n")
-                raise Exception()
         elif opt in ("--jobs"):
             try:
-                countJobs = int(value)
-                if (countJobs <= 0):
+                jobs = int(value)
+                if (jobs <= 0):
                     raise Exception()
             except Exception:
                 sys.stderr.write("ERROR : jobs must be a positive integer, not '" + value + "'.\n")
@@ -210,7 +201,7 @@ ARGUMENTS:
             raise Exception()
 
     # AOK, return everything that's needed
-    return(bamsToProcess, samples, bedFile, outDir, padding, maxGap, countsFile, tmpDir, samtools, samThreads, countJobs)
+    return(bamsToProcess, samples, bedFile, outDir, padding, maxGap, countsFile, tmpDir, samtools, jobs)
 
 
 ###############################################################################
@@ -223,7 +214,7 @@ ARGUMENTS:
 # If anything goes wrong, print error message to stderr and raise exception.
 def main(argv):
     # parse, check and preprocess arguments - exceptions must be caught by caller
-    (bamsToProcess, samples, bedFile, outDir, padding, maxGap, countsFile, tmpDir, samtools, samThreads, countJobs) = parseArgs(argv)
+    (bamsToProcess, samples, bedFile, outDir, padding, maxGap, countsFile, tmpDir, samtools, jobs) = parseArgs(argv)
 
     # args seem OK, start working
     logger.info("called with: " + " ".join(argv[1:]))
@@ -256,47 +247,76 @@ def main(argv):
     logger.debug("Done parsing previous countsFile, in %.2f s", thisTime - startTime)
     startTime = thisTime
 
+    # populate the module-global exonNCLs in countFragments
+    try:
+        mageCNV.countFragments.initExonNCLs(exons)
+    except Exception as e:
+        logger.error("initExonNCLs failed - %s", e)
+        raise Exception()
+
     #####################################################
-    # Define nested callback functions for apply_async (so countsArray et al
-    # are in their scope)
+    # decide how the work will be parallelized
 
-    # mergeCounts:
-    # can only accept one arg: the return value of mageCNV.countFragments.countFrags();
-    # this must be a 3-element tuple (sampleIndex, sampleCounts, breakPoints).
-    # Fill column at index sampleIndex in countsArray with counts stored in sampleCounts,
-    # and print info about putative CNVs with alignment-supported breakpoints as TSV
-    # to outDir/sample.breakPoints.tsv
-    def mergeCounts(countFragsRes):
-        si = countFragsRes[0]
-        for exonIndex in range(len(countFragsRes[1])):
-            countsArray[exonIndex, si] = countFragsRes[1][exonIndex]
-        if (len(countFragsRes[2]) > 0):
-            try:
-                bpFile = outDir + '/' + samples[si] + '.breakPoints.tsv'
-                BPFH = open(bpFile, mode='w')
-                for thisBP in countFragsRes[2]:
-                    toPrint = thisBP[0] + "\t" + str(thisBP[1]) + "\t" + str(thisBP[2]) + "\t" + thisBP[3] + "\t" + thisBP[4]
-                    print(toPrint, file=BPFH)
-                BPFH.close()
-                logger.info("Done processing %s", samples[si])
-            except Exception as e:
-                logger.warning("Discarding breakpoints info for %s because cannot open %s for writing - %s", samples[si], bpFile, e)
+    # total number of samples that still need to be processed
+    nbOfSamplesToProcess = len(bamsToProcess)
+    for bamIndex in range(len(bamsToProcess)):
+        if countsFilled[bamIndex]:
+            nbOfSamplesToProcess -= 1
 
-    # error callback: if countFrags fails for any BAMs, we have to remember their indexes
+    # we are allowed to use jobs cores in total: we will process paraSamples samples in
+    # parallel, each sample will be processed using coresPerSample.
+    # in our tests countFrags scales great up to 4-5 coresPerSample, with diminishing
+    # returns beyond that (probably depends on your hardware)
+    # -> we target targetCoresPerSample coresPerSample, this is increased if we
+    #    have few samples to process (and we use ceil() so we may slighty overconsume)
+    targetCoresPerSample = 4
+    paraSamples = min(math.ceil(jobs / targetCoresPerSample), nbOfSamplesToProcess)
+    coresPerSample = math.ceil(jobs / paraSamples)
+    logger.info("we will process %i samples in parallel, using up to %i cores for each sample.",
+                paraSamples, coresPerSample)
+
+    #####################################################
+    # Define nested callback for processing countFrags() result (so countsArray et al
+    # are in its scope)
+
+    # if countFrags fails for any BAMs, we have to remember their indexes
     # and only expunge them at the end -> save their indexes in failedBams
     failedBams = []
 
-    def jobError(e):
-        #  exceptions raised by countFrags are always Exception(str(sampleIndex))
-        si = int(str(e))
-        logger.warning("Failed to count fragments for sample %s, skipping it", samples[si])
-        failedBams.append(si)
+    # mergeCounts:
+    # arg: a Future object returned by ProcessPoolExecutor.submit(mageCNV.countFragments.countFrags).
+    # countFrags() returns a 3-element tuple (sampleIndex, sampleCounts, breakPoints).
+    # If something went wrong, log and populate failedBams;
+    # otherwise fill column at index sampleIndex in countsArray with counts stored in sampleCounts,
+    # and print info about putative CNVs with alignment-supported breakpoints as TSV
+    # to outDir/sample.breakPoints.tsv
+    def mergeCounts(futureCountFragsRes):
+        e = futureCountFragsRes.exception()
+        if e is not None:
+            #  exceptions raised by countFrags are always Exception(str(sampleIndex))
+            si = int(str(e))
+            logger.warning("Failed to count fragments for sample %s, skipping it", samples[si])
+            failedBams.append(si)
+        else:
+            countFragsRes = futureCountFragsRes.result()
+            si = countFragsRes[0]
+            for exonIndex in range(len(countFragsRes[1])):
+                countsArray[exonIndex, si] = countFragsRes[1][exonIndex]
+            if (len(countFragsRes[2]) > 0):
+                try:
+                    bpFile = outDir + '/' + samples[si] + '.breakPoints.tsv'
+                    BPFH = open(bpFile, mode='w')
+                    for thisBP in countFragsRes[2]:
+                        toPrint = thisBP[0] + "\t" + str(thisBP[1]) + "\t" + str(thisBP[2]) + "\t" + thisBP[3] + "\t" + thisBP[4]
+                        print(toPrint, file=BPFH)
+                    BPFH.close()
+                except Exception as e:
+                    logger.warning("Discarding breakpoints info for %s because cannot open %s for writing - %s", samples[si], bpFile, e)
+            logger.info("Done processing %s", samples[si])
 
     #####################################################
-    # Process remaining (new) BAMs, up to countJobs in parallel
-    # Careful: each BAM gets collated by samtools using samThreads threads before being processed
-    # single-threaded by python code, so this can consume up to samThreads*countJobs cores
-    with Pool(countJobs) as pool:
+    # Process new BAMs, up to paraSamples in parallel
+    with ProcessPoolExecutor(paraSamples) as pool:
         for bamIndex in range(len(bamsToProcess)):
             bam = bamsToProcess[bamIndex]
             sample = samples[bamIndex]
@@ -304,10 +324,9 @@ def main(argv):
                 logger.info('Sample %s already filled from countsFile', sample)
                 continue
             else:
-                pool.apply_async(mageCNV.countFragments.countFrags,
-                                 (bam, exons, maxGap, tmpDir, samtools, samThreads, bamIndex), {}, mergeCounts, jobError)
-        pool.close()
-        pool.join()
+                futureRes = pool.submit(mageCNV.countFragments.countFrags,
+                                        bam, len(exons), maxGap, tmpDir, samtools, coresPerSample, bamIndex)
+                futureRes.add_done_callback(mergeCounts)
 
     thisTime = time.time()
     logger.debug("Done processing all BAMs, in %.2f s", thisTime - startTime)
@@ -315,6 +334,7 @@ def main(argv):
 
     #####################################################
     # Expunge samples for which countFrags failed
+    failedBamsNb = len(failedBams)
     for failedI in reversed(failedBams):
         del(samples[failedI])
     countsArray = np.delete(countsArray, failedBams, axis=1)
@@ -324,7 +344,10 @@ def main(argv):
 
     thisTime = time.time()
     logger.debug("Done printing results for all samples, in %.2f s", thisTime - startTime)
-    logger.info("ALL DONE")
+    if (failedBamsNb > 0):
+        logger.warning("ALL DONE BUT COUNTING FAILED FOR %i SAMPLES, check the log!", failedBamsNb)
+    else:
+        logger.info("ALL DONE")
 
 
 ####################################################################################

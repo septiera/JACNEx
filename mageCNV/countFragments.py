@@ -1,16 +1,25 @@
 import os
-import numpy as np
-import numba  # make python faster
 import re
-# nested containment lists, similar to interval trees but faster (https://github.com/biocore-ntnu/ncls)
-from ncls import NCLS
 import subprocess
 import tempfile
 import time
 import logging
+import numba  # make python faster
+import numpy as np
+# nested containment lists, similar to interval trees but faster (https://github.com/biocore-ntnu/ncls)
+from ncls import NCLS
+from concurrent.futures import ProcessPoolExecutor
 
 # set up logger, using inherited config
 logger = logging.getLogger(__name__)
+
+
+# define global dictionary of NCLs.
+# This must be a (module-level) global variable because the multiprocessing
+# module doesn't allow us to use an NCL as function argument...
+# So, users of this module MUST call initExonNCLs() once to populate exonNCLs
+# before the first call to countFrags()
+exonNCLs = {}
 
 
 ###############################################################################
@@ -18,63 +27,87 @@ logger = logging.getLogger(__name__)
 ###############################################################################
 
 ####################################################
+# initExonNCLs:
+# Create nested containment lists (similar to interval trees but faster), one per
+# chromosome, representing the exons
+# Arg: exon definitions as returned by processBed, padded and sorted
+# Resulting NCLs are stored in the global dictionary exonNCLs, one NCL per
+# chromosome, key=chr, value=NCL
+# This function must be called a single time before the first call to countFrags()
+def initExonNCLs(exons):
+    # we want to access the module-global exonNCLs dictionary
+    global exonNCLs
+    if exonNCLs:
+        logger.warn("initExonNCLs called but exonNCLs already initialized, fix your code")
+        return
+    # for each chrom, build 3 lists with same length: starts, ends, indexes (in
+    # the complete exons list). key is the CHR
+    starts = {}
+    ends = {}
+    indexes = {}
+    for i in range(len(exons)):
+        # exons[i] is a list: CHR, START, END, EXON_ID
+        chrom = exons[i][0]
+        if chrom not in starts:
+            # first time we see chrom, initialize with empty lists
+            starts[chrom] = []
+            ends[chrom] = []
+            indexes[chrom] = []
+        # in all cases, append current values to the lists
+        starts[chrom].append(exons[i][1])
+        ends[chrom].append(exons[i][2])
+        indexes[chrom].append(i)
+
+    # populate global dictionary of NCLs, one per chromosome
+    for chrom in starts.keys():
+        ncl = NCLS(starts[chrom], ends[chrom], indexes[chrom])
+        exonNCLs[chrom] = ncl
+
+
+####################################################
 # countFrags :
-# Count the fragments in bamFile that overlap each exon described in exons.
+# Count the fragments in bamFile that overlap each exon from exonNCLs.
 # Arguments:
 #   - a bam file (with path)
-#   - exon definitions as returned by processBed, padded and sorted
+#   - total number of exons
 #   - the maximum accepted gap length between paired reads
 #   - a fast tmp dir with enough space for samtools collate
 #   - the samtools binary, with path
-#   - the number of cpu threads that samtools can use
+#   - number of cpu cores that we can use
 #   - an int (sampleIndex) that is not used but is simply returned (for multiprocessing)
 #
+# Pre-requirement: initExonNCLs must have been called to populate exonNCLs before
+# the first call to this function.
+#
 # Return a 3-element tuple (sampleIndex, sampleCounts, breakPoints) where:
-# - sampleCounts is a 1D numpy int array dim = len(exons) allocated here and filled with
+# - sampleCounts is a 1D numpy int array dim = nbOfExons allocated here and filled with
 #   the counts for this sample,
 # - breakPoints is a list of 5-element lists [CHR, BP1, BP2, CNVTYPE, QNAME], where
 #   BP1 and BP2 are the coordinates of the putative breakpoints, CNVTYPE is 'DEL' or 'DUP',
 #   and QNAME is the supporting fragment
 # If anything goes wrong, log info on exception and then always raise Exception(str(sampleIndex)),
 # so caller can catch it and know which sampleIndex we were working on.
-def countFrags(bamFile, exons, maxGap, tmpDir, samtools, samThreads, sampleIndex):
+def countFrags(bamFile, nbOfExons, maxGap, tmpDir, samtools, jobs, sampleIndex):
+    # This is a two step process:
+    # 1. group the alignments by QNAME with samtools-collate, and then
+    # 2. split the alignments into batches of ~batchSize alignements (making sure all alis for any
+    #    QNAME are in the same batch), and process each batch in parallel (with processBatch())
+    # Since samtools-collate needs to be mostly done before step 2 starts, we just use
+    # max(jobs-1,1) as both the number of samtools threads (step 1) and the number of
+    # python processes (step 2). This means we may use slightly more than job cores
+    # simultaneously, tune it down if needed.
+    realJobs = max(jobs - 1, 1)
+    # number of alignments to process in a batch, this is just a performance tuning param,
+    # default should be OK.
+    batchSize = 1000000
+
     try:
         logger.info('Processing BAM %s', os.path.basename(bamFile))
         startTime = time.time()
-        # for each chrom, build an NCL holding the exons
-        # NOTE: we would like to build this once in the caller and use it for each BAM,
-        # but the multiprocessing module doesn't allow this... We therefore rebuild the
-        # NCLs for each BAM, wasteful but it's OK, createExonNCLs() is fast
-        exonNCLs = createExonNCLs(exons)
 
-        # We need to process all alignments for a given qname simultaneously
-        # => ALGORITHM:
-        # parse alignements from BAM, grouped by qname;
-        # if qname didn't change -> just apply some QC and if AOK store the
-        #   data we need in accumulators,
-        # if the qname changed -> process accumulated data for the previous
-        #   qname (with Qname2ExonCount), then reset accumulators and store
-        #   data for new qname.
-
-        # Accumulators:
-        # QNAME and CHR
-        qname, qchrom = "", ""
-        # START and END coordinates on the genome of each alignment for this qname,
-        # aligning on the Forward or Reverse genomic strands
-        qstartF, qstartR, qendF, qendR = [], [], [], []
-        # coordinate of the leftmost non-clipped base on the read, alis in the same order
-        # as in qstartF/R and qendF/R
-        qstartOnReadF, qstartOnReadR = [], []
-        # qFirstOnForward==1 if the first-in-pair read of this qname is on the
-        # forward reference strand, -1 if it's on the reverse strand, 0 if we don't yet know
-        qFirstOnForward = 0
-        # qBad==True if qname must be skipped (e.g. alis on multiple chroms, or alis
-        # disagree regarding the strand on which the first/last read-in-pair aligns, or...)
-        qBad = False
-
-        # To Fill:
+        # data structures to return:
         # 1D numpy array containing the sample fragment counts for all exons
-        sampleCounts = np.zeros(len(exons), dtype=np.uint32)
+        sampleCounts = np.zeros(nbOfExons, dtype=np.uint32)
         # list of lists with info about breakpoints support
         breakPoints = []
 
@@ -96,121 +129,79 @@ def countFrags(bamFile, exons, maxGap, tmpDir, samtools, samThreads, sampleIndex
         tmpDirObj = tempfile.TemporaryDirectory(dir=tmpDir)
         tmpDirPrefix = tmpDirObj.name + "/tmpcoll"
 
-        cmd = [samtools, 'collate', '-O', '--output-fmt', 'SAM', '--threads', str(samThreads)]
+        cmd = [samtools, 'collate', '-O', '--output-fmt', 'SAM', '--threads', str(realJobs)]
         cmd.extend(['--input-fmt-option', 'filter=(mapq >= 20) && flag.paired && !(flag & 1804)'])
         cmd.extend([bamFile, tmpDirPrefix])
         samproc = subprocess.Popen(cmd, stdout=subprocess.PIPE, universal_newlines=True)
 
-        ############################################
-        # Main loop: parse each alignment
-        for line in samproc.stdout:
-            # skip header
-            if re.match('^@', line):
-                continue
+        #####################################################
+        # Define nested callback for processing processBatch() result (so sampleCounts
+        # and breakPoints are in its scope)
 
-            align = line.split('\t', maxsplit=6)
-
-            ######################################################################
-            # If we are done with previous qname: process it and reset accumulators
-            if (qname != align[0]) and (qname != ""):  # align[0] is the qname
-                # qchrom == "" is possible if all alis for qname mapped to non-main chroms
-                if (not qBad) and (qchrom != ""):
-                    # if we have 2 alis on a strand, make sure they are in "read" order (switch them if needed)
-                    if (len(qstartF) == 2) and (qstartOnReadF[0] > qstartOnReadF[1]):
-                        qstartF.reverse()
-                        qendF.reverse()
-                    if (len(qstartR) == 2) and (qstartOnReadR[0] > qstartOnReadR[1]):
-                        qstartR.reverse()
-                        qendR.reverse()
-                    BPs = Qname2ExonCount(qstartF, qendF, qstartR, qendR, exonNCLs[qchrom], sampleCounts, maxGap)
-                    if (BPs is not None):
-                        BPs.insert(0, qchrom)
-                        BPs.append(qname)
-                        breakPoints.append(BPs)
-                qname, qchrom = "", ""
-                qstartF, qstartR, qendF, qendR = [], [], [], []
-                qstartOnReadF, qstartOnReadR = [], []
-                qFirstOnForward = 0
-                qBad = False
-            elif qBad:  # same qname as previous ali but we know it's bad -> skip
-                continue
-
-            ######################################################################
-            # Either we're in the same qname and it's not bad, or we changed qname
-            # -> in both cases update accumulators with current line
-            if qname == "":
-                qname = align[0]
-
-            # align[2] == chrom
-            if align[2] not in exonNCLs:
-                # ignore alis that don't map to a chromosome where we have at least one exon;
-                # importantly this skips alis on non-main GRCh38 "chroms" (eg ALT contigs)
-                # Note: we ignore the ali but don't set qBad, because some tools report alignments to
-                # ALT contigs in the XA tag ("secondary alignemnt") of the main chrom ali (as expected),
-                # but also produce the alignements to ALTs as full alignement records with flag 0x800
-                # "supplementary alignment" set, this is contradictory but we have to deal with it...
-                continue
-            elif qchrom == "":
-                qchrom = align[2]
-            elif qchrom != align[2]:
-                # qname has alignments on different chroms, ignore it
-                qBad = True
-                continue
-            # else same chrom, keep going
-
-            # Retrieving flags for STRAND and first/second read
-            currentFlag = int(align[1])
-
-            # currentFirstOnForward==1 if according to this ali, the first-in-pair
-            # read is on the forward strand, -1 otherwise
-            currentFirstOnForward = -1
-            # flag 16 the alignment is on the reverse strand
-            # flag 64 the alignment is first in pair, otherwise 128
-            if ((currentFlag & 80) == 64) or ((currentFlag & 144) == 144):
-                currentFirstOnForward = 1
-            if qFirstOnForward == 0:
-                # first ali for this qname
-                qFirstOnForward = currentFirstOnForward
-            elif qFirstOnForward != currentFirstOnForward:
-                qBad = True
-                continue
-            # else this ali agrees with previous alis for qname -> NOOP
-
-            # START and END coordinates of current alignment on REF (ignoring any clipped bases)
-            currentStart = int(align[3])
-            # END depends on CIGAR
-            currentCigar = align[5]
-            currentAliLength = aliLengthOnRef(currentCigar)
-            currentEnd = currentStart + currentAliLength - 1
-            # coord of leftmost non-clipped base on read
-            currentStartOnRead = firstNonClipped(currentCigar)
-            if (currentFlag & 16) == 0:
-                # flag 16 off => forward strand
-                qstartF.append(currentStart)
-                qendF.append(currentEnd)
-                qstartOnReadF.append(currentStartOnRead)
+        # batchDone:
+        # arg: a Future object returned by ProcessPoolExecutor.submit(processBatch).
+        # processBatch() returns a 2-element tuple (batchCounts, batchBPs).
+        # If something went wrong, log and propagate exception;
+        # otherwise add batchCounts to sampleCounts (these are np arrays of same size),
+        # and append batchBPs to breakPoints
+        def batchDone(futureProcBatchRes):
+            e = futureProcBatchRes.exception()
+            if e is not None:
+                #  not expecting any exceptions, if any it should be fatal for bamFile
+                logger.error("Failed to process a batch for %s", os.path.basename(bamFile))
+                raise(e)
             else:
-                qstartR.append(currentStart)
-                qendR.append(currentEnd)
-                qstartOnReadR.append(currentStartOnRead)
+                procBatchRes = futureProcBatchRes.result()
+                # nonlocal declaration means += updates sampleCounts from enclosing scope
+                nonlocal sampleCounts
+                sampleCounts += procBatchRes[0]
+                breakPoints.extend(procBatchRes[1])
 
-        #################################################################################################
-        # Done reading lines from BAM
+        ############################################
+        # parse alignments
+        with ProcessPoolExecutor(realJobs) as pool:
+            # next line to examine
+            nextLine = samproc.stdout.readline()
 
-        # process last Qname
-        if (qname != "") and not qBad:
-            # if we have 2 alis on a strand, make sure they are in "read" order (switch them if needed)
-            if (len(qstartF) == 2) and (qstartOnReadF[0] > qstartOnReadF[1]):
-                qstartF.reverse()
-                qendF.reverse()
-            if (len(qstartR) == 2) and (qstartOnReadR[0] > qstartOnReadR[1]):
-                qstartR.reverse()
-                qendR.reverse()
-            BPs = Qname2ExonCount(qstartF, qendF, qstartR, qendR, exonNCLs[qchrom], sampleCounts, maxGap)
-            if (BPs is not None):
-                BPs.insert(0, qchrom)
-                BPs.append(qname)
-                breakPoints.append(BPs)
+            # skip header
+            while re.match('^@', nextLine):
+                nextLine = samproc.stdout.readline()
+
+            # store lines until batchSize alis were parsed, then process batch
+            thisBatch = []
+            thisBatchSize = 0
+            prevQname = ''
+
+            while nextLine != '':
+                if (thisBatchSize < batchSize):
+                    thisBatch.append(nextLine)
+                    thisBatchSize += 1
+                else:
+                    # grab QNAME of nextLine (with trailing \t, it doesn't matter)
+                    thisQname = re.match(r'[^\t]+\t', nextLine).group()
+                    if (prevQname == ''):
+                        # first ali after filling this batch
+                        thisBatch.append(nextLine)
+                        prevQname = thisQname
+                    elif (thisQname == prevQname):
+                        # batch is full but same QNAME
+                        thisBatch.append(nextLine)
+                    else:
+                        # this batch is full and we changed QNAME => ''-terminate batch (as expected by
+                        # processBatch), process it and start a new batch
+                        thisBatch.append('')
+                        futureRes = pool.submit(processBatch, thisBatch, nbOfExons, maxGap)
+                        futureRes.add_done_callback(batchDone)
+                        thisBatch = [nextLine]
+                        thisBatchSize = 1
+                        prevQname = ''
+                # in all cases, read next line
+                nextLine = samproc.stdout.readline()
+            # process last batch (unless bamFile had zero alignments)
+            if thisBatchSize > 0:
+                thisBatch.append('')
+                futureRes = pool.submit(processBatch, thisBatch, nbOfExons, maxGap)
+                futureRes.add_done_callback(batchDone)
 
         # wait for samtools to finish cleanly and check exit code
         if (samproc.wait() != 0):
@@ -221,9 +212,9 @@ def countFrags(bamFile, exons, maxGap, tmpDir, samtools, samThreads, sampleIndex
         # tmpDirObj should get cleaned up automatically but sometimes samtools tempfiles
         # are in the process of being deleted => sync to avoid race
         os.sync()
-        # we want breakpoints sorted by chrom (but not caring that chr10 comes before chr2),
-        # then BP1 then BP2 then CNVTYPE
-        breakPoints.sort(key=lambda row: (row[0], row[1], row[2], row[3]))
+        # we want breakpoints grouped by chrom (but not caring that chr10 comes before chr2),
+        # then sorted by BP1 then BP2 then CNVTYPE then QNAME
+        breakPoints.sort(key=lambda row: (row[0], row[1], row[2], row[3], row[4]))
         thisTime = time.time()
         logger.debug("Done countFrags for %s, in %.2f s", os.path.basename(bamFile), thisTime - startTime)
         return(sampleIndex, sampleCounts, breakPoints)
@@ -269,36 +260,143 @@ def firstNonClipped(cigar):
     return(firstNonClipped)
 
 
-#############################################################
-# Create nested containment lists (similar to interval trees but faster), one per
-# chromosome, storing the exons
-# Input : list of exons (ie lists of 4 fields), as returned by processBed
-# Output: dictionary(hash): key=chr, value=NCL
-def createExonNCLs(exons):
-    # for each chrom, build 3 lists with same length: starts, ends, indexes (in
-    # the complete exons list). key is the CHR
-    starts = {}
-    ends = {}
-    indexes = {}
-    for i in range(len(exons)):
-        # exons[i] is a list: CHR, START, END, EXON_ID
-        chrom = exons[i][0]
-        if chrom not in starts:
-            # first time we see chrom, initialize with empty lists
-            starts[chrom] = []
-            ends[chrom] = []
-            indexes[chrom] = []
-        # in all cases, append current values to the lists
-        starts[chrom].append(exons[i][1])
-        ends[chrom].append(exons[i][2])
-        indexes[chrom].append(i)
+####################################################
+# processBatch :
+# Count the fragments in batchOfLines that overlap each exon from exonNCLs.
+# Arguments:
+#   - a batch=list of SAM lines grouped by QNAME. All alis for any given QNAME
+#     must be in the same batch. A batch must end with an empty line (ie '').
+#   - total number of exons
+#   - the maximum accepted gap length between paired reads
+# Return a 2-element tuple (batchCounts, batchBPs) where:
+# - batchCounts is a 1D numpy int array dim = nbOfExons allocated here and filled with
+#   the counts for this batch of lines,
+# - batchBPs is a list of 5-element lists [CHR, BP1, BP2, CNVTYPE, QNAME], where
+#   BP1 and BP2 are the coordinates of the putative breakpoints supported by this
+#   batch of lines, CNVTYPE is 'DEL' or 'DUP',  and QNAME is the supporting fragment
+def processBatch(batchOfLines, nbOfExons, maxGap):
+    # We need to process all alis for a QNAME together
+    # -> store data in accumulators until we change QNAME
+    # Accumulators:
+    # QNAME and CHR
+    qname, qchrom = "", ""
+    # START and END coordinates on the genome of each alignment for this qname,
+    # aligning on the Forward or Reverse genomic strands
+    qstartF, qstartR, qendF, qendR = [], [], [], []
+    # coordinate of the leftmost non-clipped base on the read, alis in the same order
+    # as in qstartF/R and qendF/R
+    qstartOnReadF, qstartOnReadR = [], []
+    # qFirstOnForward==1 if the first-in-pair read of this qname is on the
+    # forward reference strand, -1 if it's on the reverse strand, 0 if we don't yet know
+    qFirstOnForward = 0
+    # qBad==True if qname must be skipped (e.g. alis on multiple chroms, or alis
+    # disagree regarding the strand on which the first/last read-in-pair aligns, or...)
+    qBad = False
 
-    # build dictionary of NCLs, one per chromosome
-    exonNCLs = {}
-    for chrom in starts.keys():
-        ncl = NCLS(starts[chrom], ends[chrom], indexes[chrom])
-        exonNCLs[chrom] = ncl
-    return(exonNCLs)
+    # results to return:
+    # 1D numpy array containing the fragment counts for all exons in batchOfLines
+    batchCounts = np.zeros(nbOfExons, dtype=np.uint32)
+    # list of lists with info about breakpoints support
+    batchBPs = []
+
+    for line in batchOfLines:
+        ali = []
+        if (line != ''):
+            ali = line.split('\t', maxsplit=6)
+            # discard last field (python split keeps all the remains after maxsplit in the last field)
+            ali.pop()
+        if (len(ali) == 0) or (ali[0] != qname):
+            # we are done with batchOfLines or we changed qname: process accumulated data
+            if (not qBad) and (qname != "") and (qchrom != ""):
+                # (qchrom == "" is possible if all alis for qname mapped to non-main chroms)
+                # if we have 2 alis on a strand, make sure they are in "read" order (switch them if needed)
+                if (len(qstartF) == 2) and (qstartOnReadF[0] > qstartOnReadF[1]):
+                    qstartF.reverse()
+                    qendF.reverse()
+                if (len(qstartR) == 2) and (qstartOnReadR[0] > qstartOnReadR[1]):
+                    qstartR.reverse()
+                    qendR.reverse()
+                BPs = Qname2ExonCount(qstartF, qendF, qstartR, qendR, qchrom, batchCounts, maxGap)
+                if (BPs is not None):
+                    BPs.insert(0, qchrom)
+                    BPs.append(qname)
+                    batchBPs.append(BPs)
+            if (len(ali) == 0):
+                # ali == empty list means we are done with this batch
+                return(batchCounts, batchBPs)
+            else:
+                # reset accumulators
+                qname, qchrom = "", ""
+                qstartF, qstartR, qendF, qendR = [], [], [], []
+                qstartOnReadF, qstartOnReadR = [], []
+                qFirstOnForward = 0
+                qBad = False
+        elif qBad:  # same qname as previous ali but we know it's bad -> skip
+            continue
+
+        ######################################################################
+        # Either we're in the same qname and it's not bad, or we changed qname
+        # -> in both cases update accumulators with current line
+        if qname == "":
+            qname = ali[0]
+
+        # ali[2] == chrom
+        if ali[2] not in exonNCLs:
+            # ignore alis that don't map to a chromosome where we have at least one exon;
+            # importantly this skips alis on non-main GRCh38 "chroms" (eg ALT contigs)
+            # Note: we ignore the ali but don't set qBad, because some tools report alignments to
+            # ALT contigs in the XA tag ("secondary alignemnt") of the main chrom ali (as expected),
+            # but also produce the alignements to ALTs as full alignement records with flag 0x800
+            # "supplementary alignment" set, this is contradictory but we have to deal with it...
+            continue
+        elif qchrom == "":
+            qchrom = ali[2]
+        elif qchrom != ali[2]:
+            # qname has alignments on different chroms, ignore it
+            qBad = True
+            continue
+        # else same chrom, keep going
+
+        # Retrieving flags for STRAND and first/second read
+        currentFlag = int(ali[1])
+
+        # currentFirstOnForward==1 if according to this ali, the first-in-pair
+        # read is on the forward strand, -1 otherwise
+        currentFirstOnForward = -1
+        # flag 16 the alignment is on the reverse strand
+        # flag 64 the alignment is first in pair, otherwise 128
+        if ((currentFlag & 80) == 64) or ((currentFlag & 144) == 144):
+            currentFirstOnForward = 1
+        if qFirstOnForward == 0:
+            # first ali for this qname
+            qFirstOnForward = currentFirstOnForward
+        elif qFirstOnForward != currentFirstOnForward:
+            qBad = True
+            continue
+        # else this ali agrees with previous alis for qname -> NOOP
+
+        # START and END coordinates of current alignment on REF (ignoring any clipped bases)
+        currentStart = int(ali[3])
+        # END depends on CIGAR
+        currentCigar = ali[5]
+        currentAliLength = aliLengthOnRef(currentCigar)
+        currentEnd = currentStart + currentAliLength - 1
+        # coord of leftmost non-clipped base on read
+        currentStartOnRead = firstNonClipped(currentCigar)
+        if (currentFlag & 16) == 0:
+            # flag 16 off => forward strand
+            qstartF.append(currentStart)
+            qendF.append(currentEnd)
+            qstartOnReadF.append(currentStartOnRead)
+        else:
+            qstartR.append(currentStart)
+            qendR.append(currentEnd)
+            qstartOnReadR.append(currentStartOnRead)
+
+    ###########
+    # Done reading lines from batchOfLines, and we already returned if the batch
+    # ended with '' as it should, check this
+    raise Exception("processBatch didn't return, batch wasn't ''-terminated?")
 
 
 ####################################################
@@ -310,14 +408,14 @@ def createExonNCLs(exons):
 # - identify exons overlapped by these intervals, and increment their count.
 # Args:
 #   - 4 lists of ints for F and R strand positions (start and end), in "read" order
-#   - the NCL for the chromosome where current alignments map
+#   - the chromosome where current alignments map
 #   - the counts vector to update (1D numpy int array)
 #   - the maximum accepted gap length between a pair of mate reads, pairs separated by
 #     a longer gap are ignored (putative structural variant or alignment error)
 # This function updates countsVec, and returns a 3-element list [BP1, BP2, CNVTYPE] if
 # the QNAME supports the presence of a CNV (CNVTYPE == 'DEL' or 'DUP') with breakpoints
 # BP1 & BP2 (ie a read spans the breakpoints), None otherwise.
-def Qname2ExonCount(startFList, endFList, startRList, endRList, exonNCL, countsVec, maxGap):
+def Qname2ExonCount(startFList, endFList, startRList, endRList, chrom, countsVec, maxGap):
     # skip Qnames that don't have alignments on both strands
     if (len(startFList) == 0) or (len(startRList) == 0):
         return
@@ -505,7 +603,7 @@ def Qname2ExonCount(startFList, endFList, startRList, endRList, exonNCL, countsV
     # we have several intervals that overlap the same exon
     exonsSeen = []
     for fi in range(len(fragStarts)):
-        overlappedExons = exonNCL.find_overlap(fragStarts[fi], fragEnds[fi])
+        overlappedExons = exonNCLs[chrom].find_overlap(fragStarts[fi], fragEnds[fi])
         for exon in overlappedExons:
             exonIndex = exon[2]
             if (exonIndex not in exonsSeen):
