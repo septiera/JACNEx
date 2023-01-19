@@ -1,17 +1,17 @@
 ###############################################################################################
 ######################################## MAGE-CNV step 2: Sample clustering  ##################
 ###############################################################################################
-# Given a TSV of exon fragment counts, normalizes the counts (Fragment Per Million), performs
-# quality control on the samples and forms the reference clusters for the call.
-# Prints results in a folder defined by the user.
+# Given a TSV of fragment counts as produced by 1_countFrags.py:
+# normalize the counts (in FPM = fragments per million), quality-control the samples,
+# and build clusters of "comparable" samples that will be used as controls for one another.
 # See usage for more details.
 ###############################################################################################
 import sys
 import getopt
 import os
-import numpy as np
 import time
 import logging
+import numpy as np
 
 ####### MAGE-CNV modules
 import mageCNV.countsFile
@@ -285,7 +285,7 @@ def main(argv):
             # - autosomesFPM (np.ndarray[float]): normalized fragment counts for valid samples, exons covered
             # in autosomes
             autosomesFPM = np.delete(validCounts, gonoIndexFlat, axis=0)
-            
+
             if figure:
                 outputFile = os.path.join(outFolder, "Dendogram_" + str(autosomesFPM.shape[1]) + "Samps_autosomes.png")
                 (clusters, ctrls, validSampClust) = mageCNV.clustering.clustersBuilds(autosomesFPM, maxCorr, minCorr, minSamps, outputFile)
