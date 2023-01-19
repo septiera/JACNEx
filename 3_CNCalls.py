@@ -10,6 +10,7 @@ import getopt
 import os
 import time
 import logging
+import numpy as np
 
 ####### MAGE-CNV modules
 import mageCNV.countsFile
@@ -141,7 +142,7 @@ def main(argv):
 
     #####################################################
     # Normalisation:
-    ##################  
+    ##################
     # Fragment Per Million normalisation:
     # NormCountOneExonForOneSample=(FragsOneExonOneSample*1x10^6)/(TotalFragsAllExonsOneSample)
     # this normalisation allows the samples to be compared
@@ -156,7 +157,7 @@ def main(argv):
     thisTime = time.time()
     logger.debug("Done fragments counts normalisation, in %.2f s", thisTime - startTime)
     startTime = thisTime
-    
+
     #######################################################
     # Extract Gender Informations
     ##################
@@ -165,7 +166,7 @@ def main(argv):
     # value=list of gonosome exon index.
     # - genderInfo (list of list[str]):contains informations for the gender
     # identification, ie ["gender identifier","specific chromosome"].
-    try: 
+    try:
         (gonosome_index, gender_info) = mageCNV.genderDiscrimination.getGenderInfos(exons)
     except Exception: 
         logger.error("getGenderInfos failed")
@@ -174,8 +175,25 @@ def main(argv):
     thisTime = time.time()
     logger.debug("Done get gender informations in %.2f s", thisTime - startTime)
     startTime = thisTime
+
+    ########################################################
+    # CN calls
+    #
+    # create flat gonosome index list
+    gono_index_flat = np.unique([item for sublist in list(gonosome_index.values()) for item in sublist]) 
+    samp_flat = np.unique([item for sublist in list(clusts2Samps.values()) for item in sublist])
     
+    # Define the shape of the NumPy arrays that will be used as values in the result dictionnary
+    # dim= NbEffectiveExons x NbCNType (4: CN0, CN1, CN2,CN3+)
+    shape = (len(samp_flat), 4)
+
+    # Initialize the dictionary with a dictionary comprehension
+    emissionIssuesDict = {key: np.zeros(shape, dtype=np.float) for key in samp_flat}
     
+    with Pool(countJobs) as pool:
+        for clusterID in clusts2Samps.keys():
+            CNCalls(counts_norm, clusterID, gono_index_flat, clusts2Samps, clusts2Ctrls, bandwidth, priors, emissionIssuesDict)
+
 ####################################################################################
 ######################################## Main ######################################
 ####################################################################################
