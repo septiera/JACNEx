@@ -40,7 +40,7 @@ def parseArgs(argv):
     bamsFrom = ""
     bedFile = ""
     # optional args with default values
-    outDir = "./breakPoints/"
+    BPdir = "./breakPoints/"
     countsFile = ""
     padding = 10
     maxGap = 1000
@@ -55,15 +55,15 @@ Results are printed to stdout in TSV format: first 4 columns hold the exon defin
 padding and sorting, subsequent columns (one per BAM) hold the counts.
 If a pre-existing counts file produced by this program with the same BED is provided (with --counts),
 counts for requested BAMs are copied from this file and counting is only performed for the new BAM(s).
-In addition, any support for putative breakpoints is printed to sample-specific TSV files created in outDir.
+In addition, any support for putative breakpoints is printed to sample-specific TSV files created in BPdir.
 ARGUMENTS:
    --bams [str]: comma-separated list of BAM files
    --bams-from [str]: text file listing BAM files, one per line
    --bed [str]: BED file, possibly gzipped, containing exon definitions (format: 4-column
            headerless tab-separated file, columns contain CHR START END EXON_ID)
-   --outDir [str]: subdir (created if needed) where breakpoint files will be produced, default :  """ + str(outDir) + """
+   --BPdir [str]: subdir (created if needed) where breakpoint files will be produced, default :  """ + str(BPdir) + """
    --counts [str] optional: pre-existing counts file produced by this program, possibly gzipped,
-           coounts for requested BAMs will be copied from this file if present
+           counts for requested BAMs will be copied from this file if present
    --padding [int] : number of bps used to pad the exon coordinates, default : """ + str(padding) + """
    --maxGap [int] : maximum accepted gap length (bp) between reads pairs, pairs separated by a longer gap
            are assumed to possibly result from a structural variant and are ignored, default : """ + str(maxGap) + """
@@ -72,7 +72,7 @@ ARGUMENTS:
    --jobs [int] : approximate number of cores that we can use, default:""" + str(jobs) + "\n"
 
     try:
-        opts, args = getopt.gnu_getopt(argv[1:], 'h', ["help", "bams=", "bams-from=", "bed=", "outDir=", "counts=",
+        opts, args = getopt.gnu_getopt(argv[1:], 'h', ["help", "bams=", "bams-from=", "bed=", "BPdir=", "counts=",
                                                        "padding=", "maxGap=", "tmp=", "samtools=", "jobs="])
     except getopt.GetoptError as e:
         sys.stderr.write("ERROR : " + e.msg + ". Try " + scriptName + " --help\n")
@@ -89,8 +89,8 @@ ARGUMENTS:
             bamsFrom = value
         elif opt in ("--bed"):
             bedFile = value
-        elif opt in ("--outDir"):
-            outDir = value
+        elif opt in ("--BPdir"):
+            BPdir = value
         elif opt in ("--counts"):
             countsFile = value
         elif opt in ("--padding"):
@@ -192,16 +192,16 @@ ARGUMENTS:
         sys.stderr.write("ERROR : samtools program '" + samtools + "' cannot be run (wrong path, or binary not in $PATH?).\n")
         raise Exception()
 
-    # test outDir last so we don't mkdir unless all other args are OK
-    if not os.path.isdir(outDir):
+    # test BPdir last so we don't mkdir unless all other args are OK
+    if not os.path.isdir(BPdir):
         try:
-            os.mkdir(outDir)
+            os.mkdir(BPdir)
         except Exception:
-            sys.stderr.write("ERROR : outDir " + outDir + " doesn't exist and can't be mkdir'd\n")
+            sys.stderr.write("ERROR : BPdir " + BPdir + " doesn't exist and can't be mkdir'd\n")
             raise Exception()
 
     # AOK, return everything that's needed
-    return(bamsToProcess, samples, bedFile, outDir, padding, maxGap, countsFile, tmpDir, samtools, jobs)
+    return(bamsToProcess, samples, bedFile, BPdir, padding, maxGap, countsFile, tmpDir, samtools, jobs)
 
 
 ###############################################################################
@@ -214,7 +214,7 @@ ARGUMENTS:
 # If anything goes wrong, print error message to stderr and raise exception.
 def main(argv):
     # parse, check and preprocess arguments - exceptions must be caught by caller
-    (bamsToProcess, samples, bedFile, outDir, padding, maxGap, countsFile, tmpDir, samtools, jobs) = parseArgs(argv)
+    (bamsToProcess, samples, bedFile, BPdir, padding, maxGap, countsFile, tmpDir, samtools, jobs) = parseArgs(argv)
 
     # args seem OK, start working
     logger.info("called with: " + " ".join(argv[1:]))
@@ -289,7 +289,7 @@ def main(argv):
     # If something went wrong, log and populate failedBams;
     # otherwise fill column at index sampleIndex in countsArray with counts stored in sampleCounts,
     # and print info about putative CNVs with alignment-supported breakpoints as TSV
-    # to outDir/sample.breakPoints.tsv
+    # to BPdir/sample.breakPoints.tsv
     def mergeCounts(futureCountFragsRes):
         e = futureCountFragsRes.exception()
         if e is not None:
@@ -304,7 +304,7 @@ def main(argv):
                 countsArray[exonIndex, si] = countFragsRes[1][exonIndex]
             if (len(countFragsRes[2]) > 0):
                 try:
-                    bpFile = outDir + '/' + samples[si] + '.breakPoints.tsv'
+                    bpFile = BPdir + '/' + samples[si] + '.breakPoints.tsv'
                     BPFH = open(bpFile, mode='w')
                     for thisBP in countFragsRes[2]:
                         toPrint = thisBP[0] + "\t" + str(thisBP[1]) + "\t" + str(thisBP[2]) + "\t" + thisBP[3] + "\t" + thisBP[4]
