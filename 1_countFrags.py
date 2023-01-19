@@ -69,7 +69,8 @@ ARGUMENTS:
            are assumed to possibly result from a structural variant and are ignored, default : """ + str(maxGap) + """
    --tmp [str]: pre-existing dir for temp files, faster is better (eg tmpfs), default: """ + tmpDir + """
    --samtools [str]: samtools binary (with path if not in $PATH), default: """ + str(samtools) + """
-   --jobs [int] : approximate number of cores that we can use, default:""" + str(jobs) + "\n"
+   --jobs [int] : approximate number of cores that we can use, default:""" + str(jobs) + "\n" + """
+   -h , --help  : display this help and exit\n"""
 
     try:
         opts, args = getopt.gnu_getopt(argv[1:], 'h', ["help", "bams=", "bams-from=", "bed=", "BPdir=", "counts=",
