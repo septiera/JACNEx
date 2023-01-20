@@ -36,9 +36,9 @@ def parseArgs(argv):
     countsFile = ""
     outFolder = ""
     # optionnal args with default values
-    minSamps = 20
-    maxCorr = 0.95
-    minCorr = 0.85
+    minSamps = "20"
+    maxCorr = "0.95"
+    minCorr = "0.85"
     # boolean args with False status by default
     nogender = False
     figure = False
@@ -46,7 +46,7 @@ def parseArgs(argv):
     usage = """\nCOMMAND SUMMARY:
 Given a TSV of exon fragment counts, normalizes the counts (Fragment Per Million), performs
 quality control on the samples and forms the reference clusters for the call.
-The execution of the default command, separates autosomes ("A") and gonosomes ("G") for
+The execution of the default command separates autosomes ("A") and gonosomes ("G") for
 clustering, to avoid bias (accepted sex chromosomes: X, Y, Z, W).
 Produces a single TSV file listing the clustering results.
 By default no result figure is obtained, otherwise a pdf illustrating the data used for QC
@@ -68,15 +68,17 @@ ARGUMENTS:
                       into clusters even if they are significantly different from the rest of
                       the clusters. A too high threshold will lead to a massive elimination of
                       non-clustered samples. default: """ + str(minCorr) + """
-   --nogender[optionnal]: no gender discrimination for clustering
-   --figure[optionnal]: make histogramms and dendogram(s) that will be present in the output in
-                        pdf and png format\n"""
+   --nogender [boolean]: no gender discrimination for clustering. Calling the argument is sufficient.
+   --figure [boolean]: make histogramms and dendogram(s) that will be present in the output in
+                       pdf and png format. Calling the argument is sufficient.\n
+   -h , --help  : display this help and exit\n"""
 
     try:
         opts, args = getopt.gnu_getopt(sys.argv[1:], 'h', ["help", "counts=", "out=", "minSamps=", "maxCorr=", "minCorr=", "nogender", "figure"])
     except getopt.GetoptError as e:
         sys.stderr.write("ERROR : " + e.msg + ". Try " + scriptName + " --help\n")
         raise Exception()
+
     for opt, value in opts:
         # sanity-check and store arguments
         if (opt in ('-h', '--help')):
@@ -84,38 +86,14 @@ ARGUMENTS:
             raise Exception()
         elif (opt in ("--counts")):
             countsFile = value
-            if (not os.path.isfile(countsFile)):
-                sys.stderr.write("ERROR : countsFile " + countsFile + " doesn't exist.\n")
-                raise Exception()
         elif (opt in ("--out")):
             outFolder = value
-            if (not os.path.isdir(outFolder)):
-                sys.stderr.write("ERROR : outFolder " + outFolder + " doesn't exist.\n")
-                raise Exception()
         elif (opt in ("--minSamps")):
-            try:
-                minSamps = np.int(value)
-                if (minSamps < 0):
-                    raise Exception()
-            except Exception:
-                sys.stderr.write("ERROR : minSamps must be a non-negative integer, not '" + value + "'.\n")
-                raise Exception()
+            minSamps = value
         elif (opt in ("--maxCorr")):
-            try:
-                maxCorr = np.float(value)
-                if (maxCorr > 1 or maxCorr < 0):
-                    raise Exception()
-            except Exception:
-                sys.stderr.write("ERROR : maxCorr must be a float between 0 and 1, not '" + value + "'.\n")
-                raise Exception()
+            maxCorr = value
         elif (opt in ("--minCorr")):
-            try:
-                maxCorr = np.float(value)
-                if (maxCorr > 1 or maxCorr < 0):
-                    raise Exception()
-            except Exception:
-                sys.stderr.write("ERROR : minCorr must be a float between 0 and 1, not '" + value + "'.\n")
-                raise Exception()
+            minCorr = value
         elif (opt in ("--nogender")):
             nogender = True
         elif (opt in ("--figure")):
@@ -123,10 +101,61 @@ ARGUMENTS:
         else:
             sys.stderr.write("ERROR : unhandled option " + opt + ".\n")
             raise Exception()
+
     #####################################################
-    # Check that the mandatory parameter is present
+    # Check that the mandatory parameters
     if countsFile == "":
-        sys.exit("ERROR : You must use --counts.\n" + usage)
+        sys.stderr.write("ERROR : You must provide a TSV file with counts with --counts. Try " + scriptName + " --help.\n")
+        raise Exception()
+    elif (not os.path.isfile(countsFile)):
+        sys.stderr.write("ERROR : countsFile " + countsFile + " doesn't exist.\n")
+        raise Exception()
+
+    if outFolder == "":
+        sys.stderr.write("ERROR : You must provide a folder path with --out. Try " + scriptName + " --help.\n")
+        raise Exception()
+    elif (not os.path.isdir(outFolder)):
+        sys.stderr.write("ERROR : outFolder " + outFolder + " doesn't exist.\n")
+        raise Exception()
+
+    #####################################################
+    # Check other args
+    if minSamps == "":
+        sys.stderr.write("ERROR : You must provide an integer value with --minSamps. Try " + scriptName + " --help.\n")
+        raise Exception()
+    else:
+        try:
+            minSamps = np.int(minSamps)
+            if (minSamps < 0):
+                raise Exception()
+        except Exception:
+            sys.stderr.write("ERROR : minSamps must be a non-negative integer, not '" + minSamps + "'.\n")
+            raise Exception()
+
+    if maxCorr == "":
+        sys.stderr.write("ERROR : You must provide a float value with --maxCorr. Try " + scriptName + " --help.\n")
+        raise Exception()
+    else:
+        try:
+            maxCorr = np.float(value)
+            if (maxCorr > 1 or maxCorr < 0):
+                raise Exception()
+        except Exception:
+            sys.stderr.write("ERROR : maxCorr must be a float between 0 and 1, not '" + value + "'.\n")
+            raise Exception()
+
+    if minCorr == "":
+        sys.stderr.write("ERROR : You must provide a float value with --minCorr. Try " + scriptName + " --help.\n")
+        raise Exception()
+    else:
+        try:
+            minCorr = np.float(minCorr)
+            if (minCorr > 1 or minCorr < 0):
+                raise Exception()
+        except Exception:
+            sys.stderr.write("ERROR : minCorr must be a float between 0 and 1, not '" + value + "'.\n")
+            raise Exception()
+
     # AOK, return everything that's needed
     return(countsFile, outFolder, minSamps, maxCorr, minCorr, nogender, figure)
 
