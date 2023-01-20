@@ -174,11 +174,16 @@ def main(argv):
 
     ################################################
     # args seem OK, start working
+    logger.info("called with: " + " ".join(argv[1:]))
     logger.info("starting to work")
     startTime = time.time()
 
-    # parse counts from TSV to obtain :
-    # - exons (list of lists[str,int,int,str]): information on exon, containing CHR,START,END,EXON_ID
+    #######################################################
+    # Parse TSV file of counts
+    ###################
+    # To obtain :
+    # - exons (list of lists[str,int,int,str]): information on exon , containing CHR,START,END,EXON_ID
+    #   the exons are sorted according to their genomic position and padded.
     # - SOIs (list[str]): sampleIDs copied from countsFile's header
     # - countsArray (np.ndarray[int]): fragment counts, dim = NbExons x NbSOIs
     try:
@@ -194,37 +199,35 @@ def main(argv):
     #####################################################
     # Normalisation:
     ##################
-    # Fragment Per Million normalisation:
-    # NormCountOneExonForOneSample=(FragsOneExonOneSample*1x10^6)/(TotalFragsAllExonsOneSample)
-    # this normalisation allows the samples to be compared
-    # - countsNorm (np.ndarray[float]): normalised counts of countsArray same dimension
-    # for arrays in input/output: NbExons*NbSOIs
+    # Fragment counts are standardised in Fragment Per Million (FPM). 
+    # - FPMArray (np.ndarray[float]): normalised counts of countsArray same dimension
+    #   for arrays in input/output: NbExons*NbSOIs
     try:
-        countsNorm = mageCNV.normalisation.FPMNormalisation(countsArray)
+        FPMArray = mageCNV.normalisation.FPMNormalisation(countsArray)
     except Exception:
         logger.error("FPMNormalisation failed")
         raise Exception()
 
     thisTime = time.time()
-    logger.debug("Done fragments counts normalisation, in %.2f s", thisTime - startTime)
+    logger.debug("Done fragment counts normalisation, in %.2f s", thisTime - startTime)
     startTime = thisTime
 
     #####################################################
     # Quality control:
     ##################
-    # The validity of a sample is evaluated according to its fragment coverage profile.
-    # If the profile does not allow to distinguish between poorly covered and covered exons,
-    # it's assigned invalid status.
+    # sample coverage validity assessment and identification of exons with
+    # little or no coverage common to the validated samples
     # - validSampQC (np.array[int]): validity status for each sample passed quality
     #   control (1: valid, 0: invalid), dim = NbSOIs
     # - exonsFewFPM (list[int]): exons indexes with little or no coverage common
     #   to all samples passing quality control
+    # Returns a pdf file illustrating the results in the output folder, if the figure argument is passed. 
     try:
         if figure:
             outputFile = os.path.join(outFolder, "CoverageProfilChecking_" + str(len(SOIs)) + "samps.pdf")
-            (validSampQC, exonsFewFPM) = mageCNV.qualityControl.SampsQC(countsNorm, SOIs, outputFile)
+            (validSampQC, exonsFewFPM) = mageCNV.qualityControl.SampsQC(FPMArray, SOIs, outputFile)
         else:
-            (validSampQC, exonsFewFPM) = mageCNV.qualityControl.SampsQC(countsNorm, SOIs)
+            (validSampQC, exonsFewFPM) = mageCNV.qualityControl.SampsQC(FPMArray, SOIs)
     except Exception as e:
         logger.error("SampQC failed %s", e)
         raise Exception()

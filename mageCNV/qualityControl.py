@@ -16,32 +16,41 @@ logger = logging.getLogger(__name__)
 # SampsQC :
 # evaluates the coverage profile of the samples and identifies the uncovered
 # exons for all valid samples.
-# i.e. to identify the optimal information for clustering.
+# This allows to identify the non optimal informations (unvalid samples, uncovered exons)
+# for clustering.
+# A sample coverage profile is deduced by computing the exon densities from the FPM values.
+# To gain accuracy, this coverage profile is smoothed.
+# A good coverage profile differentiates between uncovered and covered exons.
+# A first density drop is associated with uncovered exons, a threshold is
+# deduced from the first lowest density obtained.
+# Then the density increases which is the signal associated with covered exons,
+# a threshold is deduced from the highest density obtained.
+# If the difference between these two thresholds is less than 20% of the highest
+# density threshold, the coverage profile is not processable.
+# Invalidation of the sample for the rest of the analyses.
+# For validated samples, recovery of uncovered exon indexes that have a FPM
+# value lower than the FPM value associated with the lowest density threshold.
+# An intersection of the different lists of uncovered exons is performed in order
+# to find those common to all validated samples.
 #
 # Args:
 #  - counts (np.ndarray[float]): normalised fragment counts
 #  - SOIs (list[str]): samples of interest names
 #  - outputFile (optionnal str): full path to save the pdf
 #
-# Returns a tupple (validCounts, validSampQC), each variable is created here:
-#  - validSampQC (np.array[int]): validity status for each sample passed quality
-#   control (1: valid, 0: invalid), dim = NbSOIs
-#  - exonsFewFPM (list[int]): exons indexes with little or no coverage common
+# Returns a tupple (sampsQCfailed, uncoveredExons), each variable is created here:
+#  - sampsQCfailed (list[int]): sample indexes not validated by quality control
+#  - uncoveredExons (list[int]): exons indexes with little or no coverage common
 #   to all samples passing quality control
 
 def SampsQC(counts, SOIs, outputFile=None):
     #### Fixed parameter:
     # threshold to assess the validity of the sample coverage profile.
-    # if the difference between the density of uncovered exons and
-    # the density of covered exons is less than 20%, the sample is declared invalid.
     signalThreshold = 0.20
 
     #### To Fill:
-    validSampQC = np.ones(len(SOIs), dtype=np.int)
-
-    #### Accumulator:
-    # a list[int] storing the indexes of uncovered exons in all valid samples
-    exonsFewFPM = []
+    sampsQCfailed = []
+    uncoveredExons = []
 
     # create a matplotlib object and open a pdf if the figure option is
     # true in the main script
@@ -79,20 +88,15 @@ def SampsQC(counts, SOIs, outputFile=None):
         #############
         # sample validity assessment
         if (((maxMean - minMean) / maxMean) <= signalThreshold):
-            logger.warning("Sample %s doesn't pass quality control.",
-                           SOIs[sampleIndex])
-            validSampQC[sampleIndex] = 0
-
-        # difference between the two densities greater than signalThreshold,
-        # storage of exons with little or no coverage (all exons with MPF < minimum MPF threshold)
-        # intersection between the current list of uncovered exons and the previous one to retain
-        # only the uncovered exons for all samples validated by quality control.
+            sampsQCfailed.append(sampleIndex)
+        #############
+        # uncovered exons lists comparison
         else:
-            exons2RMSamp = np.where(sampFragCounts <= binEdges[minIndex])[0]
-            if (len(exonsFewFPM) != 0):
-                exonsFewFPM = np.intersect1d(exonsFewFPM, exons2RMSamp)
+            uncovExonSamp = np.where(sampFragCounts <= binEdges[minIndex])[0]
+            if (len(uncoveredExons) != 0):
+                uncoveredExons = np.intersect1d(uncoveredExons, uncovExonSamp)
             else:
-                exonsFewFPM = exons2RMSamp
+                uncoveredExons = uncovExonSamp
 
     # close the open pdf
     if outputFile:
@@ -100,9 +104,9 @@ def SampsQC(counts, SOIs, outputFile=None):
 
     # returns in stderr the results on the filtered data
     logger.info("%s/%s uncovered exons number deleted before clustering for %s/%s valid samples.",
-                len(exonsFewFPM), len(counts), len(np.where(validSampQC == 1)[0]), len(SOIs))
+                len(uncoveredExons), len(counts), (len(SOIs) - len(sampsQCfailed)), len(SOIs))
 
-    return(validSampQC, exonsFewFPM)
+    return(sampsQCfailed, uncoveredExons)
 
 
 ###############################################################################
