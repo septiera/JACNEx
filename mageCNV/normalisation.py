@@ -15,14 +15,16 @@ logger = logging.getLogger(__name__)
 ###############################################################################
 
 #############################################################
-# Fragment Per Million normalisation
-# Comparisons between samples are then possible
-# For each sample :
-# FPM = (Number of fragments mapped to an exon * 1e6)/Total number of mapped fragments
+# Fragment counts are normalised in Fragment Per Million (FPM).
+# algorithm for one sample :
+# FPM = (Exon FragsNb * 1x10^6) / (Total FragsNb)
+# This normalisation allows to compare samples with each other.
+# It's therefore necessary before any processing on the data (e.g. clustering and calling)
+# This small function enables numba optimizations.
 # Arg:
 # - countsArray (np.ndarray[int]): fragment counts, Dim=NbExons*NbSOIs
 # Returns:
-# - countsNorm (np.ndarray[float]): normalised counts of countsArray same dimension 
+# - countsNorm (np.ndarray[float]): normalised counts of countsArray same dimension
 # for arrays in input/output: NbExons*NbSOIs
 @numba.njit
 def FPMNormalisation(countsArray):
@@ -32,7 +34,7 @@ def FPMNormalisation(countsArray):
         SampleCountsSum = np.sum(countsArray[:, sampleCol])
         SampleCountNorm = (countsArray[:, sampleCol] * 1e6) / SampleCountsSum  # 1e6 is equivalent to 1x10^6
         countsNorm[:, sampleCol] = SampleCountNorm
-    return(countsNorm)
+    return countsNorm
 
 ###############################################################################
 ############################ PRIVATE FUNCTIONS ################################
