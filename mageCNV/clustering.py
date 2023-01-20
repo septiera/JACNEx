@@ -47,10 +47,10 @@ logger = logging.getLogger(os.path.basename(sys.argv[0]))
 #  - outputFile (str): full path (+ file name) for saving a dendogram
 #
 # Returns a tuple (clusters, ctrls, validSampClust):
-#  - clusters (np.ndarray[int]): clusterID for each sample
-#  - ctrls (list[str]): controls clusterID delimited by "," for each sample
-#  - validSampClust (np.ndarray[int]): validity status for each sample passed
-#   quality control (1: valid, 0: invalid), dim = NbSOIs
+# - clust2Samps (dict(int : list[int])): clusterID associated to SOIsIndex
+#   key = clusterID, value = list of SOIsIndex
+# - trgt2Ctrls (dict(int : list[int])): target and controls clusters correspondance,
+#   key = target clusterID, value = list of controls clusterID
 def clustersBuilds(FPMarray, maxCorr, minCorr, minSamps, outputFile=None):
     # - minDist (float): is the distance to start cluster construction
     minDist = (1 - maxCorr)**0.5
@@ -61,23 +61,15 @@ def clustersBuilds(FPMarray, maxCorr, minCorr, minSamps, outputFile=None):
     #  matrix, dim = (NbSOIs-1)*[clusterID1,clusterID2,distValue,NbSOIsInClust]
     linksMatrix = computeSampLinksPrivate(FPMarray)
 
-    # - clust2Samps (dict(int : list[int])): clusterID associated to SOIsIndex
-    #   key = clusterID, value = list of SOIsIndex
-    # - trgt2Ctrls (dict(int : list[int])): target and controls clusters correspondance,
-    #   key = target clusterID, value = list of controls clusterID
-    (clust2Samps, trgt2Ctrls) = links2ClustersPrivate(linksMatrix, minDist, maxDist, minSamps)
 
-    # - clusters (np.ndarray[int]): clusterID associated to SOIsIndex
-    # - trgt2Ctrls (dict(int : list[int])): target and controls clusters correspondance,
-    #   key = target clusterID, value = list of controls clusterID
-    (clusters, ctrls, validSampClust) = STDZAndCheckPrivate(clusters, trgt2Ctrls, minSamps)
+    (clust2Samps, trgt2Ctrls) = links2ClustersPrivate(linksMatrix, minDist, maxDist, minSamps)
 
     # Optionnal plot a dendogram based on clustering results
     if outputFile:
-        DendogramsPrivate(clusters, ctrls, linksMatrix, minDist, outputFile)
+        DendogramsPrivate(clust2Samps, trgt2Ctrls, linksMatrix, minDist, outputFile)
 
     ##########
-    return(clusters, ctrls, validSampClust)
+    return(clust2Samps, trgt2Ctrls)
 
 
 #############################
@@ -208,29 +200,6 @@ def GonosomesClustersBuilds(genderInfo, validCounts, gonoIndex, maxCorr, minCorr
     # correspond to KMeans groupID (gp1=M, gp2=F)
     gender2Kmeans = mageCNV.genderDiscrimination.genderAttribution(kmeans, validCounts, gonoIndex, genderInfo)
 
-    ####################
-    # Independent clustering for the two Kmeans groups
-    for genderGp in range(len(gender2Kmeans)):
-        logger.info("clustering for  %s", gender2Kmeans[genderGp])
-        # - sampsIndexGp (np.ndarray[int]): indexes of samples of interest for a given gender
-        sampsIndexGp = np.where(kmeans == genderGp)[0]
-        # - gonosomesFPMGp (np.ndarray[float]): extraction of fragment counts data only for samples
-        #  of the selected gender
-        gonosomesFPMGp = gonosomesFPM[:, sampsIndexGp]
-
-        # if the user wants the dendograms in the output
-        if figure:
-            outputFile = os.path.join(outFolder, "Dendogram_" + str(len(sampsIndexGp)) + "Samps_gonosomes_" + gender2Kmeans[genderGp] + ".png")
-            (tmpClusters, tmpCtrls, tmpValidityStatus) = clustersBuilds(gonosomesFPMGp, maxCorr, minCorr, minSamps, outputFile)
-        else:
-            (tmpClusters, tmpCtrls, tmpValidityStatus) = clustersBuilds(gonosomesFPMGp, maxCorr, minCorr, minSamps)
-
-        # populate clusterG, ctrlsG, validityStatusG, genderPred
-        for index in range(len(sampsIndexGp)):
-            clusters[sampsIndexGp[index]] = tmpClusters[index]
-            ctrls[sampsIndexGp[index]] = tmpCtrls[index]
-            validSampClust[sampsIndexGp[index]] = tmpValidityStatus[index]
-            genderPred[sampsIndexGp[index]] = gender2Kmeans[genderGp]
 
     return (clusters, ctrls, validSampClust, genderPred)
 
@@ -335,8 +304,17 @@ def links2ClustersPrivate(linksMatrix, minDist, maxDist, minSamps):
         # Populate "clusters" and "trgt2Ctrls"
         ##########
         # condition 1: cluster constructions from a minimum to a maximum correlation distance
+        # replacement/overwriting of old clusterIDs with the new one for SOIs indexes in
+        # np.array "clusters"
+        if (distValue < minDist):
+            clust2Samps[clusterID] = VSOIsIndexInParents
+            for key in parentClustsIDs:
+                if key in clust2Samps:
+                    del clust2Samps[key]
+                    
         # current distance is between minDist and maxDist
-        if ((distValue >= minDist) and (distValue <= maxDist)):
+        # cluster selection is possible     
+        elif ((distValue >= minDist) and (distValue <= maxDist)):
             ##########
             # condition 2: estimate the samples number to create a cluster
             # with sufficient samples in current cluster
@@ -366,6 +344,7 @@ def links2ClustersPrivate(linksMatrix, minDist, maxDist, minSamps):
                     # index corresponding to nbVSOIsInParents and parentClustsIDs (e.g list: [parent1, parent2])
                     indexCtrlParent = np.argmax(nbVSOIsInParents) # control
                     indexNewParent = np.argmin(nbVSOIsInParents) # target
+
                     
                     if parentClustsIDs[indexCtrlParent] in clust2Samps.keys():
                         # fill trgt2Ctrl
@@ -384,15 +363,24 @@ def links2ClustersPrivate(linksMatrix, minDist, maxDist, minSamps):
                             clust2Samps[clusterID] = VSOIsIndexInParents[-nbVSOIsInParents[indexNewParent]:]
                     else:
                         clust2Samps[clusterID] = VSOIsIndexInParents
-
+                     
+                    if parentClustsIDs[indexNewParent] in clust2Samps:  
+                        del clust2Samps[parentClustsIDs[indexNewParent]]
+                    
                 # Case 3: each parent cluster has an insufficient number of samples.
                 # the current clusterID becomes a control cluster.
                 else:
                     clust2Samps[clusterID] = VSOIsIndexInParents
-                    
+                    if parentClustsIDs[0] in clust2Samps:  
+                        del clust2Samps[parentClustsIDs[0]]
+                    if parentClustsIDs[1] in clust2Samps:  
+                        del clust2Samps[parentClustsIDs[1]]
             # clusters too small 
             else:
-                continue
+                clust2Samps[clusterID] = VSOIsIndexInParents
+                for key in parentClustsIDs:
+                    if key in clust2Samps:
+                        del clust2Samps[key]
             
         # current distance larger than maxDist we stop the loop on rows from linksMatrix
         elif (distValue > maxDist):
@@ -434,106 +422,47 @@ def getParentsClustsInfosPrivate(parentClustsIDs, links2Clusters, NbLinks):
             nbVSOIsInParents.append(len(links2Clusters[parentID]))
     return(VSOIsIndexInParents, nbVSOIsInParents)
 
-
-#############################
-# STDZAndCheckPrivate: [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
-# Standardization: replacement of the clusterIDs deduced from linksMatrix by identifiers
-# ranging from 0 to the total number of clusters.
-# the new identifiers are assigned according to the decreasing correlation level.
-# Checking: the samples are in a cluster with a sufficient size.
-# if not returns a warning message and changes the validity status.
-# Necessary for the calling step.
-#
-# Args:
-# - clusters (np.ndarray[int]): clusterID associated to SOIsIndex
-# - trgt2Ctrls (dict(int : list[int])): target and controls clusters correspondance,
-#   key = target clusterID, value = list of controls clusterID
-# - minSamps (int): minimal sample number to validate a cluster
-#
-# Returns a tuple (clusters, ctrls, validSampClust), only ctrls and validSampClust are created here:
-# - clusters (np.ndarray[int]): standardized clusterID for each sample
-# - ctrls (list[str]): controls clusterID delimited by "," for each sample
-# - validSampClust (np.ndarray[int]): validity status for each sample passed
-#   quality control (1: valid, 0: invalid), dim = NbSOIs
-def STDZAndCheckPrivate(clusters, trgt2Ctrls, minSamps):
-    # - uniqueClusterIDs (np.ndarray[int]): contains all clusterIDs
-    # - countsSampsinCluster (np.ndarray[int]): contains all sample counts per clusterIDs
-    uniqueClusterIDs, countsSampsinCluster = np.unique(clusters, return_counts=True)
-
-    ##########
-    # To Fill
-    ctrls = [""] * len(clusters)
-    validSampClust = np.ones(len(clusters), dtype=np.int)
-
-    # browse all unique cluster identifiers
-    for newClusterID in range(len(uniqueClusterIDs)):
-        clusterID = uniqueClusterIDs[newClusterID]
-        # selection of sample indexes associated with the old clusterID
-        Sindex = [i for i in range(len(clusters)) if clusters[i] == clusterID]
-        # replacement by the new
-        clusters[Sindex] = newClusterID
-
-        # fill ctrls by replacing clusterIDs with new ones
-        if (clusterID in trgt2Ctrls):
-            emptylist = []
-            for i in trgt2Ctrls[clusterID]:
-                if (i in uniqueClusterIDs):
-                    emptylist.append(np.where(uniqueClusterIDs == i)[0][0])
-            emptylist = ",".join(map(str, emptylist))
-            for index in Sindex:
-                ctrls[index] = emptylist
-
-        # check the validity:
-        else:
-            # the sample(s) were not clustered
-            if clusterID == newClusterID:
-                logger.warning("%s sample(s) were not clustered (maxDist to be reviewed).", len(Sindex))
-                validSampClust[Sindex] = 0
-            # cluster samples number is not sufficient to establish a correct copies numbers call
-            elif (countsSampsinCluster[newClusterID] < minSamps):
-                logger.warning("Cluster n°%s has an insufficient samples number = %s ", newClusterID, countsSampsinCluster[newClusterID])
-                validSampClust[Sindex] = 0
-
-    return(clusters, ctrls, validSampClust)
-
-
 #############################
 # DendogramsPrivate [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
 # visualisation of clustering results
 # Args:
-# - clusters (np.ndarray[int]): standardized clusterID for each sample
-# - ctrls (list[str]): controls clusterID delimited by "," for each sample
+# - clust2Samps (dict(int : list[int])): clusterID associated to valid sample indexes
+#   key = clusterID, value = list of valid sample indexes
+# - trgt2Ctrls (dict(int : list[int])): target and controls clusters correspondance,
+#   key = target clusterID, value = list of controls clusterID
 # - linksMatrix (np.ndarray[float])
 # - minDist (float): is the distance to start cluster construction
 # - outputFile (str): full path to save the png
 # Returns a png file in the output folder
-def DendogramsPrivate(clusters, ctrls, linksMatrix, minDist, outputFile):
+def DendogramsPrivate(clust2Samps, trgt2Ctrls, linksMatrix, minDist, outputFile):
     # maxClust: int variable contains total clusters number
-    maxClust = max(clusters)
+    maxClust = len(clust2Samps.keys())
 
     # To Fill
     # labelArray (np.ndarray[str]): status for each cluster as a character, dim=NbSOIs*NbClusters
     # " ": sample does not contribute to the cluster
     # "x": sample contributes to the cluster
     # "-": sample controls the cluster
-    labelArray = np.empty([len(clusters), maxClust + 1], dtype="U1")
+    labelArray = np.empty([len(linksMatrix+1), maxClust + 1], dtype="U1")
     labelArray.fill(" ")
     # labelsGp (list[str]): labels for each sample list to be passed when plotting the dendogram
     labelsGp = []
+    
+    keysList=clust2Samps.keys()
 
     # browse the different cluster identifiers
-    for clusterID in range(maxClust + 1):
+    for clusterID in range(len(keysList)):
         # retrieving the SOIs involved for the clusterID
-        SOIsindex = [i for i in range(len(clusters)) if clusters[i] == clusterID]
+        SOIsindex = clust2Samps[keysList[clusterID]]
         # associate the label for the samples contributing to the clusterID for the
         # associated cluster index position
         labelArray[SOIsindex, clusterID] = "x"
 
         # associate the label for the samples controlling the current clusterID
-        if (ctrls[SOIsindex[0]] != ""):
-            listctrl = ctrls[SOIsindex[0]].split(",")
+        if keysList[clusterID] in trgt2Ctrls.keys():
+            listctrl = trgt2Ctrls[keysList[clusterID]]
             for ctrl in listctrl:
-                CTRLindex = [j for j in range(len(clusters)) if clusters[j] == np.int(ctrl)]
+                CTRLindex = clust2Samps[ctrl]
                 labelArray[CTRLindex, clusterID] = "-"
 
     # browse the np array of labels to build the str list
