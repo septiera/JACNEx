@@ -3,8 +3,7 @@ import os
 import numpy as np
 import logging
 import matplotlib.pyplot
-# import sklearn submodule for Kmeans calculation
-import sklearn.cluster
+
 
 import mageCNV.genderDiscrimination
 
@@ -145,69 +144,6 @@ def printClustersFile(nogender, SOIs, validSampQC, validSampClust, clusters, ctr
                 to_print = "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}".format(SOIs[i], validSampQC[i], 0, "", "", "", 0, "", "")
             cluster_file.write(to_print + '\n')
         cluster_file.close()
-
-
-#############################
-# GonosomesClustersBuilds:
-# - Performs a kmeans on the coverages of the exons present in the gonosomes,
-# to identify two groups normally associated with the gender.
-# - Assigns gender to each group of Kmeans based on their coverage ratios.
-# - Performs two clustering analysis
-# - aggregates the results for all valid samples.
-# Warning: the male and female groups IDs all start with 0, so it is necessary
-# to refer to the genderPred list/column to avoid integrating males with females.
-#
-# Args:
-# - genderInfo (list of list[str]):contains informations for the gender
-# identification, ie ["gender identifier","specific chromosome"].
-# - validCounts (np.ndarray[float]): normalised fragment counts for QC validated samples,
-#  dim = NbCoveredExons x NbSOIsQCValidated
-# - gonoIndex (dict(str: list(int))): key=GonosomeID(e.g 'chrX'),
-# value=list of gonosome exon index.
-# - maxCorr (float): maximal Pearson correlation score tolerated by the user to start
-#   build clusters
-# - minCorr (float): minimal Pearson correlation score tolerated by the user to end
-#   build clusters
-# - minSamps (int): minimal sample number to validate a cluster
-# - figure (boolean): "True" => produce a figure
-# - outFolder (str): output folder path
-
-#
-# Returns a tuple (clusters, ctrls, validSampClust, genderPred), all objects are created here:
-# - clusters (np.ndarray[int]): clusterID for each sample
-# - ctrls (list[str]): controls clusterID delimited by "," for each sample
-# - validSampClust (np.ndarray[int]): validity status for each sample passed
-#   quality control (1: valid, 0: invalid), dim = NbSOIs
-# - genderPred (list[str]): genderID delimited for each SOIs (e.g: "M" or "F")
-def GonosomesClustersBuilds(genderInfo, validCounts, gonoIndex, maxCorr, minCorr, minSamps, figure, outFolder):
-
-    # cutting normalized count data according to gonosomal exons
-    # - gonoIndexFlat (np.ndarray[int]): flat gonosome exon indexes list
-    gonoIndexFlat = np.unique([item for sublist in list(gonoIndex.values()) for item in sublist])
-    # - gonosomesFPM (np.ndarray[float]): normalized fragment counts for valid samples, exons covered
-    # in gonosomes
-    gonosomesFPM = np.take(validCounts, gonoIndexFlat, axis=0)
-
-    ### To Fill and returns
-    clusters = np.zeros(gonosomesFPM.shape[1], dtype=np.int)
-    ctrls = [""] * gonosomesFPM.shape[1]
-    validSampClust = np.ones(gonosomesFPM.shape[1], dtype=np.int)
-    genderPred = [""] * gonosomesFPM.shape[1]
-
-    # Performs an empirical method (kmeans) to dissociate male and female.
-    # consider only the coverage for the exons present in the gonosomes
-    # Kmeans with k=2 (always)
-    # - kmeans (list[int]): groupID predicted by Kmeans ordered on SOIsIndex
-    kmeans = sklearn.cluster.KMeans(n_clusters=len(genderInfo), random_state=0).fit(gonosomesFPM.T).predict(gonosomesFPM.T)
-
-    # compute coverage rate for the different Kmeans groups and on
-    # the different gonosomes to associate the Kmeans group with a gender
-    # - gender2Kmeans (list[str]): genderID (e.g ["M","F"]), the order
-    # correspond to KMeans groupID (gp1=M, gp2=F)
-    gender2Kmeans = mageCNV.genderDiscrimination.genderAttribution(kmeans, validCounts, gonoIndex, genderInfo)
-
-
-    return (clusters, ctrls, validSampClust, genderPred)
 
 
 ###############################################################################
