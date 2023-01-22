@@ -199,7 +199,7 @@ def main(argv):
     #####################################################
     # Normalisation:
     ##################
-    # Fragment counts are standardised in Fragment Per Million (FPM). 
+    # Fragment counts are standardised in Fragment Per Million (FPM).
     # - FPMArray (np.ndarray[float]): normalised counts of countsArray same dimension
     #   for arrays in input/output: NbExons*NbSOIs
     try:
@@ -215,19 +215,17 @@ def main(argv):
     #####################################################
     # Quality control:
     ##################
-    # sample coverage validity assessment and identification of exons with
+    # sample coverage profil validity assessment and identification of exons with
     # little or no coverage common to the validated samples
-    # - validSampQC (np.array[int]): validity status for each sample passed quality
-    #   control (1: valid, 0: invalid), dim = NbSOIs
-    # - exonsFewFPM (list[int]): exons indexes with little or no coverage common
+    # - sampsQCfailed (list[int]): sample indexes not validated by quality control  
+    # - uncoveredExons (list[int]): exons indexes with little or no coverage common
     #   to all samples passing quality control
-    # Returns a pdf file illustrating the results in the output folder, if the figure argument is passed. 
     try:
         if figure:
             outputFile = os.path.join(outFolder, "CoverageProfilChecking_" + str(len(SOIs)) + "samps.pdf")
-            (validSampQC, exonsFewFPM) = mageCNV.qualityControl.SampsQC(FPMArray, SOIs, outputFile)
+            (sampsQCfailed, uncoveredExons) = mageCNV.qualityControl.SampsQC(FPMArray, SOIs, outputFile)
         else:
-            (validSampQC, exonsFewFPM) = mageCNV.qualityControl.SampsQC(FPMArray, SOIs)
+            (sampsQCfailed, uncoveredExons) = mageCNV.qualityControl.SampsQC(FPMArray, SOIs)
     except Exception as e:
         logger.error("SampQC failed %s", e)
         raise Exception()
@@ -243,11 +241,11 @@ def main(argv):
     # (exons and samples) by the quality control.
 
     ####################
-    # filtering the coverage data to recover valid samples and covered exons
-    # - validCounts (np.ndarray[float]): normalized fragment counts for exons covered
+    # filtering the counts data to recover valid samples and covered exons
+    # - validFPMArray (np.ndarray[float]): normalized fragment counts for exons covered
     # for all samples that passed quality control
-    validCounts = np.delete(countsNorm, np.where(validSampQC == 0)[0], axis=1)
-    validCounts = np.delete(validCounts, exonsFewFPM, axis=0)
+    validFPMArray = np.delete(FPMArray, sampsQCfailed, axis=1)
+    validFPMArray = np.delete(validFPMArray, uncoveredExons, axis=0)
 
     ###########################
     #### no gender discrimination
@@ -258,14 +256,14 @@ def main(argv):
         try:
             if figure:
                 outputFile = os.path.join(outFolder, "Dendogram_" + str(len(SOIs)) + "Samps_FullChrom.png")
-                # applying hierarchical clustering and obtaining 3 outputs:
-                # - clusters (np.ndarray[int]): standardized clusterID for each SOIs
-                # - ctrls (list[str]): controls clusterID delimited by "," for each SOIs
-                # - validSampClust (np.ndarray[boolean]): validity status for each SOIs
-                # validated by quality control after clustering (1: valid, 0: invalid)
-                (clusters, ctrls, validSampClust) = mageCNV.clustering.clustersBuilds(validCounts, maxCorr, minCorr, minSamps, outputFile)
+                # applying hierarchical clustering and obtaining 2 outputs:
+                # - clust2Samps (dict(int : list[int])): clusterID associated to SOIsIndex
+                #   key = clusterID, value = list of SOIsIndex
+                # - trgt2Ctrls (dict(int : list[int])): target and controls clusters correspondance,
+                #   key = target clusterID, value = list of controls clusterID
+                (clust2Samps, trgt2Ctrls) = mageCNV.clustering.clustersBuilds(validFPMArray, maxCorr, minCorr, minSamps, outputFile)
             else:
-                (clusters, ctrls, validSampClust) = mageCNV.clustering.clustersBuilds(validCounts, maxCorr, minCorr, minSamps)
+                (clust2Samps, trgt2Ctrls) = mageCNV.clustering.clustersBuilds(validFPMArray, maxCorr, minCorr, minSamps)
 
         except Exception:
             logger.error("clusterBuilding failed")

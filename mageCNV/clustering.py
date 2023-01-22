@@ -28,13 +28,21 @@ logger = logging.getLogger(os.path.basename(sys.argv[0]))
 # clustersBuilds
 # Groups the QC validated samples according to their distance obtained 
 # with a hierarchical clustering.
-# Transforms the correlation thresholds (ρ) passed as arguments into 
+# Transforms the correlation thresholds (maxCorr, minCorr = ρ) passed as arguments into 
 # distance (√(1-ρ)).
-# Compute distances between samples from the Pearson correlation 
-# Clusters formation and identification of controls/targets clusters 
-# from the distance matrix.
-#
-#
+# Compute distances between samples with the equation √(1-ρ) where ρ is
+# the Pearson correlation.
+# Calculate matrix links with hierarchical clustering using the 'average' 
+# method on the distance data. 
+# Parsing this links matrix allows to obtain the clusters but respecting some conditions:
+# 1- The distance between samples in the cluster must be within a range,
+# specified by the minDist and maxDist parameters.
+# 2- The number of samples in the cluster must be above a threshold,
+# specified by the minSamps parameter.
+# Identification of control clusters (samples composing a cluster with small distances 
+# between them and with sufficient numbers) used as reference for the formation of 
+# other clusters (target clusters, present for higher distances)
+# returns a pdf in the output folder if the figure option is set.
 #
 # Args:
 #  - FPMarray (np.ndarray[float]): normalised fragment counts for QC validated samples,
@@ -61,14 +69,12 @@ def clustersBuilds(FPMarray, maxCorr, minCorr, minSamps, outputFile=None):
     #  matrix, dim = (NbSOIs-1)*[clusterID1,clusterID2,distValue,NbSOIsInClust]
     linksMatrix = computeSampLinksPrivate(FPMarray)
 
-
     (clust2Samps, trgt2Ctrls) = links2ClustersPrivate(linksMatrix, minDist, maxDist, minSamps)
 
     # Optionnal plot a dendogram based on clustering results
     if outputFile:
         DendogramsPrivate(clust2Samps, trgt2Ctrls, linksMatrix, minDist, outputFile)
 
-    ##########
     return(clust2Samps, trgt2Ctrls)
 
 
@@ -244,6 +250,11 @@ def computeSampLinksPrivate(FPMarray):
 # specified by the minDist and maxDist parameters.
 # 2- The number of samples in the cluster must be above a threshold,
 # specified by the minSamps parameter.
+# a cluster called control has for attribute:
+#  -contains enough samples (>=20)
+#  -formed at very small distances (generally as soon as minDist)
+#  -the samples of this cluster are used to form another cluster with more 
+# distant samples. The cluster then formed is called target. 
 #
 # Args:
 # - linksMatrix (np.ndarray[float]): the hierarchical clustering encoded as a linkage
@@ -266,6 +277,9 @@ def links2ClustersPrivate(linksMatrix, minDist, maxDist, minSamps):
     # - links2Clusters (dict(int : list[int])): cluster formed from linksMatrix
     #   parsing associated with VSOIs.
     #   key = current clusterID, value = list of valid SOIs indexes
+    # It is important not to change it to keep the patient lists healthy. 
+    # Hence the creation of a second dictionary respecting the conditions for 
+    # the construction of clusters "clust2Samps".  
     links2Clusters = {}
     
     # To increment
@@ -291,14 +305,16 @@ def links2ClustersPrivate(linksMatrix, minDist, maxDist, minSamps):
         ################
         # Fill links2Clusters
         links2Clusters[clusterID] = VSOIsIndexInParents
-
-        NbSOIsInClust = clusterLine[3]
+        
+        """
         ################
-        # CONTROL that the sample number calculation is correct
+        # DEV CONTROL ; check that the sample number calculation for a cluster is correct
         # TO REMOVE
+        NbSOIsInClust = clusterLine[3]
         if (len(VSOIsIndexInParents) != NbSOIsInClust):
             break
-        
+        """
+
         ##########################
         # CONDITIONS FOR CLUSTER CREATION
         # Populate "clusters" and "trgt2Ctrls"
@@ -306,18 +322,24 @@ def links2ClustersPrivate(linksMatrix, minDist, maxDist, minSamps):
         # condition 1: cluster constructions from a minimum to a maximum correlation distance
         # replacement/overwriting of old clusterIDs with the new one for SOIs indexes in
         # np.array "clusters"
+        # allows to build the clusters step by step in the order of correlations. 
+        # allows to keep the small clusters after the last threshold maxDists.
         if (distValue < minDist):
             clust2Samps[clusterID] = VSOIsIndexInParents
+            # deletion of old groups when forming new ones
             for key in parentClustsIDs:
                 if key in clust2Samps:
                     del clust2Samps[key]
                     
         # current distance is between minDist and maxDist
         # cluster selection is possible     
+        # From this step onwards, clusters with sufficient samples will be kept and will
+        # be defined as controls for other clusters (fill trgt2Ctrls dictionnary)
+        # the deletion of old clusters should therefore be treated with caution.
         elif ((distValue >= minDist) and (distValue <= maxDist)):
             ##########
             # condition 2: estimate the samples number to create a cluster
-            # with sufficient samples in current cluster
+            # sufficient samples in current cluster
             if (len(VSOIsIndexInParents) >= minSamps):
                 
                 ###############
@@ -350,8 +372,7 @@ def links2ClustersPrivate(linksMatrix, minDist, maxDist, minSamps):
                         # fill trgt2Ctrl
                         # case that the parent control has previous controls
                         if (parentClustsIDs[indexCtrlParent] in trgt2Ctrls.keys()):
-                            trgt2Ctrls[clusterID] = trgt2Ctrls[parentClustsIDs[indexCtrlParent]]
-                            trgt2Ctrls[clusterID] = trgt2Ctrls[clusterID] + [parentClustsIDs[indexCtrlParent]]
+                            trgt2Ctrls[clusterID] = trgt2Ctrls[parentClustsIDs[indexCtrlParent]] + [parentClustsIDs[indexCtrlParent]]
                         else:
                             trgt2Ctrls[clusterID] = [parentClustsIDs[indexCtrlParent]]
                         
@@ -375,14 +396,16 @@ def links2ClustersPrivate(linksMatrix, minDist, maxDist, minSamps):
                         del clust2Samps[parentClustsIDs[0]]
                     if parentClustsIDs[1] in clust2Samps:  
                         del clust2Samps[parentClustsIDs[1]]
+
             # clusters too small 
+            # complete clust2Samps with new clusterID and remove old clustersID
             else:
                 clust2Samps[clusterID] = VSOIsIndexInParents
                 for key in parentClustsIDs:
                     if key in clust2Samps:
                         del clust2Samps[key]
             
-        # current distance larger than maxDist we stop the loop on rows from linksMatrix
+        # current distance larger than maxDist we stop the loop on linksMatrix rows
         elif (distValue > maxDist):
             break
     return(clust2Samps, trgt2Ctrls)
@@ -476,4 +499,4 @@ def DendogramsPrivate(clust2Samps, trgt2Ctrls, linksMatrix, minDist, outputFile)
     matplotlib.pyplot.title("Average linkage hierarchical clustering")
     dn1 = scipy.cluster.hierarchy.dendrogram(linksMatrix, labels=labelsGp, color_threshold=minDist)
     matplotlib.pyplot.ylabel("Distance √(1-ρ) ")
-    matplotlib.pyplot.savefig(outputFile, dpi=520, format="png", bbox_inches='tight')
+    matplotlib.pyplot.savefig(outputFile, dpi=520, format="pdf", bbox_inches='tight')
