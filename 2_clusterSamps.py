@@ -133,11 +133,11 @@ ARGUMENTS:
         raise Exception()
     else:
         try:
-            maxCorr = np.float(value)
+            maxCorr = np.float(maxCorr)
             if (maxCorr > 1 or maxCorr < 0):
                 raise Exception()
         except Exception:
-            sys.stderr.write("ERROR : maxCorr must be a float between 0 and 1, not '" + value + "'.\n")
+            sys.stderr.write("ERROR : maxCorr must be a float between 0 and 1, not '" + maxCorr + "'.\n")
             raise Exception()
 
     if minCorr == "":
@@ -149,7 +149,7 @@ ARGUMENTS:
             if (minCorr > 1 or minCorr < 0):
                 raise Exception()
         except Exception:
-            sys.stderr.write("ERROR : minCorr must be a float between 0 and 1, not '" + value + "'.\n")
+            sys.stderr.write("ERROR : minCorr must be a float between 0 and 1, not '" + minCorr + "'.\n")
             raise Exception()
 
     # test BPdir last so we don't mkdir unless all other args are OK
