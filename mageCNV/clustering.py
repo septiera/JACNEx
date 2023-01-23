@@ -4,9 +4,6 @@ import numpy as np
 import logging
 import matplotlib.pyplot
 
-
-import mageCNV.genderDiscrimination
-
 # different scipy submodules are used for the application of hierachical clustering
 import scipy.cluster.hierarchy
 import scipy.spatial.distance
@@ -58,7 +55,7 @@ logger = logging.getLogger(os.path.basename(sys.argv[0]))
 #   key = clusterID, value = list of SOIsIndex
 # - trgt2Ctrls (dict(int : list[int])): target and controls clusters correspondance,
 #   key = target clusterID, value = list of controls clusterID
-def clustersBuilds(FPMarray, maxCorr, minCorr, minSamps, outputFile=None):
+def clustersBuilds(FPMarray, maxCorr, minCorr, minSamps, outputFile):
     # - minDist (float): is the distance to start cluster construction
     minDist = (1 - maxCorr)**0.5
     # - maxDist (float): is the distance to finalise the cluster construction
@@ -71,8 +68,7 @@ def clustersBuilds(FPMarray, maxCorr, minCorr, minSamps, outputFile=None):
     (clust2Samps, trgt2Ctrls) = links2ClustersPrivate(linksMatrix, minDist, maxDist, minSamps)
 
     # Optionnal plot a dendogram based on clustering results
-    if outputFile:
-        DendogramsPrivate(clust2Samps, trgt2Ctrls, linksMatrix, minDist, outputFile)
+    DendogramsPrivate(clust2Samps, trgt2Ctrls, linksMatrix, minDist, outputFile)
 
     return(clust2Samps, trgt2Ctrls)
 
@@ -481,4 +477,4 @@ def DendogramsPrivate(clust2Samps, trgt2Ctrls, linksMatrix, minDist, outputFile)
     matplotlib.pyplot.title("Average linkage hierarchical clustering")
     dn1 = scipy.cluster.hierarchy.dendrogram(linksMatrix, labels=labelsGp, color_threshold=minDist)
     matplotlib.pyplot.ylabel("Distance √(1-ρ) ")
-    matplotlib.pyplot.savefig(outputFile, dpi=520, format="png", bbox_inches='tight')
+    matplotlib.pyplot.savefig(outputFile, dpi=520, format="pdf", bbox_inches='tight')

@@ -52,7 +52,7 @@ Given a TSV of exon fragment counts, normalizes the counts (Fragment Per Million
 quality control on the samples and forms the reference clusters for the call.
 The execution of the default command separates autosomes ("A") and gonosomes ("G") for
 clustering, to avoid bias (accepted sex chromosomes: X, Y, Z, W).
-Results are printed to stdout in TSV format: 5 columns 
+Results are printed to stdout in TSV format: 5 columns
 [clusterID, sampsInCluster, controlledBy, validCluster, clusterStatus]
 In addition, all graphical support (quality control histogram for each sample and
 dendogram from clustering) are printed in pdf files created in plotDir.
@@ -221,15 +221,13 @@ def main(argv):
     ##################
     # sample coverage profil validity assessment and identification of exons with
     # little or no coverage common to the validated samples
-    # - sampsQCfailed (list[int]): sample indexes not validated by quality control  
+    # - sampsQCfailed (list[int]): sample indexes not validated by quality control
     # - uncoveredExons (list[int]): exons indexes with little or no coverage common
     #   to all samples passing quality control
     try:
-        if figure:
-            outputFile = os.path.join(outFolder, "CoverageProfilChecking_" + str(len(SOIs)) + "samps.pdf")
-            (sampsQCfailed, uncoveredExons) = mageCNV.qualityControl.SampsQC(FPMArray, SOIs, outputFile)
-        else:
-            (sampsQCfailed, uncoveredExons) = mageCNV.qualityControl.SampsQC(FPMArray, SOIs)
+        QCPDF = os.path.join(plotDir, "CoverageProfilChecking_" + str(len(SOIs)) + "samps.pdf")
+        (sampsQCfailed, uncoveredExons) = mageCNV.qualityControl.SampsQC(FPMArray, SOIs, QCPDF)
+
     except Exception as e:
         logger.error("SampQC failed %s", e)
         raise Exception()
@@ -256,19 +254,14 @@ def main(argv):
     # clustering algorithm direct application
     if nogender:
         logger.info("### Samples clustering:")
-
         try:
-            if figure:
-                outputFile = os.path.join(outFolder, "Dendogram_" + str(len(SOIs)) + "Samps_FullChrom.png")
-                # applying hierarchical clustering and obtaining 2 outputs:
-                # - clust2Samps (dict(int : list[int])): clusterID associated to SOIsIndex
-                #   key = clusterID, value = list of SOIsIndex
-                # - trgt2Ctrls (dict(int : list[int])): target and controls clusters correspondance,
-                #   key = target clusterID, value = list of controls clusterID
-                (clust2Samps, trgt2Ctrls) = mageCNV.clustering.clustersBuilds(validFPMArray, maxCorr, minCorr, minSamps, outputFile)
-            else:
-                (clust2Samps, trgt2Ctrls) = mageCNV.clustering.clustersBuilds(validFPMArray, maxCorr, minCorr, minSamps)
-
+            dendogramPDF = os.path.join(plotDir, "Dendogram_" + str(len(SOIs)) + "Samps_FullChrom.png")
+            # applying hierarchical clustering and obtaining 2 outputs:
+            # - clust2Samps (dict(int : list[int])): clusterID associated to SOIsIndex
+            #   key = clusterID, value = list of SOIsIndex
+            # - trgt2Ctrls (dict(int : list[int])): target and controls clusters correspondance,
+            #   key = target clusterID, value = list of controls clusterID
+            (clust2Samps, trgt2Ctrls) = mageCNV.clustering.clustersBuilds(validFPMArray, maxCorr, minCorr, minSamps, dendogramPDF)
         except Exception:
             logger.error("clusterBuilding failed")
             raise Exception()
@@ -278,9 +271,12 @@ def main(argv):
         startTime = thisTime
 
         logger.info("### standardisation of results and validation:")
-
         try:
-            # 
+            # standardisation and verification of clustering results:
+            # - clustsResList (list of lists[str,str,str,int,str]): to be printed in STDOUT
+            # contains the following information: clusterID, list of samples added to compose the cluster,
+            # clusterIDs controlling this cluster, validity of the cluster according to its total number
+            # (<20 =invalid), its cluster status (here as all chromosomes are analysed together = "W" for whole)
             clustsResList = mageCNV.clustering.STDZandCheckRes(SOIs, sampsQCfailed, clust2Samps, trgt2Ctrls, minSamps, nogender)
 
         except Exception:
@@ -293,10 +289,9 @@ def main(argv):
 
     ###########################
     #### gender discrimination
-    # avoid grouping Male with Female which leads to dubious CNV calls
     else:
 
-        # - exonsToKeep (list of list[str,int,int,str]): contains information about the covered exons
+        # - exonsToKeep (list of list[str,int,int,str]): contains exons information from covered exons
         exonsToKeep = [val for i, val in enumerate(exons) if i not in uncoveredExons]
 
         try:
@@ -314,7 +309,7 @@ def main(argv):
         logger.debug("Done get gender informations in %.2f s", thisTime - startTime)
         startTime = thisTime
 
-        # cutting normalized count data according to autosomal exons
+        # cutting normalized count data
         # - gonoIndexFlat (np.ndarray[int]): flat gonosome exon indexes list
         gonoIndexFlat = np.unique([item for sublist in list(gonoIndex.values()) for item in sublist])
         # - autosomesFPM (np.ndarray[float]): normalized fragment counts for valid samples, exons covered
@@ -329,11 +324,14 @@ def main(argv):
         ##################
         logger.info("### Autosomes, sample clustering:")
         try:
-            if figure:
-                outputFile = os.path.join(outFolder, "Dendogram_" + str(autosomesFPM.shape[1]) + "Samps_autosomes.png")
-                (clust2Samps, trgt2Ctrls) = mageCNV.clustering.clustersBuilds(autosomesFPM, maxCorr, minCorr, minSamps, outputFile)
-            else:
-                (clust2Samps, trgt2Ctrls) = mageCNV.clustering.clustersBuilds(autosomesFPM, maxCorr, minCorr, minSamps)
+            dendogramPDF = os.path.join(plotDir, "Dendogram_" + str(autosomesFPM.shape[1]) + "Samps_autosomes.png")
+            # applying hierarchical clustering and obtaining 2 outputs autosome-specific:
+            # - clust2Samps (dict(int : list[int])): clusterID associated to SOIsIndex
+            #   key = clusterID, value = list of SOIsIndex
+            # - trgt2Ctrls (dict(int : list[int])): target and controls clusters correspondance,
+            #   key = target clusterID, value = list of controls clusterID
+            (clust2Samps, trgt2Ctrls) = mageCNV.clustering.clustersBuilds(autosomesFPM, maxCorr, minCorr, minSamps, dendogramPDF)
+
         except Exception:
             logger.error("clusterBuilds for autosomes failed")
             raise Exception()
@@ -345,16 +343,36 @@ def main(argv):
         #####################################################
         # Get Gonosomes Clusters
         ##################
-        # In contrast to all chromosomes and autosomes where only one clustering
-        # analysis is expected, for gonosomes it is preferable to perform clustering
-        # analyses by separating the genders.
-        # This avoids, among other things, future copy number calling errors.
+        logger.info("### Gonosomes, sample clustering:")
+        try:
+            dendogramPDF = os.path.join(plotDir, "Dendogram_" + str(gonosomesFPM.shape[1]) + "Samps_gonosomes.png")
+            # applying hierarchical clustering and obtaining 2 outputs gonosome-specific:
+            # - clust2SampsGono (dict(int : list[int])): clusterID associated to SOIsIndex
+            #   key = clusterID, value = list of SOIsIndex
+            # - trgt2CtrlsGono (dict(int : list[int])): target and controls clusters correspondance,
+            #   key = target clusterID, value = list of controls clusterID
+            (clust2SampsGono, trgt2CtrlsGono) = mageCNV.clustering.clustersBuilds(gonosomesFPM, maxCorr, minCorr, minSamps, dendogramPDF)
+
+        except Exception:
+            logger.error("clusterBuilds for gonosomesFPM failed")
+            raise Exception()
+
+        # unlike the processing carried out on the sets of chromosomes and autosomes,
+        # it is necessary for the gonosomes to identify the sample genders.
+        # This makes it possible to identify the clusters made up of the two genders
+        # which can potentially lead to copy number calls errors.
         # e.g. in humans compared males and females: it is possible to observe
         # heterodel calls on the X chromosome in males and homodel calls on the Y
         # chromosome in females.
         logger.info("### Gonosomes, gender prediction:")
         try:
-            (kmeans, sexePred) = mageCNV.genderDiscrimination.genderAttribution(validFPMArray , gonoIndex, genderInfo)
+            # prediction of two groups based on kmeans from count data,
+            # assignment of genders to each group based on sex chromosome coverage ratios.
+            # obtaining 2 outputs:
+            # - kmeans (list[int]): groupID predicted by Kmeans ordered on SOIsIndex
+            # - sexePred (list[str]): genderID (e.g ["M","F"]), the order
+            # correspond to KMeans groupID (0=M, 1=F)
+            (kmeans, sexePred) = mageCNV.genderDiscrimination.genderAttribution(validFPMArray, gonoIndex, genderInfo)
         except Exception:
             logger.error("gender prediction from gonosomes failed")
             raise Exception()
@@ -363,27 +381,19 @@ def main(argv):
         logger.debug("Done gender prediction from gonosomes : in %.2f s", thisTime - startTime)
         startTime = thisTime
 
-        logger.info("### Gonosomes, sample clustering:")
-        try:
-            if figure:
-                outputFile = os.path.join(outFolder, "Dendogram_" + str(gonosomesFPM.shape[1]) + "Samps_gonosomes.png")
-                (clust2SampsGono, trgt2CtrlsGono) = mageCNV.clustering.clustersBuilds(gonosomesFPM, maxCorr, minCorr, minSamps, outputFile)
-            else:
-                (clust2SampsGono, trgt2CtrlsGono) = mageCNV.clustering.clustersBuilds(gonosomesFPM, maxCorr, minCorr, minSamps)
-        except Exception:
-            logger.error("clusterBuilds for gonosomesFPM failed")
-            raise Exception()
-
-        thisTime = time.time()
-        logger.debug("Done samples clustering for gonosomesFPM : in %.2f s", thisTime - startTime)
-        startTime = thisTime
-
         logger.info("### standardisation of results and validation:")
-
         try:
-            # 
-            clustsResList = mageCNV.clustering.STDZandCheckRes(SOIs, sampsQCfailed, clust2Samps, trgt2Ctrls, minSamps, nogender,clust2SampsGono, trgt2CtrlsGono, kmeans, sexePred)
-
+            # grouping clustering results between autosomes and gonosomes
+            # standardisation and verification of clustering results:
+            # - clustsResList (list of lists[str,str,str,int,str]): to be printed in STDOUT
+            # contains the following information: clusterID, list of samples added to compose the cluster,
+            # clusterIDs controlling this cluster, validity of the cluster according to its total number
+            # (<20 =invalid), its cluster status ("A" for clusters from autosomes, "G" for gonosomes and adding gender
+            # composition "M" only males, "F" only females, "B" both genders are present in the cluster)
+            # beware if a target cluster of one gender has a control cluster with the another gender,
+            # this is not indicated by "B".
+            clustsResList = mageCNV.clustering.STDZandCheckRes(SOIs, sampsQCfailed, clust2Samps, trgt2Ctrls, minSamps,
+                                                               nogender, clust2SampsGono, trgt2CtrlsGono, kmeans, sexePred)
         except Exception:
             logger.error("standardisation of results and validation failed")
             raise Exception()
@@ -391,7 +401,6 @@ def main(argv):
         thisTime = time.time()
         logger.debug("Done standardisation of results and validation in %.2f s", thisTime - startTime)
         startTime = thisTime
-
 
     #####################################################
     # print results
