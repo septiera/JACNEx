@@ -255,7 +255,7 @@ def main(argv):
     if nogender:
         logger.info("### Samples clustering:")
         try:
-            dendogramPDF = os.path.join(plotDir, "Dendogram_" + str(len(SOIs)) + "Samps_FullChrom.png")
+            dendogramPDF = os.path.join(plotDir, "Dendogram_" + str(len(SOIs)) + "Samps_FullChrom.pdf")
             # applying hierarchical clustering and obtaining 2 outputs:
             # - clust2Samps (dict(int : list[int])): clusterID associated to SOIsIndex
             #   key = clusterID, value = list of SOIsIndex
@@ -324,7 +324,7 @@ def main(argv):
         ##################
         logger.info("### Autosomes, sample clustering:")
         try:
-            dendogramPDF = os.path.join(plotDir, "Dendogram_" + str(autosomesFPM.shape[1]) + "Samps_autosomes.png")
+            dendogramPDF = os.path.join(plotDir, "Dendogram_" + str(autosomesFPM.shape[1]) + "Samps_autosomes.pdf")
             # applying hierarchical clustering and obtaining 2 outputs autosome-specific:
             # - clust2Samps (dict(int : list[int])): clusterID associated to SOIsIndex
             #   key = clusterID, value = list of SOIsIndex
