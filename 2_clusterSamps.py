@@ -3,7 +3,12 @@
 ###############################################################################################
 # Given a TSV of exon fragment counts, normalizes the counts (Fragment Per Million), performs
 # quality control on the samples and forms the reference clusters for the call.
-# Prints results in a folder defined by the user.
+# The execution of the default command separates autosomes ("A") and gonosomes ("G") for
+# clustering, to avoid bias (accepted sex chromosomes: X, Y, Z, W).
+# Results are printed to stdout in TSV format: 5 columns 
+# [clusterID, sampsInCluster, controlledBy, validCluster, clusterStatus]
+# In addition, all graphical support (quality control histogram for each sample and
+# dendogram from clustering) are printed in pdf files created in plotDir.
 # See usage for more details.
 ###############################################################################################
 import sys
@@ -34,28 +39,28 @@ def parseArgs(argv):
     scriptName = os.path.basename(argv[0])
     # mandatory args
     countsFile = ""
-    outFolder = ""
     # optionnal args with default values
     minSamps = "20"
     maxCorr = "0.95"
     minCorr = "0.85"
+    plotDir = "./ResultPlots/"
     # boolean args with False status by default
     nogender = False
-    figure = False
 
     usage = """\nCOMMAND SUMMARY:
 Given a TSV of exon fragment counts, normalizes the counts (Fragment Per Million), performs
 quality control on the samples and forms the reference clusters for the call.
 The execution of the default command separates autosomes ("A") and gonosomes ("G") for
 clustering, to avoid bias (accepted sex chromosomes: X, Y, Z, W).
-Produces a single TSV file listing the clustering results.
-By default no result figure is obtained, otherwise a pdf illustrating the data used for QC
-is generated as well as one or more png's with the clustering dendogram(s) obtained.
+Results are printed to stdout in TSV format: 5 columns 
+[clusterID, sampsInCluster, controlledBy, validCluster, clusterStatus]
+In addition, all graphical support (quality control histogram for each sample and
+dendogram from clustering) are printed in pdf files created in plotDir.
 
 ARGUMENTS:
    --counts [str]: TSV file, first 4 columns hold the exon definitions, subsequent columns
                    hold the fragment counts. File obtained from 1_countFrags.py
-   --out[str]: acces path to a pre-existing folder to save the output files
+
    --minSamps [int]: minimum number of samples to validate the creation of a cluster,
                      default : """ + str(minSamps) + """
    --maxCorr [float]: allows to define a Pearson correlation threshold according to which
@@ -68,13 +73,12 @@ ARGUMENTS:
                       into clusters even if they are significantly different from the rest of
                       the clusters. A too high threshold will lead to a massive elimination of
                       non-clustered samples. default: """ + str(minCorr) + """
+   --plotDir[str]: subdir (created if needed) where result plots files will be produced, default :  """ + str(plotDir) + """
    --nogender [boolean]: no gender discrimination for clustering. Calling the argument is sufficient.
-   --figure [boolean]: make histogramms and dendogram(s) that will be present in the output in
-                       pdf and png format. Calling the argument is sufficient.\n
    -h , --help  : display this help and exit\n"""
 
     try:
-        opts, args = getopt.gnu_getopt(sys.argv[1:], 'h', ["help", "counts=", "out=", "minSamps=", "maxCorr=", "minCorr=", "nogender", "figure"])
+        opts, args = getopt.gnu_getopt(sys.argv[1:], 'h', ["help", "counts=", "out=", "minSamps=", "maxCorr=", "minCorr=", "plotDir=", "nogender"])
     except getopt.GetoptError as e:
         sys.stderr.write("ERROR : " + e.msg + ". Try " + scriptName + " --help\n")
         raise Exception()
@@ -86,18 +90,17 @@ ARGUMENTS:
             raise Exception()
         elif (opt in ("--counts")):
             countsFile = value
-        elif (opt in ("--out")):
-            outFolder = value
         elif (opt in ("--minSamps")):
             minSamps = value
         elif (opt in ("--maxCorr")):
             maxCorr = value
         elif (opt in ("--minCorr")):
             minCorr = value
+        elif (opt in ("--plotDir")):
+            plotDir = value
         elif (opt in ("--nogender")):
             nogender = True
-        elif (opt in ("--figure")):
-            figure = True
+
         else:
             sys.stderr.write("ERROR : unhandled option " + opt + ".\n")
             raise Exception()
@@ -109,13 +112,6 @@ ARGUMENTS:
         raise Exception()
     elif (not os.path.isfile(countsFile)):
         sys.stderr.write("ERROR : countsFile " + countsFile + " doesn't exist.\n")
-        raise Exception()
-
-    if outFolder == "":
-        sys.stderr.write("ERROR : You must provide a folder path with --out. Try " + scriptName + " --help.\n")
-        raise Exception()
-    elif (not os.path.isdir(outFolder)):
-        sys.stderr.write("ERROR : outFolder " + outFolder + " doesn't exist.\n")
         raise Exception()
 
     #####################################################
@@ -156,8 +152,16 @@ ARGUMENTS:
             sys.stderr.write("ERROR : minCorr must be a float between 0 and 1, not '" + value + "'.\n")
             raise Exception()
 
+    # test BPdir last so we don't mkdir unless all other args are OK
+    if not os.path.isdir(plotDir):
+        try:
+            os.mkdir(plotDir)
+        except Exception:
+            sys.stderr.write("ERROR : plotDir " + plotDir + " doesn't exist and can't be mkdir'd\n")
+            raise Exception()
+
     # AOK, return everything that's needed
-    return(countsFile, outFolder, minSamps, maxCorr, minCorr, nogender, figure)
+    return(countsFile, minSamps, maxCorr, minCorr, plotDir, nogender)
 
 
 ###############################################################################
@@ -170,7 +174,7 @@ ARGUMENTS:
 # If anything goes wrong, print error message to stderr and raise exception.
 def main(argv):
     # parse, check and preprocess arguments - exceptions must be caught by caller
-    (countsFile, outFolder, minSamps, maxCorr, minCorr, nogender, figure) = parseArgs(argv)
+    (countsFile, minSamps, maxCorr, minCorr, plotDir, nogender) = parseArgs(argv)
 
     ################################################
     # args seem OK, start working
