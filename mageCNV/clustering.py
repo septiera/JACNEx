@@ -38,7 +38,7 @@ logger = logging.getLogger(os.path.basename(sys.argv[0]))
 # Identification of control clusters (samples composing a cluster with small distances
 # between them and with sufficient numbers) used as reference for the formation of
 # other clusters (target clusters, present for higher distances)
-# returns a pdf in the output folder if the figure option is set.
+# returns a pdf in the plotDir.
 #
 # Args:
 #  - FPMarray (np.ndarray[float]): normalised fragment counts for QC validated samples,
@@ -135,7 +135,7 @@ def STDZandCheckRes(SOIs, sampsQCfailed, clust2Samps, trgt2Ctrls, minSamps, noge
             if len(clust2Samps[clustIDList[i]]) < minSamps and listOflist[2] == "":
                 # If the cluster does not have enough samples and has no control clusters, mark it as invalid
                 listOflist[3] = 0
-                logger.error("cluster N°%s : does not contain enough sample to be valid (%s)", i, len(clust2Samps[clustIDList[i]]))
+                logger.warning("cluster N°%s : does not contain enough sample to be valid (%s)", i, len(clust2Samps[clustIDList[i]]))
             else:
                 listOflist[3] = 1
 
@@ -153,7 +153,7 @@ def STDZandCheckRes(SOIs, sampsQCfailed, clust2Samps, trgt2Ctrls, minSamps, noge
             if len(clust2SampsGono[clustIDList[i]]) < minSamps and listOflist[2] == "":
                 # If the cluster does not have enough samples and has no control clusters, mark it as invalid
                 listOflist[3] = 0
-                logger.error("cluster N°%s : does not contain enough sample to be valid (%s)", i, len(clust2SampsGono[clustIDList[i]]))
+                logger.warning("cluster N°%s : does not contain enough sample to be valid (%s)", i, len(clust2SampsGono[clustIDList[i]]))
             else:
                 listOflist[3] = 1
             # Get the predicted gender of the samples in the current cluster and check if they are all the same
@@ -286,7 +286,7 @@ def links2ClustersPrivate(linksMatrix, minDist, maxDist, minSamps):
 
         """
         ################
-        # DEV CONTROL ; check that the sample number calculation for a cluster is correct
+        # DEV CONTROL ; check that the sample number for a cluster is correct
         # TO REMOVE
         NbSOIsInClust = clusterLine[3]
         if (len(VSOIsIndexInParents) != NbSOIsInClust):
@@ -302,6 +302,7 @@ def links2ClustersPrivate(linksMatrix, minDist, maxDist, minSamps):
         # np.array "clusters"
         # allows to build the clusters step by step in the order of correlations.
         # allows to keep the small clusters after the last threshold maxDists.
+        # all samples are taken
         if (distValue < minDist):
             clust2Samps[clusterID] = VSOIsIndexInParents
             # deletion of old groups when forming new ones
