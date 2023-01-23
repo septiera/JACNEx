@@ -36,14 +36,14 @@ logger = logging.getLogger(__name__)
 # Args:
 #  - counts (np.ndarray[float]): normalised fragment counts
 #  - SOIs (list[str]): samples of interest names
-#  - outputFile (str): full path to save the pdf
+#  - QCPDF (str): full path to save the pdf
 #
 # Returns a tupple (sampsQCfailed, uncoveredExons), each variable is created here:
 #  - sampsQCfailed (list[int]): sample indexes not validated by quality control
 #  - uncoveredExons (list[int]): exons indexes with little or no coverage common
 #   to all samples passing quality control
 
-def SampsQC(counts, SOIs, outputFile):
+def SampsQC(counts, SOIs, QCPDF):
     #### Fixed parameter:
     # threshold to assess the validity of the sample coverage profile.
     signalThreshold = 0.20
@@ -54,7 +54,7 @@ def SampsQC(counts, SOIs, outputFile):
 
     # create a matplotlib object and open a pdf if the figure option is
     # true in the main script
-    QCPDF = matplotlib.backends.backend_pdf.PdfPages(outputFile)
+    PDF = matplotlib.backends.backend_pdf.PdfPages(QCPDF)
 
     for sampleIndex in range(len(SOIs)):
         # extract sample counts
@@ -80,9 +80,8 @@ def SampsQC(counts, SOIs, outputFile):
         (maxIndex, maxMean) = findLocalMaxPrivate(densityOnFPMRange, minIndex)
 
         # graphic representation of coverage profiles.
-        # returns a pdf in the output folder
-        if outputFile:
-            coverageProfilPlotPrivate(SOIs[sampleIndex], binEdges, densityOnFPMRange, minIndex, maxIndex, pdf)
+        # returns a pdf in the plotDir
+        coverageProfilPlotPrivate(SOIs[sampleIndex], binEdges, densityOnFPMRange, minIndex, maxIndex, PDF)
 
         #############
         # sample validity assessment
@@ -98,7 +97,7 @@ def SampsQC(counts, SOIs, outputFile):
                 uncoveredExons = uncovExonSamp
 
     # close the open pdf
-    QCPDF.close()
+    PDF.close()
 
     # returns in stderr the results on the filtered data
     logger.info("%s/%s uncovered exons number deleted before clustering for %s/%s valid samples.",
