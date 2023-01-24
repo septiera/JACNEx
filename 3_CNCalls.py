@@ -1,9 +1,14 @@
 ###############################################################################################
 ######################################## MAGE-CNV step 3: Copy numbers calls ##################
 ###############################################################################################
-# Given a TSV file containing the clustering results assign logOdds for each copy number
-# (0,1,2,3+) per exon.
-# Produces one TSV file per sample.
+# Given a TSV of exon fragment counts and a TSV with clustering information,
+# calculation of emission probabilities (logOdds) for each copy number type (CN0, CN1, CN2, CN3+).
+# The results are printed in the stdout in TSV format: the first 4 columns contain
+# the definitions of the paddled and sorted exons and the following columns
+# (4 per sample) contain the logOdds.
+# In addition, all graphical support (pie chart of exon filtering per cluster) are
+# printed in pdf files created in plotDir.
+# See usage for more details.
 ###############################################################################################
 import sys
 import getopt
@@ -36,23 +41,30 @@ def parseArgs(argv):
     countsFile = ""
     clustsFile = ""
     # optionnal args with default values
+    priors = "0.001,0.01,0.979,0.01"
+    plotDir = "./ResultPlots/"
 
     usage = """\nCOMMAND SUMMARY:
-Given a TSV file containing the clustering results assign logOdds for each copy number
-(0,1,2,3+) per exon.
-Produces one TSV file per sample.
-dim=NbExons*(exon informations[CHR,START,END,EXONID])+(4 columns LogOdds for copy number types [0, 1, 2 , 3+])
+Given a TSV of exon fragment counts and a TSV with clustering information,
+calculation of emission probabilities (logOdds) for each copy number type (CN0, CN1, CN2, CN3+).
+The results are printed in the stdout in TSV format: the first 4 columns contain
+the definitions of the paddled and sorted exons and the following columns
+(4 per sample) contain the logOdds.
+In addition, all graphical support (pie chart of exon filtering per cluster) are
+printed in pdf files created in plotDir.
 
 ARGUMENTS:
    --counts [str]: TSV file, first 4 columns hold the exon definitions, subsequent columns
                    hold the fragment counts. File obtained from 1_countFrags.py.
-   --clusts [str]: TSV file, reference clusters. File obtained from 2_clusterSamps.py.
-                   2 expected format:
-                        - no gender discrimination, dim=NbSOIs*5columns
-                        - gender discrimination, dim=NbSOIs*9columns""" + "\n"
+   --clusts [str]: TSV file, contains 5 columns hold the sample cluster definitions.
+                   File obtained from 2_clusterSamps.py.
+   --priors list[float]: prior probability for each copy number type in the order [CN0, CN1,CN2,CN3+].
+                         Must be passed as a comma separated string parameter, default : """ + str(priors) + """
+   --plotDir[str]: subdir (created if needed) where result plots files will be produced, default :  """ + str(plotDir) + """
+   -h , --help  : display this help and exit\n"""
 
     try:
-        opts, args = getopt.gnu_getopt(sys.argv[1:], 'h', ["help", "counts=", "clusts="])
+        opts, args = getopt.gnu_getopt(sys.argv[1:], 'h', ["help", "counts=", "clusts=", "priors=", "plotDir="])
     except getopt.GetoptError as e:
         sys.stderr.write("ERROR : " + e.msg + ". Try " + scriptName + " --help\n")
         raise Exception()
@@ -64,14 +76,12 @@ ARGUMENTS:
             raise Exception()
         elif (opt in ("--counts")):
             countsFile = value
-            if (not os.path.isfile(countsFile)):
-                sys.stderr.write("ERROR : countsFile " + countsFile + " doesn't exist.\n")
-                raise Exception()
         elif (opt in ("--clusts")):
             clustsFile = value
-            if (not os.path.isfile(clustsFile)):
-                sys.stderr.write("ERROR : clustsFile " + clustsFile + " doesn't exist.\n")
-                raise Exception()
+        elif (opt in ("--priors")):
+            priors = value
+        elif (opt in ("--plotDir")):
+            plotDir = value
         else:
             sys.stderr.write("ERROR : unhandled option " + opt + ".\n")
             raise Exception()
@@ -79,12 +89,43 @@ ARGUMENTS:
     #####################################################
     # Check that the mandatory parameter is present
     if countsFile == "":
-        sys.exit("ERROR : You must use --counts.\n" + usage)
+        sys.exit("ERROR : You must provide a counts file with --counts. Try " + scriptName + " --help.\n")
+        raise Exception()
+    elif (not os.path.isfile(countsFile)):
+        sys.stderr.write("ERROR : countsFile " + countsFile + " doesn't exist.\n")
+        raise Exception()
+
     if clustsFile == "":
-        sys.exit("ERROR : You must use --clusts.\n" + usage)
+        sys.exit("ERROR : You must provide a clustering results file use --clusts. Try " + scriptName + " --help.\n")
+        raise Exception()
+    elif (not os.path.isfile(clustsFile)):
+        sys.stderr.write("ERROR : clustsFile " + clustsFile + " doesn't exist.\n")
+        raise Exception()
+
+    #####################################################
+    # Check other args
+    if priors == "":
+        sys.stderr.write("ERROR : You must provide four correlation values separated by commas with --priors. Try " + scriptName + " --help.\n")
+        raise Exception()
+    else:
+        try:
+            priors = [float(x) for x in priors.split(",")]
+            if (sum(priors) != 1):
+                raise Exception()
+        except Exception:
+            sys.stderr.write("ERROR : priors must be four float numbers whose sum is 1, not '" + priors + "'.\n")
+            raise Exception()
+
+    # test plotDir last so we don't mkdir unless all other args are OK
+    if not os.path.isdir(plotDir):
+        try:
+            os.mkdir(plotDir)
+        except Exception:
+            sys.stderr.write("ERROR : plotDir " + plotDir + " doesn't exist and can't be mkdir'd\n")
+            raise Exception()
 
     # AOK, return everything that's needed
-    return(countsFile, clustsFile)
+    return(countsFile, clustsFile, priors, plotDir)
 
 
 ###############################################################################
@@ -99,7 +140,7 @@ def main(argv):
 
     ################################################
     # parse, check and preprocess arguments - exceptions must be caught by caller
-    (countsFile, clustsFile) = parseArgs(argv)
+    (countsFile, clustsFile, priors, plotDir) = parseArgs(argv)
 
     ################################################
     # args seem OK, start working
@@ -127,11 +168,12 @@ def main(argv):
     # Parse clusts data :
     ##################
     # parse clusters from TSV to obtain:
-    # - clusts2Samps: a str dictionary, key: clusterID , value: samples list
-    # - clusts2Ctrls: a str dictionary, key: clusterID, value: controlsID list
-    # - nogender (boolean): identify if a discrimination of gender is made
+    # - clusts2Samps (dict[str, List[int]]): key: clusterID , value: samples index list based on SOIs list
+    # - clusts2Ctrls (dict[str, List[str]]): key: clusterID, value: controlsID list
+    # - SampsQCFailed list[str] : sample names that failed QC
+    # - sex2Clust dict[str, list[str]]: key: "A" autosomes or "G" gonosome, value: clusterID list
     try:
-        (clusts2Samps, clusts2Ctrls, nogender) = mageCNV.copyNumbersCalls.parseClustsFile(clustsFile, SOIs)
+        (clusts2Samps, clusts2Ctrls, SampsQCFailed, sex2Clust) = mageCNV.copyNumbersCalls.parseClustsFile(clustsFile, SOIs)
     except Exception:
         logger.error("parseClustsFile failed")
         raise Exception()
@@ -148,7 +190,7 @@ def main(argv):
     # this normalisation allows the samples to be compared
     # - countsNorm (np.ndarray[float]): normalised counts of countsArray same dimension
     # for arrays in input/output: NbExons*NbSOIs
-    try :
+    try:
         counts_norm = mageCNV.normalisation.FPMNormalisation(countsArray)
     except Exception:
         logger.error("FPMNormalisation failed")
@@ -158,41 +200,6 @@ def main(argv):
     logger.debug("Done fragments counts normalisation, in %.2f s", thisTime - startTime)
     startTime = thisTime
 
-    #######################################################
-    # Extract Gender Informations
-    ##################
-    # parse exons to extract information related to the organisms studied and their gender
-    # - gonoIndex (dict(str: list(int))): is a dictionary where key=GonosomeID(e.g 'chrX'),
-    # value=list of gonosome exon index.
-    # - genderInfo (list of list[str]):contains informations for the gender
-    # identification, ie ["gender identifier","specific chromosome"].
-    try:
-        (gonosome_index, gender_info) = mageCNV.genderDiscrimination.getGenderInfos(exons)
-    except Exception: 
-        logger.error("getGenderInfos failed")
-        raise Exception()
-
-    thisTime = time.time()
-    logger.debug("Done get gender informations in %.2f s", thisTime - startTime)
-    startTime = thisTime
-
-    ########################################################
-    # CN calls
-    #
-    # create flat gonosome index list
-    gono_index_flat = np.unique([item for sublist in list(gonosome_index.values()) for item in sublist]) 
-    samp_flat = np.unique([item for sublist in list(clusts2Samps.values()) for item in sublist])
-    
-    # Define the shape of the NumPy arrays that will be used as values in the result dictionnary
-    # dim= NbEffectiveExons x NbCNType (4: CN0, CN1, CN2,CN3+)
-    shape = (len(samp_flat), 4)
-
-    # Initialize the dictionary with a dictionary comprehension
-    emissionIssuesDict = {key: np.zeros(shape, dtype=np.float) for key in samp_flat}
-    
-    with Pool(countJobs) as pool:
-        for clusterID in clusts2Samps.keys():
-            CNCalls(counts_norm, clusterID, gono_index_flat, clusts2Samps, clusts2Ctrls, bandwidth, priors, emissionIssuesDict)
 
 ####################################################################################
 ######################################## Main ######################################
