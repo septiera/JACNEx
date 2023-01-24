@@ -22,26 +22,15 @@ python MAGe_CNV/1_countFrags.py --bams $BAMS --bed $BED --tmp /mnt/RamDisk/ --jo
 
 ##### STEP 2 : Samples clustering <br>
 
-Given a TSV of exon fragment counts, normalizes the counts (Fragment Per Million) and forms the reference clusters for the call. <br>
-By default, separation of autosomes ("A") and gonosomes ("G") for clustering, to avoid bias (chr accepted: X, Y, Z, W).<br>
-Results are printed to stdout folder:<br>
-- a TSV file format, describe the clustering results, dim = NbSOIs*8 columns:<br>
-    1) "sampleID": name of interest samples [str],<br>
-    2) "clusterID_A": clusters identifiers [int] obtained through the normalized fragment counts of exons on autosomes, <br>
-    3) "controlledBy_A": clusters identifiers controlling the sample cluster [str], a comma-separated string of int values (e.g "1,2"). If not controlled empty string.<br>
-    4) "validitySamps_A": a boolean specifying if a sample is dubious(0) or not(1)[int]. This score set to 0 in the case the cluster formed is validated and does not have a sufficient number of individuals.<br>
-    5) "genderPreds": a string "M"=Male or "F"=Female deduced by kmeans,<br>
-The columns 6, 7 and 8 are the same as 2, 3 and 4 but are specific to gonosomes.<br>
-In case the user doesn't want to discriminate genders, the output tsv will contain the format of the first 4 columns for all chromosomes.<br>
-- one or more png's illustrating the clustering performed by dendograms. [optionnal]<br>
-    Legend : solid line = control clusters , thin line = target clusters<br>
-    The clusters appear in decreasing order of distance (1-|pearson correlation|).<br>
+Given a TSV of exon fragment counts, normalizes the counts (Fragment Per Million), performs quality control on the samples and forms the reference clusters for the call.<br>
+The execution of the default command separates autosomes ("A") and gonosomes ("G") for clustering, to avoid bias (accepted sex chromosomes: X, Y, Z, W).<br>
+Results are printed to stdout in TSV format: 5 columns [clusterID, sampsInCluster, controlledBy, validCluster, clusterStatus]. <br>
+In addition, all graphical support (quality control histogram for each sample and dendogram from clustering) are printed in pdf files created in plotDir.<br>
 
+Example:
 ```
 COUNT="fragCounts.tsv"
-OUT="ResultFolder"
-ERR="step2.err"
-python 2_clusterSamps.py --counts $COUNT --out $OUT --figure 2> $ERR
+python MAGe_CNV/2_clusterSamps.py --counts $COUNT > resClustering.tsv 2> step2.log
 ```
 ##### STEP 3 : Copy numbers calls<br>
 
@@ -66,5 +55,8 @@ pip3 install numpy scipy
 
 numpy v1.19.5
 scipy v1.5.4
+matplotlib v3.3.4
+sklearn v0.24.2
+
 
 ```

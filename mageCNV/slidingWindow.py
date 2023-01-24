@@ -11,7 +11,20 @@ logger = logging.getLogger(__name__)
 
 ###################################
 # smoothingCoverageProfile:
-# smooth the coverage profile with kernel-density estimate using Gaussian kernel
+# Smooth the coverage profile with kernel-density estimate using Gaussian kernel
+# Limitation of the count data used to a FPM threshold (10) for extracts the exons
+# with the most coverage signals, i.e. with high density and interpretable values.
+# This cutoff is applicable on coverage data from different capture kits.
+# Definition of a sufficiently precise FPM range (0.1) to deduce the densities of the exons.
+# scipy.stats.gaussian_kde creates and uses a Gaussian probability density estimate
+# (KDE) from data.
+# The bandwidth determines the width of the Gaussian used to smooth the data when
+# estimating the probability density.
+# It's calculated automatically by scipy.stats.gaussian_kde using Scott's method.
+# bandwidth = n^(-1/(d+4)) * sigma
+#  - n is the number of elements in the data
+#  - d is the dimension of the data
+#  - sigma is the standard deviation of the data
 #
 # Args:
 # - sampFragCounts (np.ndarray[float]): FPM by exon for a sample, dim=NbExons
@@ -23,11 +36,9 @@ logger = logging.getLogger(__name__)
 def smoothingCoverageProfile(sampFragCounts):
 
     #### Fixed parameters:
-    # - FPMSignal (int): FPM threshold for extracts the exons with the most coverage
-    # signals, i.e. with high density and interpretable values.
-    # this cutoff is applicable on coverage data from different capture kits
+    # - FPMSignal (int): FPM threshold 
     FPMSignal = 10
-    # -binsNb (int); number of bins to create a sufficiently precise range for the FPM
+    # -binsNb (int): number of bins to create a sufficiently precise range for the FPM
     # in this case the size of a bin is 0.1
     binsNb = FPMSignal * 10
 
@@ -38,17 +49,8 @@ def smoothingCoverageProfile(sampFragCounts):
     # limitation of decimal points to avoid float approximations
     binEdges = np.around(binEdges, 1)
 
-    # scipy.stats.gaussian_kde creates and uses a Gaussian probability density estimate
-    # (KDE) from data.
-    # the bandwidth determines the width of the Gaussian used to smooth the data when
-    # estimating the probability density.
-    # it is calculated automatically by scipy.stats.gaussian_kde using Scott's method.
-    # bandwidth = n^(-1/(d+4)) * sigma
-    #  - n is the number of elements in the data
-    #  - d is the dimension of the data
-    #  - sigma is the standard deviation of the data
-    #
     # - density (scipy.stats.kde.gaussian_kde object): probability density for sampFragCountsReduced
+    # Beware all points are evaluated
     density = st.kde.gaussian_kde(sampFragCountsReduced)
 
     # compute density probabilities for each bins in the predefined FPM range
@@ -60,7 +62,7 @@ def smoothingCoverageProfile(sampFragCounts):
 ###################################
 # findLocalMin:
 # identifies the first minimum density and the associated index in
-# densityOnFPMRnage (identical in binEdges).
+# densityOnFPMRange (identical in binEdges).
 # This minimum density corresponds to the threshold separating exons
 # with little or no coverage from covered exons.
 #

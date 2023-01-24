@@ -3,6 +3,9 @@ import os
 import numpy as np
 import logging
 
+# import sklearn submodule for Kmeans calculation
+import sklearn.cluster
+
 # set up logger: we want scriptName rather than 'root'
 logger = logging.getLogger(os.path.basename(sys.argv[0]))
 
@@ -65,12 +68,21 @@ def getGenderInfos(exons):
 
 ###############################################################################
 # genderAttribution:
-# Gender matching to groups predicted by Kmeans
-# calcul of normalized count ratios per gonosomes and kmeans group
+# Performs a kmeans on the coverages of the exons present in the gonosomes,
+# to identify two groups normally associated with the gender.
+# Assigns gender to each group of Kmeans based on their coverage ratios.
 # ratio = median (normalized count sums list for a gonosome and for all samples in a kmean group)
-#
+# Beware two independent tests on the ratios are performed:
+# 1) identification of gender with a specific chromosome (eg: human Male= chrY)
+# One group is expected to have a 10 x higher ratio of this chromosome than the other gender.
+# 2) identification of gender with two identical chromosomes (eg: human Female = 2*chrX)
+# One groups is expected to have a 1.5 x ratio greater than the other for this chromosome.
+# Each test returns a list of predicted example genders in the order of the Kmeans
+# groups (e.g. [0="M", 1="F"]
+# If at the end of the process these two tests do not produce the same result,
+# then it's impossible to predict gender (return the error and stop the analysis). 
+# 
 # Args:
-# - kmeans (list[int]): groupID predicted by Kmeans ordered on SOIsIndex
 # - validCounts (np.ndarray[float]): normalized fragment counts for valid samples
 # - gonoIndex (dict([str]:list[int])): associated the gonosome names with the
 #  corresponding exon indexes
@@ -78,9 +90,23 @@ def getGenderInfos(exons):
 #   dim=["gender identifier","particular chromosome"]*2
 #
 # Returns:
+# - kmeans (list[int]): groupID predicted by Kmeans ordered on SOIsIndex
 # - Kmeans2Gender (list[str]): genderID (e.g ["M","F"]), the order
 # correspond to KMeans groupID (gp1=M, gp2=F)
-def genderAttribution(kmeans, validCounts, gonoIndex, genderInfo):
+def genderAttribution(validCounts, gonoIndex, genderInfo):
+    # cutting normalized count data according to gonosomal exons
+    # - gonoIndexFlat (np.ndarray[int]): flat gonosome exon indexes list
+    gonoIndexFlat = np.unique([item for sublist in list(gonoIndex.values()) for item in sublist])
+    # - gonosomesFPM (np.ndarray[float]): normalized fragment counts for valid samples, exons covered
+    # in gonosomes
+    gonosomesFPM = np.take(validCounts, gonoIndexFlat, axis=0)
+
+    # Performs an empirical method (kmeans) to dissociate male and female.
+    # consider only the coverage for the exons present in the gonosomes
+    # Kmeans with k=2 (always)
+    # - kmeans (list[int]): groupID predicted by Kmeans ordered on SOIsIndex
+    kmeans = sklearn.cluster.KMeans(n_clusters=len(genderInfo), random_state=0).fit(gonosomesFPM.T).predict(gonosomesFPM.T)
+
     # To fill
     # str list, index 0 => kmeansGroup1, index 1 => kmeansGroup2
     # contain the gender predicted by the ratio count ("M" or "F")
@@ -158,7 +184,8 @@ def genderAttribution(kmeans, validCounts, gonoIndex, genderInfo):
             condition n°1, one gender is characterised by a specific gonosome: %s \n \
                 condition n°2 that the other gender is characterised by 2 same gonosome copies: %s ", sexePredSpeGono, sexePredDupGono)
         raise Exception()
-    return(sexePredSpeGono)
+
+    return (kmeans, sexePredSpeGono)
 
 ###############################################################################
 ############################ PRIVATE FUNCTIONS ################################
