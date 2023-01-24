@@ -18,17 +18,31 @@ logger = logging.getLogger(os.path.basename(sys.argv[0]))
 
 #####################################
 # parseClustsFile ### !!! TO copy in clustering.py
-# determines the type of clustering analysis performed in the previous step,
+# Split the line by tab character and assign the resulting
+# values to the following variables (variable names identical to the column names in the file):
+# - clusterID [str]: clusterID or "Samps_QCFailed"
+# - sampleInCluster [list[str]]: samples name
+# - controlledBy [str]: control clusterID (if several are separated by commas)
+# - validClust [int]: cluster validity, number of samples in the cluster > 20
+# (0: invalid, 1: valid)
+# - clusterStatus [str]: cluster characteristics, "W" the cluster comes from the
+# analysis on all chromosomes, "A" only autosomes, "G_M" concern gonsomes and
+# contains only male samples, "G_F" gonosomes and only female, "G_B" gonosome
+# and contains both male and female samples
+# Save the data in two dictionaries, one containing the sample count for each cluster
+# and the other the target clusterIDs and their associated control.
+# Determines the type of clustering analysis performed in the previous step,
 # gender discrimination or not.
-# extraction of clustering informations
 #
 # Args:
 # - clustsFile (str): a clusterFile produced by 2_clusterSamps.py
 # - SOIs (List[str]): samples of interest names list
-# Returns a tupple (clusts2Samps,clusts2Ctrls) , each variable is created here:
-# - clusts2Samps (Dict[str, List[int]]): key: clusterID , value: samples index list
-# - clusts2Ctrls (Dict[str, List[str]]): key: clusterID, value: controlsID list
-# - nogender (boolean): identify if a discrimination of gender is made
+#
+# Returns a tupple (clusts2Samps, clusts2Ctrls, nogender) , each variable is created here:
+# - clusts2Samps (dict[str, List[int]]): key: clusterID , value: samples index list based on SOIs list
+# - clusts2Ctrls (dict[str, List[str]]): key: clusterID, value: controlsID list
+# - SampsQCFailed list[str] : sample names that failed QC
+# - sex2Clust dict[str, list[str]]: key: "A" autosomes or "G" gonosome, value: clusterID list
 def parseClustsFile(clustsFile, SOIs):
     try:
         clustsFH = open(clustsFile, "r")
@@ -43,70 +57,58 @@ def parseClustsFile(clustsFile, SOIs):
     # Initialize the dictionaries to store the clustering information
     clusts2Samps = {}
     clusts2Ctrls = {}
+    sex2Clust = {}
 
-    # Initialize a flag to indicate whether gender is included in the clustering
-    nogender = False
+    for line in clustsFH:
+        # last line of the file is associated with the sample that did not pass
+        # the quality control only the first two columns are informative
+        if line.startswith("Samps_QCFailed"):
+            SampsQCFailed = line.rstrip().split("\t", maxsplit=1)[1]
+            # replace sample names by SOIs indexes
+            SampsQCFailed = [i for i, x in enumerate(SOIs) if x in SampsQCFailed]
+        else:
+            # finding information from the 5 columns
+            clusterID, sampsInCluster, controlledBy, validCluster, clusterStatus = line.rstrip().split("\t", maxsplit=4)
 
-    # clusterFile shows that no gender discrimination is made
-    if headers == ["samplesID", "clusterID", "controlledBy", "validitySamps"]:
-        for line in clustsFH:
-            # Split the line by tab character and assign the resulting
-            # values to the following variables:
-            # sampleID: the ID of the sample
-            # validQC: sample valid status (0: invalid, 1: valid)
-            # validClust: cluster valid status (0: invalid, 1: valid)
-            # clusterID: clusterID ("" if not validated)
-            # controlledBy: a list of cluster IDs that the current cluster is controlled by ("" if not validated)
-            sampleID, validQC, validClust, clusterID, controlledBy = line.rstrip().split("\t", maxsplit=4)
-
-            if validClust == "1":
-                clusts2Samps.setdefault(clusterID, []).append(SOIs.index(sampleID))
-                if controlledBy:
-                    clusts2Ctrls[clusterID] = controlledBy.split(",")
-            else:
-                # If the sample is not valid, log a warning message
-                logger.warning(f"{sampleID} dubious sample.")
-
-    # clusterFile shows that gender discrimination is made
-    elif headers == ["samplesID", "validQC", "validCluster_A", "clusterID_A",
-                     "controlledBy_A", "genderPreds", "validCluster_G",
-                     "clusterID_G", "controlledBy_G"]:
-        nogender = True
-        for line in clustsFH:
-            # Split the line by tab character and assign the resulting
-            # values to the following variables:
-            # duplicate validClust, clusterID, controlledBy columns for autosomes (A) and gonosomes (G)
-            # genderPreds: gender "M" or "F" ("" if not validated)
-            split_line = line.rstrip("\n").split("\t", maxsplit=8)
-            (sampleID, validQC, validClust_A, clusterID_A, controlledBy_A,
-             genderPreds, validClust_G, clusterID_G, controlledBy_G) = split_line
-
+            #### DEV : For first test step integration of all clusters
+            """
+            if validCluster == "1":
+            """
             # populate clust2Samps
-            # extract only valid samples for autosomes because it's
-            # tricky to eliminate samples on their validity associated with gonosomes,
-            # especially if one gender has few samples.
-            if validClust_A == "1":
-                # fill clusterID with fine description (A for autosomes,M for Male, F for Female)
-                #################
-                # Autosomes
-                clusterID_A = f"{clusterID_A}A"
-                clusts2Samps.setdefault(clusterID_A, []).append(SOIs.index(sampleID))
-                if controlledBy_A:
-                    clusts2Ctrls[clusterID_A] = [f"{ctrl}A" for ctrl in controlledBy_A.split(",")]
+            sampsInCluster = sampsInCluster.split(", ")
+            clusts2Samps[clusterID] = [i for i, x in enumerate(SOIs) if x in sampsInCluster]
 
-                #################
-                # Gonosomes
-                clusterID_G = f"{clusterID_G}{genderPreds}"
-                clusts2Samps.setdefault(clusterID_G, []).append(SOIs.index(sampleID))
-                if controlledBy_G:
-                    clusts2Ctrls[clusterID_G] = [f"{ctrl}{genderPreds}" for ctrl in controlledBy_G.split(",")]
-            else:
-                logger.warning(f"{sampleID} dubious sample.")
-    else:
-        logger.error(f"Opening provided clustsFile {clustsFile}: {headers}")
-        raise Exception("cannot open clustsFile")
+            # populate clusts2Ctrls
+            if controlledBy != "":
+                clusts2Ctrls[clusterID] = controlledBy.split(",")
 
-    return(clusts2Samps, clusts2Ctrls, nogender)
+            # populate sex2Clust
+            if clusterStatus.startswith("A"):
+                if "A" in sex2Clust:
+                    sex2Clust["A"].append(clusterID)
+                else:
+                    sex2Clust["A"] = [clusterID]
+            elif clusterStatus.startswith("G"):
+                if "G" in sex2Clust:
+                    sex2Clust["G"].append(clusterID)
+                else:
+                    sex2Clust["G"] = [clusterID]
+
+    return(clusts2Samps, clusts2Ctrls, SampsQCFailed, sex2Clust)
+
+
+#####################################
+# allocateLogOddsArray:
+# Args:
+# - exons (dict[str, List[int]]): key: clusterID , value: samples index list
+# - SOIs (np.ndarray[float]): normalised counts
+# Return:
+# - Returns an all zeroes float array, adapted for
+# storing the logOdds for each type of copy number.
+# dim= NbExons x [NbSOIs x [CN0, CN1, CN2,CN3+]]
+def LogOddsArray(SOIs, exons):
+    # order=F should improve performance
+    return (np.zeros((len(exons), (len(SOIs) * 4)), dtype=np.float, order='F'))
 
 
 #####################################
@@ -207,6 +209,7 @@ def CNCalls(counts_norm, clusterID, gono_index_flat, clusts2Samps, clusts2Ctrls,
 
             emissionIssuesDict[soi_name][exonsIndexes[exon]] = np.round(log_odds, 2)
     return(infoList)
+
 
 ###############################################################################
 ############################ PRIVATE FUNCTIONS ################################
