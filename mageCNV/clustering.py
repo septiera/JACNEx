@@ -188,6 +188,87 @@ def printClustersFile(clustsResList):
         print(toPrint)
 
 
+#####################################
+# parseClustsFile ### !!! TO copy in clustering.py
+# Split the line by tab character and assign the resulting
+# values to the following variables (variable names identical to the column names in the file):
+# - clusterID [str]: clusterID or "Samps_QCFailed"
+# - sampleInCluster [list[str]]: samples name
+# - controlledBy [str]: control clusterID (if several are separated by commas)
+# - validClust [int]: cluster validity, number of samples in the cluster > 20
+# (0: invalid, 1: valid)
+# - clusterStatus [str]: cluster characteristics, "W" the cluster comes from the
+# analysis on all chromosomes, "A" only autosomes, "G_M" concern gonsomes and
+# contains only male samples, "G_F" gonosomes and only female, "G_B" gonosome
+# and contains both male and female samples
+# Save the data in two dictionaries, one containing the sample count for each cluster
+# and the other the target clusterIDs and their associated control.
+# Determines the type of clustering analysis performed in the previous step,
+# gender discrimination or not.
+#
+# Args:
+# - clustsFile (str): a clusterFile produced by 2_clusterSamps.py
+# - SOIs (List[str]): samples of interest names list
+#
+# Returns a tupple (clusts2Samps, clusts2Ctrls, nogender) , each variable is created here:
+# - clusts2Samps (dict[str, List[int]]): key: clusterID , value: samples index list based on SOIs list
+# - clusts2Ctrls (dict[str, List[str]]): key: clusterID, value: controlsID list
+# - SampsQCFailed list[str] : sample names that failed QC
+# - sex2Clust dict[str, list[str]]: key: "A" autosomes or "G" gonosome, value: clusterID list
+def parseClustsFile(clustsFile, SOIs):
+    try:
+        clustsFH = open(clustsFile, "r")
+        # Read the first line of the file, which contains the headers, and split it by tab character
+        headers = clustsFH.readline().rstrip().split("\t")
+    except Exception as e:
+        # If there is an error opening the file, log the error and raise an exception
+        logger.error("Opening provided clustsFile %s: %s", clustsFile, e)
+        raise Exception("cannot open clustsFile")
+
+    # To Fill and returns
+    # Initialize the dictionaries to store the clustering information
+    clusts2Samps = {}
+    clusts2Ctrls = {}
+    sex2Clust = {}
+
+    for line in clustsFH:
+        # last line of the file is associated with the sample that did not pass
+        # the quality control only the first two columns are informative
+        if line.startswith("Samps_QCFailed"):
+            SampsQCFailed = line.rstrip().split("\t", maxsplit=1)[1]
+            # replace sample names by SOIs indexes
+            SampsQCFailed = [i for i, x in enumerate(SOIs) if x in SampsQCFailed]
+        else:
+            # finding information from the 5 columns
+            clusterID, sampsInCluster, controlledBy, validCluster, clusterStatus = line.rstrip().split("\t", maxsplit=4)
+            
+            """
+            #### DEV : For first test step integration of all clusters
+            if validCluster == "1":
+            """
+            # populate clust2Samps
+            sampsInCluster = sampsInCluster.split(", ")
+            clusts2Samps[clusterID] = [i for i, x in enumerate(SOIs) if x in sampsInCluster]
+
+            # populate clusts2Ctrls
+            if controlledBy != "":
+                clusts2Ctrls[clusterID] = controlledBy.split(",")
+
+            # populate sex2Clust
+            if clusterStatus.startswith("A"):
+                if "A" in sex2Clust:
+                    sex2Clust["A"].append(clusterID)
+                else:
+                    sex2Clust["A"] = [clusterID]
+            elif clusterStatus.startswith("G"):
+                if "G" in sex2Clust:
+                    sex2Clust["G"].append(clusterID)
+                else:
+                    sex2Clust["G"] = [clusterID]
+
+    return(clusts2Samps, clusts2Ctrls, SampsQCFailed, sex2Clust)
+
+
 ###############################################################################
 ############################ PRIVATE FUNCTIONS ################################
 ###############################################################################
