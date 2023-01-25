@@ -191,13 +191,33 @@ def main(argv):
     # - countsNorm (np.ndarray[float]): normalised counts of countsArray same dimension
     # for arrays in input/output: NbExons*NbSOIs
     try:
-        counts_norm = mageCNV.normalisation.FPMNormalisation(countsArray)
+        countsNorm = mageCNV.normalisation.FPMNormalisation(countsArray)
     except Exception:
         logger.error("FPMNormalisation failed")
         raise Exception()
 
     thisTime = time.time()
     logger.debug("Done fragments counts normalisation, in %.2f s", thisTime - startTime)
+    startTime = thisTime
+
+    ####################################################
+    # CN Calls
+    ####################
+    # initiate results object
+    # - Returns an all zeroes float array, adapted for
+    # storing the logOdds for each type of copy number.
+    # dim= NbExons x [NbSOIs x [CN0, CN1, CN2,CN3+]]
+    logOddsArray = mageCNV.copyNumbersCalls.allocateLogOddsArray(SOIs, exons)
+
+    try:
+        logOddsArray = mageCNV.copyNumbersCalls.CNCalls(sex2Clust, exons, countsNorm, clusts2Samps, clusts2Ctrls, priors, SOIs, plotDir, logOddsArray)
+
+    except Exception:
+        logger.error("CNCalls failed")
+        raise Exception()
+
+    thisTime = time.time()
+    logger.debug("Done Copy Number Calls, in %.2f s", thisTime - startTime)
     startTime = thisTime
 
 
