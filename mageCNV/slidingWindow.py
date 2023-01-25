@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 def smoothingCoverageProfile(sampFragCounts):
 
     #### Fixed parameters:
-    # - FPMSignal (int): FPM threshold 
+    # - FPMSignal (int): FPM threshold
     FPMSignal = 10
     # -binsNb (int): number of bins to create a sufficiently precise range for the FPM
     # in this case the size of a bin is 0.1

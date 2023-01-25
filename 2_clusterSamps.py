@@ -5,7 +5,7 @@
 # quality control on the samples and forms the reference clusters for the call.
 # The execution of the default command separates autosomes ("A") and gonosomes ("G") for
 # clustering, to avoid bias (accepted sex chromosomes: X, Y, Z, W).
-# Results are printed to stdout in TSV format: 5 columns 
+# Results are printed to stdout in TSV format: 5 columns
 # [clusterID, sampsInCluster, controlledBy, validCluster, clusterStatus]
 # In addition, all graphical support (quality control histogram for each sample and
 # dendogram from clustering) are printed in pdf files created in plotDir.
@@ -152,7 +152,7 @@ ARGUMENTS:
             sys.stderr.write("ERROR : minCorr must be a float between 0 and 1, not '" + minCorr + "'.\n")
             raise Exception()
 
-    # test BPdir last so we don't mkdir unless all other args are OK
+    # test plotdir last so we don't mkdir unless all other args are OK
     if not os.path.isdir(plotDir):
         try:
             os.mkdir(plotDir)
