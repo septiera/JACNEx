@@ -18,9 +18,9 @@ import numpy as np
 from concurrent.futures import ProcessPoolExecutor
 
 ####### MAGE-CNV modules
-import mageCNV.bed
-import mageCNV.countsFile
-import mageCNV.countFragments
+import countFrags.bed
+import countFrags.countsFile
+import countFrags.countFragments
 
 
 ###############################################################################
