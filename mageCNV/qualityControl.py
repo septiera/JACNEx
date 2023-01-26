@@ -52,8 +52,7 @@ def SampsQC(counts, SOIs, QCPDF):
     sampsQCfailed = []
     uncoveredExons = []
 
-    # create a matplotlib object and open a pdf if the figure option is
-    # true in the main script
+    # create a matplotlib object and open a pdf
     PDF = matplotlib.backends.backend_pdf.PdfPages(QCPDF)
 
     for sampleIndex in range(len(SOIs)):

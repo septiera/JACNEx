@@ -147,7 +147,7 @@ ARGUMENTS:
             sys.stderr.write("ERROR : minCorr must be a float between 0 and 1, not '" + minCorr + "'.\n")
             raise Exception()
 
-    # test BPdir last so we don't mkdir unless all other args are OK
+    # test plotdir last so we don't mkdir unless all other args are OK
     if not os.path.isdir(plotDir):
         try:
             os.mkdir(plotDir)

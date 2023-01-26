@@ -4,6 +4,8 @@ import logging
 import numpy as np
 import scipy.stats as st
 from scipy.special import erf
+import matplotlib.pyplot as plt
+import matplotlib.backends.backend_pdf
 import time
 
 import mageCNV.slidingWindow
@@ -17,96 +19,17 @@ logger = logging.getLogger(os.path.basename(sys.argv[0]))
 ###############################################################################
 
 #####################################
-# parseClustsFile ### !!! TO copy in clustering.py
-# determines the type of clustering analysis performed in the previous step,
-# gender discrimination or not.
-# extraction of clustering informations
-#
+# allocateLogOddsArray:
 # Args:
-# - clustsFile (str): a clusterFile produced by 2_clusterSamps.py
-# - SOIs (List[str]): samples of interest names list
-# Returns a tupple (clusts2Samps,clusts2Ctrls) , each variable is created here:
-# - clusts2Samps (Dict[str, List[int]]): key: clusterID , value: samples index list
-# - clusts2Ctrls (Dict[str, List[str]]): key: clusterID, value: controlsID list
-# - nogender (boolean): identify if a discrimination of gender is made
-def parseClustsFile(clustsFile, SOIs):
-    try:
-        clustsFH = open(clustsFile, "r")
-        # Read the first line of the file, which contains the headers, and split it by tab character
-        headers = clustsFH.readline().rstrip().split("\t")
-    except Exception as e:
-        # If there is an error opening the file, log the error and raise an exception
-        logger.error("Opening provided clustsFile %s: %s", clustsFile, e)
-        raise Exception("cannot open clustsFile")
-
-    # To Fill and returns
-    # Initialize the dictionaries to store the clustering information
-    clusts2Samps = {}
-    clusts2Ctrls = {}
-
-    # Initialize a flag to indicate whether gender is included in the clustering
-    nogender = False
-
-    # clusterFile shows that no gender discrimination is made
-    if headers == ["samplesID", "clusterID", "controlledBy", "validitySamps"]:
-        for line in clustsFH:
-            # Split the line by tab character and assign the resulting
-            # values to the following variables:
-            # sampleID: the ID of the sample
-            # validQC: sample valid status (0: invalid, 1: valid)
-            # validClust: cluster valid status (0: invalid, 1: valid)
-            # clusterID: clusterID ("" if not validated)
-            # controlledBy: a list of cluster IDs that the current cluster is controlled by ("" if not validated)
-            sampleID, validQC, validClust, clusterID, controlledBy = line.rstrip().split("\t", maxsplit=4)
-
-            if validClust == "1":
-                clusts2Samps.setdefault(clusterID, []).append(SOIs.index(sampleID))
-                if controlledBy:
-                    clusts2Ctrls[clusterID] = controlledBy.split(",")
-            else:
-                # If the sample is not valid, log a warning message
-                logger.warning(f"{sampleID} dubious sample.")
-
-    # clusterFile shows that gender discrimination is made
-    elif headers == ["samplesID", "validQC", "validCluster_A", "clusterID_A",
-                     "controlledBy_A", "genderPreds", "validCluster_G",
-                     "clusterID_G", "controlledBy_G"]:
-        nogender = True
-        for line in clustsFH:
-            # Split the line by tab character and assign the resulting
-            # values to the following variables:
-            # duplicate validClust, clusterID, controlledBy columns for autosomes (A) and gonosomes (G)
-            # genderPreds: gender "M" or "F" ("" if not validated)
-            split_line = line.rstrip("\n").split("\t", maxsplit=8)
-            (sampleID, validQC, validClust_A, clusterID_A, controlledBy_A,
-             genderPreds, validClust_G, clusterID_G, controlledBy_G) = split_line
-
-            # populate clust2Samps
-            # extract only valid samples for autosomes because it's
-            # tricky to eliminate samples on their validity associated with gonosomes,
-            # especially if one gender has few samples.
-            if validClust_A == "1":
-                # fill clusterID with fine description (A for autosomes,M for Male, F for Female)
-                #################
-                # Autosomes
-                clusterID_A = f"{clusterID_A}A"
-                clusts2Samps.setdefault(clusterID_A, []).append(SOIs.index(sampleID))
-                if controlledBy_A:
-                    clusts2Ctrls[clusterID_A] = [f"{ctrl}A" for ctrl in controlledBy_A.split(",")]
-
-                #################
-                # Gonosomes
-                clusterID_G = f"{clusterID_G}{genderPreds}"
-                clusts2Samps.setdefault(clusterID_G, []).append(SOIs.index(sampleID))
-                if controlledBy_G:
-                    clusts2Ctrls[clusterID_G] = [f"{ctrl}{genderPreds}" for ctrl in controlledBy_G.split(",")]
-            else:
-                logger.warning(f"{sampleID} dubious sample.")
-    else:
-        logger.error(f"Opening provided clustsFile {clustsFile}: {headers}")
-        raise Exception("cannot open clustsFile")
-
-    return(clusts2Samps, clusts2Ctrls, nogender)
+# - exons (dict[str, List[int]]): key: clusterID , value: samples index list
+# - SOIs (np.ndarray[float]): normalised counts
+# Return:
+# - Returns an all zeroes float array, adapted for
+# storing the logOdds for each type of copy number.
+# dim= NbExons x [NbSOIs x [CN0, CN1, CN2,CN3+]]
+def allocateLogOddsArray(SOIs, exons):
+    # order=F should improve performance
+    return (np.zeros((len(exons), (len(SOIs) * 4)), dtype=np.float, order='F'))
 
 
 #####################################
@@ -118,95 +41,121 @@ def parseClustsFile(clustsFile, SOIs):
 #
 # Returns
 #
-def CNCalls(counts_norm, clusterID, gono_index_flat, clusts2Samps, clusts2Ctrls, bandwidth, priors, emissionIssuesDict):
-    ###############
-    # select data corresponding to cluster
-    # Select the rows of the normalized count matrix corresponding to the exons of the cluster
-    if clusterID.endswith("A"):
-        countsIncluster = np.delete(counts_norm, gono_index_flat, axis=0)
-        exonsIndexes=np.delete(np.arange(0,len(counts_norm),1),gono_index_flat)
-    else:
-        countsIncluster = counts_norm[gono_index_flat]
-        exonsIndexes=gono_index_flat
-        
-    # Get the indices of the samples in the cluster and its controls
-    sampleIndexes = clusts2Samps[clusterID]
-    if clusterID in clusts2Ctrls:
-        for controls in clusts2Ctrls[clusterID]:
-            sampleIndexes.extend(clusts2Samps[controls])
-    sampleIndexes = list(set(sampleIndexes))
+def CNCalls(sex2Clust, exons, countsNorm, clusts2Samps, clusts2Ctrls, priors, SOIs, plotDir, logOddsArray):
+    # Fixed Parameter
+    bandwidth = 2
 
-    # Select the columns of cluster_counts corresponding to the samples in the cluster and its controls
-    countsIncluster = countsIncluster[:, sampleIndexes]
+    #
+    pdfFile = os.path.join(plotDir, "ResCallsByCluster_" + str(len(SOIs)) + "samps.pdf")
+    # create a matplotlib object and open a pdf
+    PDF = matplotlib.backends.backend_pdf.PdfPages(pdfFile)
 
-    ###########
-    # Initialize InfoList with the exon index
-    infoList = [[exon] for exon in exonsIndexes]
-
-    ###########
-    # fit a gamma distribution to find the profile of exons with little or no coverage (CN0)
-    # - gammaParameters
-    # - gammaThreshold
-    gammaParameters, gammaThreshold = fitGammaDistributionPrivate(countsIncluster)
-
-    ##############
-    # Iterate over the exons
-    for exon in range(len(exonsIndexes)):
-        # Print progress every 10000 exons
-        if exon % 10000 == 0:
-            logger.info("%s: %s  %s ", clusterID, exon, time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()))
-
-        # Get count data for the exon
-        exonFPM = countsIncluster[exon]
-
-        ####################
-        # Filter n°1: the exon is not covered => mu == 0
-        # do nothing leave logOdds at zero
-        mean_fpkm = exonFPM.mean()
-        if mean_fpkm == 0:
-            infoList[exon] += [0, 0, 0, 0, 0]
-            continue
-
-        ###################
-        # Fit a robust Gaussian to the count data
-        # - mean:
-        # - stdev
-        mean, stdev = fitRobustGaussianPrivate(exonFPM, bandwidth=bandwidth)
-
-        ###################
-        # Filter n°2: exon if standard deviation is zero
-        # do nothing leave logOdds at zero
-        if stdev == 0:
-            # Define a new standard deviation to allow the calculation of the ratio
-            if mean > gammaThreshold:
-                stdev = mean / 20
-            # Exon nocall
+    for clustID in clusts2Samps:
+        ##################################
+        ## Select cluster specific indexes in countsNorm
+        ##### ROW indexes:
+        # in case there are specific autosome and gonosome clusters.
+        # identification of the indexes of the exons associated with the gonosomes or autosomes.
+        if sex2Clust:
+            (gonoIndex, genderInfo) = mageCNV.genderDiscrimination.getGenderInfos(exons)
+            gonoIndexFlat = np.unique([item for sublist in list(gonoIndex.values()) for item in sublist])
+            if clustID in sex2Clust["A"]:
+                exonsIndex2Process = [i for i in range(countsNorm.shape[0]) if i not in gonoIndex]
             else:
-                infoList[exon] += [0, 0, 0, 0, 0]
+                exonsIndex2Process = gonoIndex
+        else:
+            exonsIndex2Process = range(countsNorm.shape[0])
+
+        ##### COLUMN indexes:
+        # Get the indexes of the samples in the cluster and its controls
+        sampleIndex2Process = clusts2Samps[clustID]
+        if clustID in clusts2Ctrls:
+            for controls in clusts2Ctrls[clustID]:
+                sampleIndex2Process.extend(clusts2Samps[controls])
+        sampleIndex2Process = list(set(sampleIndex2Process))
+
+        # count data selection
+        countsInCluster = np.take(countsNorm, exonsIndex2Process, axis=0)
+        countsInCluster = np.take(countsInCluster, sampleIndex2Process, axis=1)
+
+        ###########
+        # Initialize InfoList with the exon index
+        infoList = [[exon] for exon in exonsIndex2Process]
+
+        ##################################
+        # fit a gamma distribution to find the profile of exons with little or no coverage (CN0)
+        # - gammaParameters
+        # - gammaThreshold
+        gammaParameters, gammaThreshold = fitGammaDistributionPrivate(countsInCluster, clustID, PDF)
+
+        ###################################
+        # Iterate over the exons
+        for exon in range(len(exonsIndex2Process)):
+            # Print progress every 10000 exons
+            if exon % 10000 == 0:
+                logger.info("%s: %s  %s ", clustID, exon, time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()))
+
+            # Get count data for the exon
+            exonFPM = countsInCluster[exon]
+
+            ####################
+            # Filter n°1: the exon is not covered => mu == 0
+            # do nothing leave logOdds at zero
+            mean_fpkm = exonFPM.mean()
+            if mean_fpkm == 0:
+                infoList[exon] += [-1, 0, 0, 0]
                 continue
 
-        z_score = (mean - gammaThreshold) / stdev
-        weight = computeWeightPrivate(exonFPM, mean, stdev)
+            ###################
+            # Fit a robust Gaussian to the count data
+            # - mean:
+            # - stdev:
+            mean, stdev = fitRobustGaussianPrivate(exonFPM, bandwidth=bandwidth)
 
-        ###################
-        # Filter n°3:
-        # Exon nocall
-        if (weight < 0.5) or (z_score < 3):
+            ###################
+            # Filter n°2: if standard deviation is zero
+            # do nothing leave logOdds at zero
+            if stdev == 0:
+                # Define a new standard deviation to allow the calculation of the ratio
+                if mean > gammaThreshold:
+                    stdev = mean / 20
+                # Exon nocall
+                else:
+                    infoList[exon] += [mean, -1, 0, 0]
+                    continue
+
+            z_score = (mean - gammaThreshold) / stdev
+            weight = computeWeightPrivate(exonFPM, mean, stdev)
+
+            ###################
+            # Filter n°3:
+            # Exon nocall
+            if (weight < 0.5) or (z_score < 3):
+                infoList[exon] += [mean, stdev, z_score, weight]
+                continue
+
+            # Append values to InfoList
             infoList[exon] += [mean, stdev, z_score, weight]
-            continue
 
-        # Append values to InfoList
-        infoList[exon] += [mean, stdev, z_score, weight]
+            # Retrieve results for each sample XXXXXX
+            for i in clusts2Samps[clustID]:
+                sample_data = exonFPM[sampleIndex2Process.index(i)]
+                sampIndexInLogOddsArray = i * 4
 
-        # Retrieve results for each sample
-        for i in range(len(sampleIndexes)):
-            sample_data = exonFPM[i]
-            soi_name = sampleIndexes[i]
+                log_odds = mageCNV.copyNumbersCalls.computeLogOddsPrivate(sample_data, gammaParameters, gammaThreshold, priors, mean, stdev)
 
-            log_odds = mageCNV.copyNumbersCalls.computeLogOddsPrivate(sample_data, gammaParameters, gammaThreshold, priors, mean, stdev)
+                for val in range(4):
+                    if logOddsArray[exonsIndex2Process[exon], (sampIndexInLogOddsArray + val)] == 0:
+                        logOddsArray[exonsIndex2Process[exon], (sampIndexInLogOddsArray + val)] = log_odds[val]
+                    else:
+                        logger.error('erase previous logOdds value')
 
-            emissionIssuesDict[soi_name][exonsIndexes[exon]] = np.round(log_odds, 2)
-    return(infoList)
+        filtersPiePlotPrivate(clustID, infoList, PDF)
+
+    # close the open pdf
+    PDF.close()
+    return(logOddsArray)
+
 
 ###############################################################################
 ############################ PRIVATE FUNCTIONS ################################
@@ -219,14 +168,17 @@ def CNCalls(counts_norm, clusterID, gono_index_flat, clusts2Samps, clusts2Ctrls,
 #  -it has few parameters (3 in total: shape, scale=1/beta, and loc),
 #  -is well-known, and had the best goodness of fit on the empirical data.
 # Arg:
-# -countsIncluster (np.ndarray[floats]): cluster fragment counts (normalised)
+# -countsInCluster (np.ndarray[floats]): cluster fragment counts (normalised)
+# - clustID (str): cluster identifier
+# - PDF (matplotlib object): store plots in a single pdf
 # Returns a tupple (gamma_parameters, threshold_value), each variable is created here:
 # -gammaParameters (tuple of floats): estimated parameters of the gamma distribution
 # -thresholdValue (float): value corresponding to 95% of the cumulative distribution function
-def fitGammaDistributionPrivate(countsIncluster):
+#
+def fitGammaDistributionPrivate(countsInCluster, clustID, PDF):
     # compute meanFPM by exons
     # save computation time instead of taking the raw data (especially for clusters with many samples)
-    meanCountByExons = np.mean(countsIncluster, axis=1)
+    meanCountByExons = np.mean(countsInCluster, axis=1)
 
     # smooth the coverage profile with kernel-density estimate using Gaussian kernels
     # - binEdges (np.ndarray[floats]): FPM range
@@ -256,6 +208,8 @@ def fitGammaDistributionPrivate(countsIncluster):
     # compute the value corresponding to 95% of the cumulative distribution function
     # this value corresponds to the FPM value allowing to split covered exons from uncovered exons
     thresholdValue = countsExonsNotCovered[thresholdIndex]
+
+    coverageProfilPlotPrivate(clustID, binEdges, densityOnFPMRange, minIndex, gammaParameters, PDF)
 
     return (gammaParameters, thresholdValue)
 
@@ -325,7 +279,7 @@ def fitRobustGaussianPrivate(X, mu=None, sigma=None, bandwidth=1.0, eps=1.0e-5):
 # - standard_deviation (float): std FPM value for the exon
 # Returns weight of sample contribution to the gaussian for the exon [float]
 def computeWeightPrivate(fpm_in_exon, mean, standard_deviation):
-    targetData = fpm_in_exon[(fpm_in_exon > (mean - (2 * standard_deviation))) & 
+    targetData = fpm_in_exon[(fpm_in_exon > (mean - (2 * standard_deviation))) &
                              (fpm_in_exon < (mean + (2 * standard_deviation))), ]
     weight = len(targetData) / len(fpm_in_exon)
 
@@ -398,3 +352,81 @@ def computeLogOddsPrivate(sample_data, params, gamma_threshold, prior_probabilit
         log_odds.append(log_odd)
 
     return log_odds
+
+
+###################################
+# coverageProfilPlotPrivate:
+# generates a plot per cluster
+# x-axis: the range of FPM bins (every 0.1 between 0 and 10)
+# y-axis: exons densities
+# black curve: density data smoothed with kernel-density estimate using Gaussian kernels
+# red vertical line: minimum FPM threshold, all uncovered exons are below this threshold
+# green curve: gamma fit
+#
+# Args:
+# - sampleName (str): sample exact name
+# - binEdges (np.ndarray[floats]): FPM range
+# - densityOnFPMRange (np.ndarray[float]): probability density for all bins in the FPM range
+#   dim= len(binEdges)
+# - minIndex (int): index associated with the first lowest density observed
+# - gammaParameters (list[float]):
+# - pdf (matplotlib object): store plots in a single pdf
+#
+# save a plot in the output pdf
+def coverageProfilPlotPrivate(clustID, binEdges, densityOnFPMRange, minIndex, gammaParameters, PDF):
+
+    fig = plt.figure(figsize=(6, 6))
+    plt.plot(binEdges, densityOnFPMRange, color='black', label='smoothed densities')
+
+    pdfCN0 = st.gamma.pdf(binEdges, a=gammaParameters[0], loc=gammaParameters[1], scale=gammaParameters[2])
+    plt.plot(binEdges, pdfCN0, 'c', label=("CN0 α=" + str(round(gammaParameters[0], 2)) +
+                                           " loc=" + str(round(gammaParameters[1], 2)) +
+                                           " β=" + str(round(gammaParameters[2], 2))))
+    plt.axvline(binEdges[minIndex], color='crimson', linestyle='dashdot', linewidth=2,
+                label="minFPM=" + '{:0.1f}'.format(binEdges[minIndex]))
+
+    plt.ylim(0, 0.5)
+    plt.ylabel("Exon densities")
+    plt.xlabel("Fragments Per Million")
+    plt.title(clustID + " coverage profile")
+    plt.legend()
+
+    PDF.savefig(fig)
+    plt.close()
+
+
+###################################
+# filtersPiePlotPrivate:
+# generates a plot per cluster
+#
+# Args:
+# - clustID [str]:
+# - infoList (list of list[float]):
+# - pdf (matplotlib object): store plots in a single pdf
+#
+# save a plot in the output pdf
+def filtersPiePlotPrivate(clustID, infoList, pdf):
+
+    fig = plt.figure(figsize=(10, 10))
+
+    exonsMuZero = len(infoList[infoList[0] == -1])
+    exonsSigRGZero = len(infoList[infoList[1] == -1])
+    exonsZscore_inf3_only = len(infoList[(infoList[2] < 3) & infoList[3] >= 0.50])
+    exonsZscore_Weigth = len(infoList[(infoList[2] < 3) & infoList[3] < 0.50])
+    exonsWeight_inf_50p = len(infoList[(infoList[2] >= 3) & infoList[3] < 0.50])
+    exonsToKeep = len(infoList[(infoList[0] > 0) & (infoList[1] > 0) & (infoList[2] >= 3) & infoList[3] > 0.50])
+
+    x = [exonsMuZero, exonsSigRGZero, exonsZscore_inf3_only, exonsZscore_Weigth,
+         exonsWeight_inf_50p, exonsToKeep]
+
+    plt.pie(x, labels=['exons filtered mu=0', 'exons filtered sigRG=0', 'exons filtered only Zscore <3',
+                       'exons filtered Zscore+Weight', 'exons filtered Weight <50%', 'exons Keep'],
+            colors=["grey", "yellow", "indianred", "mediumpurple", "royalblue", "mediumaquamarine"],
+            autopct=lambda x: str(round(x, 2)) + '%',
+            startangle=-270,
+            pctdistance=0.7, labeldistance=1.1)
+    plt.legend()
+    plt.title(clustID)
+
+    pdf.savefig(fig)
+    plt.close()
