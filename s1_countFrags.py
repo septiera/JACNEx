@@ -270,7 +270,7 @@ def main(argv):
 
     # we are allowed to use jobs cores in total: we will process paraSamples samples in
     # parallel, each sample will be processed using coresPerSample.
-    # in our tests countFrags scales great up to 4-5 coresPerSample, with diminishing
+    # in our tests bam2counts() scales great up to 4-5 coresPerSample, with diminishing
     # returns beyond that (probably depends on your hardware)
     # -> we target targetCoresPerSample coresPerSample, this is increased if we
     #    have few samples to process (and we use ceil() so we may slighty overconsume)
@@ -281,37 +281,37 @@ def main(argv):
                 paraSamples, coresPerSample)
 
     #####################################################
-    # Define nested callback for processing countFrags() result (so countsArray et al
+    # Define nested callback for processing bam2counts() result (so countsArray et al
     # are in its scope)
 
-    # if countFrags fails for any BAMs, we have to remember their indexes
+    # if bam2counts fails for any BAMs, we have to remember their indexes
     # and only expunge them at the end -> save their indexes in failedBams
     failedBams = []
 
     # mergeCounts:
-    # arg: a Future object returned by ProcessPoolExecutor.submit(countFrags.countFragments.countFrags).
-    # countFrags() returns a 3-element tuple (sampleIndex, sampleCounts, breakPoints).
+    # arg: a Future object returned by ProcessPoolExecutor.submit(countFrags.countFragments.bam2counts).
+    # bam2counts() returns a 3-element tuple (sampleIndex, sampleCounts, breakPoints).
     # If something went wrong, log and populate failedBams;
     # otherwise fill column at index sampleIndex in countsArray with counts stored in sampleCounts,
     # and print info about putative CNVs with alignment-supported breakpoints as TSV
     # to BPdir/sample.breakPoints.tsv
-    def mergeCounts(futureCountFragsRes):
-        e = futureCountFragsRes.exception()
+    def mergeCounts(futureBam2countsRes):
+        e = futureBam2countsRes.exception()
         if e is not None:
-            #  exceptions raised by countFrags are always Exception(str(sampleIndex))
+            #  exceptions raised by bam2counts are always Exception(str(sampleIndex))
             si = int(str(e))
             logger.warning("Failed to count fragments for sample %s, skipping it", samples[si])
             failedBams.append(si)
         else:
-            countFragsRes = futureCountFragsRes.result()
-            si = countFragsRes[0]
-            for exonIndex in range(len(countFragsRes[1])):
-                countsArray[exonIndex, si] = countFragsRes[1][exonIndex]
-            if (len(countFragsRes[2]) > 0):
+            bam2countsRes = futureBam2countsRes.result()
+            si = bam2countsRes[0]
+            for exonIndex in range(len(bam2countsRes[1])):
+                countsArray[exonIndex, si] = bam2countsRes[1][exonIndex]
+            if (len(bam2countsRes[2]) > 0):
                 try:
                     bpFile = BPdir + '/' + samples[si] + '.breakPoints.tsv'
                     BPFH = open(bpFile, mode='w')
-                    for thisBP in countFragsRes[2]:
+                    for thisBP in bam2countsRes[2]:
                         toPrint = thisBP[0] + "\t" + str(thisBP[1]) + "\t" + str(thisBP[2]) + "\t" + thisBP[3] + "\t" + thisBP[4]
                         print(toPrint, file=BPFH)
                     BPFH.close()
@@ -329,7 +329,7 @@ def main(argv):
                 logger.info('Sample %s already filled from countsFile', sample)
                 continue
             else:
-                futureRes = pool.submit(countFrags.countFragments.countFrags,
+                futureRes = pool.submit(countFrags.countFragments.bam2counts,
                                         bam, len(exons), maxGap, tmpDir, samtools, coresPerSample, bamIndex)
                 futureRes.add_done_callback(mergeCounts)
 
@@ -338,7 +338,7 @@ def main(argv):
     startTime = thisTime
 
     #####################################################
-    # Expunge samples for which countFrags failed
+    # Expunge samples for which bam2counts failed
     failedBamsNb = len(failedBams)
     for failedI in reversed(failedBams):
         del(samples[failedI])
