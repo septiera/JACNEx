@@ -229,7 +229,7 @@ def main(argv):
     # parse exons from BED to obtain a list of lists (dim=NbExon x [CHR,START,END,EXONID]),
     # the exons are sorted according to their genomic position and padded
     try:
-        exons = mageCNV.bed.processBed(bedFile, padding)
+        exons = countFrags.bed.processBed(bedFile, padding)
     except Exception:
         logger.error("processBed failed")
         raise Exception()
@@ -243,7 +243,7 @@ def main(argv):
     # countsArray[exonIndex,sampleIndex] will store the specified count,
     # countsFilled[sampleIndex] is True iff counts for specified sample were filled from countsFile
     try:
-        (countsArray, countsFilled) = mageCNV.countsFile.extractCountsFromPrev(exons, samples, countsFile)
+        (countsArray, countsFilled) = countFrags.countsFile.extractCountsFromPrev(exons, samples, countsFile)
     except Exception as e:
         logger.error("parseCountsFile failed - %s", e)
         raise Exception()
@@ -254,7 +254,7 @@ def main(argv):
 
     # populate the module-global exonNCLs in countFragments
     try:
-        mageCNV.countFragments.initExonNCLs(exons)
+        countFrags.countFragments.initExonNCLs(exons)
     except Exception as e:
         logger.error("initExonNCLs failed - %s", e)
         raise Exception()
@@ -289,7 +289,7 @@ def main(argv):
     failedBams = []
 
     # mergeCounts:
-    # arg: a Future object returned by ProcessPoolExecutor.submit(mageCNV.countFragments.countFrags).
+    # arg: a Future object returned by ProcessPoolExecutor.submit(countFrags.countFragments.countFrags).
     # countFrags() returns a 3-element tuple (sampleIndex, sampleCounts, breakPoints).
     # If something went wrong, log and populate failedBams;
     # otherwise fill column at index sampleIndex in countsArray with counts stored in sampleCounts,
@@ -329,7 +329,7 @@ def main(argv):
                 logger.info('Sample %s already filled from countsFile', sample)
                 continue
             else:
-                futureRes = pool.submit(mageCNV.countFragments.countFrags,
+                futureRes = pool.submit(countFrags.countFragments.countFrags,
                                         bam, len(exons), maxGap, tmpDir, samtools, coresPerSample, bamIndex)
                 futureRes.add_done_callback(mergeCounts)
 
@@ -345,7 +345,7 @@ def main(argv):
     countsArray = np.delete(countsArray, failedBams, axis=1)
 
     # Print exon defs + counts to stdout
-    mageCNV.countsFile.printCountsFile(exons, samples, countsArray)
+    countFrags.countsFile.printCountsFile(exons, samples, countsArray)
 
     thisTime = time.time()
     logger.debug("Done printing results for all samples, in %.2f s", thisTime - startTime)

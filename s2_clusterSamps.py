@@ -186,7 +186,7 @@ def main(argv):
     # - SOIs (list[str]): sampleIDs copied from countsFile's header
     # - countsArray (np.ndarray[int]): fragment counts, dim = NbExons x NbSOIs
     try:
-        (exons, SOIs, countsArray) = mageCNV.countsFile.parseCountsFile(countsFile)
+        (exons, SOIs, countsArray) = countFrags.countsFile.parseCountsFile(countsFile)
     except Exception:
         logger.error("parseCountsFile failed")
         raise Exception()
@@ -202,7 +202,7 @@ def main(argv):
     # - FPMArray (np.ndarray[float]): normalised counts of countsArray same dimension
     #   for arrays in input/output: NbExons*NbSOIs
     try:
-        FPMArray = mageCNV.normalisation.FPMNormalisation(countsArray)
+        FPMArray = clusterSamps.normalisation.FPMNormalisation(countsArray)
     except Exception:
         logger.error("FPMNormalisation failed")
         raise Exception()
@@ -221,7 +221,7 @@ def main(argv):
     #   to all samples passing quality control
     try:
         QCPDF = os.path.join(plotDir, "CoverageProfilChecking_" + str(len(SOIs)) + "samps.pdf")
-        (sampsQCfailed, uncoveredExons) = mageCNV.qualityControl.SampsQC(FPMArray, SOIs, QCPDF)
+        (sampsQCfailed, uncoveredExons) = clusterSamps.qualityControl.SampsQC(FPMArray, SOIs, QCPDF)
 
     except Exception as e:
         logger.error("SampQC failed %s", e)
@@ -256,7 +256,7 @@ def main(argv):
             #   key = clusterID, value = list of SOIsIndex
             # - trgt2Ctrls (dict(int : list[int])): target and controls clusters correspondance,
             #   key = target clusterID, value = list of controls clusterID
-            (clust2Samps, trgt2Ctrls) = mageCNV.clustering.clustersBuilds(validFPMArray, maxCorr, minCorr, minSamps, dendogramPDF)
+            (clust2Samps, trgt2Ctrls) = clusterSamps.clustering.clustersBuilds(validFPMArray, maxCorr, minCorr, minSamps, dendogramPDF)
         except Exception:
             logger.error("clusterBuilding failed")
             raise Exception()
@@ -272,7 +272,7 @@ def main(argv):
             # contains the following information: clusterID, list of samples added to compose the cluster,
             # clusterIDs controlling this cluster, validity of the cluster according to its total number
             # (<20 =invalid), its cluster status (here as all chromosomes are analysed together = "W" for whole)
-            clustsResList = mageCNV.clustering.STDZandCheckRes(SOIs, sampsQCfailed, clust2Samps, trgt2Ctrls, minSamps, nogender)
+            clustsResList = clusterSamps.clustering.STDZandCheckRes(SOIs, sampsQCfailed, clust2Samps, trgt2Ctrls, minSamps, nogender)
 
         except Exception:
             logger.error("standardisation of results and validation failed")
@@ -295,7 +295,7 @@ def main(argv):
             # value=list of gonosome exon index.
             # - genderInfo (list of list[str]):contains informations for the gender
             # identification, ie ["gender identifier","specific chromosome"].
-            (gonoIndex, genderInfo) = mageCNV.genderDiscrimination.getGenderInfos(exonsToKeep)
+            (gonoIndex, genderInfo) = clusterSamps.genderDiscrimination.getGenderInfos(exonsToKeep)
         except Exception:
             logger.error("getGenderInfos failed")
             raise Exception()
@@ -325,7 +325,7 @@ def main(argv):
             #   key = clusterID, value = list of SOIsIndex
             # - trgt2Ctrls (dict(int : list[int])): target and controls clusters correspondance,
             #   key = target clusterID, value = list of controls clusterID
-            (clust2Samps, trgt2Ctrls) = mageCNV.clustering.clustersBuilds(autosomesFPM, maxCorr, minCorr, minSamps, dendogramPDF)
+            (clust2Samps, trgt2Ctrls) = clusterSamps.clustering.clustersBuilds(autosomesFPM, maxCorr, minCorr, minSamps, dendogramPDF)
 
         except Exception:
             logger.error("clusterBuilds for autosomes failed")
@@ -346,7 +346,7 @@ def main(argv):
             #   key = clusterID, value = list of SOIsIndex
             # - trgt2CtrlsGono (dict(int : list[int])): target and controls clusters correspondance,
             #   key = target clusterID, value = list of controls clusterID
-            (clust2SampsGono, trgt2CtrlsGono) = mageCNV.clustering.clustersBuilds(gonosomesFPM, maxCorr, minCorr, minSamps, dendogramPDF)
+            (clust2SampsGono, trgt2CtrlsGono) = clusterSamps.clustering.clustersBuilds(gonosomesFPM, maxCorr, minCorr, minSamps, dendogramPDF)
 
         except Exception:
             logger.error("clusterBuilds for gonosomesFPM failed")
@@ -367,7 +367,7 @@ def main(argv):
             # - kmeans (list[int]): groupID predicted by Kmeans ordered on SOIsIndex
             # - sexePred (list[str]): genderID (e.g ["M","F"]), the order
             # correspond to KMeans groupID (0=M, 1=F)
-            (kmeans, sexePred) = mageCNV.genderDiscrimination.genderAttribution(validFPMArray, gonoIndex, genderInfo)
+            (kmeans, sexePred) = clusterSamps.genderDiscrimination.genderAttribution(validFPMArray, gonoIndex, genderInfo)
         except Exception:
             logger.error("gender prediction from gonosomes failed")
             raise Exception()
@@ -387,7 +387,7 @@ def main(argv):
             # composition "M" only males, "F" only females, "B" both genders are present in the cluster)
             # beware if a target cluster of one gender has a control cluster with the another gender,
             # this is not indicated by "B".
-            clustsResList = mageCNV.clustering.STDZandCheckRes(SOIs, sampsQCfailed, clust2Samps, trgt2Ctrls, minSamps,
+            clustsResList = clusterSamps.clustering.STDZandCheckRes(SOIs, sampsQCfailed, clust2Samps, trgt2Ctrls, minSamps,
                                                                nogender, clust2SampsGono, trgt2CtrlsGono, kmeans, sexePred)
         except Exception:
             logger.error("standardisation of results and validation failed")
@@ -400,7 +400,7 @@ def main(argv):
     #####################################################
     # print results
     ##################
-    mageCNV.clustering.printClustersFile(clustsResList)
+    clusterSamps.clustering.printClustersFile(clustsResList)
 
     thisTime = time.time()
     logger.debug("Done printing results, in %.2f s", thisTime - startTime)
