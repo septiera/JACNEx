@@ -181,7 +181,7 @@ def main(argv):
     # Parse TSV file of counts
     ###################
     # To obtain :
-    # - exons (list of lists[str,int,int,str]): information on exon , containing CHR,START,END,EXON_ID
+    # - exons (list of lists[str,int,int,str]): CHR,START,END,EXON_ID
     #   the exons are sorted according to their genomic position and padded.
     # - SOIs (list[str]): sampleIDs copied from countsFile's header
     # - countsArray (np.ndarray[int]): fragment counts, dim = NbExons x NbSOIs
