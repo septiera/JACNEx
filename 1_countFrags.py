@@ -23,6 +23,10 @@ import mageCNV.countsFile
 import mageCNV.countFragments
 
 
+# set up logger, using inherited config, in case we get called as a module
+logger = logging.getLogger(__name__)
+
+
 ###############################################################################
 ############################ PRIVATE FUNCTIONS ################################
 ###############################################################################
