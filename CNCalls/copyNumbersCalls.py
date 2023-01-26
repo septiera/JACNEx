@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 import matplotlib.backends.backend_pdf
 import time
 
-import mageCNV.slidingWindow
+import clusterSamps.slidingWindow
 
 # set up logger: we want scriptName rather than 'root'
 logger = logging.getLogger(os.path.basename(sys.argv[0]))

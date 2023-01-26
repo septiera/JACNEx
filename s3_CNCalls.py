@@ -18,11 +18,11 @@ import logging
 import numpy as np
 
 ####### MAGE-CNV modules
-import mageCNV.countsFile
-import mageCNV.normalisation
-import mageCNV.genderDiscrimination
-import mageCNV.slidingWindow
-import mageCNV.copyNumbersCalls
+import countFrags.countsFile
+import clusterSamps.normalisation
+import clusterSamps.genderDiscrimination
+import clusterSamps.slidingWindow
+import CNCalls.copyNumbersCalls
 
 
 ###############################################################################

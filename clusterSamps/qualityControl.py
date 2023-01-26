@@ -1,8 +1,9 @@
 import numpy as np
 import logging
-import mageCNV.slidingWindow
 import matplotlib.backends.backend_pdf
 import matplotlib.pyplot as plt
+
+import clusterSamps.slidingWindow
 
 # set up logger, using inherited config
 logger = logging.getLogger(__name__)
