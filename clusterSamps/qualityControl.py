@@ -64,13 +64,13 @@ def SampsQC(counts, SOIs, QCPDF):
         # - binEdges (np.ndarray[floats]): FPM range
         # - densityOnFPMRange (np.ndarray[float]): probability density for all bins in the FPM range
         #   dim= len(binEdges)
-        binEdges, densityOnFPMRange = clusterSamps.slidingWindow.smoothingCoverageProfile(sampFragCounts)
+        binEdges, densityOnFPMRange = mageCNV.slidingWindow.smoothingCoverageProfile(sampFragCounts)
 
         # recover the threshold of the minimum density means before an increase
         # - minIndex (int): index from "densityMeans" associated with the first lowest
         # observed mean
         # - minMean (float): first lowest observed mean
-        (minIndex, minMean) = clusterSamps.slidingWindow.findLocalMin(densityOnFPMRange)
+        (minIndex, minMean) = mageCNV.slidingWindow.findLocalMin(densityOnFPMRange)
 
         # recover the threshold of the maximum density means after the minimum
         # density means which is associated with the largest covered exons number.

@@ -155,7 +155,7 @@ def main(argv):
     # - SOIs (list[str]): sampleIDs copied from countsFile's header
     # - countsArray (np.ndarray[int]): fragment counts, dim = NbExons x NbSOIs
     try:
-        (exons, SOIs, countsArray) = countFrags.countsFile.parseCountsFile(countsFile)
+        (exons, SOIs, countsArray) = mageCNV.countsFile.parseCountsFile(countsFile)
     except Exception:
         logger.error("parseCountsFile failed")
         raise Exception()
@@ -173,7 +173,7 @@ def main(argv):
     # - SampsQCFailed list[str] : sample names that failed QC
     # - sex2Clust dict[str, list[str]]: key: "A" autosomes or "G" gonosome, value: clusterID list
     try:
-        (clusts2Samps, clusts2Ctrls, SampsQCFailed, sex2Clust) = CNCalls.copyNumbersCalls.parseClustsFile(clustsFile, SOIs)
+        (clusts2Samps, clusts2Ctrls, SampsQCFailed, sex2Clust) = mageCNV.copyNumbersCalls.parseClustsFile(clustsFile, SOIs)
     except Exception:
         logger.error("parseClustsFile failed")
         raise Exception()
@@ -191,7 +191,7 @@ def main(argv):
     # - countsNorm (np.ndarray[float]): normalised counts of countsArray same dimension
     # for arrays in input/output: NbExons*NbSOIs
     try:
-        countsNorm = clusterSamps.normalisation.FPMNormalisation(countsArray)
+        countsNorm = mageCNV.normalisation.FPMNormalisation(countsArray)
     except Exception:
         logger.error("FPMNormalisation failed")
         raise Exception()
@@ -207,10 +207,10 @@ def main(argv):
     # - Returns an all zeroes float array, adapted for
     # storing the logOdds for each type of copy number.
     # dim= NbExons x [NbSOIs x [CN0, CN1, CN2,CN3+]]
-    logOddsArray = CNCalls.copyNumbersCalls.allocateLogOddsArray(SOIs, exons)
+    logOddsArray = mageCNV.copyNumbersCalls.allocateLogOddsArray(SOIs, exons)
 
     try:
-        logOddsArray = CNCalls.copyNumbersCalls.CNCalls(sex2Clust, exons, countsNorm, clusts2Samps, clusts2Ctrls, priors, SOIs, plotDir, logOddsArray)
+        logOddsArray = mageCNV.copyNumbersCalls.CNCalls(sex2Clust, exons, countsNorm, clusts2Samps, clusts2Ctrls, priors, SOIs, plotDir, logOddsArray)
 
     except Exception:
         logger.error("CNCalls failed")

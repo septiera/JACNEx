@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 # This must be a (module-level) global variable because the multiprocessing
 # module doesn't allow us to use an NCL as function argument...
 # So, users of this module MUST call initExonNCLs() once to populate exonNCLs
-# before the first call to bam2counts()
+# before the first call to countFrags()
 exonNCLs = {}
 
 
@@ -33,7 +33,7 @@ exonNCLs = {}
 # Arg: exon definitions as returned by processBed, padded and sorted
 # Resulting NCLs are stored in the global dictionary exonNCLs, one NCL per
 # chromosome, key=chr, value=NCL
-# This function must be called a single time before the first call to bam2counts()
+# This function must be called a single time before the first call to countFrags()
 def initExonNCLs(exons):
     # we want to access the module-global exonNCLs dictionary
     global exonNCLs
@@ -65,7 +65,7 @@ def initExonNCLs(exons):
 
 
 ####################################################
-# bam2counts :
+# countFrags :
 # Count the fragments in bamFile that overlap each exon from exonNCLs.
 # Arguments:
 #   - a bam file (with path)
@@ -87,7 +87,7 @@ def initExonNCLs(exons):
 #   and QNAME is the supporting fragment
 # If anything goes wrong, log info on exception and then always raise Exception(str(sampleIndex)),
 # so caller can catch it and know which sampleIndex we were working on.
-def bam2counts(bamFile, nbOfExons, maxGap, tmpDir, samtools, jobs, sampleIndex):
+def countFrags(bamFile, nbOfExons, maxGap, tmpDir, samtools, jobs, sampleIndex):
     # This is a two step process:
     # 1. group the alignments by QNAME with samtools-collate, and then
     # 2. split the alignments into batches of ~batchSize alignements (making sure all alis for any
@@ -205,7 +205,7 @@ def bam2counts(bamFile, nbOfExons, maxGap, tmpDir, samtools, jobs, sampleIndex):
 
         # wait for samtools to finish cleanly and check exit code
         if (samproc.wait() != 0):
-            logger.error("in bam2counts, while processing %s, samtools exited with code %s",
+            logger.error("in countFrags, while processing %s, samtools exited with code %s",
                          bamFile, samproc.returncode)
             raise Exception("samtools failed")
 
@@ -216,7 +216,7 @@ def bam2counts(bamFile, nbOfExons, maxGap, tmpDir, samtools, jobs, sampleIndex):
         # then sorted by BP1 then BP2 then CNVTYPE then QNAME
         breakPoints.sort(key=lambda row: (row[0], row[1], row[2], row[3], row[4]))
         thisTime = time.time()
-        logger.debug("Done bam2counts for %s, in %.2f s", os.path.basename(bamFile), thisTime - startTime)
+        logger.debug("Done countFrags for %s, in %.2f s", os.path.basename(bamFile), thisTime - startTime)
         return(sampleIndex, sampleCounts, breakPoints)
 
     except Exception as e:
