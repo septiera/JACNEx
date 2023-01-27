@@ -15,7 +15,7 @@ import numpy as np
 
 ####### MAGE-CNV modules
 import countFrags.countsFile
-import clusterSamps.normalisation
+import countFrags.countFragments
 import clusterSamps.qualityControl
 import clusterSamps.genderDiscrimination
 import clusterSamps.clustering
@@ -202,7 +202,7 @@ def main(argv):
     # - FPMArray (np.ndarray[float]): normalised counts of countsArray same dimension
     #   for arrays in input/output: NbExons*NbSOIs
     try:
-        FPMArray = clusterSamps.normalisation.FPMNormalisation(countsArray)
+        FPMArray = countFrags.countFragments.FPMNormalisation(countsArray)
     except Exception:
         logger.error("FPMNormalisation failed")
         raise Exception()
