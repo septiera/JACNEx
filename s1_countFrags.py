@@ -235,7 +235,7 @@ def main(argv):
         raise Exception()
 
     thisTime = time.time()
-    logger.debug("Done pre-processing BED, in %.2f s", thisTime - startTime)
+    logger.debug("Done pre-processing BED, in %.2fs", thisTime - startTime)
     startTime = thisTime
 
     # allocate countsArray and countsFilled, and populate them with pre-calculated
@@ -249,7 +249,7 @@ def main(argv):
         raise Exception()
 
     thisTime = time.time()
-    logger.debug("Done parsing previous countsFile, in %.2f s", thisTime - startTime)
+    logger.debug("Done parsing previous countsFile, in %.2fs", thisTime - startTime)
     startTime = thisTime
 
     # populate the module-global exonNCLs in countFragments
@@ -335,7 +335,8 @@ def main(argv):
                 futureRes.add_done_callback(mergeCounts)
 
     thisTime = time.time()
-    logger.debug("Done processing all BAMs, in %.2f s", thisTime - startTime)
+    logger.info("Done processing all BAMs, %i new BAMs in %.2fs i.e. %.2fs per BAM",
+                nbOfSamplesToProcess, thisTime - startTime, (thisTime - startTime) / nbOfSamplesToProcess)
     startTime = thisTime
 
     #####################################################
@@ -349,7 +350,7 @@ def main(argv):
     countFrags.countsFile.printCountsFile(exons, samples, countsArray)
 
     thisTime = time.time()
-    logger.debug("Done printing results for all samples, in %.2f s", thisTime - startTime)
+    logger.debug("Done printing results for all samples, in %.2fs", thisTime - startTime)
     if (failedBamsNb > 0):
         logger.warning("ALL DONE BUT COUNTING FAILED FOR %i SAMPLES, check the log!", failedBamsNb)
     else:
