@@ -42,7 +42,7 @@ logger = logging.getLogger(os.path.basename(sys.argv[0]))
 #
 # Args:
 #  - FPMarray (np.ndarray[float]): normalised fragment counts for QC validated samples,
-#  dim = NbCoveredExons x NbSOIsQCValidated
+#  dim = NbCapturedExons x NbSOIsQCValidated
 #  - maxCorr (float): maximal Pearson correlation score tolerated by the user to start
 #   build clusters
 #  - minCorr (float): minimal Pearson correlation score tolerated by the user to end
@@ -241,7 +241,7 @@ def parseClustsFile(clustsFile, SOIs):
         else:
             # finding information from the 5 columns
             clusterID, sampsInCluster, controlledBy, validCluster, clusterStatus = line.rstrip().split("\t", maxsplit=4)
-            
+
             """
             #### DEV : For first test step integration of all clusters
             if validCluster == "1":
@@ -283,7 +283,7 @@ def parseClustsFile(clustsFile, SOIs):
 #
 # Args:
 # - FPMarray (np.ndarray[float]): normalised fragment counts for QC validated
-#  samples (VSOIs), dim = NbCoveredExons x NbSOIsQCValidated
+#  samples (VSOIs), dim = NbCapturedExons x NbSOIsQCValidated
 #
 # Return:
 # - linksMatrix (np.ndarray[float]): the hierarchical clustering encoded as a linkage
