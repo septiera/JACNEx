@@ -1,13 +1,11 @@
-import sys
-import os
 import numpy as np
 import logging
 
 # import sklearn submodule for Kmeans calculation
 import sklearn.cluster
 
-# set up logger: we want scriptName rather than 'root'
-logger = logging.getLogger(os.path.basename(sys.argv[0]))
+# set up logger, using inherited config
+logger = logging.getLogger(__name__)
 
 
 ###############################################################################
@@ -80,8 +78,8 @@ def getGenderInfos(exons):
 # Each test returns a list of predicted example genders in the order of the Kmeans
 # groups (e.g. [0="M", 1="F"]
 # If at the end of the process these two tests do not produce the same result,
-# then it's impossible to predict gender (return the error and stop the analysis). 
-# 
+# then it's impossible to predict gender (return the error and stop the analysis).
+#
 # Args:
 # - validCounts (np.ndarray[float]): normalized fragment counts for valid samples
 # - gonoIndex (dict([str]:list[int])): associated the gonosome names with the

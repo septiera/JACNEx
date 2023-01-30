@@ -6,7 +6,7 @@ import logging
 import numba  # make python faster
 import numpy as np
 # nested containment lists, similar to interval trees but faster (https://github.com/biocore-ntnu/ncls)
-from ncls import NCLS
+import ncls
 from concurrent.futures import ProcessPoolExecutor
 
 # set up logger, using inherited config
@@ -59,7 +59,7 @@ def initExonNCLs(exons):
 
     # populate global dictionary of NCLs, one per chromosome
     for chrom in starts.keys():
-        ncl = NCLS(starts[chrom], ends[chrom], indexes[chrom])
+        ncl = ncls.NCLS(starts[chrom], ends[chrom], indexes[chrom])
         exonNCLs[chrom] = ncl
 
 
