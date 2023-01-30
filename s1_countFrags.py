@@ -317,7 +317,7 @@ def main(argv):
                     BPFH.close()
                 except Exception as e:
                     logger.warning("Discarding breakpoints info for %s because cannot open %s for writing - %s", samples[si], bpFile, e)
-            logger.info("Done processing %s", samples[si])
+            logger.info("Done bam2counts for %s", samples[si])
 
     #####################################################
     # Process new BAMs, up to paraSamples in parallel
@@ -329,6 +329,7 @@ def main(argv):
                 logger.info('Sample %s already filled from countsFile', sample)
                 continue
             else:
+                logger.info("Starting bam2counts for %s", sample)
                 futureRes = pool.submit(countFrags.countFragments.bam2counts,
                                         bam, len(exons), maxGap, tmpDir, samtools, coresPerSample, bamIndex)
                 futureRes.add_done_callback(mergeCounts)
@@ -361,7 +362,7 @@ def main(argv):
 
 if __name__ == '__main__':
     # configure logging, sub-modules will inherit this config
-    logging.basicConfig(format='%(asctime)s %(levelname)s %(name)s %(funcName)s(): %(message)s',
+    logging.basicConfig(format='%(asctime)s %(levelname)s %(name)s: %(message)s',
                         datefmt='%Y-%m-%d %H:%M:%S',
                         level=logging.DEBUG)
     # set up logger: we want script name rather than 'root'

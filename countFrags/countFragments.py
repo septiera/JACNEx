@@ -2,7 +2,6 @@ import os
 import re
 import subprocess
 import tempfile
-import time
 import logging
 import numba  # make python faster
 import numpy as np
@@ -38,8 +37,8 @@ def initExonNCLs(exons):
     # we want to access the module-global exonNCLs dictionary
     global exonNCLs
     if exonNCLs:
-        logger.warn("initExonNCLs called but exonNCLs already initialized, fix your code")
-        return
+        logger.error("initExonNCLs called but exonNCLs already initialized, fix your code")
+        raise Exception("initExonNCLs() called twice")
     # for each chrom, build 3 lists with same length: starts, ends, indexes (in
     # the complete exons list). key is the CHR
     starts = {}
@@ -102,9 +101,6 @@ def bam2counts(bamFile, nbOfExons, maxGap, tmpDir, samtools, jobs, sampleIndex):
     batchSize = 1000000
 
     try:
-        logger.info('Processing BAM %s', os.path.basename(bamFile))
-        startTime = time.time()
-
         # data structures to return:
         # 1D numpy array containing the sample fragment counts for all exons
         sampleCounts = np.zeros(nbOfExons, dtype=np.uint32)
@@ -215,13 +211,12 @@ def bam2counts(bamFile, nbOfExons, maxGap, tmpDir, samtools, jobs, sampleIndex):
         # we want breakpoints grouped by chrom (but not caring that chr10 comes before chr2),
         # then sorted by BP1 then BP2 then CNVTYPE then QNAME
         breakPoints.sort(key=lambda row: (row[0], row[1], row[2], row[3], row[4]))
-        thisTime = time.time()
-        logger.debug("Done bam2counts for %s, in %.2f s", os.path.basename(bamFile), thisTime - startTime)
         return(sampleIndex, sampleCounts, breakPoints)
 
     except Exception as e:
         logger.error(repr(e))
         raise Exception(str(sampleIndex))
+
 
 #############################################################
 # FPMNormalisation
@@ -245,6 +240,7 @@ def FPMNormalisation(countsArray):
         SampleCountNorm = (countsArray[:, sampleCol] * 1e6) / SampleCountsSum  # 1e6 is equivalent to 1x10^6
         countsNorm[:, sampleCol] = SampleCountNorm
     return countsNorm
+
 
 ###############################################################################
 ############################ PRIVATE FUNCTIONS ################################
