@@ -21,6 +21,10 @@ import clusterSamps.genderDiscrimination
 import clusterSamps.clustering
 
 
+# set up logger, using inherited config, in case we get called as a module
+logger = logging.getLogger(__name__)
+
+
 ###############################################################################
 ############################ PRIVATE FUNCTIONS ################################
 ###############################################################################
@@ -173,7 +177,7 @@ def main(argv):
 
     ################################################
     # args seem OK, start working
-    logger.info("called with: " + " ".join(argv[1:]))
+    logger.debug("called with: " + " ".join(argv[1:]))
     logger.info("starting to work")
     startTime = time.time()
 
@@ -388,7 +392,7 @@ def main(argv):
             # beware if a target cluster of one gender has a control cluster with the another gender,
             # this is not indicated by "B".
             clustsResList = clusterSamps.clustering.STDZandCheckRes(SOIs, sampsQCfailed, clust2Samps, trgt2Ctrls, minSamps,
-                                                               nogender, clust2SampsGono, trgt2CtrlsGono, kmeans, sexePred)
+                                                                    nogender, clust2SampsGono, trgt2CtrlsGono, kmeans, sexePred)
         except Exception:
             logger.error("standardisation of results and validation failed")
             raise Exception()

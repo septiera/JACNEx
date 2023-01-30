@@ -15,7 +15,6 @@ import getopt
 import os
 import time
 import logging
-import numpy as np
 
 ####### MAGE-CNV modules
 import countFrags.countsFile
@@ -23,6 +22,10 @@ import clusterSamps.normalisation
 import clusterSamps.genderDiscrimination
 import clusterSamps.slidingWindow
 import CNCalls.copyNumbersCalls
+
+
+# set up logger, using inherited config, in case we get called as a module
+logger = logging.getLogger(__name__)
 
 
 ###############################################################################
@@ -144,6 +147,7 @@ def main(argv):
 
     ################################################
     # args seem OK, start working
+    logger.debug("called with: " + " ".join(argv[1:]))
     logger.info("starting to work")
     startTime = time.time()
 

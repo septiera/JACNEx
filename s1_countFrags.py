@@ -222,7 +222,7 @@ def main(argv):
     (bamsToProcess, samples, bedFile, BPdir, padding, maxGap, countsFile, tmpDir, samtools, jobs) = parseArgs(argv)
 
     # args seem OK, start working
-    logger.info("called with: " + " ".join(argv[1:]))
+    logger.debug("called with: " + " ".join(argv[1:]))
     logger.info("starting to work")
     startTime = time.time()
 
