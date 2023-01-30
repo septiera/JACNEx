@@ -47,7 +47,7 @@ def extractCountsFromPrev(exons, SOIs, prevCountsFile):
         (prevExons, prevSamples, prevCountsList) = parseCountsFilePrivate(prevCountsFile)
         # compare exon definitions
         if (exons != prevExons):
-            logger.error("exon definitions disagree between prevCountsFile and BED file...\n\tIf the BED file changed " +
+            logger.error("exon definitions disagree between prevCountsFile and BED file...\n\tIf the BED file changed " + 
                          "you cannot re-use a previous countsFile: all counts must be recalculated from scratch")
             raise Exception('mismatched exon definitions')
 

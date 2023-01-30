@@ -218,14 +218,14 @@ def main(argv):
     #####################################################
     # Quality control:
     ##################
-    # sample coverage profil validity assessment and identification of exons with
-    # little or no coverage common to the validated samples
+    # sample coverage profil validity assessment and identification of uncaptured exons indexes
+    # common to the validated samples
     # - sampsQCfailed (list[int]): sample indexes not validated by quality control
-    # - uncoveredExons (list[int]): exons indexes with little or no coverage common
+    # - uncapturedExons (list[int]): uncaptured exons indexes common
     #   to all samples passing quality control
     try:
         QCPDF = os.path.join(plotDir, "CoverageProfilChecking_" + str(len(SOIs)) + "samps.pdf")
-        (sampsQCfailed, uncoveredExons) = clusterSamps.qualityControl.SampsQC(FPMArray, SOIs, QCPDF)
+        (sampsQCfailed, uncapturedExons) = clusterSamps.qualityControl.SampsQC(FPMArray, SOIs, QCPDF)
 
     except Exception as e:
         logger.error("SampQC failed %s", e)
@@ -242,11 +242,11 @@ def main(argv):
     # (exons and samples) by the quality control.
 
     ####################
-    # filtering the counts data to recover valid samples and covered exons
-    # - validFPMArray (np.ndarray[float]): normalized fragment counts for exons covered
+    # filtering the counts data to recover valid samples and captured exons
+    # - validFPMArray (np.ndarray[float]): normalized fragment counts for exons captured
     # for all samples that passed quality control
     validFPMArray = np.delete(FPMArray, sampsQCfailed, axis=1)
-    validFPMArray = np.delete(validFPMArray, uncoveredExons, axis=0)
+    validFPMArray = np.delete(validFPMArray, uncapturedExons, axis=0)
 
     ###########################
     #### no gender discrimination
@@ -290,8 +290,8 @@ def main(argv):
     #### gender discrimination
     else:
 
-        # - exonsToKeep (list of list[str,int,int,str]): contains exons information from covered exons
-        exonsToKeep = [val for i, val in enumerate(exons) if i not in uncoveredExons]
+        # - exonsToKeep (list of list[str,int,int,str]): contains exons information from captured exons
+        exonsToKeep = [val for i, val in enumerate(exons) if i not in uncapturedExons]
 
         try:
             # parse exons to extract information related to the organisms studied and their gender
@@ -311,10 +311,10 @@ def main(argv):
         # cutting normalized count data
         # - gonoIndexFlat (np.ndarray[int]): flat gonosome exon indexes list
         gonoIndexFlat = np.unique([item for sublist in list(gonoIndex.values()) for item in sublist])
-        # - autosomesFPM (np.ndarray[float]): normalized fragment counts for valid samples, exons covered
+        # - autosomesFPM (np.ndarray[float]): normalized fragment counts for valid samples, exons captured
         # in autosomes
         autosomesFPM = np.delete(validFPMArray, gonoIndexFlat, axis=0)
-        # - gonosomesFPM (np.ndarray[float]): normalized fragment counts for valid samples, exons covered
+        # - gonosomesFPM (np.ndarray[float]): normalized fragment counts for valid samples, exons captured
         # in gonosomes
         gonosomesFPM = np.take(validFPMArray, gonoIndexFlat, axis=0)
 

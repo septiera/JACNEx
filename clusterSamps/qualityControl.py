@@ -3,7 +3,7 @@ import logging
 import matplotlib.backends.backend_pdf
 import matplotlib.pyplot as plt
 
-import clusterSamps.slidingWindow
+import clusterSamps.smoothing
 
 # set up logger, using inherited config
 logger = logging.getLogger(__name__)
@@ -15,23 +15,23 @@ logger = logging.getLogger(__name__)
 
 ###################################
 # SampsQC :
-# evaluates the coverage profile of the samples and identifies the uncovered
+# evaluates the coverage profile of the samples and identifies the uncaptured
 # exons for all valid samples.
-# This allows to identify the non optimal informations (unvalid samples, uncovered exons)
+# This allows to identify the non optimal informations (unvalid samples, uncaptured exons)
 # for clustering.
 # A sample coverage profile is deduced by computing the exon densities from the FPM values.
 # To gain accuracy, this coverage profile is smoothed.
 # A good coverage profile differentiates between uncovered and covered exons.
-# A first density drop is associated with uncovered exons, a threshold is
+# A first density drop is associated with uncovered and uncaptured exons, a threshold is
 # deduced from the first lowest density obtained.
-# Then the density increases which is the signal associated with covered exons,
+# Then the density increases which is the signal associated with captured exons,
 # a threshold is deduced from the highest density obtained.
 # If the difference between these two thresholds is less than 20% of the highest
 # density threshold, the coverage profile is not processable.
 # Invalidation of the sample for the rest of the analyses.
-# For validated samples, recovery of uncovered exon indexes that have a FPM
+# For validated samples, recovery of uncaptured exon indexes that have a FPM
 # value lower than the FPM value associated with the lowest density threshold.
-# An intersection of the different lists of uncovered exons is performed in order
+# An intersection of the different lists of uncaptured exons is performed in order
 # to find those common to all validated samples.
 #
 # Args:
@@ -41,8 +41,8 @@ logger = logging.getLogger(__name__)
 #
 # Returns a tupple (sampsQCfailed, uncoveredExons), each variable is created here:
 #  - sampsQCfailed (list[int]): sample indexes not validated by quality control
-#  - uncoveredExons (list[int]): exons indexes with little or no coverage common
-#   to all samples passing quality control
+#  - uncapturedExons (list[int]): uncaptured exons indexes common to all samples
+# passing quality control
 
 def SampsQC(counts, SOIs, QCPDF):
     #### Fixed parameter:
@@ -61,36 +61,36 @@ def SampsQC(counts, SOIs, QCPDF):
         sampFragCounts = counts[:, sampleIndex]
 
         # smooth the coverage profile with kernel-density estimate using Gaussian kernels
-        # - binEdges (np.ndarray[floats]): FPM range
+        # - FPMRange (np.ndarray[floats]): FPM range, [0-10] each 0.01
         # - densityOnFPMRange (np.ndarray[float]): probability density for all bins in the FPM range
         #   dim= len(binEdges)
-        binEdges, densityOnFPMRange = clusterSamps.slidingWindow.smoothingCoverageProfile(sampFragCounts)
+        FPMRange, densityOnFPMRange = clusterSamps.smoothing.smoothingCoverageProfile(sampFragCounts)
 
-        # recover the threshold of the minimum density means before an increase
-        # - minIndex (int): index from "densityMeans" associated with the first lowest
-        # observed mean
-        # - minMean (float): first lowest observed mean
-        (minIndex, minMean) = clusterSamps.slidingWindow.findLocalMin(densityOnFPMRange)
+        # recover the threshold (FPMRange index) of the minimum density before an increase
+        # - minDensity2FPMIndex (int): FPMRange index associated with the first lowest
+        # observed density
+        # - minDensity (float): first lowest density observed
+        (minDensity2FPMIndex, minDensity) = clusterSamps.smoothing.findLocalMin(densityOnFPMRange)
 
         # recover the threshold of the maximum density means after the minimum
         # density means which is associated with the largest covered exons number.
-        # - maxIndex (int): index from "densityMeans" associated with the maximum density
-        # mean observed
-        # - maxMean (float): maximum density mean
-        (maxIndex, maxMean) = findLocalMaxPrivate(densityOnFPMRange, minIndex)
+        # - maxDensity2FPMIndex (int): FPMRange index associated with the maximum density
+        # observed
+        # - maxDensity (float): maximum density
+        (maxDensity2FPMIndex, maxDensity) = findLocalMaxPrivate(densityOnFPMRange, minDensity2FPMIndex)
 
         # graphic representation of coverage profiles.
         # returns a pdf in the plotDir
-        coverageProfilPlotPrivate(SOIs[sampleIndex], binEdges, densityOnFPMRange, minIndex, maxIndex, PDF)
+        coverageProfilPlotPrivate(SOIs[sampleIndex], FPMRange, densityOnFPMRange, minDensity2FPMIndex, maxDensity2FPMIndex, PDF)
 
         #############
         # sample validity assessment
-        if (((maxMean - minMean) / maxMean) <= signalThreshold):
+        if (((maxDensity - minDensity) / maxDensity) <= signalThreshold):
             sampsQCfailed.append(sampleIndex)
         #############
         # uncovered exons lists comparison
         else:
-            uncovExonSamp = np.where(sampFragCounts <= binEdges[minIndex])[0]
+            uncovExonSamp = np.where(sampFragCounts <= FPMRange[minDensity2FPMIndex])[0]
             if (len(uncoveredExons) != 0):
                 uncoveredExons = np.intersect1d(uncoveredExons, uncovExonSamp)
             else:
@@ -116,19 +116,19 @@ def SampsQC(counts, SOIs, QCPDF):
 # Args:
 #  - densityOnFPMRange (np.ndarray[float]): probability density for all bins
 #   in the FPM range
-# this arguments is from the slidingWindow.smoothingCoverageProfile function.
-#  - minIndex (int): index associated with the first lowest observed density
+# this arguments is from the smoothing.smoothingCoverageProfile function.
+#  - minDensity2FPMIndex (int): index associated with the first lowest observed density
 #   in np.ndarray "densityOnFPMRange"
 # this arguments is from the slidingWindow.findLocalMin function.
 #
 # Returns a tupple (maxIndex, maxDensity), each variable is created here:
-#  - maxIndex (int): index from np.ndarray "densityOnFPMRange" associated with
-#   the maximum density observed occurring after the minimum density
-#  - maxDensity (float): maximum density
-def findLocalMaxPrivate(densityOnFPMRange, minIndex):
-    maxDensity = np.max(densityOnFPMRange[minIndex:])
-    maxIndex = np.where(densityOnFPMRange == maxDensity)[0][0]
-    return (maxIndex, maxDensity)
+#  - maxDensity2FPMIndex (int): FPMRange index associated with the maximum density
+# observed
+# - maxDensity (float): maximum density
+def findLocalMaxPrivate(densityOnFPMRange, minDensity2FPMIndex):
+    maxDensity = np.max(densityOnFPMRange[minDensity2FPMIndex:])
+    maxDensity2FPMIndex = np.where(densityOnFPMRange == maxDensity)[0][0]
+    return (maxDensity2FPMIndex, maxDensity)
 
 
 ###################################
@@ -136,10 +136,12 @@ def findLocalMaxPrivate(densityOnFPMRange, minIndex):
 # generates a plot per patient
 # x-axis: the range of FPM bins (every 0.1 between 0 and 10)
 # y-axis: exons densities
-# black curve: density data smoothed with kernel-density estimate using Gaussian kernels
-# red vertical line: minimum FPM threshold, all uncovered exons are below this threshold
-# orange vertical line: maximum FPM, corresponds to the FPM value where the density of
-# covered exons is the highest.
+# black curve: density data smoothed with kernel-density estimate
+# using Gaussian kernels
+# red vertical line: minimum FPM threshold, all uncovered and
+# uncaptured exons are below this threshold
+# orange vertical line: maximum FPM, corresponds to the FPM
+# value where the density of captured exons is the highest.
 #
 # Args:
 # - sampleName (str): sample exact name
