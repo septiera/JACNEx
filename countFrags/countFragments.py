@@ -219,26 +219,18 @@ def bam2counts(bamFile, nbOfExons, maxGap, tmpDir, samtools, jobs, sampleIndex):
 
 
 #############################################################
-# FPMNormalisation
-# Fragment counts are normalised in Fragment Per Million (FPM).
-# algorithm for one sample :
-# FPM = (Exon FragsNb * 1x10^6) / (Total FragsNb)
-# This normalisation allows to compare samples with each other.
-# It's therefore necessary before any processing on the data (e.g. clustering and calling)
-# This small function enables numba optimizations.
-# Arg:
-# - countsArray (np.ndarray[int]): fragment counts, Dim=NbExons*NbSOIs
-# Returns:
-# - countsNorm (np.ndarray[float]): normalised counts of countsArray same dimension
-# for arrays in input/output: NbExons*NbSOIs
+# normalizeCounts:
+# Normalize the fragment counts, as fragments per million (FPM).
+# This allows to compare samples with each other.
+# Arg: an np.ndarray[int] storing the fragment counts, Dim=NbExons*NbSOIs
+# Returns an np.ndarray[float] with the normalized counts (FPM), same size as countsArray
 @numba.njit
-def FPMNormalisation(countsArray):
-    # create an empty array to filled with the normalized counts
+def normalizeCounts(countsArray):
+    # empty array to be filled with the normalized counts
     countsNorm = np.zeros_like(countsArray, dtype=np.float32)
     for sampleCol in range(countsArray.shape[1]):
         SampleCountsSum = np.sum(countsArray[:, sampleCol])
-        SampleCountNorm = (countsArray[:, sampleCol] * 1e6) / SampleCountsSum  # 1e6 is equivalent to 1x10^6
-        countsNorm[:, sampleCol] = SampleCountNorm
+        countsNorm[:, sampleCol] = countsArray[:, sampleCol] * (1e6 / SampleCountsSum)
     return countsNorm
 
 
@@ -247,9 +239,9 @@ def FPMNormalisation(countsArray):
 ###############################################################################
 
 ####################################################
-# aliLengthOnRef :
-# Input : a CIGAR string
-# Output : span of the alignment on the reference sequence, ie number of bases
+# aliLengthOnRef:
+# Arg: a CIGAR string
+# Returns the span of the alignment on the reference sequence, ie number of bases
 # consumed by the alignment on the reference
 def aliLengthOnRef(cigar):
     length = 0
