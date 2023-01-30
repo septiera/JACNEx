@@ -63,15 +63,15 @@ def smoothingCoverageProfile(sampFragCounts):
 # findLocalMin:
 # identifies the first minimum density and the associated index in
 # densityOnFPMRange (identical in binEdges).
-# This minimum density corresponds to the threshold separating exons
-# with little or no coverage from covered exons.
+# This minimum density corresponds to the threshold separating
+# capured and uncaptured exons.
 #
 # Args:
 #  - densityOnFPMRange (np.ndarray[float]): probability density for all bins in the FPM range
-#
 # Returns a tupple (minIndex, minDensity), each variable is created here:
-#  - minIndex (int): index with the first lowest density observed
-#  - minDensity (float): first lowest density observed
+# - minDensity2FPMIndex (int): FPMRange index associated with the first lowest
+# observed density
+# - minDensity (float): first lowest density observed
 def findLocalMin(densityOnFPMRange):
     #### Fixed parameter
     # threshold number of observed windows with density above the current
@@ -81,7 +81,7 @@ def findLocalMin(densityOnFPMRange):
     #### To Fill:
     # initialize variables for minimum density and index
     minDensity = densityOnFPMRange[0]
-    minIndex = 0
+    minDensity2FPMIndex = 0
 
     #### Accumulator:
     # counter for number of windows with densities greater than the current
@@ -92,7 +92,7 @@ def findLocalMin(densityOnFPMRange):
         # current density is lower than the minimum density found so far
         if densityOnFPMRange[i] < minDensity:
             minDensity = densityOnFPMRange[i]
-            minIndex = i
+            minDensity2FPMIndex = i
             # reset counter
             counter = 0
         # current density is greater than the minimum density found so far
@@ -103,4 +103,4 @@ def findLocalMin(densityOnFPMRange):
         if counter >= subseqWindowSupMin:
             break
 
-    return (minIndex, minDensity)
+    return (minDensity2FPMIndex, minDensity)
