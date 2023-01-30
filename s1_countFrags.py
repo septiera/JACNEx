@@ -277,8 +277,8 @@ def main(argv):
     targetCoresPerSample = 4
     paraSamples = min(math.ceil(jobs / targetCoresPerSample), nbOfSamplesToProcess)
     coresPerSample = math.ceil(jobs / paraSamples)
-    logger.info("we will process %i samples in parallel, using up to %i cores for each sample.",
-                paraSamples, coresPerSample)
+    logger.info("%i new sample(s)  => will process %i in parallel, using up to %i cores/sample",
+                nbOfSamplesToProcess, paraSamples, coresPerSample)
 
     #####################################################
     # Define nested callback for processing bam2counts() result (so countsArray et al
@@ -316,8 +316,9 @@ def main(argv):
                         print(toPrint, file=BPFH)
                     BPFH.close()
                 except Exception as e:
-                    logger.warning("Discarding breakpoints info for %s because cannot open %s for writing - %s", samples[si], bpFile, e)
-            logger.info("Done bam2counts for %s", samples[si])
+                    logger.warning("Discarding breakpoints info for %s because cannot open %s for writing - %s",
+                                   samples[si], bpFile, e)
+            logger.info("Done counting fragments for %s", samples[si])
 
     #####################################################
     # Process new BAMs, up to paraSamples in parallel
@@ -329,7 +330,6 @@ def main(argv):
                 logger.info('Sample %s already filled from countsFile', sample)
                 continue
             else:
-                logger.info("Starting bam2counts for %s", sample)
                 futureRes = pool.submit(countFrags.countFragments.bam2counts,
                                         bam, len(exons), maxGap, tmpDir, samtools, coresPerSample, bamIndex)
                 futureRes.add_done_callback(mergeCounts)
