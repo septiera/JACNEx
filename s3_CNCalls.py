@@ -25,6 +25,9 @@ import clusterSamps.slidingWindow
 import CNCalls.copyNumbersCalls
 
 
+# set up logger, using inherited config, in case we get called as a module
+logger = logging.getLogger(__name__)
+
 ###############################################################################
 ############################ PRIVATE FUNCTIONS ################################
 ###############################################################################
@@ -144,6 +147,7 @@ def main(argv):
 
     ################################################
     # args seem OK, start working
+    logger.debug("called with: " + " ".join(argv[1:]))
     logger.info("starting to work")
     startTime = time.time()
 
@@ -226,11 +230,12 @@ def main(argv):
 ####################################################################################
 if __name__ == '__main__':
     # configure logging, sub-modules will inherit this config
-    logging.basicConfig(format='%(asctime)s %(levelname)s %(name)s %(funcName)s(): %(message)s',
+    logging.basicConfig(format='%(asctime)s %(levelname)s %(name)s: %(message)s',
                         datefmt='%Y-%m-%d %H:%M:%S',
                         level=logging.DEBUG)
     # set up logger: we want script name rather than 'root'
     logger = logging.getLogger(os.path.basename(sys.argv[0]))
+
     try:
         main(sys.argv)
     except Exception:
