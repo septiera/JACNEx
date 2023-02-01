@@ -2,13 +2,15 @@ import sys
 import os
 import logging
 import numpy as np
-import scipy.stats as st
+import scipy.stats
 from scipy.special import erf
-import matplotlib.pyplot as plt
+import matplotlib.pyplot
 import matplotlib.backends.backend_pdf
 import time
 
+sys.path.append("..")
 import clusterSamps.smoothing
+import clusterSamps.genderDiscrimination
 
 # set up logger: we want scriptName rather than 'root'
 logger = logging.getLogger(os.path.basename(sys.argv[0]))
@@ -57,7 +59,7 @@ def CNCalls(sex2Clust, exons, countsNorm, clusts2Samps, clusts2Ctrls, priors, SO
         # in case there are specific autosome and gonosome clusters.
         # identification of the indexes of the exons associated with the gonosomes or autosomes.
         if sex2Clust:
-            (gonoIndex, genderInfo) = mageCNV.genderDiscrimination.getGenderInfos(exons)
+            (gonoIndex, genderInfo) = clusterSamps.genderDiscrimination.getGenderInfos(exons)
             gonoIndexFlat = np.unique([item for sublist in list(gonoIndex.values()) for item in sublist])
             if clustID in sex2Clust["A"]:
                 exonsIndex2Process = [i for i in range(countsNorm.shape[0]) if i not in gonoIndex]
@@ -142,7 +144,7 @@ def CNCalls(sex2Clust, exons, countsNorm, clusts2Samps, clusts2Ctrls, priors, SO
                 sample_data = exonFPM[sampleIndex2Process.index(i)]
                 sampIndexInLogOddsArray = i * 4
 
-                log_odds = mageCNV.copyNumbersCalls.computeLogOddsPrivate(sample_data, gammaParameters, gammaThreshold, priors, mean, stdev)
+                log_odds = computeLogOddsPrivate(sample_data, gammaParameters, gammaThreshold, priors, mean, stdev)
 
                 for val in range(4):
                     if logOddsArray[exonsIndex2Process[exon], (sampIndexInLogOddsArray + val)] == 0:
@@ -184,23 +186,23 @@ def fitGammaDistributionPrivate(countsInCluster, clustID, PDF):
     # - binEdges (np.ndarray[floats]): FPM range
     # - densityOnFPMRange (np.ndarray[float]): probability density for all bins in the FPM range
     #   dim= len(binEdges)
-    binEdges, densityOnFPMRange = mageCNV.slidingWindow.smoothingCoverageProfile(meanCountByExons)
+    binEdges, densityOnFPMRange = clusterSamps.smoothing.smoothingCoverageProfile(meanCountByExons)
 
     # recover the threshold of the minimum density means before an increase
     # - minIndex (int): index from "densityMeans" associated with the first lowest
     # observed mean
     # - minMean (float): first lowest observed mean (not used for the calling step)
-    (minIndex, minMean) = mageCNV.slidingWindow.findLocalMin(densityOnFPMRange)
+    (minIndex, minMean) = clusterSamps.smoothing.findLocalMin(densityOnFPMRange)
 
     countsExonsNotCovered = meanCountByExons[meanCountByExons <= binEdges[minIndex]]
 
     countsExonsNotCovered.sort()  # sort data in-place
 
     # estimate the parameters of the gamma distribution that best fits the data
-    gammaParameters = st.gamma.fit(countsExonsNotCovered)
+    gammaParameters = scipy.stats.gamma.fit(countsExonsNotCovered)
 
     # compute the cumulative distribution function of the gamma distribution
-    cdf = st.gamma.cdf(countsExonsNotCovered, a=gammaParameters[0], loc=gammaParameters[1], scale=gammaParameters[2])
+    cdf = scipy.stats.gamma.cdf(countsExonsNotCovered, a=gammaParameters[0], loc=gammaParameters[1], scale=gammaParameters[2])
 
     # find the index of the last element where cdf < 0.95
     thresholdIndex = np.where(cdf < 0.95)[0][-1]
@@ -231,7 +233,7 @@ def fitRobustGaussianPrivate(X, mu=None, sigma=None, bandwidth=1.0, eps=1.0e-5):
     # Integral of a normal distribution from -x to x
     weights = lambda x: erf(x / np.sqrt(2))
     # Standard deviation of a truncated normal distribution from -x to x
-    sigmas = lambda x: np.sqrt(1 - 2 * x * st.norm.pdf(x) / weights(x))
+    sigmas = lambda x: np.sqrt(1 - 2 * x * scipy.stats.norm.pdf(x) / weights(x))
 
     w, w0 = 0, 2
 
@@ -318,16 +320,16 @@ def computeLogOddsPrivate(sample_data, params, gamma_threshold, prior_probabilit
     # Reversely, the value of the pdf is truncated from the threshold value discriminating
     # covered from uncovered exons.
     gamma_pdf = 0
-    cdf_cno_threshold = st.gamma.cdf(gamma_threshold, a=params[0], loc=params[1], scale=params[2])
+    cdf_cno_threshold = scipy.stats.gamma.cdf(gamma_threshold, a=params[0], loc=params[1], scale=params[2])
     if sample_data <= mean_cn1:
-        gamma_pdf = (1 / (1 - cdf_cno_threshold)) * st.gamma.pdf(sample_data, a=params[0], loc=params[1], scale=params[2])
+        gamma_pdf = (1 / (1 - cdf_cno_threshold)) * scipy.stats.gamma.pdf(sample_data, a=params[0], loc=params[1], scale=params[2])
     probability_densities.append(gamma_pdf)
 
     ################
     # Calculate the probability densities for the remaining cases (CN1,CN2,CN3+) using the normal distribution
-    probability_densities.append(st.norm.pdf(sample_data, mean / 2, standard_deviation))
-    probability_densities.append(st.norm.pdf(sample_data, mean, standard_deviation))
-    probability_densities.append(st.norm.pdf(sample_data, 3 * mean / 2, standard_deviation))
+    probability_densities.append(scipy.stats.norm.pdf(sample_data, mean / 2, standard_deviation))
+    probability_densities.append(scipy.stats.norm.pdf(sample_data, mean, standard_deviation))
+    probability_densities.append(scipy.stats.norm.pdf(sample_data, 3 * mean / 2, standard_deviation))
 
     #################
     # Calculate the prior probabilities
@@ -375,24 +377,24 @@ def computeLogOddsPrivate(sample_data, params, gamma_threshold, prior_probabilit
 # save a plot in the output pdf
 def coverageProfilPlotPrivate(clustID, binEdges, densityOnFPMRange, minIndex, gammaParameters, PDF):
 
-    fig = plt.figure(figsize=(6, 6))
-    plt.plot(binEdges, densityOnFPMRange, color='black', label='smoothed densities')
+    fig = matplotlib.pyplot.figure(figsize=(6, 6))
+    matplotlib.pyplot.plot(binEdges, densityOnFPMRange, color='black', label='smoothed densities')
 
-    pdfCN0 = st.gamma.pdf(binEdges, a=gammaParameters[0], loc=gammaParameters[1], scale=gammaParameters[2])
-    plt.plot(binEdges, pdfCN0, 'c', label=("CN0 α=" + str(round(gammaParameters[0], 2)) +
+    pdfCN0 = scipy.stats.gamma.pdf(binEdges, a=gammaParameters[0], loc=gammaParameters[1], scale=gammaParameters[2])
+    matplotlib.pyplot.plot(binEdges, pdfCN0, 'c', label=("CN0 α=" + str(round(gammaParameters[0], 2)) +
                                            " loc=" + str(round(gammaParameters[1], 2)) +
                                            " β=" + str(round(gammaParameters[2], 2))))
-    plt.axvline(binEdges[minIndex], color='crimson', linestyle='dashdot', linewidth=2,
+    matplotlib.pyplot.axvline(binEdges[minIndex], color='crimson', linestyle='dashdot', linewidth=2,
                 label="minFPM=" + '{:0.1f}'.format(binEdges[minIndex]))
 
-    plt.ylim(0, 0.5)
-    plt.ylabel("Exon densities")
-    plt.xlabel("Fragments Per Million")
-    plt.title(clustID + " coverage profile")
-    plt.legend()
+    matplotlib.pyplot.ylim(0, 0.5)
+    matplotlib.pyplot.ylabel("Exon densities")
+    matplotlib.pyplot.xlabel("Fragments Per Million")
+    matplotlib.pyplot.title(clustID + " coverage profile")
+    matplotlib.pyplot.legend()
 
     PDF.savefig(fig)
-    plt.close()
+    matplotlib.pyplot.close()
 
 
 ###################################
@@ -407,7 +409,7 @@ def coverageProfilPlotPrivate(clustID, binEdges, densityOnFPMRange, minIndex, ga
 # save a plot in the output pdf
 def filtersPiePlotPrivate(clustID, infoList, pdf):
 
-    fig = plt.figure(figsize=(10, 10))
+    fig = matplotlib.pyplot.figure(figsize=(10, 10))
 
     exonsMuZero = len(infoList[infoList[0] == -1])
     exonsSigRGZero = len(infoList[infoList[1] == -1])
@@ -419,14 +421,14 @@ def filtersPiePlotPrivate(clustID, infoList, pdf):
     x = [exonsMuZero, exonsSigRGZero, exonsZscore_inf3_only, exonsZscore_Weigth,
          exonsWeight_inf_50p, exonsToKeep]
 
-    plt.pie(x, labels=['exons filtered mu=0', 'exons filtered sigRG=0', 'exons filtered only Zscore <3',
+    matplotlib.pyplot.pie(x, labels=['exons filtered mu=0', 'exons filtered sigRG=0', 'exons filtered only Zscore <3',
                        'exons filtered Zscore+Weight', 'exons filtered Weight <50%', 'exons Keep'],
             colors=["grey", "yellow", "indianred", "mediumpurple", "royalblue", "mediumaquamarine"],
             autopct=lambda x: str(round(x, 2)) + '%',
             startangle=-270,
             pctdistance=0.7, labeldistance=1.1)
-    plt.legend()
-    plt.title(clustID)
+    matplotlib.pyplot.legend()
+    matplotlib.pyplot.title(clustID)
 
     pdf.savefig(fig)
-    plt.close()
+    matplotlib.pyplot.close()
