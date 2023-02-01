@@ -19,9 +19,8 @@ import numpy as np
 
 ####### MAGE-CNV modules
 import countFrags.countsFile
-import clusterSamps.normalisation
-import clusterSamps.genderDiscrimination
-import clusterSamps.slidingWindow
+import countFrags.countFragments
+import clusterSamps.clustering
 import CNCalls.copyNumbersCalls
 
 
