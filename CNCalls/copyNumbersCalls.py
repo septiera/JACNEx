@@ -12,8 +12,8 @@ import time
 import clusterSamps.smoothing
 import clusterSamps.genderDiscrimination
 
-# set up logger: we want scriptName rather than 'root'
-logger = logging.getLogger(os.path.basename(sys.argv[0]))
+# set up logger, using inherited config
+logger = logging.getLogger(__name__)
 
 
 ###############################################################################
