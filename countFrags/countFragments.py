@@ -2,12 +2,11 @@ import os
 import re
 import subprocess
 import tempfile
-import time
 import logging
 import numba  # make python faster
 import numpy as np
 # nested containment lists, similar to interval trees but faster (https://github.com/biocore-ntnu/ncls)
-from ncls import NCLS
+import ncls
 from concurrent.futures import ProcessPoolExecutor
 
 # set up logger, using inherited config
@@ -38,8 +37,8 @@ def initExonNCLs(exons):
     # we want to access the module-global exonNCLs dictionary
     global exonNCLs
     if exonNCLs:
-        logger.warn("initExonNCLs called but exonNCLs already initialized, fix your code")
-        return
+        logger.error("initExonNCLs called but exonNCLs already initialized, fix your code")
+        raise Exception("initExonNCLs() called twice")
     # for each chrom, build 3 lists with same length: starts, ends, indexes (in
     # the complete exons list). key is the CHR
     starts = {}
@@ -60,7 +59,7 @@ def initExonNCLs(exons):
 
     # populate global dictionary of NCLs, one per chromosome
     for chrom in starts.keys():
-        ncl = NCLS(starts[chrom], ends[chrom], indexes[chrom])
+        ncl = ncls.NCLS(starts[chrom], ends[chrom], indexes[chrom])
         exonNCLs[chrom] = ncl
 
 
@@ -102,9 +101,6 @@ def bam2counts(bamFile, nbOfExons, maxGap, tmpDir, samtools, jobs, sampleIndex):
     batchSize = 1000000
 
     try:
-        logger.info('Processing BAM %s', os.path.basename(bamFile))
-        startTime = time.time()
-
         # data structures to return:
         # 1D numpy array containing the sample fragment counts for all exons
         sampleCounts = np.zeros(nbOfExons, dtype=np.uint32)
@@ -215,45 +211,37 @@ def bam2counts(bamFile, nbOfExons, maxGap, tmpDir, samtools, jobs, sampleIndex):
         # we want breakpoints grouped by chrom (but not caring that chr10 comes before chr2),
         # then sorted by BP1 then BP2 then CNVTYPE then QNAME
         breakPoints.sort(key=lambda row: (row[0], row[1], row[2], row[3], row[4]))
-        thisTime = time.time()
-        logger.debug("Done bam2counts for %s, in %.2f s", os.path.basename(bamFile), thisTime - startTime)
         return(sampleIndex, sampleCounts, breakPoints)
 
     except Exception as e:
         logger.error(repr(e))
         raise Exception(str(sampleIndex))
 
+
 #############################################################
-# FPMNormalisation
-# Fragment counts are normalised in Fragment Per Million (FPM).
-# algorithm for one sample :
-# FPM = (Exon FragsNb * 1x10^6) / (Total FragsNb)
-# This normalisation allows to compare samples with each other.
-# It's therefore necessary before any processing on the data (e.g. clustering and calling)
-# This small function enables numba optimizations.
-# Arg:
-# - countsArray (np.ndarray[int]): fragment counts, Dim=NbExons*NbSOIs
-# Returns:
-# - countsNorm (np.ndarray[float]): normalised counts of countsArray same dimension
-# for arrays in input/output: NbExons*NbSOIs
+# normalizeCounts:
+# Normalize the fragment counts, as fragments per million (FPM).
+# This allows to compare samples with each other.
+# Arg: an np.ndarray[int] storing the fragment counts, Dim=NbExons*NbSOIs
+# Returns an np.ndarray[float] with the normalized counts (FPM), same size as countsArray
 @numba.njit
-def FPMNormalisation(countsArray):
-    # create an empty array to filled with the normalized counts
+def normalizeCounts(countsArray):
+    # empty array to be filled with the normalized counts
     countsNorm = np.zeros_like(countsArray, dtype=np.float32)
     for sampleCol in range(countsArray.shape[1]):
         SampleCountsSum = np.sum(countsArray[:, sampleCol])
-        SampleCountNorm = (countsArray[:, sampleCol] * 1e6) / SampleCountsSum  # 1e6 is equivalent to 1x10^6
-        countsNorm[:, sampleCol] = SampleCountNorm
+        countsNorm[:, sampleCol] = countsArray[:, sampleCol] * (1e6 / SampleCountsSum)
     return countsNorm
+
 
 ###############################################################################
 ############################ PRIVATE FUNCTIONS ################################
 ###############################################################################
 
 ####################################################
-# aliLengthOnRef :
-# Input : a CIGAR string
-# Output : span of the alignment on the reference sequence, ie number of bases
+# aliLengthOnRef:
+# Arg: a CIGAR string
+# Returns the span of the alignment on the reference sequence, ie number of bases
 # consumed by the alignment on the reference
 def aliLengthOnRef(cigar):
     length = 0

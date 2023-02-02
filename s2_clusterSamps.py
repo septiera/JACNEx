@@ -21,6 +21,10 @@ import clusterSamps.genderDiscrimination
 import clusterSamps.clustering
 
 
+# set up logger, using inherited config, in case we get called as a module
+logger = logging.getLogger(__name__)
+
+
 ###############################################################################
 ############################ PRIVATE FUNCTIONS ################################
 ###############################################################################
@@ -173,7 +177,7 @@ def main(argv):
 
     ################################################
     # args seem OK, start working
-    logger.info("called with: " + " ".join(argv[1:]))
+    logger.debug("called with: " + " ".join(argv[1:]))
     logger.info("starting to work")
     startTime = time.time()
 
@@ -202,13 +206,13 @@ def main(argv):
     # - FPMArray (np.ndarray[float]): normalised counts of countsArray same dimension
     #   for arrays in input/output: NbExons*NbSOIs
     try:
-        FPMArray = countFrags.countFragments.FPMNormalisation(countsArray)
+        FPMArray = countFrags.countFragments.normalizeCounts(countsArray)
     except Exception:
-        logger.error("FPMNormalisation failed")
+        logger.error("normalizeCounts failed")
         raise Exception()
 
     thisTime = time.time()
-    logger.debug("Done fragment counts normalisation, in %.2f s", thisTime - startTime)
+    logger.debug("Done normalizing counts, in %.2f s", thisTime - startTime)
     startTime = thisTime
 
     #####################################################

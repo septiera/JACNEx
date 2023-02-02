@@ -15,13 +15,16 @@ import getopt
 import os
 import time
 import logging
-import numpy as np
 
 ####### MAGE-CNV modules
 import countFrags.countsFile
 import countFrags.countFragments
 import clusterSamps.clustering
 import CNCalls.copyNumbersCalls
+
+
+# set up logger, using inherited config, in case we get called as a module
+logger = logging.getLogger(__name__)
 
 
 # set up logger, using inherited config, in case we get called as a module

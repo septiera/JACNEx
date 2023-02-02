@@ -222,7 +222,7 @@ def main(argv):
     (bamsToProcess, samples, bedFile, BPdir, padding, maxGap, countsFile, tmpDir, samtools, jobs) = parseArgs(argv)
 
     # args seem OK, start working
-    logger.info("called with: " + " ".join(argv[1:]))
+    logger.debug("called with: " + " ".join(argv[1:]))
     logger.info("starting to work")
     startTime = time.time()
 
@@ -235,7 +235,7 @@ def main(argv):
         raise Exception()
 
     thisTime = time.time()
-    logger.debug("Done pre-processing BED, in %.2f s", thisTime - startTime)
+    logger.debug("Done pre-processing BED, in %.2fs", thisTime - startTime)
     startTime = thisTime
 
     # allocate countsArray and countsFilled, and populate them with pre-calculated
@@ -249,7 +249,7 @@ def main(argv):
         raise Exception()
 
     thisTime = time.time()
-    logger.debug("Done parsing previous countsFile, in %.2f s", thisTime - startTime)
+    logger.debug("Done parsing previous countsFile, in %.2fs", thisTime - startTime)
     startTime = thisTime
 
     # populate the module-global exonNCLs in countFragments
@@ -277,8 +277,8 @@ def main(argv):
     targetCoresPerSample = 4
     paraSamples = min(math.ceil(jobs / targetCoresPerSample), nbOfSamplesToProcess)
     coresPerSample = math.ceil(jobs / paraSamples)
-    logger.info("we will process %i samples in parallel, using up to %i cores for each sample.",
-                paraSamples, coresPerSample)
+    logger.info("%i new sample(s)  => will process %i in parallel, using up to %i cores/sample",
+                nbOfSamplesToProcess, paraSamples, coresPerSample)
 
     #####################################################
     # Define nested callback for processing bam2counts() result (so countsArray et al
@@ -316,8 +316,9 @@ def main(argv):
                         print(toPrint, file=BPFH)
                     BPFH.close()
                 except Exception as e:
-                    logger.warning("Discarding breakpoints info for %s because cannot open %s for writing - %s", samples[si], bpFile, e)
-            logger.info("Done processing %s", samples[si])
+                    logger.warning("Discarding breakpoints info for %s because cannot open %s for writing - %s",
+                                   samples[si], bpFile, e)
+            logger.info("Done counting fragments for %s", samples[si])
 
     #####################################################
     # Process new BAMs, up to paraSamples in parallel
@@ -334,7 +335,8 @@ def main(argv):
                 futureRes.add_done_callback(mergeCounts)
 
     thisTime = time.time()
-    logger.debug("Done processing all BAMs, in %.2f s", thisTime - startTime)
+    logger.info("Done processing all BAMs, %i new BAMs in %.2fs i.e. %.2fs per BAM",
+                nbOfSamplesToProcess, thisTime - startTime, (thisTime - startTime) / nbOfSamplesToProcess)
     startTime = thisTime
 
     #####################################################
@@ -348,7 +350,7 @@ def main(argv):
     countFrags.countsFile.printCountsFile(exons, samples, countsArray)
 
     thisTime = time.time()
-    logger.debug("Done printing results for all samples, in %.2f s", thisTime - startTime)
+    logger.debug("Done printing results for all samples, in %.2fs", thisTime - startTime)
     if (failedBamsNb > 0):
         logger.warning("ALL DONE BUT COUNTING FAILED FOR %i SAMPLES, check the log!", failedBamsNb)
     else:
@@ -361,7 +363,7 @@ def main(argv):
 
 if __name__ == '__main__':
     # configure logging, sub-modules will inherit this config
-    logging.basicConfig(format='%(asctime)s %(levelname)s %(name)s %(funcName)s(): %(message)s',
+    logging.basicConfig(format='%(asctime)s %(levelname)s %(name)s: %(message)s',
                         datefmt='%Y-%m-%d %H:%M:%S',
                         level=logging.DEBUG)
     # set up logger: we want script name rather than 'root'

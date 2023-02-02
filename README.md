@@ -50,8 +50,10 @@ make all all-htslib
 It is also necessary to have python version 3.6.
 As well as the following modules:
 ```
-python3 -m venv ~/pythonEnv36
-pip3 install numpy scipy
+python3 -m venv ~/pyEnv_MageCNV
+source pyEnv_MageCNV/bin/activate
+pip install --upgrade pip
+pip install numpy scipy numba ncls matplotlib sklearn
 
 numpy v1.19.5
 scipy v1.5.4

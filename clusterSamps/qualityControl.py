@@ -1,8 +1,9 @@
-import numpy as np
 import logging
+import numpy as np
 import matplotlib.backends.backend_pdf
-import matplotlib.pyplot as plt
+import matplotlib.pyplot
 
+####### MAGE-CNV modules
 import clusterSamps.smoothing
 
 # set up logger, using inherited config
@@ -155,21 +156,21 @@ def findLocalMaxPrivate(densityOnFPMRange, minDensity2FPMIndex):
 # Returns a pdf file in the output folder
 def coverageProfilPlotPrivate(sampleName, binEdges, densityOnFPMRange, minIndex, maxIndex, pdf):
     # Disable interactive mode
-    plt.ioff()
+    matplotlib.pyplot.ioff()
 
-    fig = plt.figure(figsize=(6, 6))
-    plt.plot(binEdges, densityOnFPMRange, color='black', label='smoothed densities')
+    fig = matplotlib.pyplot.figure(figsize=(6, 6))
+    matplotlib.pyplot.plot(binEdges, densityOnFPMRange, color='black', label='smoothed densities')
 
-    plt.axvline(binEdges[minIndex], color='crimson', linestyle='dashdot', linewidth=2,
-                label="minFPM=" + '{:0.1f}'.format(binEdges[minIndex]))
-    plt.axvline(binEdges[maxIndex], color='darkorange', linestyle='dashdot', linewidth=2,
-                label="maxFPM=" + '{:0.1f}'.format(binEdges[maxIndex]))
+    matplotlib.pyplot.axvline(binEdges[minIndex], color='crimson', linestyle='dashdot', linewidth=2,
+                              label="minFPM=" + '{:0.1f}'.format(binEdges[minIndex]))
+    matplotlib.pyplot.axvline(binEdges[maxIndex], color='darkorange', linestyle='dashdot', linewidth=2,
+                              label="maxFPM=" + '{:0.1f}'.format(binEdges[maxIndex]))
 
-    plt.ylim(0, 0.5)
-    plt.ylabel("Exon densities")
-    plt.xlabel("Fragments Per Million")
-    plt.title(sampleName + " coverage profile")
-    plt.legend()
+    matplotlib.pyplot.ylim(0, 0.5)
+    matplotlib.pyplot.ylabel("Exon densities")
+    matplotlib.pyplot.xlabel("Fragments Per Million")
+    matplotlib.pyplot.title(sampleName + " coverage profile")
+    matplotlib.pyplot.legend()
 
     pdf.savefig(fig)
-    plt.close()
+    matplotlib.pyplot.close()

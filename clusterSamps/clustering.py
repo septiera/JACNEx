@@ -1,7 +1,5 @@
-import sys
-import os
-import numpy as np
 import logging
+import numpy as np
 import matplotlib.pyplot
 
 # different scipy submodules are used for the application of hierachical clustering
@@ -12,8 +10,8 @@ import scipy.spatial.distance
 matplotlib_logger = logging.getLogger('matplotlib')
 matplotlib_logger.setLevel(logging.WARNING)
 
-# set up logger: we want scriptName rather than 'root'
-logger = logging.getLogger(os.path.basename(sys.argv[0]))
+# set up logger, using inherited config
+logger = logging.getLogger(__name__)
 
 
 ###############################################################################

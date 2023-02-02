@@ -1,8 +1,5 @@
-import logging
 import numpy as np
-import scipy.stats as st
-# set up logger, using inherited config
-logger = logging.getLogger(__name__)
+import scipy.stats
 
 
 ###############################################################################
@@ -51,7 +48,7 @@ def smoothingCoverageProfile(sampFragCounts):
 
     # - density (scipy.stats.kde.gaussian_kde object): probability density for sampFragCountsReduced
     # Beware all points are evaluated
-    density = st.kde.gaussian_kde(sampFragCountsReduced)
+    density = scipy.stats.kde.gaussian_kde(sampFragCountsReduced)
 
     # compute density probabilities for each bins in the predefined FPM range
     densityOnFPMRange = density(binEdges)
