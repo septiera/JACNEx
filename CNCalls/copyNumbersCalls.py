@@ -8,7 +8,7 @@ import matplotlib.pyplot
 import matplotlib.backends.backend_pdf
 import time
 
-sys.path.append("..")
+
 import clusterSamps.smoothing
 import clusterSamps.genderDiscrimination
 
