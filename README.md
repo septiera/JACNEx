@@ -53,12 +53,12 @@ As well as the following modules:
 python3 -m venv ~/pyEnv_MageCNV
 source pyEnv_MageCNV/bin/activate
 pip install --upgrade pip
-pip install numpy scipy numba ncls matplotlib sklearn
+pip install numpy scipy numba ncls matplotlib scikit-learn
 
 numpy v1.19.5
 scipy v1.5.4
 matplotlib v3.3.4
-sklearn v0.24.2
+scikit-learn v0.24.2
 
 
 ```
