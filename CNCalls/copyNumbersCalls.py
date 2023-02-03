@@ -64,7 +64,7 @@ def CNCalls(sex2Clust, exons, countsNorm, clusts2Samps, clusts2Ctrls, priors, SO
         row_mask = np.isin(np.arange(countsNorm[0]), exonsIndex2Process, invert=True)
 
         # Use the masks to index the 2D numpy array
-        countsInCluster = countsNorm[np.ix_(row_mask, col_mask)]
+        clusterCounting = countsNorm[np.ix_(row_mask, col_mask)]
 
         ###########
         # Initialize InfoList with the exon index
@@ -74,17 +74,17 @@ def CNCalls(sex2Clust, exons, countsNorm, clusts2Samps, clusts2Ctrls, priors, SO
         # fit a gamma distribution to find the profile of exons with little or no coverage (CN0)
         # - gammaParameters
         # - gammaThreshold
-        gammaParameters, gammaThreshold = fitGammaDistributionPrivate(countsInCluster, clustID, PDF)
+        gammaParameters, gammaThreshold = fitGammaDistributionPrivate(clusterCounting, clustID, PDF)
 
         ###################################
         # Iterate over the exons
-        for exon in range(countsInCluster.shape[0]):
+        for exon in range(clusterCounting.shape[0]):
             # Print progress every 10000 exons
             if exon % 10000 == 0:
                 logger.info("%s: %s  %s ", clustID, exon, time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()))
 
             # Get count data for the exon
-            exonFPM = countsInCluster[exon]
+            exonFPM = clusterCounting[exon]
 
             ####################
             # Filter n°1: the exon is not covered => mu == 0
@@ -234,11 +234,50 @@ def fitGammaDistributionPrivate(clusterCounting, clustID, PDF):
     # this value corresponds to the FPM value allowing to split covered exons from uncovered exons
     uncovExonThreshold  = countsExonsNotCovered[thresholdIndex]
 
-    coverageProfilPlotPrivate(clustID, binEdges, densityOnFPMRange, minIndex, gammaParams, PDF)
+    coverageProfilPlotPrivate(clustID, binEdges, densityOnFPMRange, minIndex, uncovExonThreshold, clusterCounting.shape[1], PDF)
 
-    return (gammaParams, uncovExonThreshold )
+    return (gammaParams, uncovExonThreshold)
 
+###################################
+# coverageProfilPlotPrivate:
+# generates a plot per cluster
+# x-axis: the range of FPM bins (every 0.1 between 0 and 10)
+# y-axis: exons densities
+# black curve: density data smoothed with kernel-density estimate using Gaussian kernels
+# red vertical line: minimum FPM threshold, all uncovered exons are below this threshold
+# green curve: gamma fit
+#
+# Args:
+# - sampleName (str): sample exact name
+# - binEdges (np.ndarray[floats]): FPM range
+# - densityOnFPMRange (np.ndarray[float]): probability density for all bins in the FPM range
+#   dim= len(binEdges)
+# - minIndex (int): index associated with the first lowest density observed
+# - uncovExonThreshold (float): value corresponding to 95% of the cumulative distribution function
+# from the gamma, corresponds to the FPM threshold where before this the exons are not covered 
+# (contains both uncaptured, poorly covered and potentially homodeleted exons).
+# - SOIsNb (int): number of samples in the cluster
+# - pdf (matplotlib object): store plots in a single pdf
+# Returns and saves a plot in the output pdf
+def coverageProfilPlotPrivate(clustID, binEdges, densityOnFPMRange, minIndex, uncovExonThreshold, SOIsNb, PDF):
 
+    fig = matplotlib.pyplot.figure(figsize=(6,6))
+    matplotlib.pyplot.plot(binEdges, densityOnFPMRange, color='black', label='smoothed densities')
+    matplotlib.pyplot.axvline(binEdges[minIndex], color='crimson', linestyle='dashdot', linewidth=2,
+                label="minFPM=" + '{:0.1f}'.format(binEdges[minIndex]))
+    matplotlib.pyplot.axvline(uncovExonThreshold, color='blue', linestyle='dashdot', linewidth=2,
+                label="uncovExonThreshold=" + '{:0.2f}'.format(uncovExonThreshold))
+
+    matplotlib.pyplot.ylim(0, 0.5)
+    matplotlib.pyplot.ylabel("Exon densities")
+    matplotlib.pyplot.xlabel("Fragments Per Million")
+    matplotlib.pyplot.title("ClusterID:" + clustID + " coverage profile (" + str(SOIsNb) + ")")
+    matplotlib.pyplot.legend()
+
+    PDF.savefig(fig)
+    matplotlib.pyplot.close()
+    
+    
 ############################
 # fitRobustGaussianPrivate [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
 # Fits a single principal gaussian component around a starting guess point
@@ -378,47 +417,6 @@ def computeLogOddsPrivate(sample_data, params, gamma_threshold, prior_probabilit
         log_odds.append(log_odd)
 
     return log_odds
-
-
-###################################
-# coverageProfilPlotPrivate:
-# generates a plot per cluster
-# x-axis: the range of FPM bins (every 0.1 between 0 and 10)
-# y-axis: exons densities
-# black curve: density data smoothed with kernel-density estimate using Gaussian kernels
-# red vertical line: minimum FPM threshold, all uncovered exons are below this threshold
-# green curve: gamma fit
-#
-# Args:
-# - sampleName (str): sample exact name
-# - binEdges (np.ndarray[floats]): FPM range
-# - densityOnFPMRange (np.ndarray[float]): probability density for all bins in the FPM range
-#   dim= len(binEdges)
-# - minIndex (int): index associated with the first lowest density observed
-# - gammaParameters (list[float]):
-# - pdf (matplotlib object): store plots in a single pdf
-#
-# save a plot in the output pdf
-def coverageProfilPlotPrivate(clustID, binEdges, densityOnFPMRange, minIndex, gammaParameters, PDF):
-
-    fig = matplotlib.pyplot.figure(figsize=(6, 6))
-    matplotlib.pyplot.plot(binEdges, densityOnFPMRange, color='black', label='smoothed densities')
-
-    pdfCN0 = scipy.stats.gamma.pdf(binEdges, a=gammaParameters[0], loc=gammaParameters[1], scale=gammaParameters[2])
-    matplotlib.pyplot.plot(binEdges, pdfCN0, 'c', label=("CN0 α=" + str(round(gammaParameters[0], 2)) +
-                                           " loc=" + str(round(gammaParameters[1], 2)) +
-                                           " β=" + str(round(gammaParameters[2], 2))))
-    matplotlib.pyplot.axvline(binEdges[minIndex], color='crimson', linestyle='dashdot', linewidth=2,
-                label="minFPM=" + '{:0.1f}'.format(binEdges[minIndex]))
-
-    matplotlib.pyplot.ylim(0, 0.5)
-    matplotlib.pyplot.ylabel("Exon densities")
-    matplotlib.pyplot.xlabel("Fragments Per Million")
-    matplotlib.pyplot.title(clustID + " coverage profile")
-    matplotlib.pyplot.legend()
-
-    PDF.savefig(fig)
-    matplotlib.pyplot.close()
 
 
 ###################################
