@@ -267,7 +267,6 @@ def coverageProfilPlotPrivate(clustID, binEdges, densityOnFPMRange, minIndex, un
                 label="minFPM=" + '{:0.1f}'.format(binEdges[minIndex]))
     matplotlib.pyplot.axvline(uncovExonThreshold, color='blue', linestyle='dashdot', linewidth=2,
                 label="uncovExonThreshold=" + '{:0.2f}'.format(uncovExonThreshold))
-
     matplotlib.pyplot.ylim(0, 0.5)
     matplotlib.pyplot.ylabel("Exon densities")
     matplotlib.pyplot.xlabel("Fragments Per Million")
@@ -278,59 +277,84 @@ def coverageProfilPlotPrivate(clustID, binEdges, densityOnFPMRange, minIndex, un
     matplotlib.pyplot.close()
     
     
-############################
-# fitRobustGaussianPrivate [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
+########
+# robustGaussianFitPrivate [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
 # Fits a single principal gaussian component around a starting guess point
 # in a 1-dimensional gaussian mixture of unknown components with EM algorithm
-# script found to :https://github.com/hmiemad/robust_Gaussian_fit (v07.2022)
+# script found to :https://github.com/hmiemad/robust_Gaussian_fit (v01_2023)
 # Args:
-#  -X (np.ndarray[float]): A sample of 1-dimensional mixture of gaussian random variables
-#  -mu (float, optional): Expectation. Defaults to None.
-#  -sigma (float, optional): Standard deviation. Defaults to None.
-#  -bandwidth (float, optional): Hyperparameter of truncation. Defaults to 1.
-#  -eps (float, optional): Convergence tolerance. Defaults to 1.0e-5.
-# Returns a tupple (mu,sigma), each variable is created here:
-# mean [float] and stdev[float] of the gaussian component
-def fitRobustGaussianPrivate(X, mu=None, sigma=None, bandwidth=1.0, eps=1.0e-5):
-    # Integral of a normal distribution from -x to x
-    weights = lambda x: erf(x / np.sqrt(2))
-    # Standard deviation of a truncated normal distribution from -x to x
-    sigmas = lambda x: np.sqrt(1 - 2 * x * scipy.stats.norm.pdf(x) / weights(x))
-
-    w, w0 = 0, 2
-
+# - X (np.array): A sample of 1-dimensional mixture of gaussian random variables
+# - mu (float, optional): Expectation. Defaults to None.
+# - sigma (float, optional): Standard deviation. Defaults to None.
+# - bandwidth (float, optional): Hyperparameter of truncation. Defaults to 1.
+# - eps (float, optional): Convergence tolerance. Defaults to 1.0e-5.
+# Returns:
+# - mu [float],sigma [float]: mean and stdev of the gaussian component
+def fitRobustGaussianPrivate(X, mu = None, sigma = None, bandwidth = 1.0, eps = 1.0e-5, weights = None):
     if mu is None:
-        # median is an approach as robust and naïve as possible to Expectation
+        #median is an approach as robust and naïve as possible to Expectation
         mu = np.median(X)
-
+    mu_0 = mu + 1
+    
     if sigma is None:
-        # rule of thumb
-        sigma = np.std(X) / 3
+        #rule of thumb
+        sigma = np.std(X)/3
+    sigma_0 = sigma + 1
+    
+    bandwidth_truncated_normal_weight, bandwidth_truncated_normal_sigma = truncated_integral_and_sigma(bandwidth)
 
-    bandwidth_truncated_normal_weight = weights(bandwidth)
-    bandwidth_truncated_normal_sigma = sigmas(bandwidth)
+    
+    while abs(mu - mu_0) + abs(sigma - sigma_0) > eps:
+        #loop until tolerence is reached
 
-    while abs(w - w0) > eps:
-        # loop until tolerence is reached
-        try:
-            """
-            -create a window on X around mu of width 2*bandwidth*sigma
-            -find the mean of that window to shift the window to most expected local value
-            -measure the standard deviation of the window and divide by the standard
-            deviation of a truncated gaussian distribution
-            -measure the proportion of points inside the window, divide by the weight of
-            a truncated gaussian distribution
-            """
-            W = np.where(np.logical_And(X - mu - bandwidth * sigma <= 0, X - mu + bandwidth * sigma >= 0), 1, 0)
-            mu = np.mean(X[W == 1])
-            sigma = np.std(X[W == 1]) / bandwidth_truncated_normal_sigma
-            w0 = w
-            w = np.mean(W) / bandwidth_truncated_normal_weight
+        """
+        create a uniform window on X around mu of width 2*bandwidth*sigma
+        find the mean of that window to shift the window to most expected local value
+        measure the standard deviation of the window and divide by the standard deviation of a truncated gaussian distribution
+        measure the proportion of points inside the window, divide by the weight of a truncated gaussian distribution
+        """
+        Window = np.logical_and(X - mu - bandwidth * sigma < 0 , X - mu + bandwidth * sigma > 0)
+        if weights is None : 
+            Window_weights = None
+        else :
+            Window_weights = weights[Window]
+        mu_0, mu = mu, np.average(X[Window], weights = Window_weights)
+        var = np.average(np.square(X[Window]), weights = Window_weights) - mu**2
+        sigma_0 , sigma = sigma, np.sqrt(var)/bandwidth_truncated_normal_sigma
+    w = np.average(Window, weights = weights)/bandwidth_truncated_normal_weight
 
-        except:
-            break
+    return (mu,sigma)
 
-    return (mu, sigma)
+###########
+# normal_erf
+# ancillary function of the robustGaussianFitPrivate function 
+# computes Gauss error function
+# The error function (erf) is used to describe the Gaussian or Normal distribution. 
+# It gives the probability that a random variable follows a given Gaussian distribution, 
+# indicating the probability that it is less than or equal to a given value. 
+# In other words, the error function quantifies the probability distribution for a 
+# random variable following a Gaussian distribution.
+# this function replaces the use of the scipy.stats.erf module
+def normal_erf(x, mu = 0, sigma = 1,  depth = 50):
+    ele = 1.0
+    normal = 1.0
+    x = (x - mu)/sigma
+    erf = x
+    for i in range(1,depth):
+        ele = - ele * x * x/2.0/i
+        normal = normal + ele
+        erf = erf + ele * x / (2.0 * i + 1)
+
+    return np.clip(normal/np.sqrt(2.0*np.pi)/sigma,0,None) , np.clip(erf/np.sqrt(2.0*np.pi)/sigma,-0.5,0.5)
+
+##########
+# truncated_integral_and_sigma
+# ancillary function of the robustGaussianFitPrivate function 
+# allows for a more precise and focused analysis of a function 
+# by limiting the study to particular parts of its defining set.
+def truncated_integral_and_sigma(x):
+    n,e = normal_erf(x)
+    return 2*e, np.sqrt(1-n*x/e)
 
 
 ############################
