@@ -197,7 +197,7 @@ def main(argv):
     # - countsNorm (np.ndarray[float]): normalised counts of countsArray same dimension
     # for arrays in input/output: NbExons*NbSOIs
     try:
-        countsNorm = clusterSamps.normalisation.FPMNormalisation(countsArray)
+        countsNorm = countFrags.countFragments.normalizeCounts(countsArray)
     except Exception:
         logger.error("FPMNormalisation failed")
         raise Exception()
