@@ -1,13 +1,11 @@
-import sys
 import os
 import logging
 import numpy as np
+import numba
 import scipy.stats
-from scipy.special import erf
 import matplotlib.pyplot
 import matplotlib.backends.backend_pdf
 import time
-
 
 import clusterSamps.smoothing
 import clusterSamps.genderDiscrimination
@@ -51,34 +49,22 @@ def CNCalls(sex2Clust, exons, countsNorm, clusts2Samps, clusts2Ctrls, priors, SO
     pdfFile = os.path.join(plotDir, "ResCallsByCluster_" + str(len(SOIs)) + "samps.pdf")
     # create a matplotlib object and open a pdf
     PDF = matplotlib.backends.backend_pdf.PdfPages(pdfFile)
+    
+    if sex2Clust:
+        (gonoIndex, genderInfo) = clusterSamps.genderDiscrimination.getGenderInfos(exons)
+        #
+        maskAutosome_Gonosome = ~np.isin(np.arange(countsNorm.shape[0]), sorted(set(sum(gonoIndex.values(), []))))
 
     for clustID in clusts2Samps:
-        ##################################
-        ## Select cluster specific indexes in countsNorm
-        ##### ROW indexes:
-        # in case there are specific autosome and gonosome clusters.
-        # identification of the indexes of the exons associated with the gonosomes or autosomes.
-        if sex2Clust:
-            (gonoIndex, genderInfo) = clusterSamps.genderDiscrimination.getGenderInfos(exons)
-            gonoIndexFlat = np.unique([item for sublist in list(gonoIndex.values()) for item in sublist])
-            if clustID in sex2Clust["A"]:
-                exonsIndex2Process = [i for i in range(countsNorm.shape[0]) if i not in gonoIndex]
-            else:
-                exonsIndex2Process = gonoIndex
-        else:
-            exonsIndex2Process = range(countsNorm.shape[0])
+        # 
+        (sampleIndex2Process, exonsIndex2Process) = extractClusterDependentDataPrivate(clustID, clusts2Samps, clusts2Ctrls, sex2Clust, maskAutosome_Gonosome)
+        
+        # Create Boolean masks for columns and rows
+        col_mask = np.isin(np.arange(countsNorm[1]), sampleIndex2Process, invert=True)
+        row_mask = np.isin(np.arange(countsNorm[0]), exonsIndex2Process, invert=True)
 
-        ##### COLUMN indexes:
-        # Get the indexes of the samples in the cluster and its controls
-        sampleIndex2Process = clusts2Samps[clustID]
-        if clustID in clusts2Ctrls:
-            for controls in clusts2Ctrls[clustID]:
-                sampleIndex2Process.extend(clusts2Samps[controls])
-        sampleIndex2Process = list(set(sampleIndex2Process))
-
-        # count data selection
-        countsInCluster = np.take(countsNorm, exonsIndex2Process, axis=0)
-        countsInCluster = np.take(countsInCluster, sampleIndex2Process, axis=1)
+        # Use the masks to index the 2D numpy array
+        countsInCluster = countsNorm[np.ix_(row_mask, col_mask)]
 
         ###########
         # Initialize InfoList with the exon index
@@ -92,7 +78,7 @@ def CNCalls(sex2Clust, exons, countsNorm, clusts2Samps, clusts2Ctrls, priors, SO
 
         ###################################
         # Iterate over the exons
-        for exon in range(len(exonsIndex2Process)):
+        for exon in range(countsInCluster.shape[0]):
             # Print progress every 10000 exons
             if exon % 10000 == 0:
                 logger.info("%s: %s  %s ", clustID, exon, time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()))
@@ -103,8 +89,8 @@ def CNCalls(sex2Clust, exons, countsNorm, clusts2Samps, clusts2Ctrls, priors, SO
             ####################
             # Filter n°1: the exon is not covered => mu == 0
             # do nothing leave logOdds at zero
-            mean_fpkm = exonFPM.mean()
-            if mean_fpkm == 0:
+            medianFPM = np.median(exonFPM)
+            if medianFPM  == 0:
                 infoList[exon] += [-1, 0, 0, 0]
                 continue
 
@@ -162,6 +148,42 @@ def CNCalls(sex2Clust, exons, countsNorm, clusts2Samps, clusts2Ctrls, priors, SO
 ###############################################################################
 ############################ PRIVATE FUNCTIONS ################################
 ###############################################################################
+# extractClusterDependentDataPrivate [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
+# extraction of indexes specific to the samples contained in the cluster and 
+# indexes of the exons to be processed (specific to autosomes or gonosomes)
+# Args:
+# - clustID [str] : cluster identifier
+# - clusts2Samps (dict[str: list[int]]): for each cluster identifier a list of SOIs is associated
+# - clusts2Ctrls (dict[str: list[str]]): for each target cluster identifier a list of control clusters is associated
+# - sex2Clust (dict[str, list[str]]): for "A" autosomes or "G" gonosomes a list of corresponding clusterIDs is associated
+# - mask (numpy.ndarray[bool]): boolean mask 1: autosome exon indexes, 0: gonosome exon indexes. dim=NbExons
+# Returns a tupple (), each object are created here:
+# - sampleIndex2Process (list[int]): SOIs indexes in current cluster
+# - exonsIndex2Process (list[int]): exons indexes to treat the current cluster
+def extractClusterDependentDataPrivate(clustID, clusts2Samps, clusts2Ctrls, sex2Clust=None, mask=None):
+    ##################################
+    ## Select cluster specific indexes to apply to countsNorm
+    ##### COLUMN indexes:
+    # Get the indexes of the samples in the cluster and its controls
+    sampleIndex2Process = clusts2Samps[clustID]
+    if clustID in clusts2Ctrls:
+        for controls in clusts2Ctrls[clustID]:
+            sampleIndex2Process.extend(clusts2Samps[controls])
+    sampleIndex2Process = list(set(sampleIndex2Process))
+    
+    ##### ROW indexes:
+    # in case there are specific autosome and gonosome clusters.
+    # identification of the indexes of the exons associated with the gonosomes or autosomes.
+    if sex2Clust:
+        if clustID in sex2Clust["A"]:
+            exonsIndex2Process = np.flatnonzero(mask)
+        else:
+            exonsIndex2Process = np.where(~mask)[0]
+    else:
+        exonsIndex2Process = range(len(mask))
+
+    return(sampleIndex2Process, exonsIndex2Process)
+
 
 ############################
 # fitGammaDistributionPrivate [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
