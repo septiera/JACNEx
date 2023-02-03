@@ -167,23 +167,24 @@ def CNCalls(sex2Clust, exons, countsNorm, clusts2Samps, clusts2Ctrls, priors, SO
 # fitGammaDistributionPrivate [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
 # Estimate the parameters of the gamma distribution that best fits the data.
 # The gamma distribution was chosen after testing 101 continuous distribution laws,
-#  -it has few parameters (3 in total: shape, scale=1/beta, and loc),
+#  -it has few parameters (3 in total: shape, loc, scale=1/beta),
 #  -is well-known, and had the best goodness of fit on the empirical data.
 # Arg:
-# -countsInCluster (np.ndarray[floats]): cluster fragment counts (normalised)
+# - clusterCounting (np.ndarray[floats]): normalised fragment count table for individuals in a cluster
 # - clustID (str): cluster identifier
 # - PDF (matplotlib object): store plots in a single pdf
 # Returns a tupple (gamma_parameters, threshold_value), each variable is created here:
-# -gammaParameters (tuple of floats): estimated parameters of the gamma distribution
-# -thresholdValue (float): value corresponding to 95% of the cumulative distribution function
-#
-def fitGammaDistributionPrivate(countsInCluster, clustID, PDF):
+# - gammaParams (tuple of floats): estimated parameters of the gamma distribution
+# - uncovExonThreshold (float): value corresponding to 95% of the cumulative distribution function
+# from the gamma, corresponds to the FPM threshold where before this the exons are not covered 
+# (contains both uncaptured, poorly covered and potentially homodeleted exons).
+def fitGammaDistributionPrivate(clusterCounting, clustID, PDF):
     # compute meanFPM by exons
     # save computation time instead of taking the raw data (especially for clusters with many samples)
-    meanCountByExons = np.mean(countsInCluster, axis=1)
+    meanCountByExons = np.mean(clusterCounting, axis=1)
 
     # smooth the coverage profile with kernel-density estimate using Gaussian kernels
-    # - binEdges (np.ndarray[floats]): FPM range
+    # - binEdges (np.ndarray[floats]): FPM range from 0 to 10 every 0.1
     # - densityOnFPMRange (np.ndarray[float]): probability density for all bins in the FPM range
     #   dim= len(binEdges)
     binEdges, densityOnFPMRange = clusterSamps.smoothing.smoothingCoverageProfile(meanCountByExons)
@@ -199,21 +200,21 @@ def fitGammaDistributionPrivate(countsInCluster, clustID, PDF):
     countsExonsNotCovered.sort()  # sort data in-place
 
     # estimate the parameters of the gamma distribution that best fits the data
-    gammaParameters = scipy.stats.gamma.fit(countsExonsNotCovered)
+    gammaParams = scipy.stats.gamma.fit(countsExonsNotCovered)
 
     # compute the cumulative distribution function of the gamma distribution
-    cdf = scipy.stats.gamma.cdf(countsExonsNotCovered, a=gammaParameters[0], loc=gammaParameters[1], scale=gammaParameters[2])
+    cdf = scipy.stats.gamma.cdf(countsExonsNotCovered, a=gammaParams[0], loc=gammaParams[1], scale=gammaParams[2])
 
     # find the index of the last element where cdf < 0.95
     thresholdIndex = np.where(cdf < 0.95)[0][-1]
 
     # compute the value corresponding to 95% of the cumulative distribution function
     # this value corresponds to the FPM value allowing to split covered exons from uncovered exons
-    thresholdValue = countsExonsNotCovered[thresholdIndex]
+    uncovExonThreshold  = countsExonsNotCovered[thresholdIndex]
 
-    coverageProfilPlotPrivate(clustID, binEdges, densityOnFPMRange, minIndex, gammaParameters, PDF)
+    coverageProfilPlotPrivate(clustID, binEdges, densityOnFPMRange, minIndex, gammaParams, PDF)
 
-    return (gammaParameters, thresholdValue)
+    return (gammaParams, uncovExonThreshold )
 
 
 ############################
@@ -295,6 +296,7 @@ def computeWeightPrivate(fpm_in_exon, mean, standard_deviation):
 #
 # Args:
 # - sample_data (float): a sample data point, FPM value
+# - gamma_params (list(float)): estimated parameters of the gamma distribution [shape, loc, scale]
 # - gamma_threshold (float):
 # - prior_probabilities (list[float]): prior probabilities for different cases
 # - mean (float): mean value for the normal distribution
