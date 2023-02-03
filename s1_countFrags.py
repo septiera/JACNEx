@@ -50,7 +50,8 @@ def parseArgs(argv):
     maxGap = 1000
     tmpDir = "/tmp/"
     samtools = "samtools"
-    jobs = 20
+    # jobs default: 80% of available cores
+    jobs = round(0.8 * len(os.sched_getaffinity(0)))
 
     usage = """\nCOMMAND SUMMARY:
 Given a BED of exons and one or more BAM files, count the number of sequenced fragments
@@ -73,7 +74,7 @@ ARGUMENTS:
            are assumed to possibly result from a structural variant and are ignored, default : """ + str(maxGap) + """
    --tmp [str]: pre-existing dir for temp files, faster is better (eg tmpfs), default: """ + tmpDir + """
    --samtools [str]: samtools binary (with path if not in $PATH), default: """ + str(samtools) + """
-   --jobs [int] : approximate number of cores that we can use, default:""" + str(jobs) + "\n" + """
+   --jobs [int] : cores that we can use, defaults to 80% of available cores ie """ + str(jobs) + "\n" + """
    -h , --help  : display this help and exit\n"""
 
     try:
@@ -270,11 +271,12 @@ def main(argv):
 
     # we are allowed to use jobs cores in total: we will process paraSamples samples in
     # parallel, each sample will be processed using coresPerSample.
-    # in our tests bam2counts() scales great up to 4-5 coresPerSample, with diminishing
-    # returns beyond that (probably depends on your hardware)
+    # in our tests 7 cores/sample provided the best overall performance, both with jobs=20
+    # and jobs=40. This probably depends on your hardware but in any case it's just a
+    # performance tuning parameter.
     # -> we target targetCoresPerSample coresPerSample, this is increased if we
     #    have few samples to process (and we use ceil() so we may slighty overconsume)
-    targetCoresPerSample = 4
+    targetCoresPerSample = 7
     paraSamples = min(math.ceil(jobs / targetCoresPerSample), nbOfSamplesToProcess)
     coresPerSample = math.ceil(jobs / paraSamples)
     logger.info("%i new sample(s)  => will process %i in parallel, using up to %i cores/sample",
