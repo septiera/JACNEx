@@ -109,7 +109,7 @@ def parseCountsFile(countsFile):
 def printCountsFile(exons, samples, countsArray, outFile):
     try:
         if outFile.endswith(".gz"):
-            outFH = gzip.open(outFile, "xt")
+            outFH = gzip.open(outFile, "xt", compresslevel=6)
         else:
             outFH = open(outFile, "x")
     except Exception as e:
