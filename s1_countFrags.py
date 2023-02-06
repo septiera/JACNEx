@@ -44,7 +44,7 @@ def parseArgs(argv):
     bedFile = ""
     # optional args with default values
     outFile = ""
-    BPDir = "./breakPoints/"
+    BPDir = "./BreakPoints/"
     countsFile = ""
     padding = 10
     maxGap = 1000
@@ -68,7 +68,7 @@ ARGUMENTS:
            headerless tab-separated file, columns contain CHR START END EXON_ID)
    --out [str] : file where results will be saved, must not pre-exist, will be gzipped if it ends with '.gz',
            can have a path component but the subdir must exist
-   --BPDir [str] : subdir (created if needed) where breakpoint files will be produced, default :  """ + str(BPDir) + """
+   --BPDir [str] : dir (created if needed) where breakpoint files will be produced, default :  """ + str(BPDir) + """
    --counts [str] optional: pre-existing counts file produced by this program, possibly gzipped,
            counts for requested BAMs will be copied from this file if present
    --padding [int] : number of bps used to pad the exon coordinates, default : """ + str(padding) + """
