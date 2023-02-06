@@ -239,7 +239,7 @@ def fitGammaDistributionPrivate(clusterCounting, clustID, PDF):
     return (gammaParams, uncovExonThreshold)
 
 ###################################
-# coverageProfilPlotPrivate:
+# coverageProfilPlotPrivate: [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
 # generates a plot per cluster
 # x-axis: the range of FPM bins (every 0.1 between 0 and 10)
 # y-axis: exons densities
@@ -277,7 +277,7 @@ def coverageProfilPlotPrivate(clustID, binEdges, densityOnFPMRange, minIndex, un
     matplotlib.pyplot.close()
     
     
-########
+###################################
 # robustGaussianFitPrivate [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
 # Fits a single principal gaussian component around a starting guess point
 # in a 1-dimensional gaussian mixture of unknown components with EM algorithm
@@ -366,6 +366,7 @@ def truncated_integral_and_sigma(x):
 # - mean (float): mean FPM value for the exon
 # - standard_deviation (float): std FPM value for the exon
 # Returns weight of sample contribution to the gaussian for the exon [float]
+@numba.njit
 def computeWeightPrivate(fpm_in_exon, mean, standard_deviation):
     targetData = fpm_in_exon[(fpm_in_exon > (mean - (2 * standard_deviation))) &
                              (fpm_in_exon < (mean + (2 * standard_deviation))), ]
@@ -394,8 +395,8 @@ def computeLogOddsPrivate(sample_data, params, gamma_threshold, prior_probabilit
     mean_cn1 = mean / 2
 
     # To Fill
-    # Initialize an empty list to store the probability densities
-    probability_densities = []
+    # Initialize an empty numpy array to store the probability densities for each copy number type
+    probability_densities = np.zeros(4)
 
     ###############
     # Calculate the probability density for the gamma distribution (CN0 profil)
@@ -406,42 +407,48 @@ def computeLogOddsPrivate(sample_data, params, gamma_threshold, prior_probabilit
     # is higher than the mean of the Gaussian associated to CN1.
     # Reversely, the value of the pdf is truncated from the threshold value discriminating
     # covered from uncovered exons.
-    gamma_pdf = 0
     cdf_cno_threshold = scipy.stats.gamma.cdf(gamma_threshold, a=params[0], loc=params[1], scale=params[2])
     if sample_data <= mean_cn1:
-        gamma_pdf = (1 / (1 - cdf_cno_threshold)) * scipy.stats.gamma.pdf(sample_data, a=params[0], loc=params[1], scale=params[2])
-    probability_densities.append(gamma_pdf)
+        probability_densities[0] = (1 / (1 - cdf_cno_threshold)) * scipy.stats.gamma.pdf(sample_data, a=params[0], loc=params[1], scale=params[2])
 
     ################
     # Calculate the probability densities for the remaining cases (CN1,CN2,CN3+) using the normal distribution
-    probability_densities.append(scipy.stats.norm.pdf(sample_data, mean / 2, standard_deviation))
-    probability_densities.append(scipy.stats.norm.pdf(sample_data, mean, standard_deviation))
-    probability_densities.append(scipy.stats.norm.pdf(sample_data, 3 * mean / 2, standard_deviation))
+    probability_densities[1] = scipy.stats.norm.pdf(sample_data, mean / 2, standard_deviation)
+    probability_densities[2] = scipy.stats.norm.pdf(sample_data, mean, standard_deviation)
+    probability_densities[3] = scipy.stats.norm.pdf(sample_data, 3 * mean / 2, standard_deviation)
 
     #################
-    # Calculate the prior probabilities
-    probability_densities_priors = []
-    for i in range(len(probability_densities)):
-        probability_densities_priors.append(probability_densities[i] * prior_probabilities[i])
+    # Add prior probabilities
+    probability_densities_priors = np.multiply(probability_densities, prior_probabilities)
+
+    ################
+    # case where one of the probabilities is equal to 0 addition of an epsilon 
+    # which is 1000 times lower than the lowest probability
+    probability_densities_priors = addEpsilonPrivate(probability_densities_priors)
 
     ##################
     # Calculate the log-odds ratios
-    log_odds = []
+    emissionProba = np.zeros(4)
     for i in range(len(probability_densities_priors)):
         # Calculate the denominator for the log-odds ratio
-        to_subtract = probability_densities_priors[:i] + probability_densities_priors[i + 1:]
-        to_subtract = np.sum(to_subtract)
+        to_subtract = np.sum(probability_densities_priors[np.arange(probability_densities_priors.shape[0]) != i])
 
         # Calculate the log-odds ratio for the current probability density
-        if np.isclose(np.log10(to_subtract), 0):
-            log_odd = 0
-        else:
-            log_odd = np.log10(probability_densities_priors[i]) - np.log10(to_subtract)
+        log_odd = np.log10(probability_densities_priors[i]) - np.log10(to_subtract)
 
-        log_odds.append(log_odd)
+        # probability transformation
+        emissionProba[i]=1/(1+np.exp(log_odd))
 
-    return log_odds
+    return emissionProba/emissionProba.sum()
 
+################
+# addEpsilonPrivate
+@numba.njit
+def addEpsilonPrivate(probs, epsilon_factor=1000):
+    min_prob = np.min(probs[probs > 0])
+    epsilon = min_prob / epsilon_factor
+    probs = np.where(probs == 0, epsilon, probs)
+    return probs
 
 ###################################
 # filtersPiePlotPrivate:
