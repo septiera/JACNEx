@@ -102,16 +102,29 @@ def parseCountsFile(countsFile):
 #     of 4 scalars (types: str,int,int,str) containing CHR,START,END,EXON_ID
 #   - 'samples' is a list of sampleIDs
 #   - 'countsArray' is an int numpy array, dim = len(exons) x len(samples)
+#   - 'outFile' is a filename that doesn't exist, it can have a path component (which must exist),
+#      output will be gzipped if outFile ends with '.gz'
 #
-# Print this data to stdout as a 'countsFile' (same format parsed by extractCountsFromPrev).
-def printCountsFile(exons, samples, countsArray):
-    toPrint = "CHR\tSTART\tEND\tEXON_ID\t" + "\t".join(samples)
-    print(toPrint)
+# Print this data to outFile as a 'countsFile' (same format parsed by extractCountsFromPrev).
+def printCountsFile(exons, samples, countsArray, outFile):
+    try:
+        if outFile.endswith(".gz"):
+            outFH = gzip.open(outFile, "xt")
+        else:
+            outFH = open(outFile, "x")
+    except Exception as e:
+        logger.error("Cannot (gzip-)open outFile %s: %s", outFile, e)
+        raise Exception('cannot (gzip-)open outFile')
+
+    toPrint = "CHR\tSTART\tEND\tEXON_ID\t" + "\t".join(samples) + "\n"
+    outFH.write(toPrint)
     for i in range(len(exons)):
         # exon def + counts
         toPrint = exons[i][0] + "\t" + str(exons[i][1]) + "\t" + str(exons[i][2]) + "\t" + exons[i][3]
         toPrint += counts2str(countsArray, i)
-        print(toPrint)
+        toPrint += "\n"
+        outFH.write(toPrint)
+    outFH.close()
 
 
 ###############################################################################
@@ -160,6 +173,7 @@ def parseCountsFilePrivate(countsFile):
         # convert counts to 1D np array and save
         counts = np.fromstring(splitLine[4], dtype=np.uint32, sep='\t')
         countsList.append(counts)
+    countsFH.close()
     return(exons, samples, countsList)
 
 
