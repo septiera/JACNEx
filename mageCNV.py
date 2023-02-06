@@ -19,6 +19,7 @@ import s1_countFrags
 # Parse and sanity check the command+arguments, provided as a list of
 # strings (eg sys.argv).
 # Return a list with everything needed by this module's main()
+# If anything is wrong, raise Exception("ERROR MESSAGE")
 def parseArgs(argv):
     scriptName = os.path.basename(argv[0])
 
@@ -39,9 +40,11 @@ def parseArgs(argv):
     maxGap = "1000"
     samtools = "samtools"
 
-    usage = """\nCOMMAND SUMMARY:
+    usage = "NAME:\n" + scriptName + """\n
+DESCRIPTION:
 blablabla
-ARGUMENTS
+
+ARGUMENTS:
 Global arguments:
    --bams [str] : comma-separated list of BAM files
    --bams-from [str] : text file listing BAM files, one per line
@@ -50,27 +53,26 @@ Global arguments:
    --workDir [str] : subdir where intermediate results and QC files are produced, provide a pre-existing workDir to
            re-use results from a previous run (incremental use-case)
    --tmp [str] : pre-existing dir for temp files, faster is better (eg tmpfs), default: """ + tmpDir + """
-   --jobs [int] : cores that we can use, defaults to 80% of available cores ie """ + str(jobs) + """
+   --jobs [int] : cores that we can use, defaults to 80% of available cores ie """ + jobs + """
    -h , --help : display this help and exit
 
 Step 1 optional arguments, defaults should be OK:
-   --padding [int] : number of bps used to pad the exon coordinates, default : """ + str(padding) + """
+   --padding [int] : number of bps used to pad the exon coordinates, default : """ + padding + """
    --maxGap [int] : maximum accepted gap length (bp) between reads pairs, pairs separated by a longer gap
-           are assumed to possibly result from a structural variant and are ignored, default : """ + str(maxGap) + """
-   --samtools [str] : samtools binary (with path if not in $PATH), default: """ + str(samtools) + "\n"
+           are assumed to possibly result from a structural variant and are ignored, default : """ + maxGap + """
+   --samtools [str] : samtools binary (with path if not in $PATH), default: """ + samtools + "\n"
 
     try:
         opts, args = getopt.gnu_getopt(argv[1:], 'h', ["help", "bams=", "bams-from=", "bed=", "workDir=", "tmp=",
                                                        "jobs=", "padding=", "maxGap=", "samtools="])
     except getopt.GetoptError as e:
-        sys.stderr.write("ERROR : " + e.msg + ". Try " + scriptName + " --help\n")
-        raise Exception()
+        raise Exception(e.msg + ". Try " + scriptName + " --help")
 
     for opt, value in opts:
         # sanity-check and store arguments
         if opt in ('-h', '--help'):
             sys.stderr.write(usage)
-            raise Exception()
+            sys.exit(0)
         elif opt in ("--bams"):
             bams = value
         elif opt in ("--bams-from"):
@@ -89,21 +91,18 @@ Step 1 optional arguments, defaults should be OK:
             maxGap = value
         elif opt in ("--samtools"):
             samtools = value
-        # else:
-        #     sys.stderr.write("ERROR : unhandled option " + opt + ".\n")
-        #     raise Exception()
+        else:
+            raise Exception("unhandled option " + opt)
 
     #####################################################
     # process mageCNV.py-specific options, other options will be checked by s[1-4]_*.py
     if workDir == "":
-        sys.stderr.write("ERROR : You must provide a workDir with --workDir. Try " + scriptName + " --help.\n")
-        raise Exception()
+        raise Exception("you must provide a workDir with --workDir. Try " + scriptName + " --help")
     elif not os.path.isdir(workDir):
         try:
             os.mkdir(workDir)
-        except Exception:
-            sys.stderr.write("ERROR : workDir " + workDir + " doesn't exist and can't be mkdir'd\n")
-            raise Exception()
+        except Exception as e:
+            raise Exception("workDir " + workDir + " doesn't exist and can't be mkdir'd: " + str(e))
 
     # AOK, return everything that's needed
     return(bams, bamsFrom, bedFile, workDir, tmpDir, jobs, padding, maxGap, samtools)
@@ -116,13 +115,14 @@ Step 1 optional arguments, defaults should be OK:
 ####################################################
 # main function
 # Arg: list of strings, eg sys.argv
-# If anything goes wrong, log error message and raise exception.
+# If anything goes wrong, raise Exception("SOME EXPLICIT ERROR MESSAGE"), more details
+# may be available in the log
 def main(argv):
     # parse, check and preprocess arguments
     try:
         (bams, bamsFrom, bedFile, workDir, tmpDir, jobs, padding, maxGap, samtools) = parseArgs(argv)
     except Exception:
-        # parseArgs explained on stderr what went wrong, just re-raise
+        # problem is described in Exception, just re-raise
         raise
 
     # args seem OK, start working
@@ -132,7 +132,7 @@ def main(argv):
     ######################
     # hard-coded subdir hierarchy of workDir, created if needed
 
-    # name of current step, for log messages
+    # name of current step, for log messages / exception names
     stepName = "STEP0 - CHECK SUBDIR HIERARCHY -"
 
     # countsFiles are saved (date-stamped and gzipped) in countsDir
@@ -141,8 +141,7 @@ def main(argv):
         try:
             os.mkdir(countsDir)
         except Exception:
-            logger.error("%s countsDir %s doesn't exist and can't be mkdir'd", stepName, countsDir)
-            raise Exception()
+            raise Exception(stepName + " countsDir " +  countsDir + "doesn't exist and can't be mkdir'd")
 
     # breakpoint results are saved in BPDir
     BPDir = workDir + '/BreakPoints/'
@@ -150,8 +149,7 @@ def main(argv):
         try:
             os.mkdir(BPDir)
         except Exception:
-            logger.error("%s BPDir %s doesn't exist and can't be mkdir'd", stepName, BPDir)
-            raise Exception()
+            raise Exception(stepName + " BPDir " + BPDir + " doesn't exist and can't be mkdir'd")
 
     ######################
     # STEP 1
@@ -173,8 +171,7 @@ def main(argv):
     dateStamp = datetime.today().strftime('%Y-%m-%d_%H-%M-%S')
     countsFile = countsDir + '/countsFile_' + dateStamp + '.gz'
     if os.path.isfile(countsFile):
-        logger.error("%s countsFile %s already exists\n", stepName, countsFile)
-        raise Exception()
+        raise Exception(stepName + " countsFile " + countsFile + " already exists")
     stepArgs.extend(["--out", countsFile])
 
     logger.info("%s STARTING", stepName)
@@ -200,6 +197,6 @@ if __name__ == '__main__':
     try:
         main(sys.argv)
     except Exception as e:
-        if (str(e) != ''):
-            logger.error(str(e))
-        exit(1)
+        # details on the issue should be in the exception name, print it to stderr and die
+        sys.stderr.write("ERROR in " + sys.argv[0] + " : " + str(e) + "\n")
+        sys.exit(1)
