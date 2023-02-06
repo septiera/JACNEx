@@ -30,12 +30,13 @@ def parseArgs(argv):
 
     # global optional args
     tmpDir = "/tmp/"
-    # jobs default: 80% of available cores
+    # jobs default: 80% of available cores, as a string
     jobs = round(0.8 * len(os.sched_getaffinity(0)))
+    jobs = str(jobs)
 
-    # step1 optional args with default values
-    padding = 10
-    maxGap = 1000
+    # step1 optional args with default values, as strings
+    padding = "10"
+    maxGap = "1000"
     samtools = "samtools"
 
     usage = """\nCOMMAND SUMMARY:
@@ -49,14 +50,14 @@ Global arguments:
    --workDir [str] : subdir where intermediate results and QC files are produced, provide a pre-existing workDir to
            re-use results from a previous run (incremental use-case)
    --tmp [str] : pre-existing dir for temp files, faster is better (eg tmpfs), default: """ + tmpDir + """
-   --jobs [int] : cores that we can use, defaults to 80% of available cores ie """ + str(jobs) + "\n" + """
+   --jobs [int] : cores that we can use, defaults to 80% of available cores ie """ + str(jobs) + """
+   -h , --help : display this help and exit
+
 Step 1 optional arguments, defaults should be OK:
    --padding [int] : number of bps used to pad the exon coordinates, default : """ + str(padding) + """
    --maxGap [int] : maximum accepted gap length (bp) between reads pairs, pairs separated by a longer gap
            are assumed to possibly result from a structural variant and are ignored, default : """ + str(maxGap) + """
-   --samtools [str] : samtools binary (with path if not in $PATH), default: """ + str(samtools) + """
-
-   -h , --help : display this help and exit\n"""
+   --samtools [str] : samtools binary (with path if not in $PATH), default: """ + str(samtools) + "\n"
 
     try:
         opts, args = getopt.gnu_getopt(argv[1:], 'h', ["help", "bams=", "bams-from=", "bed=", "workDir=", "tmp=",
@@ -81,34 +82,16 @@ Step 1 optional arguments, defaults should be OK:
         elif opt in ("--tmp"):
             tmpDir = value
         elif opt in ("--jobs"):
-            try:
-                jobs = int(value)
-                if (jobs <= 0):
-                    raise Exception()
-            except Exception:
-                sys.stderr.write("ERROR : jobs must be a positive integer, not '" + value + "'.\n")
-                raise Exception()
+            jobs = value
         elif opt in ("--padding"):
-            try:
-                padding = int(value)
-                if (padding < 0):
-                    raise Exception()
-            except Exception:
-                sys.stderr.write("ERROR : padding must be a non-negative integer, not '" + value + "'.\n")
-                raise Exception()
+            padding = value
         elif opt in ("--maxGap"):
-            try:
-                maxGap = int(value)
-                if (maxGap < 0):
-                    raise Exception()
-            except Exception:
-                sys.stderr.write("ERROR : maxGap must be a non-negative integer, not '" + value + "'.\n")
-                raise Exception()
+            maxGap = value
         elif opt in ("--samtools"):
             samtools = value
-        else:
-            sys.stderr.write("ERROR : unhandled option " + opt + ".\n")
-            raise Exception()
+        # else:
+        #     sys.stderr.write("ERROR : unhandled option " + opt + ".\n")
+        #     raise Exception()
 
     #####################################################
     # process mageCNV.py-specific options, other options will be checked by s[1-4]_*.py
@@ -199,7 +182,7 @@ def main(argv):
         s1_countFrags.main(stepArgs)
     except Exception:
         logger.error("%s FAILED", stepName)
-        raise Exception()
+        raise
     logger.info("%s DONE", stepName)
 
 
