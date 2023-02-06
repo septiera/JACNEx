@@ -268,106 +268,111 @@ def main(argv):
     logger.debug("Done parsing previous countsFile, in %.2fs", thisTime - startTime)
     startTime = thisTime
 
-    # populate the module-global exonNCLs in countFragments
-    try:
-        countFrags.countFragments.initExonNCLs(exons)
-    except Exception as e:
-        logger.error("initExonNCLs failed - %s", e)
-        raise Exception()
-
-    #####################################################
-    # decide how the work will be parallelized
-
     # total number of samples that still need to be processed
     nbOfSamplesToProcess = len(bamsToProcess)
     for bamIndex in range(len(bamsToProcess)):
         if countsFilled[bamIndex]:
             nbOfSamplesToProcess -= 1
 
-    # we are allowed to use jobs cores in total: we will process paraSamples samples in
-    # parallel, each sample will be processed using coresPerSample.
-    # in our tests 7 cores/sample provided the best overall performance, both with jobs=20
-    # and jobs=40. This probably depends on your hardware but in any case it's just a
-    # performance tuning parameter.
-    # -> we target targetCoresPerSample coresPerSample, this is increased if we
-    #    have few samples to process (and we use ceil() so we may slighty overconsume)
-    targetCoresPerSample = 7
-    paraSamples = min(math.ceil(jobs / targetCoresPerSample), nbOfSamplesToProcess)
-    coresPerSample = math.ceil(jobs / paraSamples)
-    logger.info("%i new sample(s)  => will process %i in parallel, using up to %i cores/sample",
-                nbOfSamplesToProcess, paraSamples, coresPerSample)
+    if nbOfSamplesToProcess == 0:
+        logger.info("All requested samples are already in previous countsFile")
 
-    #####################################################
-    # Define nested callback for processing bam2counts() result (so countsArray et al
-    # are in its scope)
+    else:
+        #####################################################
+        # decide how the work will be parallelized
+        # we are allowed to use jobs cores in total: we will process paraSamples samples in
+        # parallel, each sample will be processed using coresPerSample.
+        # in our tests 7 cores/sample provided the best overall performance, both with jobs=20
+        # and jobs=40. This probably depends on your hardware but in any case it's just a
+        # performance tuning parameter.
+        # -> we target targetCoresPerSample coresPerSample, this is increased if we
+        #    have few samples to process (and we use ceil() so we may slighty overconsume)
+        targetCoresPerSample = 7
+        paraSamples = min(math.ceil(jobs / targetCoresPerSample), nbOfSamplesToProcess)
+        coresPerSample = math.ceil(jobs / paraSamples)
+        logger.info("%i new sample(s)  => will process %i in parallel, using up to %i cores/sample",
+                    nbOfSamplesToProcess, paraSamples, coresPerSample)
 
-    # if bam2counts fails for any BAMs, we have to remember their indexes
-    # and only expunge them at the end -> save their indexes in failedBams
-    failedBams = []
+        #####################################################
+        # populate the module-global exonNCLs in countFragments
+        try:
+            countFrags.countFragments.initExonNCLs(exons)
+        except Exception as e:
+            logger.error("initExonNCLs failed - %s", e)
+            raise Exception()
 
-    # mergeCounts:
-    # arg: a Future object returned by ProcessPoolExecutor.submit(countFrags.countFragments.bam2counts).
-    # bam2counts() returns a 3-element tuple (sampleIndex, sampleCounts, breakPoints).
-    # If something went wrong, log and populate failedBams;
-    # otherwise fill column at index sampleIndex in countsArray with counts stored in sampleCounts,
-    # and print info about putative CNVs with alignment-supported breakpoints as TSV
-    # to BPDir/sample.breakPoints.tsv
-    def mergeCounts(futureBam2countsRes):
-        e = futureBam2countsRes.exception()
-        if e is not None:
-            #  exceptions raised by bam2counts are always Exception(str(sampleIndex))
-            si = int(str(e))
-            logger.warning("Failed to count fragments for sample %s, skipping it", samples[si])
-            failedBams.append(si)
-        else:
-            bam2countsRes = futureBam2countsRes.result()
-            si = bam2countsRes[0]
-            for exonIndex in range(len(bam2countsRes[1])):
-                countsArray[exonIndex, si] = bam2countsRes[1][exonIndex]
-            if (len(bam2countsRes[2]) > 0):
-                try:
-                    bpFile = BPDir + '/' + samples[si] + '.breakPoints.tsv'
-                    BPFH = open(bpFile, mode='w')
-                    for thisBP in bam2countsRes[2]:
-                        toPrint = thisBP[0] + "\t" + str(thisBP[1]) + "\t" + str(thisBP[2]) + "\t" + thisBP[3] + "\t" + thisBP[4]
-                        print(toPrint, file=BPFH)
-                    BPFH.close()
-                except Exception as e:
-                    logger.warning("Discarding breakpoints info for %s because cannot open %s for writing - %s",
-                                   samples[si], bpFile, e)
-            logger.info("Done counting fragments for %s", samples[si])
+        #####################################################
+        # Define nested callback for processing bam2counts() result (so countsArray et al
+        # are in its scope)
 
-    #####################################################
-    # Process new BAMs, up to paraSamples in parallel
-    with ProcessPoolExecutor(paraSamples) as pool:
-        for bamIndex in range(len(bamsToProcess)):
-            bam = bamsToProcess[bamIndex]
-            sample = samples[bamIndex]
-            if countsFilled[bamIndex]:
-                logger.info('Sample %s already filled from countsFile', sample)
-                continue
+        # if bam2counts fails for any BAMs, we have to remember their indexes
+        # and only expunge them at the end -> save their indexes in failedBams
+        failedBams = []
+
+        # mergeCounts:
+        # arg: a Future object returned by ProcessPoolExecutor.submit(countFrags.countFragments.bam2counts).
+        # bam2counts() returns a 3-element tuple (sampleIndex, sampleCounts, breakPoints).
+        # If something went wrong, log and populate failedBams;
+        # otherwise fill column at index sampleIndex in countsArray with counts stored in sampleCounts,
+        # and print info about putative CNVs with alignment-supported breakpoints as TSV
+        # to BPDir/sample.breakPoints.tsv
+        def mergeCounts(futureBam2countsRes):
+            e = futureBam2countsRes.exception()
+            if e is not None:
+                #  exceptions raised by bam2counts are always Exception(str(sampleIndex))
+                si = int(str(e))
+                logger.warning("Failed to count fragments for sample %s, skipping it", samples[si])
+                failedBams.append(si)
             else:
-                futureRes = pool.submit(countFrags.countFragments.bam2counts,
-                                        bam, len(exons), maxGap, tmpDir, samtools, coresPerSample, bamIndex)
-                futureRes.add_done_callback(mergeCounts)
+                bam2countsRes = futureBam2countsRes.result()
+                si = bam2countsRes[0]
+                for exonIndex in range(len(bam2countsRes[1])):
+                    countsArray[exonIndex, si] = bam2countsRes[1][exonIndex]
+                if (len(bam2countsRes[2]) > 0):
+                    try:
+                        bpFile = BPDir + '/' + samples[si] + '.breakPoints.tsv'
+                        BPFH = open(bpFile, mode='w')
+                        for thisBP in bam2countsRes[2]:
+                            toPrint = thisBP[0] + "\t" + str(thisBP[1]) + "\t" + str(thisBP[2]) + "\t" + thisBP[3] + "\t" + thisBP[4]
+                            print(toPrint, file=BPFH)
+                        BPFH.close()
+                    except Exception as e:
+                        logger.warning("Discarding breakpoints info for %s because cannot open %s for writing - %s",
+                                       samples[si], bpFile, e)
+                logger.info("Done counting fragments for %s", samples[si])
 
-    thisTime = time.time()
-    logger.info("Done processing all BAMs, %i new BAMs in %.2fs i.e. %.2fs per BAM",
-                nbOfSamplesToProcess, thisTime - startTime, (thisTime - startTime) / nbOfSamplesToProcess)
-    startTime = thisTime
+        #####################################################
+        # Process new BAMs, up to paraSamples in parallel
+        with ProcessPoolExecutor(paraSamples) as pool:
+            for bamIndex in range(len(bamsToProcess)):
+                bam = bamsToProcess[bamIndex]
+                sample = samples[bamIndex]
+                if countsFilled[bamIndex]:
+                    logger.info('Sample %s already filled from countsFile', sample)
+                    continue
+                else:
+                    futureRes = pool.submit(countFrags.countFragments.bam2counts,
+                                            bam, len(exons), maxGap, tmpDir, samtools, coresPerSample, bamIndex)
+                    futureRes.add_done_callback(mergeCounts)
+
+        #####################################################
+        # Expunge samples for which bam2counts failed
+        failedBamsNb = len(failedBams)
+        for failedI in reversed(failedBams):
+            del(samples[failedI])
+        countsArray = np.delete(countsArray, failedBams, axis=1)
+
+        thisTime = time.time()
+        logger.info("Done processing all BAMs, %i new BAMs in %.2fs i.e. %.2fs per BAM",
+                    nbOfSamplesToProcess, thisTime - startTime, (thisTime - startTime) / nbOfSamplesToProcess)
+        startTime = thisTime
 
     #####################################################
-    # Expunge samples for which bam2counts failed
-    failedBamsNb = len(failedBams)
-    for failedI in reversed(failedBams):
-        del(samples[failedI])
-    countsArray = np.delete(countsArray, failedBams, axis=1)
-
     # Print exon defs + counts to outFile
     countFrags.countsFile.printCountsFile(exons, samples, countsArray, outFile)
 
     thisTime = time.time()
-    logger.debug("Done printing results for all samples, in %.2fs", thisTime - startTime)
+    logger.debug("Done printing counts for all samples, in %.2fs", thisTime - startTime)
     if (failedBamsNb > 0):
         logger.warning("ALL DONE BUT COUNTING FAILED FOR %i SAMPLES, check the log!", failedBamsNb)
     else:
