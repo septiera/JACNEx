@@ -264,6 +264,7 @@ def parseClustsFile(clustsFile, SOIs):
                 else:
                     sex2Clust["G"] = [clusterID]
 
+    clustsFH.close()
     return(clusts2Samps, clusts2Ctrls, SampsQCFailed, sex2Clust)
 
 
