@@ -91,7 +91,8 @@ ARGUMENTS:
     for opt, value in opts:
         # sanity-check and store arguments
         if opt in ('-h', '--help'):
-            raise Exception(usage)
+            sys.stderr.write(usage)
+            sys.exit(0)
         elif opt in ("--bams"):
             bams = value
         elif opt in ("--bams-from"):
@@ -387,4 +388,4 @@ if __name__ == '__main__':
     except Exception as e:
         # details on the issue should be in the exception name, print it to stderr and die
         sys.stderr.write("ERROR in " + sys.argv[0] + " : " + str(e) + "\n")
-        exit(1)
+        sys.exit(1)
