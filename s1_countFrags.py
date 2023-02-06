@@ -35,6 +35,7 @@ logger = logging.getLogger(__name__)
 # Parse and sanity check the command+arguments, provided as a list of
 # strings (eg sys.argv).
 # Return a list with everything needed by this module's main()
+# If anything is wrong, raise Exception("ERROR MESSAGE")
 def parseArgs(argv):
     scriptName = os.path.basename(argv[0])
 
@@ -42,9 +43,9 @@ def parseArgs(argv):
     bams = ""
     bamsFrom = ""
     bedFile = ""
-    # optional args with default values
     outFile = ""
-    BPDir = "./BreakPoints/"
+    # optional args with default values
+    BPDir = "BreakPoints/"
     countsFile = ""
     padding = 10
     maxGap = 1000
@@ -53,7 +54,8 @@ def parseArgs(argv):
     # jobs default: 80% of available cores
     jobs = round(0.8 * len(os.sched_getaffinity(0)))
 
-    usage = """\nCOMMAND SUMMARY:
+    usage = "NAME:\n" + scriptName + """\n
+DESCRIPTION:
 Given a BED of exons and one or more BAM files, count the number of sequenced fragments
 from each BAM that overlap each exon (+- padding).
 Results are printed to --out in TSV format (possibly gzipped): first 4 columns hold the exon
@@ -61,6 +63,7 @@ definitions after padding and sorting, subsequent columns (one per BAM) hold the
 If a pre-existing counts file produced by this program with the same BED is provided (with --counts),
 counts for requested BAMs are copied from this file and counting is only performed for the new BAM(s).
 In addition, any support for putative breakpoints is printed to sample-specific TSV files created in BPDir.
+
 ARGUMENTS:
    --bams [str] : comma-separated list of BAM files
    --bams-from [str] : text file listing BAM files, one per line
@@ -68,29 +71,27 @@ ARGUMENTS:
            headerless tab-separated file, columns contain CHR START END EXON_ID)
    --out [str] : file where results will be saved, must not pre-exist, will be gzipped if it ends with '.gz',
            can have a path component but the subdir must exist
-   --BPDir [str] : dir (created if needed) where breakpoint files will be produced, default :  """ + str(BPDir) + """
+   --BPDir [str] : dir (created if needed) where breakpoint files will be produced, default :  """ + BPDir + """
    --counts [str] optional: pre-existing counts file produced by this program, possibly gzipped,
            counts for requested BAMs will be copied from this file if present
+   --jobs [int] : cores that we can use, defaults to 80% of available cores ie """ + str(jobs) + "\n" + """
    --padding [int] : number of bps used to pad the exon coordinates, default : """ + str(padding) + """
    --maxGap [int] : maximum accepted gap length (bp) between reads pairs, pairs separated by a longer gap
            are assumed to possibly result from a structural variant and are ignored, default : """ + str(maxGap) + """
    --tmp [str] : pre-existing dir for temp files, faster is better (eg tmpfs), default: """ + tmpDir + """
-   --samtools [str] : samtools binary (with path if not in $PATH), default: """ + str(samtools) + """
-   --jobs [int] : cores that we can use, defaults to 80% of available cores ie """ + str(jobs) + "\n" + """
+   --samtools [str] : samtools binary (with path if not in $PATH), default: """ + samtools + """
    -h , --help : display this help and exit\n"""
 
     try:
         opts, args = getopt.gnu_getopt(argv[1:], 'h', ["help", "bams=", "bams-from=", "bed=", "out=", "BPDir=",
-                                                       "counts=", "padding=", "maxGap=", "tmp=", "samtools=", "jobs="])
+                                                       "counts=", "jobs=", "padding=", "maxGap=", "tmp=", "samtools="])
     except getopt.GetoptError as e:
-        sys.stderr.write("ERROR : " + e.msg + ". Try " + scriptName + " --help\n")
-        raise Exception()
+        raise Exception(e.msg + ". Try " + scriptName + " --help")
 
     for opt, value in opts:
         # sanity-check and store arguments
         if opt in ('-h', '--help'):
-            sys.stderr.write(usage)
-            raise Exception()
+            raise Exception(usage)
         elif opt in ("--bams"):
             bams = value
         elif opt in ("--bams-from"):
@@ -103,43 +104,23 @@ ARGUMENTS:
             BPDir = value
         elif opt in ("--counts"):
             countsFile = value
+        elif opt in ("--jobs"):
+            jobs = value
         elif opt in ("--padding"):
-            try:
-                padding = int(value)
-                if (padding < 0):
-                    raise Exception()
-            except Exception:
-                sys.stderr.write("ERROR : padding must be a non-negative integer, not '" + value + "'.\n")
-                raise Exception()
+            padding = value
         elif opt in ("--maxGap"):
-            try:
-                maxGap = int(value)
-                if (maxGap < 0):
-                    raise Exception()
-            except Exception:
-                sys.stderr.write("ERROR : maxGap must be a non-negative integer, not '" + value + "'.\n")
-                raise Exception()
+            maxGap = value
         elif opt in ("--tmp"):
             tmpDir = value
         elif opt in ("--samtools"):
             samtools = value
-        elif opt in ("--jobs"):
-            try:
-                jobs = int(value)
-                if (jobs <= 0):
-                    raise Exception()
-            except Exception:
-                sys.stderr.write("ERROR : jobs must be a positive integer, not '" + value + "'.\n")
-                raise Exception()
         else:
-            sys.stderr.write("ERROR : unhandled option " + opt + ".\n")
-            raise Exception()
+            raise Exception("unhandled option " + opt)
 
     #####################################################
     # Check and clean up list of BAMs
     if (bams == "" and bamsFrom == "") or (bams != "" and bamsFrom != ""):
-        sys.stderr.write("ERROR : You must use either --bams or --bams-from but not both. Try " + scriptName + " --help.\n")
-        raise Exception()
+        raise Exception("you must use either --bams or --bams-from but not both. Try " + scriptName + " --help")
     # bamsTmp will store user-supplied BAMs
     bamsTmp = []
     # bamsNoDupe: tmp dictionary for removing dupes if any: key==bam, value==1
@@ -152,8 +133,7 @@ ARGUMENTS:
     if bams != "":
         bamsTmp = bams.split(",")
     elif not os.path.isfile(bamsFrom):
-        sys.stderr.write("ERROR : bams-from file " + bamsFrom + " doesn't exist.\n")
-        raise Exception()
+        raise Exception("bams-from file " + bamsFrom + " doesn't exist")
     else:
         try:
             bamsList = open(bamsFrom, "r")
@@ -162,17 +142,14 @@ ARGUMENTS:
                 bamsTmp.append(bam)
             bamsList.close()
         except Exception as e:
-            sys.stderr.write("ERROR opening provided --bams-from file %s: %s", bamsFrom, e)
-            raise Exception()
+            raise Exception("opening provided --bams-from file " + bamsFrom + " : " + str(e))
 
     # Check that all bams exist and remove any duplicates
     for bam in bamsTmp:
         if not os.path.isfile(bam):
-            sys.stderr.write("ERROR : BAM " + bam + " doesn't exist.\n")
-            raise Exception()
+            raise Exception("BAM " + bam + " doesn't exist")
         elif not os.access(bam, os.R_OK):
-            sys.stderr.write("ERROR : BAM " + bam + " cannot be read.\n")
-            raise Exception()
+            raise Exception("BAM " + bam + " cannot be read")
         elif bam in bamsNoDupe:
             logger.warning("BAM " + bam + " specified twice, ignoring the dupe")
         else:
@@ -185,44 +162,56 @@ ARGUMENTS:
     #####################################################
     # Check other args
     if bedFile == "":
-        sys.stderr.write("ERROR : You must provide a BED file with --bed. Try " + scriptName + " --help.\n")
-        raise Exception()
+        raise Exception("you must provide a BED file with --bed. Try " + scriptName + " --help")
     elif not os.path.isfile(bedFile):
-        sys.stderr.write("ERROR : bedFile " + bedFile + " doesn't exist.\n")
-        raise Exception()
+        raise Exception("bedFile " + bedFile + " doesn't exist")
 
     if outFile == "":
-        sys.stderr.write("ERROR : You must provide an outFile with --out. Try " + scriptName + " --help.\n")
-        raise Exception()
+        raise Exception("you must provide an outFile with --out. Try " + scriptName + " --help")
     elif os.path.isfile(outFile):
-        sys.stderr.write("ERROR : outFile " + outFile + " already exists.\n")
-        raise Exception()
+        raise Exception("outFile " + outFile + " already exists")
     elif (os.path.dirname(outFile) != '') and (not os.path.isdir(os.path.dirname(outFile))):
-        sys.stderr.write("ERROR : the directory where outFile " + outFile + " should be created doesn't exist.\n")
-        raise Exception()
+        raise Exception("the directory where outFile " + outFile + " should be created doesn't exist")
 
     if (countsFile != "") and (not os.path.isfile(countsFile)):
-        sys.stderr.write("ERROR : countsFile " + countsFile + " doesn't exist.\n")
-        raise Exception()
+        raise Exception("countsFile " + countsFile + " doesn't exist")
+
+    try:
+        jobs = int(jobs)
+        if (jobs <= 0):
+            raise Exception()
+    except Exception:
+        raise Exception("jobs must be a positive integer, not " + str(jobs))
+
+    try:
+        padding = int(padding)
+        if (padding < 0):
+            raise Exception()
+    except Exception:
+        raise Exception("padding must be a non-negative integer, not " + str(padding))
+
+    try:
+        maxGap = int(maxGap)
+        if (maxGap < 0):
+            raise Exception()
+    except Exception:
+        raise Exception("maxGap must be a non-negative integer, not " + str(maxGap))
 
     if not os.path.isdir(tmpDir):
-        sys.stderr.write("ERROR : tmp directory " + tmpDir + " doesn't exist.\n")
-        raise Exception()
+        raise Exception("tmp directory " + tmpDir + " doesn't exist")
 
     if shutil.which(samtools) is None:
-        sys.stderr.write("ERROR : samtools program '" + samtools + "' cannot be run (wrong path, or binary not in $PATH?).\n")
-        raise Exception()
+        raise Exception("samtools program '" + samtools + "' cannot be run (wrong path, or binary not in $PATH?)")
 
     # test BPDir last so we don't mkdir unless all other args are OK
     if not os.path.isdir(BPDir):
         try:
             os.mkdir(BPDir)
         except Exception:
-            sys.stderr.write("ERROR : BPDir " + BPDir + " doesn't exist and can't be mkdir'd\n")
-            raise Exception()
+            raise Exception("BPDir " + BPDir + " doesn't exist and can't be mkdir'd")
 
     # AOK, return everything that's needed
-    return(bamsToProcess, samples, bedFile, outFile, BPDir, padding, maxGap, countsFile, tmpDir, samtools, jobs)
+    return(bamsToProcess, samples, bedFile, outFile, BPDir, jobs, padding, maxGap, countsFile, tmpDir, samtools)
 
 
 ###############################################################################
@@ -232,10 +221,15 @@ ARGUMENTS:
 ####################################################
 # main function
 # Arg: list of strings, eg sys.argv
-# If anything goes wrong, print error message to stderr and raise exception.
+# If anything goes wrong, raise Exception("SOME EXPLICIT ERROR MESSAGE"), more details
+# may be available in the log
 def main(argv):
-    # parse, check and preprocess arguments - exceptions must be caught by caller
-    (bamsToProcess, samples, bedFile, outFile, BPDir, padding, maxGap, countsFile, tmpDir, samtools, jobs) = parseArgs(argv)
+    # parse, check and preprocess arguments
+    try:
+        (bamsToProcess, samples, bedFile, outFile, BPDir, jobs, padding, maxGap, countsFile, tmpDir, samtools) = parseArgs(argv)
+    except Exception:
+        # problem is described in Exception, just re-raise
+        raise
 
     # args seem OK, start working
     logger.debug("called with: " + " ".join(argv[1:]))
@@ -247,8 +241,7 @@ def main(argv):
     try:
         exons = countFrags.bed.processBed(bedFile, padding)
     except Exception:
-        logger.error("processBed failed")
-        raise Exception()
+        raise Exception("processBed failed")
 
     thisTime = time.time()
     logger.debug("Done pre-processing BED, in %.2fs", thisTime - startTime)
@@ -261,8 +254,7 @@ def main(argv):
     try:
         (countsArray, countsFilled) = countFrags.countsFile.extractCountsFromPrev(exons, samples, countsFile)
     except Exception as e:
-        logger.error("parseCountsFile failed - %s", e)
-        raise Exception()
+        raise Exception("parseCountsFile failed - " + str(e))
 
     thisTime = time.time()
     logger.debug("Done parsing previous countsFile, in %.2fs", thisTime - startTime)
@@ -273,6 +265,10 @@ def main(argv):
     for bamIndex in range(len(bamsToProcess)):
         if countsFilled[bamIndex]:
             nbOfSamplesToProcess -= 1
+
+    # if bam2counts fails for any BAMs, we have to remember their indexes
+    # and only expunge them at the end -> save their indexes in failedBams
+    failedBams = []
 
     if nbOfSamplesToProcess == 0:
         logger.info("All requested samples are already in previous countsFile")
@@ -298,16 +294,11 @@ def main(argv):
         try:
             countFrags.countFragments.initExonNCLs(exons)
         except Exception as e:
-            logger.error("initExonNCLs failed - %s", e)
-            raise Exception()
+            raise Exception("initExonNCLs failed - " + str(e))
 
         #####################################################
         # Define nested callback for processing bam2counts() result (so countsArray et al
         # are in its scope)
-
-        # if bam2counts fails for any BAMs, we have to remember their indexes
-        # and only expunge them at the end -> save their indexes in failedBams
-        failedBams = []
 
         # mergeCounts:
         # arg: a Future object returned by ProcessPoolExecutor.submit(countFrags.countFragments.bam2counts).
@@ -357,13 +348,13 @@ def main(argv):
 
         #####################################################
         # Expunge samples for which bam2counts failed
-        failedBamsNb = len(failedBams)
-        for failedI in reversed(failedBams):
-            del(samples[failedI])
-        countsArray = np.delete(countsArray, failedBams, axis=1)
+        if len(failedBams) > 0:
+            for failedI in reversed(failedBams):
+                del(samples[failedI])
+            countsArray = np.delete(countsArray, failedBams, axis=1)
 
         thisTime = time.time()
-        logger.info("Done processing all BAMs, %i new BAMs in %.2fs i.e. %.2fs per BAM",
+        logger.info("Processed %i new BAMs in %.2fs, i.e. %.2fs per BAM",
                     nbOfSamplesToProcess, thisTime - startTime, (thisTime - startTime) / nbOfSamplesToProcess)
         startTime = thisTime
 
@@ -372,9 +363,9 @@ def main(argv):
     countFrags.countsFile.printCountsFile(exons, samples, countsArray, outFile)
 
     thisTime = time.time()
-    logger.debug("Done printing counts for all samples, in %.2fs", thisTime - startTime)
-    if (failedBamsNb > 0):
-        logger.warning("ALL DONE BUT COUNTING FAILED FOR %i SAMPLES, check the log!", failedBamsNb)
+    logger.debug("Done printing counts for all (non-failed) samples, in %.2fs", thisTime - startTime)
+    if len(failedBams) > 0:
+        raise("counting FAILED for " + len(failedBams) + " samples, check the log!")
     else:
         logger.info("ALL DONE")
 
@@ -393,6 +384,7 @@ if __name__ == '__main__':
 
     try:
         main(sys.argv)
-    except Exception:
-        # whoever raised the exception should have explained it on stderr, here we just die
+    except Exception as e:
+        # details on the issue should be in the exception name, print it to stderr and die
+        sys.stderr.write("ERROR in " + sys.argv[0] + " : " + str(e) + "\n")
         exit(1)
