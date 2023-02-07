@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 
 ###############################################################################
-############################ PRIVATE FUNCTIONS ################################
+############################ PUBLIC FUNCTIONS #################################
 ###############################################################################
 
 ####################################################
@@ -38,13 +38,14 @@ def parseArgs(argv):
     scriptName = os.path.basename(argv[0])
     # mandatory args
     countsFile = ""
-    # optionnal args with default values
+    outFile = ""
+    # optional args with default values
     minSamps = "20"
     maxCorr = "0.95"
     minCorr = "0.85"
     plotDir = "./ResultPlots/"
-    # boolean args with False status by default
-    nogender = False
+    # boolean, will be True if --noGender is specified
+    noGender = False
 
     usage = """\nCOMMAND SUMMARY:
 Given a TSV of exon fragment counts, normalizes the counts (Fragment Per Million), performs
@@ -59,7 +60,8 @@ dendogram from clustering) are printed in pdf files created in plotDir.
 ARGUMENTS:
    --counts [str]: TSV file, first 4 columns hold the exon definitions, subsequent columns
                    hold the fragment counts. File obtained from 1_countFrags.py
-
+   --out [str] : file where results will be saved, must not pre-exist, will be gzipped if it ends
+                 with '.gz', can have a path component but the subdir must exist
    --minSamps [int]: minimum number of samples to validate the creation of a cluster,
                      default : """ + str(minSamps) + """
    --maxCorr [float]: allows to define a Pearson correlation threshold according to which
@@ -73,22 +75,22 @@ ARGUMENTS:
                       the clusters. A too high threshold will lead to a massive elimination of
                       non-clustered samples. default: """ + str(minCorr) + """
    --plotDir[str]: subdir (created if needed) where result plots files will be produced, default :  """ + str(plotDir) + """
-   --nogender [boolean]: no gender discrimination for clustering. Calling the argument is sufficient.
+   --noGender : disable gender differentiation for clustering on sex chromosomes
    -h , --help  : display this help and exit\n"""
 
     try:
-        opts, args = getopt.gnu_getopt(sys.argv[1:], 'h', ["help", "counts=", "out=", "minSamps=", "maxCorr=", "minCorr=", "plotDir=", "nogender"])
+        opts, args = getopt.gnu_getopt(argv[1:], 'h', ["help", "counts=", "out=", "minSamps=", "maxCorr=", "minCorr=", "plotDir=", "noGender"])
     except getopt.GetoptError as e:
-        sys.stderr.write("ERROR : " + e.msg + ". Try " + scriptName + " --help\n")
-        raise Exception()
+        raise Exception(e.msg + ". Try " + scriptName + " --help")
 
     for opt, value in opts:
-        # sanity-check and store arguments
-        if (opt in ('-h', '--help')):
+        if opt in ('-h', '--help'):
             sys.stderr.write(usage)
-            raise Exception()
+            sys.exit(0)
         elif (opt in ("--counts")):
             countsFile = value
+        elif opt in ("--out"):
+            outFile = value
         elif (opt in ("--minSamps")):
             minSamps = value
         elif (opt in ("--maxCorr")):
@@ -97,75 +99,58 @@ ARGUMENTS:
             minCorr = value
         elif (opt in ("--plotDir")):
             plotDir = value
-        elif (opt in ("--nogender")):
-            nogender = True
-
+        elif (opt in ("--noGender")):
+            noGender = True
         else:
-            sys.stderr.write("ERROR : unhandled option " + opt + ".\n")
-            raise Exception()
+            raise Exception("unhandled option " + opt)
 
     #####################################################
-    # Check that the mandatory parameters
+    # Check mandatory args
     if countsFile == "":
-        sys.stderr.write("ERROR : You must provide a TSV file with counts with --counts. Try " + scriptName + " --help.\n")
-        raise Exception()
-    elif (not os.path.isfile(countsFile)):
-        sys.stderr.write("ERROR : countsFile " + countsFile + " doesn't exist.\n")
-        raise Exception()
+        raise Exception("you must provide a countsFile with --counts. Try " + scriptName + " --help")
+    elif not os.path.isfile(countsFile):
+        raise Exception("countsFile " + countsFile + " doesn't exist")
+
+    if outFile == "":
+        raise Exception("you must provide an outFile with --out. Try " + scriptName + " --help")
+    elif os.path.exists(outFile):
+        raise Exception("outFile " + outFile + " already exists")
+    elif (os.path.dirname(outFile) != '') and (not os.path.isdir(os.path.dirname(outFile))):
+        raise Exception("the directory where outFile " + outFile + " should be created doesn't exist")
 
     #####################################################
     # Check other args
-    if minSamps == "":
-        sys.stderr.write("ERROR : You must provide an integer value with --minSamps. Try " + scriptName + " --help.\n")
-        raise Exception()
-    else:
-        try:
-            minSamps = np.int(minSamps)
-            if (minSamps < 0):
-                raise Exception()
-        except Exception:
-            sys.stderr.write("ERROR : minSamps must be a non-negative integer, not '" + minSamps + "'.\n")
+    try:
+        minSamps = int(minSamps)
+        if (minSamps <= 0):
             raise Exception()
+    except Exception:
+        raise Exception("minSamps must be a positive integer, not " + str(minSamps))
 
-    if maxCorr == "":
-        sys.stderr.write("ERROR : You must provide a float value with --maxCorr. Try " + scriptName + " --help.\n")
-        raise Exception()
-    else:
-        try:
-            maxCorr = np.float(maxCorr)
-            if (maxCorr > 1 or maxCorr < 0):
-                raise Exception()
-        except Exception:
-            sys.stderr.write("ERROR : maxCorr must be a float between 0 and 1, not '" + maxCorr + "'.\n")
+    try:
+        maxCorr = float(maxCorr)
+        if (maxCorr > 1) or (maxCorr < 0):
             raise Exception()
+    except Exception:
+        raise Exception("maxCorr must be a float between 0 and 1, not " + str(maxCorr))
 
-    if minCorr == "":
-        sys.stderr.write("ERROR : You must provide a float value with --minCorr. Try " + scriptName + " --help.\n")
-        raise Exception()
-    else:
-        try:
-            minCorr = np.float(minCorr)
-            if (minCorr > 1 or minCorr < 0):
-                raise Exception()
-        except Exception:
-            sys.stderr.write("ERROR : minCorr must be a float between 0 and 1, not '" + minCorr + "'.\n")
+    try:
+        minCorr = float(minCorr)
+        if (minCorr > maxCorr) or (minCorr < 0):
             raise Exception()
+    except Exception:
+        raise Exception("minCorr must be a float between 0 and maxCorr, not " + str(minCorr))
 
     # test plotdir last so we don't mkdir unless all other args are OK
     if not os.path.isdir(plotDir):
         try:
             os.mkdir(plotDir)
         except Exception:
-            sys.stderr.write("ERROR : plotDir " + plotDir + " doesn't exist and can't be mkdir'd\n")
-            raise Exception()
+            raise Exception("plotDir " + plotDir + " doesn't exist and can't be mkdir'd")
 
     # AOK, return everything that's needed
-    return(countsFile, minSamps, maxCorr, minCorr, plotDir, nogender)
+    return(countsFile, outFile, minSamps, maxCorr, minCorr, plotDir, noGender)
 
-
-###############################################################################
-############################ PUBLIC FUNCTIONS #################################
-###############################################################################
 
 ####################################################
 # main function
@@ -173,7 +158,7 @@ ARGUMENTS:
 # If anything goes wrong, print error message to stderr and raise exception.
 def main(argv):
     # parse, check and preprocess arguments - exceptions must be caught by caller
-    (countsFile, minSamps, maxCorr, minCorr, plotDir, nogender) = parseArgs(argv)
+    (countsFile, outFile, minSamps, maxCorr, minCorr, plotDir, noGender) = parseArgs(argv)
 
     ################################################
     # args seem OK, start working
@@ -251,7 +236,7 @@ def main(argv):
     ###########################
     #### no gender discrimination
     # clustering algorithm direct application
-    if nogender:
+    if noGender:
         logger.info("### Samples clustering:")
         try:
             dendogramPDF = os.path.join(plotDir, "Dendogram_" + str(len(SOIs)) + "Samps_FullChrom.pdf")
@@ -276,7 +261,7 @@ def main(argv):
             # contains the following information: clusterID, list of samples added to compose the cluster,
             # clusterIDs controlling this cluster, validity of the cluster according to its total number
             # (<20 =invalid), its cluster status (here as all chromosomes are analysed together = "W" for whole)
-            clustsResList = clusterSamps.clustering.STDZandCheckRes(SOIs, sampsQCfailed, clust2Samps, trgt2Ctrls, minSamps, nogender)
+            clustsResList = clusterSamps.clustering.STDZandCheckRes(SOIs, sampsQCfailed, clust2Samps, trgt2Ctrls, minSamps, noGender)
 
         except Exception:
             logger.error("standardisation of results and validation failed")
@@ -392,7 +377,7 @@ def main(argv):
             # beware if a target cluster of one gender has a control cluster with the another gender,
             # this is not indicated by "B".
             clustsResList = clusterSamps.clustering.STDZandCheckRes(SOIs, sampsQCfailed, clust2Samps, trgt2Ctrls, minSamps,
-                                                                    nogender, clust2SampsGono, trgt2CtrlsGono, kmeans, sexePred)
+                                                                    noGender, clust2SampsGono, trgt2CtrlsGono, kmeans, sexePred)
         except Exception:
             logger.error("standardisation of results and validation failed")
             raise Exception()
@@ -404,7 +389,7 @@ def main(argv):
     #####################################################
     # print results
     ##################
-    clusterSamps.clustering.printClustersFile(clustsResList)
+    clusterSamps.clustering.printClustersFile(clustsResList, outFile)
 
     thisTime = time.time()
     logger.debug("Done printing results, in %.2f s", thisTime - startTime)
