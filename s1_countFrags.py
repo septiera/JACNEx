@@ -59,18 +59,21 @@ DESCRIPTION:
 Given a BED of exons and one or more BAM files, count the number of sequenced fragments
 from each BAM that overlap each exon (+- padding).
 Results are printed to --out in TSV format (possibly gzipped): first 4 columns hold the exon
-definitions after padding and sorting, subsequent columns (one per BAM) hold the counts.
+definitions after padding and sorting, subsequent columns (one per BAM, sorted by BAM name
+alphanumerically) hold the counts.
+In addition, any support for putative breakpoints is printed to sample-specific TSV files
+created in BPDir.
 If a pre-existing counts file produced by this program with the same BED is provided (with --counts),
-counts for requested BAMs are copied from this file and counting is only performed for the new BAM(s).
-In addition, any support for putative breakpoints is printed to sample-specific TSV files created in BPDir.
+counts for common BAMs are copied from this file and counting is only performed for the new BAMs.
+Furthermore, if the BAMs exactly match those in --counts, the output file (--out) is not produced.
 
 ARGUMENTS:
    --bams [str] : comma-separated list of BAM files
    --bams-from [str] : text file listing BAM files, one per line
    --bed [str] : BED file, possibly gzipped, containing exon definitions (format: 4-column
            headerless tab-separated file, columns contain CHR START END EXON_ID)
-   --out [str] : file where results will be saved, must not pre-exist, will be gzipped if it ends with '.gz',
-           can have a path component but the subdir must exist
+   --out [str] : file where results will be saved (unless BAMs exactly match those in --counts), must not
+           pre-exist, will be gzipped if it ends with '.gz', can have a path component but the subdir must exist
    --BPDir [str] : dir (created if needed) where breakpoint files will be produced, default :  """ + BPDir + """
    --counts [str] optional: pre-existing counts file produced by this program, possibly gzipped,
            counts for requested BAMs will be copied from this file if present
@@ -278,7 +281,12 @@ def main(argv):
     failedBams = []
 
     if nbOfSamplesToProcess == 0:
-        logger.info("All requested samples are already in previous countsFile")
+        logger.info("all provided BAMs are in previous countsFile")
+        # if samples exactly match those in countsFile, return immediately
+        _, prevSamples, _ = countFrags.countsFile.parseCountsFile(countsFile)
+        if prevSamples == samples:
+            logger.info("provided BAMs exactly match those in previous countsFile, not producing outFile")
+            return()
 
     else:
         #####################################################
