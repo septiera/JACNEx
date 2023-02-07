@@ -50,8 +50,8 @@ Global arguments:
    --bams-from [str] : text file listing BAM files, one per line
    --bed [str] : BED file, possibly gzipped, containing exon definitions (format: 4-column
            headerless tab-separated file, columns contain CHR START END EXON_ID)
-   --workDir [str] : subdir where intermediate results and QC files are produced, provide a pre-existing workDir to
-           re-use results from a previous run (incremental use-case)
+   --workDir [str] : subdir where intermediate results and QC files are produced, provide a pre-existing
+           workDir to reuse results from a previous run (incremental use-case)
    --tmp [str] : pre-existing dir for temp files, faster is better (eg tmpfs), default: """ + tmpDir + """
    --jobs [int] : cores that we can use, defaults to 80% of available cores ie """ + jobs + """
    -h , --help : display this help and exit
@@ -141,7 +141,7 @@ def main(argv):
         try:
             os.mkdir(countsDir)
         except Exception:
-            raise Exception(stepName + " countsDir " +  countsDir + "doesn't exist and can't be mkdir'd")
+            raise Exception(stepName + " countsDir " + countsDir + "doesn't exist and can't be mkdir'd")
 
     # breakpoint results are saved in BPDir
     BPDir = workDir + '/BreakPoints/'
@@ -161,10 +161,11 @@ def main(argv):
     stepArgs.extend(["--tmp", tmpDir, "--jobs", jobs])
     stepArgs.extend(["--BPDir", BPDir, "--padding", padding, "--maxGap", maxGap, "--samtools", samtools])
 
-    # find and re-use most recent pre-existing countsFile, if any
+    # find and reuse most recent pre-existing countsFile, if any
     countsFilesAll = glob.glob(countsDir + '/countsFile_*.gz')
     countsFilePrev = max(countsFilesAll, default='', key=os.path.getctime)
     if countsFilePrev != '':
+        logger.info("will reuse most recent countsFile: " + countsFilePrev)
         stepArgs.extend(["--counts", countsFilePrev])
 
     # new countsFile to create: use date+time stamp
@@ -180,7 +181,14 @@ def main(argv):
     except Exception:
         logger.error("%s FAILED", stepName)
         raise
+
+    # countsFile isn't created if it would be identical to countsFilePrev, if this
+    # is the case just use countsFilePrev downstream
+    if not os.path.isfile(countsFile):
+        countsFile = countsFilePrev
+
     logger.info("%s DONE", stepName)
+
 
 
 ####################################################################################
