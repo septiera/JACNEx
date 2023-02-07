@@ -35,7 +35,7 @@ python MAGe_CNV/2_clusterSamps.py --counts $COUNT > resClustering.tsv 2> step2.l
 ##### STEP 3 : Copy numbers calls<br>
 
 ### CONFIGURATION:
-To launch the different stages of the pipeline it is necessary to be located in the folder where you want to obtain the outputs. <br>
+
 
 ### DEPENDENCIES:
 It is necessary that all the software used are present. <br>
@@ -51,7 +51,7 @@ It is also necessary to have python version 3.6.
 As well as the following modules:
 ```
 python3 -m venv ~/pyEnv_MageCNV
-source pyEnv_MageCNV/bin/activate
+source ~/pyEnv_MageCNV/bin/activate
 pip install --upgrade pip
 pip install numpy scipy numba ncls matplotlib scikit-learn
 
