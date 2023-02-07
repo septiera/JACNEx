@@ -1,4 +1,5 @@
 import logging
+import gzip
 import numpy as np
 import matplotlib.pyplot
 
@@ -170,24 +171,36 @@ def STDZandCheckRes(SOIs, sampsQCfailed, clust2Samps, trgt2Ctrls, minSamps, noge
 
 #############################
 # printClustersFile:
-#
 # Args:
 # - clustsResList (list of lists[str]): returned by STDZandCheck Function, ie each cluster is a lists
 #     of 5 scalars containing [clusterID,Samples,controlledBy,validCluster,status]
+# - 'outFile' is a filename that doesn't exist, it can have a path component (which must exist),
+#     output will be gzipped if outFile ends with '.gz'
 #
-# Print this data to stdout as a 'clustsFile' (same format parsed by extractClustsFromPrev).
-def printClustersFile(clustsResList):
-    toPrint = "clusterID\tSamples\tcontrolledBy\tvalidCluster\tstatus"
-    print(toPrint)
+# Print this data to outFile as a 'clustsFile' (same format parsed by parseClustsFile).
+def printClustersFile(clustsResList, outFile):
+    try:
+        if outFile.endswith(".gz"):
+            outFH = gzip.open(outFile, "xt", compresslevel=6)
+        else:
+            outFH = open(outFile, "x")
+    except Exception as e:
+        logger.error("Cannot (gzip-)open clustersFile %s: %s", outFile, e)
+        raise Exception('cannot (gzip-)open clustersFile')
+
+    toPrint = "clusterID\tSamples\tcontrolledBy\tvalidCluster\tstatus\n"
+    outFH.write(toPrint)
     for i in range(len(clustsResList)):
         toPrint = "{}\t{}\t{}\t{}\t{}".format(clustsResList[i][0], clustsResList[i][1],
                                               clustsResList[i][2], clustsResList[i][3],
                                               clustsResList[i][4])
-        print(toPrint)
+        toPrint += "\n"
+        outFH.write(toPrint)
+    outFH.close()
 
 
 #####################################
-# parseClustsFile ### !!! TO copy in clustering.py
+# parseClustsFile
 # Split the line by tab character and assign the resulting
 # values to the following variables (variable names identical to the column names in the file):
 # - clusterID [str]: clusterID or "Samps_QCFailed"
@@ -205,7 +218,7 @@ def printClustersFile(clustsResList):
 # gender discrimination or not.
 #
 # Args:
-# - clustsFile (str): a clusterFile produced by 2_clusterSamps.py
+# - clustsFile (str): a clusterFile produced by 2_clusterSamps.py, possibly gzipped
 # - SOIs (List[str]): samples of interest names list
 #
 # Returns a tupple (clusts2Samps, clusts2Ctrls, nogender) , each variable is created here:
@@ -215,19 +228,22 @@ def printClustersFile(clustsResList):
 # - sex2Clust dict[str, list[str]]: key: "A" autosomes or "G" gonosome, value: clusterID list
 def parseClustsFile(clustsFile, SOIs):
     try:
-        clustsFH = open(clustsFile, "r")
-        # Read the first line of the file, which contains the headers, and split it by tab character
-        headers = clustsFH.readline().rstrip().split("\t")
+        if clustsFile.endswith(".gz"):
+            clustsFH = gzip.open(clustsFile, "rt")
+        else:
+            clustsFH = open(clustsFile, "r")
     except Exception as e:
-        # If there is an error opening the file, log the error and raise an exception
         logger.error("Opening provided clustsFile %s: %s", clustsFile, e)
-        raise Exception("cannot open clustsFile")
+        raise Exception('cannot open clustsFile')
 
     # To Fill and returns
     # Initialize the dictionaries to store the clustering information
     clusts2Samps = {}
     clusts2Ctrls = {}
     sex2Clust = {}
+
+    # skip header
+    _ = clustsFH.readline()
 
     for line in clustsFH:
         # last line of the file is associated with the sample that did not pass
