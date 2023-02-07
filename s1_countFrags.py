@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 
 ###############################################################################
-############################ PRIVATE FUNCTIONS ################################
+############################ PUBLIC FUNCTIONS #################################
 ###############################################################################
 
 ####################################################
@@ -92,7 +92,6 @@ ARGUMENTS:
         raise Exception(e.msg + ". Try " + scriptName + " --help")
 
     for opt, value in opts:
-        # sanity-check and store arguments
         if opt in ('-h', '--help'):
             sys.stderr.write(usage)
             sys.exit(0)
@@ -178,7 +177,7 @@ ARGUMENTS:
 
     if outFile == "":
         raise Exception("you must provide an outFile with --out. Try " + scriptName + " --help")
-    elif os.path.isfile(outFile):
+    elif os.path.exists(outFile):
         raise Exception("outFile " + outFile + " already exists")
     elif (os.path.dirname(outFile) != '') and (not os.path.isdir(os.path.dirname(outFile))):
         raise Exception("the directory where outFile " + outFile + " should be created doesn't exist")
@@ -223,10 +222,6 @@ ARGUMENTS:
     # AOK, return everything that's needed
     return(bamsToProcess, samples, bedFile, outFile, BPDir, jobs, padding, maxGap, countsFile, tmpDir, samtools)
 
-
-###############################################################################
-############################ PUBLIC FUNCTIONS #################################
-###############################################################################
 
 ####################################################
 # main function
@@ -285,7 +280,7 @@ def main(argv):
         # if samples exactly match those in countsFile, return immediately
         _, prevSamples, _ = countFrags.countsFile.parseCountsFile(countsFile)
         if prevSamples == samples:
-            logger.info("provided BAMs exactly match those in previous countsFile, not producing outFile")
+            logger.info("provided BAMs exactly match those in previous countsFile, not producing a new one")
             return()
 
     else:
@@ -388,7 +383,6 @@ def main(argv):
 ####################################################################################
 ######################################## Main ######################################
 ####################################################################################
-
 if __name__ == '__main__':
     # configure logging, sub-modules will inherit this config
     logging.basicConfig(format='%(asctime)s %(levelname)s %(name)s: %(message)s',
