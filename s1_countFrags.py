@@ -119,17 +119,17 @@ ARGUMENTS:
             raise Exception("unhandled option " + opt)
 
     #####################################################
-    # Check and clean up list of BAMs
+    # Check, clean up and sort list of BAMs
     if (bams == "" and bamsFrom == "") or (bams != "" and bamsFrom != ""):
         raise Exception("you must use either --bams or --bams-from but not both. Try " + scriptName + " --help")
     # bamsTmp will store user-supplied BAMs
     bamsTmp = []
-    # bamsNoDupe: tmp dictionary for removing dupes if any: key==bam, value==1
-    bamsNoDupe = {}
-    # bamsToProcess, with any dupes removed
+    # lists of BAMs and samples to process, where sample names are the BAM name
+    # stripped of path and .bam extension, both will be sorted by sample name
     bamsToProcess = []
-    # sample names stripped of path and .bam extension, same order as in bamsToProcess
     samples = []
+    # samplesSeen: tmp dictionary for identifying dupes if any: key==sample, value==1
+    samplesSeen = {}
 
     if bams != "":
         bamsTmp = bams.split(",")
@@ -145,20 +145,26 @@ ARGUMENTS:
         except Exception as e:
             raise Exception("opening provided --bams-from file " + bamsFrom + " : " + str(e))
 
-    # Check that all bams exist and remove any duplicates
+    # Check that all bams exist and that there aren't any duplicate samples
     for bam in bamsTmp:
         if not os.path.isfile(bam):
             raise Exception("BAM " + bam + " doesn't exist")
         elif not os.access(bam, os.R_OK):
             raise Exception("BAM " + bam + " cannot be read")
-        elif bam in bamsNoDupe:
-            logger.warning("BAM " + bam + " specified twice, ignoring the dupe")
         else:
-            bamsNoDupe[bam] = 1
+            sample = os.path.basename(bam)
+            sample = re.sub(r"\.[bs]am$", "", sample)
+            if sample in samplesSeen:
+                logger.error("multiple BAMs correspond to sample " + sample + ", this is not allowed")
+                raise Exception("multiple BAMs for sample " + sample)
+            samplesSeen[sample] = 1
             bamsToProcess.append(bam)
-            sampleName = os.path.basename(bam)
-            sampleName = re.sub(r"\.[bs]am$", "", sampleName)
-            samples.append(sampleName)
+            samples.append(sample)
+    # sort both lists by sampleName
+    sampleIndexes = list(range(len(samples)))
+    sampleIndexes.sort(key=samples.__getitem__)
+    samples = [samples[i] for i in sampleIndexes]
+    bamsToProcess = [bamsToProcess[i] for i in sampleIndexes]
 
     #####################################################
     # Check other args
