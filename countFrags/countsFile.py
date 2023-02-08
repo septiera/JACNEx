@@ -48,7 +48,7 @@ def extractCountsFromPrev(exons, SOIs, prevCountsFile):
         # compare exon definitions
         if (exons != prevExons):
             logger.error("exon definitions disagree between prevCountsFile and BED file...\n" +
-                         "\tIf the BED file  or padding changed, " +
+                         "\tIf the BED file or padding changed, " +
                          "you cannot re-use a previous countsFile: all counts must be recalculated from scratch")
             raise Exception('mismatched exon definitions between prevCountsFile and exons')
 
