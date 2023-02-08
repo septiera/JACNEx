@@ -502,35 +502,24 @@ def addEpsilonPrivate(probs, epsilon_factor=1000):
 ###################################
 # filtersPiePlotPrivate:
 # generates a plot per cluster
-#
 # Args:
-# - clustID [str]:
-# - infoList (list of list[float]):
+# - clustID [str]: cluster identifier 
+# - filterRes (dict[str:int]): dictionary of exon counters of different filtering
+# performed for the cluster
 # - pdf (matplotlib object): store plots in a single pdf
 #
 # save a plot in the output pdf
-def filtersPiePlotPrivate(clustID, infoList, pdf):
+def filtersPiePlotPrivate(clustID, filterRes, pdf):
 
     fig = matplotlib.pyplot.figure(figsize=(10, 10))
-
-    exonsMuZero = len(infoList[infoList[0] == -1])
-    exonsSigRGZero = len(infoList[infoList[1] == -1])
-    exonsZscore_inf3_only = len(infoList[(infoList[2] < 3) & infoList[3] >= 0.50])
-    exonsZscore_Weigth = len(infoList[(infoList[2] < 3) & infoList[3] < 0.50])
-    exonsWeight_inf_50p = len(infoList[(infoList[2] >= 3) & infoList[3] < 0.50])
-    exonsToKeep = len(infoList[(infoList[0] > 0) & (infoList[1] > 0) & (infoList[2] >= 3) & infoList[3] > 0.50])
-
-    x = [exonsMuZero, exonsSigRGZero, exonsZscore_inf3_only, exonsZscore_Weigth,
-         exonsWeight_inf_50p, exonsToKeep]
-
-    matplotlib.pyplot.pie(x, labels=['exons filtered mu=0', 'exons filtered sigRG=0', 'exons filtered only Zscore <3',
-                       'exons filtered Zscore+Weight', 'exons filtered Weight <50%', 'exons Keep'],
+    matplotlib.pyplot.pie(filterRes.values(), labels=filterRes.keys(),
             colors=["grey", "yellow", "indianred", "mediumpurple", "royalblue", "mediumaquamarine"],
             autopct=lambda x: str(round(x, 2)) + '%',
             startangle=-270,
-            pctdistance=0.7, labeldistance=1.1)
+            pctdistance=0.7,
+            labeldistance=1.1)
     matplotlib.pyplot.legend()
-    matplotlib.pyplot.title(clustID)
+    matplotlib.pyplot.title("filtered and called exons for the cluster " + clustID)
 
     pdf.savefig(fig)
     matplotlib.pyplot.close()
