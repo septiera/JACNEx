@@ -53,7 +53,7 @@ def CNCalls(sex2Clust, exons, countsNorm, clusts2Samps, clusts2Ctrls, priors, SO
         # recovery of data specific to the current cluster
         # sampleIndex2Process (list[int]): indexes of interest samples (from the cluster + controls)
         # exonsIndex2Process (list[int]): indexes of the exons having allowed the formation of the cluster
-        (sampleIndex2Process, exonsIndex2Process) = extractClusterDependentDataPrivate(clustID, clusts2Samps, clusts2Ctrls, sex2Clust, maskAutosome_Gonosome)
+        (sampleIndex2Process, exonsIndex2Process) = extractClusterInfosPrivate(clustID, clusts2Samps, clusts2Ctrls, sex2Clust, maskAutosome_Gonosome)
         
         # Create Boolean masks for columns and rows
         col_mask = np.isin(np.arange(countsNorm[1]), sampleIndex2Process, invert=True)
@@ -138,7 +138,7 @@ def allocateEmissionArrayPrivate(SOIs, exons):
 
 
 #####################################
-# extractClusterDependentDataPrivate [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
+# extractClusterInfosPrivate [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
 # extraction of indexes specific to the samples contained in the cluster and 
 # indexes of the exons to be processed (specific to autosomes or gonosomes)
 # Args:
@@ -150,7 +150,7 @@ def allocateEmissionArrayPrivate(SOIs, exons):
 # Returns a tupple (), each object are created here:
 # - sampleIndex2Process (list[int]): SOIs indexes in current cluster
 # - exonsIndex2Process (list[int]): exons indexes to treat the current cluster
-def extractClusterDependentDataPrivate(clustID, clusts2Samps, clusts2Ctrls, sex2Clust=None, mask=None):
+def extractClusterInfosPrivate(clustID, clusts2Samps, clusts2Ctrls, sex2Clust=None, mask=None):
     ##################################
     ## Select cluster specific indexes to apply to countsNorm
     ##### COLUMN indexes:
@@ -283,7 +283,6 @@ def coverageProfilPlotPrivate(clustID, binEdges, densityOnFPMRange, minIndex, un
 # Returns :
 # if any of the filtering conditions are met returns False
 # otherwise returns the Gaussien parameters mean [float] and standard deviation [float].
-
 def exonFilteringPrivate (exonFPM, uncovExonThreshold, filterCounters):
     ###################
     # Filter n°1: exon not covered 
@@ -353,7 +352,8 @@ def exonFilteringPrivate (exonFPM, uncovExonThreshold, filterCounters):
         return       
     
     return(meanRG, stdevRG)
-    
+
+
 ###################################
 # robustGaussianFitPrivate [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
 # Fits a single principal gaussian component around a starting guess point
