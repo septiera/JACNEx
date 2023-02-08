@@ -42,9 +42,6 @@ def allocateLogOddsArray(SOIs, exons):
 # Returns
 #
 def CNCalls(sex2Clust, exons, countsNorm, clusts2Samps, clusts2Ctrls, priors, SOIs, plotDir, logOddsArray):
-    # Fixed Parameter
-    bandwidth = 2
-
     #
     pdfFile = os.path.join(plotDir, "ResCallsByCluster_" + str(len(SOIs)) + "samps.pdf")
     # create a matplotlib object and open a pdf
@@ -98,7 +95,7 @@ def CNCalls(sex2Clust, exons, countsNorm, clusts2Samps, clusts2Ctrls, priors, SO
             # Fit a robust Gaussian to the count data
             # - mean:
             # - stdev:
-            mean, stdev = fitRobustGaussianPrivate(exonFPM, bandwidth=bandwidth)
+            mean, stdev = fitRobustGaussianPrivate(exonFPM)
 
             ###################
             # Filter n°2: if standard deviation is zero
@@ -286,11 +283,11 @@ def coverageProfilPlotPrivate(clustID, binEdges, densityOnFPMRange, minIndex, un
 # - X (np.array): A sample of 1-dimensional mixture of gaussian random variables
 # - mu (float, optional): Expectation. Defaults to None.
 # - sigma (float, optional): Standard deviation. Defaults to None.
-# - bandwidth (float, optional): Hyperparameter of truncation. Defaults to 1.
+# - bandwidth (float, optional): Hyperparameter of truncation. Defaults to 2.
 # - eps (float, optional): Convergence tolerance. Defaults to 1.0e-5.
 # Returns:
 # - mu [float],sigma [float]: mean and stdev of the gaussian component
-def fitRobustGaussianPrivate(X, mu = None, sigma = None, bandwidth = 1.0, eps = 1.0e-5, weights = None):
+def fitRobustGaussianPrivate(X, mu = None, sigma = None, bandwidth = 2.0, eps = 1.0e-5):
     if mu is None:
         #median is an approach as robust and naïve as possible to Expectation
         mu = np.median(X)
@@ -301,12 +298,10 @@ def fitRobustGaussianPrivate(X, mu = None, sigma = None, bandwidth = 1.0, eps = 
         sigma = np.std(X)/3
     sigma_0 = sigma + 1
     
-    bandwidth_truncated_normal_weight, bandwidth_truncated_normal_sigma = truncated_integral_and_sigma(bandwidth)
+    bandwidth_truncated_normal_sigma = truncated_integral_and_sigma(bandwidth)
 
-    
     while abs(mu - mu_0) + abs(sigma - sigma_0) > eps:
         #loop until tolerence is reached
-
         """
         create a uniform window on X around mu of width 2*bandwidth*sigma
         find the mean of that window to shift the window to most expected local value
@@ -314,16 +309,18 @@ def fitRobustGaussianPrivate(X, mu = None, sigma = None, bandwidth = 1.0, eps = 
         measure the proportion of points inside the window, divide by the weight of a truncated gaussian distribution
         """
         Window = np.logical_and(X - mu - bandwidth * sigma < 0 , X - mu + bandwidth * sigma > 0)
-        if weights is None : 
-            Window_weights = None
-        else :
-            Window_weights = weights[Window]
-        mu_0, mu = mu, np.average(X[Window], weights = Window_weights)
-        var = np.average(np.square(X[Window]), weights = Window_weights) - mu**2
-        sigma_0 , sigma = sigma, np.sqrt(var)/bandwidth_truncated_normal_sigma
-    w = np.average(Window, weights = weights)/bandwidth_truncated_normal_weight
-
-    return (mu,sigma)
+        
+        # condition to identify exons with points arround at the median 
+        if Window.any():
+            mu_0, mu = mu, np.average(X[Window])
+            var = np.average(np.square(X[Window])) - mu**2
+            sigma_0 , sigma = sigma, np.sqrt(var)/bandwidth_truncated_normal_sigma
+        # no points arround the median
+        # e.g. exon where more than 1/2 of the samples have an FPM = 0. 
+        # A Gaussian fit is impossible => raise exception
+        else:
+            raise Exception("cannot fit") 
+    return (mu, sigma)
 
 ###########
 # normal_erf
@@ -354,7 +351,7 @@ def normal_erf(x, mu = 0, sigma = 1,  depth = 50):
 # by limiting the study to particular parts of its defining set.
 def truncated_integral_and_sigma(x):
     n,e = normal_erf(x)
-    return 2*e, np.sqrt(1-n*x/e)
+    return np.sqrt(1-n*x/e)
 
 
 ############################
