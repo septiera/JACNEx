@@ -21,9 +21,9 @@ logger = logging.getLogger(__name__)
 # Args:
 #   - exons: exon definitions as returned by processBed, padded and sorted
 #   - SOIs: a list of samples of interest (ie list of strings)
-#   - prevCountsFile: a countsFile produced by printCountsFile for some samples
-#     (hopefully some of the SOIs), using the same exon definitions as in 'exons',
-#     if there is one; or '' otherwise
+#   - prevCountsFile: a countsFile (possibly gzipped) produced by printCountsFile
+#     for some samples (hopefully some of the SOIs), using the same exon definitions
+#     as in 'exons', if there is one; or '' otherwise
 #
 # Will returns a tuple (countsArray, countsFilled), each is created here:
 #   - countsArray is an int numpy array, dim = NbExons x NbSOIs, initially all-zeroes
@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 #
 # If prevCountsFile=='' return the (all-zeroes/all(-False) arrays
 # Otherwise:
-# -> make sure prevCountsFile was produced with the same BED as exons, else raise exception;
+# -> make sure prevCountsFile was produced with the same BED+padding as exons, else raise exception;
 # -> for any sample present in both prevCounts and SOIs, fill the sample's column in
 #    countsArray by copying data from prevCounts, and set countsFilled[sample] to True
 def extractCountsFromPrev(exons, SOIs, prevCountsFile):
@@ -47,9 +47,10 @@ def extractCountsFromPrev(exons, SOIs, prevCountsFile):
         (prevExons, prevSamples, prevCountsList) = parseCountsFilePrivate(prevCountsFile)
         # compare exon definitions
         if (exons != prevExons):
-            logger.error("exon definitions disagree between prevCountsFile and BED file...\n\tIf the BED file changed " +
+            logger.error("exon definitions disagree between prevCountsFile and BED file...\n" +
+                         "\tIf the BED file or padding changed, " +
                          "you cannot re-use a previous countsFile: all counts must be recalculated from scratch")
-            raise Exception('mismatched exon definitions')
+            raise Exception('mismatched exon definitions between prevCountsFile and exons')
 
         # fill prev2new to identify SOIs that are in prevCountsFile:
         # prev2new is a 1D numpy array, size = len(prevSamples), prev2new[prev] is the
@@ -102,16 +103,29 @@ def parseCountsFile(countsFile):
 #     of 4 scalars (types: str,int,int,str) containing CHR,START,END,EXON_ID
 #   - 'samples' is a list of sampleIDs
 #   - 'countsArray' is an int numpy array, dim = len(exons) x len(samples)
+#   - 'outFile' is a filename that doesn't exist, it can have a path component (which must exist),
+#      output will be gzipped if outFile ends with '.gz'
 #
-# Print this data to stdout as a 'countsFile' (same format parsed by extractCountsFromPrev).
-def printCountsFile(exons, samples, countsArray):
-    toPrint = "CHR\tSTART\tEND\tEXON_ID\t" + "\t".join(samples)
-    print(toPrint)
+# Print this data to outFile as a 'countsFile' (same format parsed by extractCountsFromPrev).
+def printCountsFile(exons, samples, countsArray, outFile):
+    try:
+        if outFile.endswith(".gz"):
+            outFH = gzip.open(outFile, "xt", compresslevel=6)
+        else:
+            outFH = open(outFile, "x")
+    except Exception as e:
+        logger.error("Cannot (gzip-)open outFile %s: %s", outFile, e)
+        raise Exception('cannot (gzip-)open outFile')
+
+    toPrint = "CHR\tSTART\tEND\tEXON_ID\t" + "\t".join(samples) + "\n"
+    outFH.write(toPrint)
     for i in range(len(exons)):
         # exon def + counts
         toPrint = exons[i][0] + "\t" + str(exons[i][1]) + "\t" + str(exons[i][2]) + "\t" + exons[i][3]
         toPrint += counts2str(countsArray, i)
-        print(toPrint)
+        toPrint += "\n"
+        outFH.write(toPrint)
+    outFH.close()
 
 
 ###############################################################################
@@ -160,6 +174,7 @@ def parseCountsFilePrivate(countsFile):
         # convert counts to 1D np array and save
         counts = np.fromstring(splitLine[4], dtype=np.uint32, sep='\t')
         countsList.append(counts)
+    countsFH.close()
     return(exons, samples, countsList)
 
 
@@ -184,7 +199,7 @@ def allocateCountsArray(numExons, numSamples):
 # Args:
 #   - countsArray is an int numpy array to populate, dim = NbExons x NbSOIs
 #   - exonIndex is the index of the current exon
-#   - prevCounts contains the prev counts for exon exonIndex
+#   - prevCounts contains the prev counts for exon exonIndex, in a 1D np array
 #   - prev2new is a 1D np array of ints of size len(prevCounts), prev2new[i] is
 #    the column index in countsArray where counts for prev sample i (in prevCounts) must
 #    be stored, or -1 if sample i must be discarded

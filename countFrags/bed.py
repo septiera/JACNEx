@@ -92,6 +92,7 @@ def processBed(bedFile, padding):
         #############################
         # save exon definition
         exons.append(fields)
+    bedFH.close()
 
     #########################
     #### Done parsing bedFile

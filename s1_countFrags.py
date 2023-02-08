@@ -3,7 +3,6 @@
 ###############################################################################################
 # Given a BED of exons and one or more BAM files, count the number of sequenced fragments
 # from each BAM that overlap each exon (+- padding).
-# Print results to stdout.
 # See usage for details.
 ###############################################################################################
 import sys
@@ -28,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 
 ###############################################################################
-############################ PRIVATE FUNCTIONS ################################
+############################ PUBLIC FUNCTIONS #################################
 ###############################################################################
 
 ####################################################
@@ -36,6 +35,7 @@ logger = logging.getLogger(__name__)
 # Parse and sanity check the command+arguments, provided as a list of
 # strings (eg sys.argv).
 # Return a list with everything needed by this module's main()
+# If anything is wrong, raise Exception("ERROR MESSAGE")
 def parseArgs(argv):
     scriptName = os.path.basename(argv[0])
 
@@ -43,183 +43,198 @@ def parseArgs(argv):
     bams = ""
     bamsFrom = ""
     bedFile = ""
+    outFile = ""
     # optional args with default values
-    BPdir = "./breakPoints/"
+    BPDir = "BreakPoints/"
     countsFile = ""
     padding = 10
     maxGap = 1000
     tmpDir = "/tmp/"
     samtools = "samtools"
-    jobs = 20
+    # jobs default: 80% of available cores
+    jobs = round(0.8 * len(os.sched_getaffinity(0)))
 
-    usage = """\nCOMMAND SUMMARY:
+    usage = "NAME:\n" + scriptName + """\n
+DESCRIPTION:
 Given a BED of exons and one or more BAM files, count the number of sequenced fragments
 from each BAM that overlap each exon (+- padding).
-Results are printed to stdout in TSV format: first 4 columns hold the exon definitions after
-padding and sorting, subsequent columns (one per BAM) hold the counts.
+Results are printed to --out in TSV format (possibly gzipped): first 4 columns hold the exon
+definitions after padding and sorting, subsequent columns (one per BAM, sorted by BAM name
+alphanumerically) hold the counts.
+In addition, any support for putative breakpoints is printed to sample-specific TSV files
+created in BPDir.
 If a pre-existing counts file produced by this program with the same BED is provided (with --counts),
-counts for requested BAMs are copied from this file and counting is only performed for the new BAM(s).
-In addition, any support for putative breakpoints is printed to sample-specific TSV files created in BPdir.
+counts for common BAMs are copied from this file and counting is only performed for the new BAMs.
+Furthermore, if the BAMs exactly match those in --counts, the output file (--out) is not produced.
+
 ARGUMENTS:
-   --bams [str]: comma-separated list of BAM files
-   --bams-from [str]: text file listing BAM files, one per line
-   --bed [str]: BED file, possibly gzipped, containing exon definitions (format: 4-column
+   --bams [str] : comma-separated list of BAM files
+   --bams-from [str] : text file listing BAM files, one per line
+   --bed [str] : BED file, possibly gzipped, containing exon definitions (format: 4-column
            headerless tab-separated file, columns contain CHR START END EXON_ID)
-   --BPdir [str]: subdir (created if needed) where breakpoint files will be produced, default :  """ + str(BPdir) + """
+   --out [str] : file where results will be saved (unless BAMs exactly match those in --counts), must not
+           pre-exist, will be gzipped if it ends with '.gz', can have a path component but the subdir must exist
+   --BPDir [str] : dir (created if needed) where breakpoint files will be produced, default :  """ + BPDir + """
    --counts [str] optional: pre-existing counts file produced by this program, possibly gzipped,
            counts for requested BAMs will be copied from this file if present
+   --jobs [int] : cores that we can use, defaults to 80% of available cores ie """ + str(jobs) + "\n" + """
    --padding [int] : number of bps used to pad the exon coordinates, default : """ + str(padding) + """
    --maxGap [int] : maximum accepted gap length (bp) between reads pairs, pairs separated by a longer gap
            are assumed to possibly result from a structural variant and are ignored, default : """ + str(maxGap) + """
-   --tmp [str]: pre-existing dir for temp files, faster is better (eg tmpfs), default: """ + tmpDir + """
-   --samtools [str]: samtools binary (with path if not in $PATH), default: """ + str(samtools) + """
-   --jobs [int] : approximate number of cores that we can use, default:""" + str(jobs) + "\n" + """
-   -h , --help  : display this help and exit\n"""
+   --tmp [str] : pre-existing dir for temp files, faster is better (eg tmpfs), default: """ + tmpDir + """
+   --samtools [str] : samtools binary (with path if not in $PATH), default: """ + samtools + """
+   -h , --help : display this help and exit\n"""
 
     try:
-        opts, args = getopt.gnu_getopt(argv[1:], 'h', ["help", "bams=", "bams-from=", "bed=", "BPdir=", "counts=",
-                                                       "padding=", "maxGap=", "tmp=", "samtools=", "jobs="])
+        opts, args = getopt.gnu_getopt(argv[1:], 'h', ["help", "bams=", "bams-from=", "bed=", "out=", "BPDir=",
+                                                       "counts=", "jobs=", "padding=", "maxGap=", "tmp=", "samtools="])
     except getopt.GetoptError as e:
-        sys.stderr.write("ERROR : " + e.msg + ". Try " + scriptName + " --help\n")
-        raise Exception()
+        raise Exception(e.msg + ". Try " + scriptName + " --help")
 
     for opt, value in opts:
-        # sanity-check and store arguments
         if opt in ('-h', '--help'):
             sys.stderr.write(usage)
-            raise Exception()
+            sys.exit(0)
         elif opt in ("--bams"):
             bams = value
         elif opt in ("--bams-from"):
             bamsFrom = value
         elif opt in ("--bed"):
             bedFile = value
-        elif opt in ("--BPdir"):
-            BPdir = value
+        elif opt in ("--out"):
+            outFile = value
+        elif opt in ("--BPDir"):
+            BPDir = value
         elif opt in ("--counts"):
             countsFile = value
+        elif opt in ("--jobs"):
+            jobs = value
         elif opt in ("--padding"):
-            try:
-                padding = int(value)
-                if (padding < 0):
-                    raise Exception()
-            except Exception:
-                sys.stderr.write("ERROR : padding must be a non-negative integer, not '" + value + "'.\n")
-                raise Exception()
+            padding = value
         elif opt in ("--maxGap"):
-            try:
-                maxGap = int(value)
-                if (maxGap < 0):
-                    raise Exception()
-            except Exception:
-                sys.stderr.write("ERROR : maxGap must be a non-negative integer, not '" + value + "'.\n")
-                raise Exception()
+            maxGap = value
         elif opt in ("--tmp"):
             tmpDir = value
         elif opt in ("--samtools"):
             samtools = value
-        elif opt in ("--jobs"):
-            try:
-                jobs = int(value)
-                if (jobs <= 0):
-                    raise Exception()
-            except Exception:
-                sys.stderr.write("ERROR : jobs must be a positive integer, not '" + value + "'.\n")
-                raise Exception()
         else:
-            sys.stderr.write("ERROR : unhandled option " + opt + ".\n")
-            raise Exception()
+            raise Exception("unhandled option " + opt)
 
     #####################################################
-    # Check and clean up list of BAMs
+    # Check, clean up and sort list of BAMs
     if (bams == "" and bamsFrom == "") or (bams != "" and bamsFrom != ""):
-        sys.stderr.write("ERROR : You must use either --bams or --bams-from but not both. Try " + scriptName + " --help.\n")
-        raise Exception()
+        raise Exception("you must use either --bams or --bams-from but not both. Try " + scriptName + " --help")
     # bamsTmp will store user-supplied BAMs
     bamsTmp = []
-    # bamsNoDupe: tmp dictionary for removing dupes if any: key==bam, value==1
-    bamsNoDupe = {}
-    # bamsToProcess, with any dupes removed
+    # lists of BAMs and samples to process, where sample names are the BAM name
+    # stripped of path and .bam extension, both will be sorted by sample name
     bamsToProcess = []
-    # sample names stripped of path and .bam extension, same order as in bamsToProcess
     samples = []
+    # samplesSeen: tmp dictionary for identifying dupes if any: key==sample, value==1
+    samplesSeen = {}
 
     if bams != "":
         bamsTmp = bams.split(",")
     elif not os.path.isfile(bamsFrom):
-        sys.stderr.write("ERROR : bams-from file " + bamsFrom + " doesn't exist.\n")
-        raise Exception()
+        raise Exception("bams-from file " + bamsFrom + " doesn't exist")
     else:
         try:
             bamsList = open(bamsFrom, "r")
             for bam in bamsList:
                 bam = bam.rstrip()
                 bamsTmp.append(bam)
+            bamsList.close()
         except Exception as e:
-            sys.stderr.write("ERROR opening provided --bams-from file %s: %s", bamsFrom, e)
-            raise Exception()
+            raise Exception("opening provided --bams-from file " + bamsFrom + " : " + str(e))
 
-    # Check that all bams exist and remove any duplicates
+    # Check that all bams exist and that there aren't any duplicate samples
     for bam in bamsTmp:
         if not os.path.isfile(bam):
-            sys.stderr.write("ERROR : BAM " + bam + " doesn't exist.\n")
-            raise Exception()
+            raise Exception("BAM " + bam + " doesn't exist")
         elif not os.access(bam, os.R_OK):
-            sys.stderr.write("ERROR : BAM " + bam + " cannot be read.\n")
-            raise Exception()
-        elif bam in bamsNoDupe:
-            logger.warning("BAM " + bam + " specified twice, ignoring the dupe")
+            raise Exception("BAM " + bam + " cannot be read")
         else:
-            bamsNoDupe[bam] = 1
+            sample = os.path.basename(bam)
+            sample = re.sub(r"\.[bs]am$", "", sample)
+            if sample in samplesSeen:
+                logger.error("multiple BAMs correspond to sample " + sample + ", this is not allowed")
+                raise Exception("multiple BAMs for sample " + sample)
+            samplesSeen[sample] = 1
             bamsToProcess.append(bam)
-            sampleName = os.path.basename(bam)
-            sampleName = re.sub(r"\.[bs]am$", "", sampleName)
-            samples.append(sampleName)
+            samples.append(sample)
+    # sort both lists by sampleName
+    sampleIndexes = list(range(len(samples)))
+    sampleIndexes.sort(key=samples.__getitem__)
+    samples = [samples[i] for i in sampleIndexes]
+    bamsToProcess = [bamsToProcess[i] for i in sampleIndexes]
 
     #####################################################
     # Check other args
     if bedFile == "":
-        sys.stderr.write("ERROR : You must provide a BED file with --bed. Try " + scriptName + " --help.\n")
-        raise Exception()
+        raise Exception("you must provide a BED file with --bed. Try " + scriptName + " --help")
     elif not os.path.isfile(bedFile):
-        sys.stderr.write("ERROR : bedFile " + bedFile + " doesn't exist.\n")
-        raise Exception()
+        raise Exception("bedFile " + bedFile + " doesn't exist")
+
+    if outFile == "":
+        raise Exception("you must provide an outFile with --out. Try " + scriptName + " --help")
+    elif os.path.exists(outFile):
+        raise Exception("outFile " + outFile + " already exists")
+    elif (os.path.dirname(outFile) != '') and (not os.path.isdir(os.path.dirname(outFile))):
+        raise Exception("the directory where outFile " + outFile + " should be created doesn't exist")
 
     if (countsFile != "") and (not os.path.isfile(countsFile)):
-        sys.stderr.write("ERROR : countsFile " + countsFile + " doesn't exist.\n")
-        raise Exception()
+        raise Exception("countsFile " + countsFile + " doesn't exist")
+
+    try:
+        jobs = int(jobs)
+        if (jobs <= 0):
+            raise Exception()
+    except Exception:
+        raise Exception("jobs must be a positive integer, not " + str(jobs))
+
+    try:
+        padding = int(padding)
+        if (padding < 0):
+            raise Exception()
+    except Exception:
+        raise Exception("padding must be a non-negative integer, not " + str(padding))
+
+    try:
+        maxGap = int(maxGap)
+        if (maxGap < 0):
+            raise Exception()
+    except Exception:
+        raise Exception("maxGap must be a non-negative integer, not " + str(maxGap))
 
     if not os.path.isdir(tmpDir):
-        sys.stderr.write("ERROR : tmp directory " + tmpDir + " doesn't exist.\n")
-        raise Exception()
+        raise Exception("tmp directory " + tmpDir + " doesn't exist")
 
     if shutil.which(samtools) is None:
-        sys.stderr.write("ERROR : samtools program '" + samtools + "' cannot be run (wrong path, or binary not in $PATH?).\n")
-        raise Exception()
+        raise Exception("samtools program '" + samtools + "' cannot be run (wrong path, or binary not in $PATH?)")
 
-    # test BPdir last so we don't mkdir unless all other args are OK
-    if not os.path.isdir(BPdir):
+    # test BPDir last so we don't mkdir unless all other args are OK
+    if not os.path.isdir(BPDir):
         try:
-            os.mkdir(BPdir)
+            os.mkdir(BPDir)
         except Exception:
-            sys.stderr.write("ERROR : BPdir " + BPdir + " doesn't exist and can't be mkdir'd\n")
-            raise Exception()
+            raise Exception("BPDir " + BPDir + " doesn't exist and can't be mkdir'd")
 
     # AOK, return everything that's needed
-    return(bamsToProcess, samples, bedFile, BPdir, padding, maxGap, countsFile, tmpDir, samtools, jobs)
+    return(bamsToProcess, samples, bedFile, outFile, BPDir, jobs, padding, maxGap, countsFile, tmpDir, samtools)
 
-
-###############################################################################
-############################ PUBLIC FUNCTIONS #################################
-###############################################################################
 
 ####################################################
 # main function
 # Arg: list of strings, eg sys.argv
-# If anything goes wrong, print error message to stderr and raise exception.
+# If anything goes wrong, raise Exception("SOME EXPLICIT ERROR MESSAGE"), more details
+# may be available in the log
 def main(argv):
-    # parse, check and preprocess arguments - exceptions must be caught by caller
-    (bamsToProcess, samples, bedFile, BPdir, padding, maxGap, countsFile, tmpDir, samtools, jobs) = parseArgs(argv)
+    # parse, check and preprocess arguments
+    try:
+        (bamsToProcess, samples, bedFile, outFile, BPDir, jobs, padding, maxGap, countsFile, tmpDir, samtools) = parseArgs(argv)
+    except Exception:
+        # problem is described in Exception, just re-raise
+        raise
 
     # args seem OK, start working
     logger.debug("called with: " + " ".join(argv[1:]))
@@ -231,8 +246,7 @@ def main(argv):
     try:
         exons = countFrags.bed.processBed(bedFile, padding)
     except Exception:
-        logger.error("processBed failed")
-        raise Exception()
+        raise Exception("processBed failed")
 
     thisTime = time.time()
     logger.debug("Done pre-processing BED, in %.2fs", thisTime - startTime)
@@ -245,22 +259,11 @@ def main(argv):
     try:
         (countsArray, countsFilled) = countFrags.countsFile.extractCountsFromPrev(exons, samples, countsFile)
     except Exception as e:
-        logger.error("parseCountsFile failed - %s", e)
-        raise Exception()
+        raise Exception("parseCountsFile failed - " + str(e))
 
     thisTime = time.time()
     logger.debug("Done parsing previous countsFile, in %.2fs", thisTime - startTime)
     startTime = thisTime
-
-    # populate the module-global exonNCLs in countFragments
-    try:
-        countFrags.countFragments.initExonNCLs(exons)
-    except Exception as e:
-        logger.error("initExonNCLs failed - %s", e)
-        raise Exception()
-
-    #####################################################
-    # decide how the work will be parallelized
 
     # total number of samples that still need to be processed
     nbOfSamplesToProcess = len(bamsToProcess)
@@ -268,91 +271,111 @@ def main(argv):
         if countsFilled[bamIndex]:
             nbOfSamplesToProcess -= 1
 
-    # we are allowed to use jobs cores in total: we will process paraSamples samples in
-    # parallel, each sample will be processed using coresPerSample.
-    # in our tests bam2counts() scales great up to 4-5 coresPerSample, with diminishing
-    # returns beyond that (probably depends on your hardware)
-    # -> we target targetCoresPerSample coresPerSample, this is increased if we
-    #    have few samples to process (and we use ceil() so we may slighty overconsume)
-    targetCoresPerSample = 4
-    paraSamples = min(math.ceil(jobs / targetCoresPerSample), nbOfSamplesToProcess)
-    coresPerSample = math.ceil(jobs / paraSamples)
-    logger.info("%i new sample(s)  => will process %i in parallel, using up to %i cores/sample",
-                nbOfSamplesToProcess, paraSamples, coresPerSample)
-
-    #####################################################
-    # Define nested callback for processing bam2counts() result (so countsArray et al
-    # are in its scope)
-
     # if bam2counts fails for any BAMs, we have to remember their indexes
     # and only expunge them at the end -> save their indexes in failedBams
     failedBams = []
 
-    # mergeCounts:
-    # arg: a Future object returned by ProcessPoolExecutor.submit(countFrags.countFragments.bam2counts).
-    # bam2counts() returns a 3-element tuple (sampleIndex, sampleCounts, breakPoints).
-    # If something went wrong, log and populate failedBams;
-    # otherwise fill column at index sampleIndex in countsArray with counts stored in sampleCounts,
-    # and print info about putative CNVs with alignment-supported breakpoints as TSV
-    # to BPdir/sample.breakPoints.tsv
-    def mergeCounts(futureBam2countsRes):
-        e = futureBam2countsRes.exception()
-        if e is not None:
-            #  exceptions raised by bam2counts are always Exception(str(sampleIndex))
-            si = int(str(e))
-            logger.warning("Failed to count fragments for sample %s, skipping it", samples[si])
-            failedBams.append(si)
-        else:
-            bam2countsRes = futureBam2countsRes.result()
-            si = bam2countsRes[0]
-            for exonIndex in range(len(bam2countsRes[1])):
-                countsArray[exonIndex, si] = bam2countsRes[1][exonIndex]
-            if (len(bam2countsRes[2]) > 0):
-                try:
-                    bpFile = BPdir + '/' + samples[si] + '.breakPoints.tsv'
-                    BPFH = open(bpFile, mode='w')
-                    for thisBP in bam2countsRes[2]:
-                        toPrint = thisBP[0] + "\t" + str(thisBP[1]) + "\t" + str(thisBP[2]) + "\t" + thisBP[3] + "\t" + thisBP[4]
-                        print(toPrint, file=BPFH)
-                    BPFH.close()
-                except Exception as e:
-                    logger.warning("Discarding breakpoints info for %s because cannot open %s for writing - %s",
-                                   samples[si], bpFile, e)
-            logger.info("Done counting fragments for %s", samples[si])
+    if nbOfSamplesToProcess == 0:
+        logger.info("all provided BAMs are in previous countsFile")
+        # if samples exactly match those in countsFile, return immediately
+        _, prevSamples, _ = countFrags.countsFile.parseCountsFile(countsFile)
+        if prevSamples == samples:
+            logger.info("provided BAMs exactly match those in previous countsFile, not producing a new one")
+            return()
 
-    #####################################################
-    # Process new BAMs, up to paraSamples in parallel
-    with ProcessPoolExecutor(paraSamples) as pool:
-        for bamIndex in range(len(bamsToProcess)):
-            bam = bamsToProcess[bamIndex]
-            sample = samples[bamIndex]
-            if countsFilled[bamIndex]:
-                logger.info('Sample %s already filled from countsFile', sample)
-                continue
+    else:
+        #####################################################
+        # decide how the work will be parallelized
+        # we are allowed to use jobs cores in total: we will process paraSamples samples in
+        # parallel, each sample will be processed using coresPerSample.
+        # in our tests 7 cores/sample provided the best overall performance, both with jobs=20
+        # and jobs=40. This probably depends on your hardware but in any case it's just a
+        # performance tuning parameter.
+        # -> we target targetCoresPerSample coresPerSample, this is increased if we
+        #    have few samples to process (and we use ceil() so we may slighty overconsume)
+        targetCoresPerSample = 7
+        paraSamples = min(math.ceil(jobs / targetCoresPerSample), nbOfSamplesToProcess)
+        coresPerSample = math.ceil(jobs / paraSamples)
+        logger.info("%i new sample(s)  => will process %i in parallel, using up to %i cores/sample",
+                    nbOfSamplesToProcess, paraSamples, coresPerSample)
+
+        #####################################################
+        # populate the module-global exonNCLs in countFragments
+        try:
+            countFrags.countFragments.initExonNCLs(exons)
+        except Exception as e:
+            raise Exception("initExonNCLs failed - " + str(e))
+
+        #####################################################
+        # Define nested callback for processing bam2counts() result (so countsArray et al
+        # are in its scope)
+
+        # mergeCounts:
+        # arg: a Future object returned by ProcessPoolExecutor.submit(countFrags.countFragments.bam2counts).
+        # bam2counts() returns a 3-element tuple (sampleIndex, sampleCounts, breakPoints).
+        # If something went wrong, log and populate failedBams;
+        # otherwise fill column at index sampleIndex in countsArray with counts stored in sampleCounts,
+        # and print info about putative CNVs with alignment-supported breakpoints as TSV
+        # to BPDir/sample.breakPoints.tsv
+        def mergeCounts(futureBam2countsRes):
+            e = futureBam2countsRes.exception()
+            if e is not None:
+                #  exceptions raised by bam2counts are always Exception(str(sampleIndex))
+                si = int(str(e))
+                logger.warning("Failed to count fragments for sample %s, skipping it", samples[si])
+                failedBams.append(si)
             else:
-                futureRes = pool.submit(countFrags.countFragments.bam2counts,
-                                        bam, len(exons), maxGap, tmpDir, samtools, coresPerSample, bamIndex)
-                futureRes.add_done_callback(mergeCounts)
+                bam2countsRes = futureBam2countsRes.result()
+                si = bam2countsRes[0]
+                for exonIndex in range(len(bam2countsRes[1])):
+                    countsArray[exonIndex, si] = bam2countsRes[1][exonIndex]
+                if (len(bam2countsRes[2]) > 0):
+                    try:
+                        bpFile = BPDir + '/' + samples[si] + '.breakPoints.tsv'
+                        BPFH = open(bpFile, mode='w')
+                        for thisBP in bam2countsRes[2]:
+                            toPrint = thisBP[0] + "\t" + str(thisBP[1]) + "\t" + str(thisBP[2]) + "\t" + thisBP[3] + "\t" + thisBP[4]
+                            print(toPrint, file=BPFH)
+                        BPFH.close()
+                    except Exception as e:
+                        logger.warning("Discarding breakpoints info for %s because cannot open %s for writing - %s",
+                                       samples[si], bpFile, e)
+                logger.info("Done counting fragments for %s", samples[si])
 
-    thisTime = time.time()
-    logger.info("Done processing all BAMs, %i new BAMs in %.2fs i.e. %.2fs per BAM",
-                nbOfSamplesToProcess, thisTime - startTime, (thisTime - startTime) / nbOfSamplesToProcess)
-    startTime = thisTime
+        #####################################################
+        # Process new BAMs, up to paraSamples in parallel
+        with ProcessPoolExecutor(paraSamples) as pool:
+            for bamIndex in range(len(bamsToProcess)):
+                bam = bamsToProcess[bamIndex]
+                sample = samples[bamIndex]
+                if countsFilled[bamIndex]:
+                    logger.info('Sample %s already filled from countsFile', sample)
+                    continue
+                else:
+                    futureRes = pool.submit(countFrags.countFragments.bam2counts,
+                                            bam, len(exons), maxGap, tmpDir, samtools, coresPerSample, bamIndex)
+                    futureRes.add_done_callback(mergeCounts)
+
+        #####################################################
+        # Expunge samples for which bam2counts failed
+        if len(failedBams) > 0:
+            for failedI in reversed(failedBams):
+                del(samples[failedI])
+            countsArray = np.delete(countsArray, failedBams, axis=1)
+
+        thisTime = time.time()
+        logger.info("Processed %i new BAMs in %.2fs, i.e. %.2fs per BAM",
+                    nbOfSamplesToProcess, thisTime - startTime, (thisTime - startTime) / nbOfSamplesToProcess)
+        startTime = thisTime
 
     #####################################################
-    # Expunge samples for which bam2counts failed
-    failedBamsNb = len(failedBams)
-    for failedI in reversed(failedBams):
-        del(samples[failedI])
-    countsArray = np.delete(countsArray, failedBams, axis=1)
-
-    # Print exon defs + counts to stdout
-    countFrags.countsFile.printCountsFile(exons, samples, countsArray)
+    # Print exon defs + counts to outFile
+    countFrags.countsFile.printCountsFile(exons, samples, countsArray, outFile)
 
     thisTime = time.time()
-    logger.debug("Done printing results for all samples, in %.2fs", thisTime - startTime)
-    if (failedBamsNb > 0):
-        logger.warning("ALL DONE BUT COUNTING FAILED FOR %i SAMPLES, check the log!", failedBamsNb)
+    logger.debug("Done printing counts for all (non-failed) samples, in %.2fs", thisTime - startTime)
+    if len(failedBams) > 0:
+        raise("counting FAILED for " + len(failedBams) + " samples, check the log!")
     else:
         logger.info("ALL DONE")
 
@@ -360,7 +383,6 @@ def main(argv):
 ####################################################################################
 ######################################## Main ######################################
 ####################################################################################
-
 if __name__ == '__main__':
     # configure logging, sub-modules will inherit this config
     logging.basicConfig(format='%(asctime)s %(levelname)s %(name)s: %(message)s',
@@ -371,6 +393,7 @@ if __name__ == '__main__':
 
     try:
         main(sys.argv)
-    except Exception:
-        # whoever raised the exception should have explained it on stderr, here we just die
-        exit(1)
+    except Exception as e:
+        # details on the issue should be in the exception name, print it to stderr and die
+        sys.stderr.write("ERROR in " + sys.argv[0] + " : " + str(e) + "\n")
+        sys.exit(1)
