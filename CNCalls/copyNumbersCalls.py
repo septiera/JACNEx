@@ -73,7 +73,7 @@ def CNCalls(sex2Clust, exons, countsNorm, clusts2Samps, clusts2Ctrls, priors, SO
         # Initialize  a hash allowing to detail the filtering carried out 
         # as well as the calls for all the exons. 
         # It is used for the pie chart representing the filtering.
-        infoList = [[exon] for exon in exonsIndex2Process]
+        filterRes = dict.fromkeys(["med=0","cannotFitRG", "meanRG=0", "pseudoZscore<3", "sampleContribution2RG<0.5"], 0)
 
         ##################################
         # smoothing on the set of coverage data averaged by exons.
@@ -83,8 +83,9 @@ def CNCalls(sex2Clust, exons, countsNorm, clusts2Samps, clusts2Ctrls, priors, SO
         # (95% gamma cdf)
         gammaParameters, gammaThreshold = fitGammaDistributionPrivate(clusterCounting, clustID, PDF)
 
-        ###################################
-        # Iterate over the exons
+        ##############################
+        # second loop 
+        # Browse cluster-specific exons 
         for exon in range(clusterCounting.shape[0]):
              # Print progress every 10000 exons
             if exon % 10000 == 0:
@@ -93,8 +94,11 @@ def CNCalls(sex2Clust, exons, countsNorm, clusts2Samps, clusts2Ctrls, priors, SO
             # Get count data for the exon
             exonFPM = clusterCounting[exon]
 
-            if exonFilteringPrivate(exonFPM, gammaThreshold):
+            robustGaussianParams = exonFilteringPrivate(exonFPM, gammaThreshold, filterRes)
+            if robustGaussianParams is None:
                 continue
+            
+            filterRes["ExonsCalls"]+=1
             
             ###################
             # 
@@ -104,7 +108,7 @@ def CNCalls(sex2Clust, exons, countsNorm, clusts2Samps, clusts2Ctrls, priors, SO
                 sample_data = exonFPM[sampleIndex2Process.index(i)]
                 sampIndexInLogOddsArray = i * 4
 
-                log_odds = computeLogOddsPrivate(sample_data, gammaParameters, gammaThreshold, priors, mean, stdev)
+                log_odds = computeLogOddsPrivate(sample_data, gammaParameters, gammaThreshold, priors, robustGaussianParams)
 
                 for val in range(4):
                     if logOddsArray[exonsIndex2Process[exon], (sampIndexInLogOddsArray + val)] == 0:
@@ -112,7 +116,7 @@ def CNCalls(sex2Clust, exons, countsNorm, clusts2Samps, clusts2Ctrls, priors, SO
                     else:
                         logger.error('erase previous logOdds value')
 
-        filtersPiePlotPrivate(clustID, infoList, PDF)
+        filtersPiePlotPrivate(clustID, filterRes, PDF)
 
     # close the open pdf
     PDF.close()
@@ -188,8 +192,7 @@ def fitGammaDistributionPrivate(clusterCounting, clustID, PDF):
     # recover the threshold of the minimum density means before an increase
     # - minIndex (int): index from "densityMeans" associated with the first lowest
     # observed mean
-    # - minMean (float): first lowest observed mean (not used for the calling step)
-    (minIndex, minMean) = clusterSamps.smoothing.findLocalMin(densityOnFPMRange)
+    (minIndex, _) = clusterSamps.smoothing.findLocalMin(densityOnFPMRange)
 
     countsExonsNotCovered = meanCountByExons[meanCountByExons <= binEdges[minIndex]]
 
@@ -264,6 +267,7 @@ def exonFilteringPrivate (exonFPM, gammaThreshold, filterRes):
     # exon is not kept for the rest of the filtering and calling step
     medianFPM = np.median(exonFPM)
     if medianFPM  == 0:
+        filterRes["med=0"]+=1
         return
 
     ###################
@@ -277,6 +281,7 @@ def exonFilteringPrivate (exonFPM, gammaThreshold, filterRes):
         meanRG, stdevRG = fitRobustGaussianPrivate(exonFPM)
     except Exception as e:
         if str(e) == "cannot fit":
+            filterRes["cannotFitRG"]+=1
             return
         else:
             raise
@@ -292,6 +297,7 @@ def exonFilteringPrivate (exonFPM, gammaThreshold, filterRes):
     
     # exon is not kept for the rest of the filtering and calling step
     if meanRG == 0:
+        filterRes["meanRG=0"]+=1
         return
     
     # the mean != zero and all samples have the same coverage value.
@@ -305,6 +311,7 @@ def exonFilteringPrivate (exonFPM, gammaThreshold, filterRes):
     # the exon is excluded if there are less than 3 standard deviations between 
     # the threshold and the mean.
     if (z_score < 3):
+        filterRes["pseudoZscore<3"]+=1
         return
 
     ###################
@@ -314,8 +321,10 @@ def exonFilteringPrivate (exonFPM, gammaThreshold, filterRes):
     # otherwise exon is not kept for the calling step
     weight = computeWeightPrivate(exonFPM, meanRG, stdevRG)
     if (weight < 0.5):
+        filterRes["sampleContribution2RG<0.5"]+=1
         return       
     
+    return(meanRG, stdevRG)
     
 ###################################
 # robustGaussianFitPrivate [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
