@@ -42,18 +42,24 @@ def allocateLogOddsArray(SOIs, exons):
 # Returns
 #
 def CNCalls(sex2Clust, exons, countsNorm, clusts2Samps, clusts2Ctrls, priors, SOIs, plotDir, logOddsArray):
-    #
     pdfFile = os.path.join(plotDir, "ResCallsByCluster_" + str(len(SOIs)) + "samps.pdf")
     # create a matplotlib object and open a pdf
     PDF = matplotlib.backends.backend_pdf.PdfPages(pdfFile)
     
+    # when discriminating between genders, 
+    # importance of identifying autosomes and gonosomes exons index
+    # to make calls on associated reference groups.
     if sex2Clust:
-        (gonoIndex, genderInfo) = clusterSamps.genderDiscrimination.getGenderInfos(exons)
-        #
+        gonoIndex, _ = clusterSamps.genderDiscrimination.getGenderInfos(exons)
         maskAutosome_Gonosome = ~np.isin(np.arange(countsNorm.shape[0]), sorted(set(sum(gonoIndex.values(), []))))
 
+    ##############################
+    # first loop 
+    # Browse clusters
     for clustID in clusts2Samps:
-        # 
+        # recovery of data specific to the current cluster
+        # sampleIndex2Process (list[int]): indexes of interest samples (from the cluster + controls)
+        # exonsIndex2Process (list[int]): indexes of the exons having allowed the formation of the cluster
         (sampleIndex2Process, exonsIndex2Process) = extractClusterDependentDataPrivate(clustID, clusts2Samps, clusts2Ctrls, sex2Clust, maskAutosome_Gonosome)
         
         # Create Boolean masks for columns and rows
@@ -64,64 +70,35 @@ def CNCalls(sex2Clust, exons, countsNorm, clusts2Samps, clusts2Ctrls, priors, SO
         clusterCounting = countsNorm[np.ix_(row_mask, col_mask)]
 
         ###########
-        # Initialize InfoList with the exon index
+        # Initialize  a hash allowing to detail the filtering carried out 
+        # as well as the calls for all the exons. 
+        # It is used for the pie chart representing the filtering.
         infoList = [[exon] for exon in exonsIndex2Process]
 
         ##################################
-        # fit a gamma distribution to find the profile of exons with little or no coverage (CN0)
-        # - gammaParameters
-        # - gammaThreshold
+        # smoothing on the set of coverage data averaged by exons.
+        # fit a gamma distribution on the non-captured exons.
+        # - gammaParameters [list[float]]: [shape, loc, scale]
+        # - gammaThreshold [float]: threshold delimiting exons not covered and exons covered 
+        # (95% gamma cdf)
         gammaParameters, gammaThreshold = fitGammaDistributionPrivate(clusterCounting, clustID, PDF)
 
         ###################################
         # Iterate over the exons
         for exon in range(clusterCounting.shape[0]):
-            # Print progress every 10000 exons
+             # Print progress every 10000 exons
             if exon % 10000 == 0:
-                logger.info("%s: %s  %s ", clustID, exon, time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()))
+                logger.info("ClusterID %s: %s  %s ", clustID, exon, time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()))
 
             # Get count data for the exon
             exonFPM = clusterCounting[exon]
 
-            ####################
-            # Filter n°1: the exon is not covered => mu == 0
-            # do nothing leave logOdds at zero
-            medianFPM = np.median(exonFPM)
-            if medianFPM  == 0:
-                infoList[exon] += [-1, 0, 0, 0]
+            if exonFilteringPrivate(exonFPM, gammaThreshold):
                 continue
-
+            
             ###################
-            # Fit a robust Gaussian to the count data
-            # - mean:
-            # - stdev:
-            mean, stdev = fitRobustGaussianPrivate(exonFPM)
-
+            # 
             ###################
-            # Filter n°2: if standard deviation is zero
-            # do nothing leave logOdds at zero
-            if stdev == 0:
-                # Define a new standard deviation to allow the calculation of the ratio
-                if mean > gammaThreshold:
-                    stdev = mean / 20
-                # Exon nocall
-                else:
-                    infoList[exon] += [mean, -1, 0, 0]
-                    continue
-
-            z_score = (mean - gammaThreshold) / stdev
-            weight = computeWeightPrivate(exonFPM, mean, stdev)
-
-            ###################
-            # Filter n°3:
-            # Exon nocall
-            if (weight < 0.5) or (z_score < 3):
-                infoList[exon] += [mean, stdev, z_score, weight]
-                continue
-
-            # Append values to InfoList
-            infoList[exon] += [mean, stdev, z_score, weight]
-
             # Retrieve results for each sample XXXXXX
             for i in clusts2Samps[clustID]:
                 sample_data = exonFPM[sampleIndex2Process.index(i)]
@@ -140,6 +117,7 @@ def CNCalls(sex2Clust, exons, countsNorm, clusts2Samps, clusts2Ctrls, priors, SO
     # close the open pdf
     PDF.close()
     return(logOddsArray)
+
 
 
 ###############################################################################
@@ -166,7 +144,6 @@ def extractClusterDependentDataPrivate(clustID, clusts2Samps, clusts2Ctrls, sex2
     if clustID in clusts2Ctrls:
         for controls in clusts2Ctrls[clustID]:
             sampleIndex2Process.extend(clusts2Samps[controls])
-    sampleIndex2Process = list(set(sampleIndex2Process))
     
     ##### ROW indexes:
     # in case there are specific autosome and gonosome clusters.
@@ -272,6 +249,72 @@ def coverageProfilPlotPrivate(clustID, binEdges, densityOnFPMRange, minIndex, un
 
     PDF.savefig(fig)
     matplotlib.pyplot.close()
+
+    
+###############################################################
+# 
+def exonFilteringPrivate (exonFPM, gammaThreshold, filterRes):
+    ###################
+    # Filter n°1: exon not covered 
+    # treats several possible cases:
+    # - all samples in the cluster haven't coverage for the current exon
+    # - more than 2/3 of the samples have no cover.
+    #   Warning: Potential presence of homodeletions. We have chosen don't
+    # call them because they affect too many samples
+    # exon is not kept for the rest of the filtering and calling step
+    medianFPM = np.median(exonFPM)
+    if medianFPM  == 0:
+        return
+
+    ###################
+    # fits a Gaussian robustly from the exon count data
+    # meanRG [float] and stdevRG [float] are the gaussian parameters
+    # Filter n°2: the Gaussian fitting cannot be performed 
+    # the median (consider as the mean parameter of the Gaussian) is located
+    # in an area without point data.
+    # in this case exon is not kept for the rest of the filtering and calling step
+    try:
+        meanRG, stdevRG = fitRobustGaussianPrivate(exonFPM)
+    except Exception as e:
+        if str(e) == "cannot fit":
+            return
+        else:
+            raise
+        
+    ###################
+    # Filter n°3: 
+    # principle: the Gaussian obtained in a robust way must not be associated 
+    # with a copie number total loss (CN0) 
+    # a pseudozscore allows to exclude exons with a Gaussian overlapping the 
+    # threshold of not covered exons (gammaThreshold). 
+    # To obtain the pseudoZscore it's necessary that the parameters of the 
+    # robust Gaussian != 0.
+    
+    # exon is not kept for the rest of the filtering and calling step
+    if meanRG == 0:
+        return
+    
+    # the mean != zero and all samples have the same coverage value.
+    # In this case a new arbitrary standard deviation is calculated 
+    # (simulates 5% on each side of the mean)
+    if (stdevRG == 0) :
+        stdevRG = meanRG / 20
+        
+    z_score = (meanRG - gammaThreshold) / stdevRG
+    
+    # the exon is excluded if there are less than 3 standard deviations between 
+    # the threshold and the mean.
+    if (z_score < 3):
+        return
+
+    ###################
+    # Filter n°4:
+    # principle: Calls are considered possible when the robust Gaussian has a sample
+    # minimum contribution of 50%.
+    # otherwise exon is not kept for the calling step
+    weight = computeWeightPrivate(exonFPM, meanRG, stdevRG)
+    if (weight < 0.5):
+        return       
     
     
 ###################################
@@ -436,7 +479,7 @@ def computeLogOddsPrivate(sample_data, params, gamma_threshold, prior_probabilit
         # probability transformation
         emissionProba[i]=1/(1+np.exp(log_odd))
 
-    return emissionProba/emissionProba.sum()
+    return emissionProba/emissionProba.sum() # normalized 
 
 ################
 # addEpsilonPrivate
