@@ -42,7 +42,7 @@ def processBed(bedFile, padding):
             bedFH = open(bedFile, "r")
     except Exception as e:
         logger.error("Cannot open BED file - %s", e)
-        raise Exception()
+        raise Exception("processBed failed, check log")
 
     for line in bedFH:
         fields = line.rstrip().split("\t")
@@ -52,7 +52,7 @@ def processBed(bedFile, padding):
         if len(fields) != 4:
             logger.error("In BED file %s, line doesn't have 4 fields:\n%s",
                          bedFile, line)
-            raise Exception()
+            raise Exception("processBed failed, check log")
         # START and END must be ints
         if fields[1].isdigit() and fields[2].isdigit():
             # OK, convert to actual ints and pad (but don't pad to negatives)
@@ -61,12 +61,12 @@ def processBed(bedFile, padding):
         else:
             logger.error("In BED file %s, columns 2-3 START-END are not ints in line:\n%s",
                          bedFile, line)
-            raise Exception()
+            raise Exception("processBed failed, check log")
         # EXON_ID must be unique
         if fields[3] in exonIDs:
             logger.error("In BED file %s, EXON_ID (4th column) %s is not unique",
                          bedFile, fields[3])
-            raise Exception()
+            raise Exception("processBed failed, check log")
         else:
             exonIDs[fields[3]] = 1
         #############################

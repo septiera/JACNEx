@@ -23,7 +23,7 @@ import s2_clusterSamps
 # Return a list with:
 # - everything needed by this module's main()
 # - one sys.argv-like list (as a list of strings) for each mageCNV step
-# If anything is wrong, raise Exception("ERROR MESSAGE")
+# If anything is wrong, raise Exception("EXPLICIT ERROR MESSAGE")
 def parseArgs(argv):
     scriptName = os.path.basename(argv[0])
 
@@ -36,8 +36,8 @@ def parseArgs(argv):
     step3Args = ["s3_CNCalls.py"]
     step4Args = ["s4_TBN.py"]
 
-    # default values of global optional args
-    # jobs default: 80% of available cores, as a string
+    # default values of global optional args, as strings
+    # jobs default: 80% of available cores
     jobs = round(0.8 * len(os.sched_getaffinity(0)))
     jobs = str(jobs)
 
@@ -159,11 +159,7 @@ def main(argv):
 
     logger.info("called with: " + " ".join(argv[1:]))
     # parse, check and preprocess arguments
-    try:
-        (workDir, step1Args, step2Args, step3Args, step4Args) = parseArgs(argv)
-    except Exception:
-        # problem is described in Exception, just re-raise
-        raise
+    (workDir, step1Args, step2Args, step3Args, step4Args) = parseArgs(argv)
 
     ##################
     # hard-coded subdir hierarchy of workDir, created if needed
@@ -268,7 +264,7 @@ def main(argv):
         s1_countFrags.main(step1Args)
     except Exception as e:
         logger.error("%s FAILED: %s", stepNames[1], str(e))
-        raise Exception("STEP1 FAILED")
+        raise Exception("STEP1 FAILED, check log")
 
     # countsFile wasn't created if it would be identical to countsFilePrev, if this
     # is the case just use countsFilePrev downstream
@@ -284,7 +280,7 @@ def main(argv):
         s2_clusterSamps.main(step2Args)
     except Exception as e:
         logger.error("%s FAILED: %s", stepNames[2], str(e))
-        raise Exception("STEP2 FAILED")
+        raise Exception("STEP2 FAILED, check log")
     logger.info("%s DONE", stepNames[2])
 
     logger.info("ALL DONE")

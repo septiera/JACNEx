@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 # Parse and sanity check the command+arguments, provided as a list of
 # strings (eg sys.argv).
 # Return a list with everything needed by this module's main()
-# If anything is wrong, raise Exception("ERROR MESSAGE")
+# If anything is wrong, raise Exception("EXPLICIT ERROR MESSAGE")
 def parseArgs(argv):
     scriptName = os.path.basename(argv[0])
 
@@ -216,8 +216,8 @@ ARGUMENTS:
     if not os.path.isdir(BPDir):
         try:
             os.mkdir(BPDir)
-        except Exception:
-            raise Exception("BPDir " + BPDir + " doesn't exist and can't be mkdir'd")
+        except Exception as e:
+            raise Exception("BPDir " + BPDir + " doesn't exist and can't be mkdir'd: " + str(e))
 
     # AOK, return everything that's needed
     return(bamsToProcess, samples, bedFile, outFile, BPDir, jobs, padding, maxGap, countsFile, tmpDir, samtools)
@@ -230,11 +230,7 @@ ARGUMENTS:
 # may be available in the log
 def main(argv):
     # parse, check and preprocess arguments
-    try:
-        (bamsToProcess, samples, bedFile, outFile, BPDir, jobs, padding, maxGap, countsFile, tmpDir, samtools) = parseArgs(argv)
-    except Exception:
-        # problem is described in Exception, just re-raise
-        raise
+    (bamsToProcess, samples, bedFile, outFile, BPDir, jobs, padding, maxGap, countsFile, tmpDir, samtools) = parseArgs(argv)
 
     # args seem OK, start working
     logger.debug("called with: " + " ".join(argv[1:]))
@@ -243,10 +239,7 @@ def main(argv):
 
     # parse exons from BED to obtain a list of lists (dim=NbExon x [CHR,START,END,EXONID]),
     # the exons are sorted according to their genomic position and padded
-    try:
-        exons = countFrags.bed.processBed(bedFile, padding)
-    except Exception:
-        raise Exception("processBed failed")
+    exons = countFrags.bed.processBed(bedFile, padding)
 
     thisTime = time.time()
     logger.debug("Done pre-processing BED, in %.2fs", thisTime - startTime)
@@ -259,7 +252,7 @@ def main(argv):
     try:
         (countsArray, countsFilled) = countFrags.countsFile.extractCountsFromPrev(exons, samples, countsFile)
     except Exception as e:
-        raise Exception("parseCountsFile failed - " + str(e))
+        raise Exception("extractCountsFromPrev failed - " + str(e))
 
     thisTime = time.time()
     logger.debug("Done parsing previous countsFile, in %.2fs", thisTime - startTime)
@@ -384,16 +377,17 @@ def main(argv):
 ######################################## Main ######################################
 ####################################################################################
 if __name__ == '__main__':
+    scriptName = os.path.basename(sys.argv[0])
     # configure logging, sub-modules will inherit this config
     logging.basicConfig(format='%(asctime)s %(levelname)s %(name)s: %(message)s',
                         datefmt='%Y-%m-%d %H:%M:%S',
                         level=logging.DEBUG)
     # set up logger: we want script name rather than 'root'
-    logger = logging.getLogger(os.path.basename(sys.argv[0]))
+    logger = logging.getLogger(scriptName)
 
     try:
         main(sys.argv)
     except Exception as e:
         # details on the issue should be in the exception name, print it to stderr and die
-        sys.stderr.write("ERROR in " + sys.argv[0] + " : " + str(e) + "\n")
+        sys.stderr.write("ERROR in " + scriptName + " : " + str(e) + "\n")
         sys.exit(1)
