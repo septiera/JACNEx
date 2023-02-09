@@ -157,8 +157,7 @@ def main(argv):
     try:
         (exons, SOIs, countsArray) = countFrags.countsFile.parseCountsFile(countsFile)
     except Exception:
-        logger.error("parseCountsFile failed")
-        raise Exception()
+        raise Exception("parseCountsFile failed")
 
     thisTime = time.time()
     logger.debug("Done parsing countsFile, in %.2f s", thisTime - startTime)
@@ -175,8 +174,7 @@ def main(argv):
     try:
         (clusts2Samps, clusts2Ctrls, SampsQCFailed, sex2Clust) = CNCalls.copyNumbersCalls.parseClustsFile(clustsFile, SOIs)
     except Exception:
-        logger.error("parseClustsFile failed")
-        raise Exception()
+        raise Exception("parseClustsFile failed")
 
     thisTime = time.time()
     logger.debug("Done parsing clustsFile, in %.2f s", thisTime - startTime)
@@ -193,8 +191,7 @@ def main(argv):
     try:
         countsNorm = countFrags.countFragments.normalizeCounts(countsArray)
     except Exception:
-        logger.error("FPMNormalisation failed")
-        raise Exception()
+        raise Exception("FPMNormalisation failed")
 
     thisTime = time.time()
     logger.debug("Done fragments counts normalisation, in %.2f s", thisTime - startTime)
@@ -203,24 +200,25 @@ def main(argv):
     ####################################################
     # CN Calls
     ####################
-    # initiate results object
-    # - Returns an all zeroes float array, adapted for
-    # storing the logOdds for each type of copy number.
-    # dim= NbExons x [NbSOIs x [CN0, CN1, CN2,CN3+]]
-    logOddsArray = CNCalls.copyNumbersCalls.allocateLogOddsArray(SOIs, exons)
-
+    #
+    #
+    #
     try:
-        logOddsArray = CNCalls.copyNumbersCalls.CNCalls(sex2Clust, exons, countsNorm, clusts2Samps, clusts2Ctrls, priors, SOIs, plotDir, logOddsArray)
-
+        emissionArray = CNCalls.copyNumbersCalls.CNCalls(sex2Clust, exons, countsNorm, clusts2Samps, clusts2Ctrls, priors, SOIs, plotDir)
     except Exception:
-        logger.error("CNCalls failed")
-        raise Exception()
+        raise Exception("CNCalls failed")
 
     thisTime = time.time()
     logger.debug("Done Copy Number Calls, in %.2f s", thisTime - startTime)
     startTime = thisTime
 
-
+    ####################################################
+    # print results
+    ####################
+    #
+    #
+    #
+    #
 ####################################################################################
 ######################################## Main ######################################
 ####################################################################################
@@ -234,6 +232,7 @@ if __name__ == '__main__':
 
     try:
         main(sys.argv)
-    except Exception:
-        # whoever raised the exception should have explained it on stderr, here we just die
-        exit(1)
+    except Exception as e:
+        # details on the issue should be in the exception name, print it to stderr and die
+        sys.stderr.write("ERROR in " + sys.argv[0] + " : " + str(e) + "\n")
+        sys.exit(1)
