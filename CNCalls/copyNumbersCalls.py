@@ -160,7 +160,7 @@ def CNCalls(sex2Clust, exons, countsNorm, clusts2Samps, clusts2Ctrls, priors, SO
 # dim= NbExons x [NbSOIs x [CN0, CN1, CN2,CN3+]]
 def allocateEmissionArrayPrivate(SOIs, exons):
     # order=F should improve performance
-    return (np.zeros((len(exons), (len(SOIs) * 4)), dtype=np.float, order='F'))
+    return (np.full((len(exons), (len(SOIs) * 4), -1), dtype=np.float16, order='F'))
 
 
 #####################################
