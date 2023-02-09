@@ -20,26 +20,53 @@ logger = logging.getLogger(__name__)
 
 #####################################
 # CNCalls:
-# 
+# Given a normalized fragment counts array for each sample set of a cluster
+# returns an emission probability for each type of copy number (CN0, CN1,CN2,CN3+)
+# for each exons analysed.
+# several stages are present.
+# - analysis of each cluster:
+#   - average coverage profile per exon smoothing by kernel density estimation,
+#   - identification of a threshold separating exons little or no covered
+#   - fit a gamma distribution
+#   - recovery of gamma parameters and a maximum threshold associated with not
+#   covered exon.
+#   - analysis by exon:
+#       - filtering of non-interpretable exons and assigning an emission probability
+#         to -1 for all NCs for this.
+# 4 large filters: not all samples have coverage, a robust Gaussian (RG) cannot be fitted,
+# a pseudozscore evaluates if Gaussian overlap with the threshold of not covered exons,
+# the contribution of the samples to the Gaussian must be greater than 50%.
+#       - for non filtered exons for each cluster sample:
+#           - extraction of density probabilities for each distribution
+#           (gamma (CN0), 3 gaussians: CN1= muRG/2, CN2= muRG, CN3+=muRG)
+#           - addition of priors
+#           - calculation of log-Odds from Bayes naive theorem for each NC.
+#           - transformation of log-Odds into probability + normalization
+#
+# Two graphical representations are generated in this function for each cluster one is a
+# histogram representing the obtained smoothed coverage data, the second is a camembert graph
+# summarising exon filtering.
+#
 # Args:
-# - sex2Clust
-# - exons
-# - countsNorm
-# - clusts2Samps
-# - clusts2Ctrls
-# - priors
-# - SOIs
-# - plotDir
-# Returns
-# - emissionArray
+# - sex2Clust dict[str, list[str]]: key: "A" autosomes or "G" gonosome, value: clusterID list
+# - exons (list of lists[str,int,int,str]): information on exon, containing CHR,START,END,EXON_ID
+# - countsNorm (np.ndarray[float]): normalised counts of countsArray same dimension
+# for arrays in input/output: NbExons*NbSOIs
+# - clusts2Samps (dict[str, List[int]]): key: clusterID , value: samples index list based on SOIs list
+# - clusts2Ctrls (dict[str, List[str]]): key: clusterID, value: controlsID list
+# - priors (list[float]): prior probability for each copy number type in the order [CN0, CN1,CN2,CN3+].
+# - SOIs (list[str]): sampleIDs copied from countsFile's header
+# - plotDir (str): subdir (created if needed) where result plots files will be produced
+# Returns:
+# - emissionArray (np.ndarray[float]): contain emission probabilities. dim=NbExons* (NbSOIs*[CN0,CN1,CN2,CN3+])
 def CNCalls(sex2Clust, exons, countsNorm, clusts2Samps, clusts2Ctrls, priors, SOIs, plotDir):
     emissionArray = allocateEmissionArrayPrivate(SOIs, exons)
-    
+
     # create a matplotlib object and open a pdf
     pdfFile = os.path.join(plotDir, "ResCallsByCluster_" + str(len(SOIs)) + "samps.pdf")
     PDF = matplotlib.backends.backend_pdf.PdfPages(pdfFile)
-    
-    # when discriminating between genders, 
+
+    # when discriminating between genders,
     # importance of identifying autosomes and gonosomes exons index
     # to make calls on associated reference groups.
     if sex2Clust:
@@ -47,14 +74,14 @@ def CNCalls(sex2Clust, exons, countsNorm, clusts2Samps, clusts2Ctrls, priors, SO
         maskAutosome_Gonosome = ~np.isin(np.arange(countsNorm.shape[0]), sorted(set(sum(gonoIndex.values(), []))))
 
     ##############################
-    # first loop 
+    # first loop
     # Browse clusters
     for clustID in clusts2Samps:
         # recovery of data specific to the current cluster
         # sampleIndex2Process (list[int]): indexes of interest samples (from the cluster + controls)
         # exonsIndex2Process (list[int]): indexes of the exons having allowed the formation of the cluster
         (sampleIndex2Process, exonsIndex2Process) = extractClusterInfosPrivate(clustID, clusts2Samps, clusts2Ctrls, sex2Clust, maskAutosome_Gonosome)
-        
+
         # Create Boolean masks for columns and rows
         col_mask = np.isin(np.arange(countsNorm[1]), sampleIndex2Process, invert=True)
         row_mask = np.isin(np.arange(countsNorm[0]), exonsIndex2Process, invert=True)
@@ -63,24 +90,24 @@ def CNCalls(sex2Clust, exons, countsNorm, clusts2Samps, clusts2Ctrls, priors, SO
         clusterCounting = countsNorm[np.ix_(row_mask, col_mask)]
 
         ###########
-        # Initialize  a hash allowing to detail the filtering carried out 
-        # as well as the calls for all the exons. 
+        # Initialize  a hash allowing to detail the filtering carried out
+        # as well as the calls for all the exons.
         # It is used for the pie chart representing the filtering.
-        filterCounters = dict.fromkeys(["med=0","cannotFitRG", "meanRG=0", "pseudoZscore<3", "sampleContribution2RG<0.5"], 0)
+        filterCounters = dict.fromkeys(["med=0", "cannotFitRG", "meanRG=0", "pseudoZscore<3", "sampleContribution2RG<0.5"], 0)
 
         ##################################
         # smoothing on the set of coverage data averaged by exons.
         # fit a gamma distribution on the non-captured exons.
         # - gammaParameters [list[float]]: [shape, loc, scale]
-        # - uncovExonThreshold  [float]: threshold delimiting exons not covered and exons covered 
+        # - uncovExonThreshold  [float]: threshold delimiting exons not covered and exons covered
         # (95% gamma cdf)
         gammaParameters, uncovExonThreshold = fitGammaDistributionPrivate(clusterCounting, clustID, PDF)
 
         ##############################
-        # second loop 
-        # Browse cluster-specific exons 
+        # second loop
+        # Browse cluster-specific exons
         for exon in range(clusterCounting.shape[0]):
-             # Print progress every 10000 exons
+            # Print progress every 10000 exons
             if exon % 10000 == 0:
                 logger.info("ClusterID %s: %s  %s ", clustID, exon, time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()))
 
@@ -92,11 +119,11 @@ def CNCalls(sex2Clust, exons, countsNorm, clusts2Samps, clusts2Ctrls, priors, SO
             robustGaussianParams = exonFilteringPrivate(exonFPM, uncovExonThreshold, filterCounters)
             if robustGaussianParams is None:
                 continue
-            
-            filterCounters["ExonsCalls"]+=1
-            
+
+            filterCounters["ExonsCalls"] += 1
+
             ###################
-            # 
+            #
             ###################
             # Retrieve results for each sample XXXXXX
             for i in clusts2Samps[clustID]:
@@ -116,8 +143,6 @@ def CNCalls(sex2Clust, exons, countsNorm, clusts2Samps, clusts2Ctrls, priors, SO
     # close the open pdf
     PDF.close()
     return(emissionArray)
-
-
 
 ###############################################################################
 ############################ PRIVATE FUNCTIONS ################################
