@@ -148,6 +148,7 @@ def CNCalls(sex2Clust, exons, countsNorm, clusts2Samps, clusts2Ctrls, priors, SO
 ############################ PRIVATE FUNCTIONS ################################
 ###############################################################################
 
+
 #####################################
 # allocateEmissionArrayPrivate [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
 # Args:
@@ -164,7 +165,7 @@ def allocateEmissionArrayPrivate(SOIs, exons):
 
 #####################################
 # extractClusterInfosPrivate [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
-# extraction of indexes specific to the samples contained in the cluster and 
+# extraction of indexes specific to the samples contained in the cluster and
 # indexes of the exons to be processed (specific to autosomes or gonosomes)
 # Args:
 # - clustID [str] : cluster identifier
@@ -184,7 +185,7 @@ def extractClusterInfosPrivate(clustID, clusts2Samps, clusts2Ctrls, sex2Clust=No
     if clustID in clusts2Ctrls:
         for controls in clusts2Ctrls[clustID]:
             sampleIndex2Process.extend(clusts2Samps[controls])
-    
+
     ##### ROW indexes:
     # in case there are specific autosome and gonosome clusters.
     # identification of the indexes of the exons associated with the gonosomes or autosomes.
@@ -212,7 +213,7 @@ def extractClusterInfosPrivate(clustID, clusts2Samps, clusts2Ctrls, sex2Clust=No
 # Returns a tupple (gamma_parameters, threshold_value), each variable is created here:
 # - gammaParams (tuple of floats): estimated parameters of the gamma distribution
 # - uncovExonThreshold (float): value corresponding to 95% of the cumulative distribution function
-# from the gamma, corresponds to the FPM threshold where before this the exons are not covered 
+# from the gamma, corresponds to the FPM threshold where before this the exons are not covered
 # (contains both uncaptured, poorly covered and potentially homodeleted exons).
 def fitGammaDistributionPrivate(clusterCounting, clustID, PDF):
     # compute meanFPM by exons
@@ -245,11 +246,12 @@ def fitGammaDistributionPrivate(clusterCounting, clustID, PDF):
 
     # compute the value corresponding to 95% of the cumulative distribution function
     # this value corresponds to the FPM value allowing to split covered exons from uncovered exons
-    uncovExonThreshold  = countsExonsNotCovered[thresholdIndex]
+    uncovExonThreshold = countsExonsNotCovered[thresholdIndex]
 
     coverageProfilPlotPrivate(clustID, binEdges, densityOnFPMRange, minIndex, uncovExonThreshold, clusterCounting.shape[1], PDF)
 
     return (gammaParams, uncovExonThreshold)
+
 
 ###################################
 # coverageProfilPlotPrivate: [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
@@ -267,19 +269,19 @@ def fitGammaDistributionPrivate(clusterCounting, clustID, PDF):
 #   dim= len(binEdges)
 # - minIndex (int): index associated with the first lowest density observed
 # - uncovExonThreshold (float): value corresponding to 95% of the cumulative distribution function
-# from the gamma, corresponds to the FPM threshold where before this the exons are not covered 
+# from the gamma, corresponds to the FPM threshold where before this the exons are not covered
 # (contains both uncaptured, poorly covered and potentially homodeleted exons).
 # - SOIsNb (int): number of samples in the cluster
 # - pdf (matplotlib object): store plots in a single pdf
 # Returns and saves a plot in the output pdf
 def coverageProfilPlotPrivate(clustID, binEdges, densityOnFPMRange, minIndex, uncovExonThreshold, SOIsNb, PDF):
 
-    fig = matplotlib.pyplot.figure(figsize=(6,6))
+    fig = matplotlib.pyplot.figure(figsize=(6, 6))
     matplotlib.pyplot.plot(binEdges, densityOnFPMRange, color='black', label='smoothed densities')
     matplotlib.pyplot.axvline(binEdges[minIndex], color='crimson', linestyle='dashdot', linewidth=2,
-                label="minFPM=" + '{:0.1f}'.format(binEdges[minIndex]))
+                              label="minFPM=" + '{:0.1f}'.format(binEdges[minIndex]))
     matplotlib.pyplot.axvline(uncovExonThreshold, color='blue', linestyle='dashdot', linewidth=2,
-                label="uncovExonThreshold=" + '{:0.2f}'.format(uncovExonThreshold))
+                              label="uncovExonThreshold=" + '{:0.2f}'.format(uncovExonThreshold))
     matplotlib.pyplot.ylim(0, 0.5)
     matplotlib.pyplot.ylabel("Exon densities")
     matplotlib.pyplot.xlabel("Fragments Per Million")
@@ -289,12 +291,12 @@ def coverageProfilPlotPrivate(clustID, binEdges, densityOnFPMRange, minIndex, un
     PDF.savefig(fig)
     matplotlib.pyplot.close()
 
-    
+
 ###############################################################
 # exonFilteringPrivate [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
 # filtering of non-interpretable exons:
 # Filter n°1: exon not covered (median=0)
-# Filter n°2: the Gaussian fitting cannot be performed 
+# Filter n°2: the Gaussian fitting cannot be performed
 # Filter n°3: pseudoZscore < 3
 # Filter n°4: samples contribution for gaussian < 50%
 # if the exon passes all filtering Gaussian parameter extraction to continue calling.
@@ -302,15 +304,15 @@ def coverageProfilPlotPrivate(clustID, binEdges, densityOnFPMRange, minIndex, un
 # Args:
 # - exonFPM [ndarray[float]]: normalised fragment count for an exon for samples in a cluster
 # - uncovExonThreshold  (float): value corresponding to 95% of the cumulative distribution function
-# from the gamma, corresponds to the FPM threshold where before this the exons are not covered 
+# from the gamma, corresponds to the FPM threshold where before this the exons are not covered
 # - filterCounters (dict[str:int]): dictionary of exon counters of different filtering
 # performed for the cluster
 # Returns :
 # if any of the filtering conditions are met returns False
 # otherwise returns the Gaussien parameters mean [float] and standard deviation [float].
-def exonFilteringPrivate (exonFPM, uncovExonThreshold, filterCounters):
+def exonFilteringPrivate(exonFPM, uncovExonThreshold, filterCounters):
     ###################
-    # Filter n°1: exon not covered 
+    # Filter n°1: exon not covered
     # treats several possible cases:
     # - all samples in the cluster haven't coverage for the current exon
     # - more than 2/3 of the samples have no cover.
@@ -318,14 +320,14 @@ def exonFilteringPrivate (exonFPM, uncovExonThreshold, filterCounters):
     # call them because they affect too many samples
     # exon is not kept for the rest of the filtering and calling step
     medianFPM = np.median(exonFPM)
-    if medianFPM  == 0:
-        filterCounters["med=0"]+=1
+    if medianFPM == 0:
+        filterCounters["med=0"] += 1
         return
 
     ###################
     # fits a Gaussian robustly from the exon count data
     # meanRG [float] and stdevRG [float] are the gaussian parameters
-    # Filter n°2: the Gaussian fitting cannot be performed 
+    # Filter n°2: the Gaussian fitting cannot be performed
     # the median (consider as the mean parameter of the Gaussian) is located
     # in an area without point data.
     # in this case exon is not kept for the rest of the filtering and calling step
@@ -333,37 +335,37 @@ def exonFilteringPrivate (exonFPM, uncovExonThreshold, filterCounters):
         meanRG, stdevRG = fitRobustGaussianPrivate(exonFPM)
     except Exception as e:
         if str(e) == "cannot fit":
-            filterCounters["cannotFitRG"]+=1
+            filterCounters["cannotFitRG"] += 1
             return
         else:
             raise
-        
+
     ###################
-    # Filter n°3: 
-    # principle: the Gaussian obtained in a robust way must not be associated 
-    # with a copie number total loss (CN0) 
-    # a pseudozscore allows to exclude exons with a Gaussian overlapping the 
-    # threshold of not covered exons (uncovExonThreshold ). 
-    # To obtain the pseudoZscore it's necessary that the parameters of the 
+    # Filter n°3:
+    # principle: the Gaussian obtained in a robust way must not be associated
+    # with a copie number total loss (CN0)
+    # a pseudozscore allows to exclude exons with a Gaussian overlapping the
+    # threshold of not covered exons (uncovExonThreshold ).
+    # To obtain the pseudoZscore it's necessary that the parameters of the
     # robust Gaussian != 0.
-    
+
     # exon is not kept for the rest of the filtering and calling step
     if meanRG == 0:
-        filterCounters["meanRG=0"]+=1
+        filterCounters["meanRG=0"] += 1
         return
-    
+
     # the mean != zero and all samples have the same coverage value.
-    # In this case a new arbitrary standard deviation is calculated 
+    # In this case a new arbitrary standard deviation is calculated
     # (simulates 5% on each side of the mean)
-    if (stdevRG == 0) :
+    if (stdevRG == 0):
         stdevRG = meanRG / 20
-        
-    z_score = (meanRG - uncovExonThreshold ) / stdevRG
-    
-    # the exon is excluded if there are less than 3 standard deviations between 
+
+    z_score = (meanRG - uncovExonThreshold) / stdevRG
+
+    # the exon is excluded if there are less than 3 standard deviations between
     # the threshold and the mean.
     if (z_score < 3):
-        filterCounters["pseudoZscore<3"]+=1
+        filterCounters["pseudoZscore<3"] += 1
         return
 
     ###################
@@ -373,9 +375,9 @@ def exonFilteringPrivate (exonFPM, uncovExonThreshold, filterCounters):
     # otherwise exon is not kept for the calling step
     weight = computeWeightPrivate(exonFPM, meanRG, stdevRG)
     if (weight < 0.5):
-        filterCounters["sampleContribution2RG<0.5"]+=1
-        return       
-    
+        filterCounters["sampleContribution2RG<0.5"] += 1
+        return
+
     return(meanRG, stdevRG)
 
 
@@ -392,71 +394,73 @@ def exonFilteringPrivate (exonFPM, uncovExonThreshold, filterCounters):
 # - eps (float, optional): Convergence tolerance. Defaults to 1.0e-5.
 # Returns:
 # - mu [float],sigma [float]: mean and stdev of the gaussian component
-def fitRobustGaussianPrivate(X, mu = None, sigma = None, bandwidth = 2.0, eps = 1.0e-5):
+def fitRobustGaussianPrivate(X, mu=None, sigma=None, bandwidth=2.0, eps=1.0e-5):
     if mu is None:
-        #median is an approach as robust and naïve as possible to Expectation
+        # median is an approach as robust and naïve as possible to Expectation
         mu = np.median(X)
     mu_0 = mu + 1
-    
+
     if sigma is None:
-        #rule of thumb
-        sigma = np.std(X)/3
+        # rule of thumb
+        sigma = np.std(X) / 3
     sigma_0 = sigma + 1
-    
+
     bandwidth_truncated_normal_sigma = truncated_integral_and_sigma(bandwidth)
 
     while abs(mu - mu_0) + abs(sigma - sigma_0) > eps:
-        #loop until tolerence is reached
+        # loop until tolerence is reached
         """
         create a uniform window on X around mu of width 2*bandwidth*sigma
         find the mean of that window to shift the window to most expected local value
         measure the standard deviation of the window and divide by the standard deviation of a truncated gaussian distribution
         measure the proportion of points inside the window, divide by the weight of a truncated gaussian distribution
         """
-        Window = np.logical_and(X - mu - bandwidth * sigma < 0 , X - mu + bandwidth * sigma > 0)
-        
-        # condition to identify exons with points arround at the median 
+        Window = np.logical_and(X - mu - bandwidth * sigma < 0, X - mu + bandwidth * sigma > 0)
+
+        # condition to identify exons with points arround at the median
         if Window.any():
             mu_0, mu = mu, np.average(X[Window])
             var = np.average(np.square(X[Window])) - mu**2
-            sigma_0 , sigma = sigma, np.sqrt(var)/bandwidth_truncated_normal_sigma
+            sigma_0, sigma = sigma, np.sqrt(var) / bandwidth_truncated_normal_sigma
         # no points arround the median
-        # e.g. exon where more than 1/2 of the samples have an FPM = 0. 
+        # e.g. exon where more than 1/2 of the samples have an FPM = 0.
         # A Gaussian fit is impossible => raise exception
         else:
-            raise Exception("cannot fit") 
+            raise Exception("cannot fit")
     return (mu, sigma)
+
 
 ###########
 # normal_erf
-# ancillary function of the robustGaussianFitPrivate function 
+# ancillary function of the robustGaussianFitPrivate function
 # computes Gauss error function
-# The error function (erf) is used to describe the Gaussian or Normal distribution. 
-# It gives the probability that a random variable follows a given Gaussian distribution, 
-# indicating the probability that it is less than or equal to a given value. 
-# In other words, the error function quantifies the probability distribution for a 
+# The error function (erf) is used to describe the Gaussian or Normal distribution.
+# It gives the probability that a random variable follows a given Gaussian distribution,
+# indicating the probability that it is less than or equal to a given value.
+# In other words, the error function quantifies the probability distribution for a
 # random variable following a Gaussian distribution.
 # this function replaces the use of the scipy.stats.erf module
-def normal_erf(x, mu = 0, sigma = 1,  depth = 50):
+def normal_erf(x, mu=0, sigma=1, depth=50):
     ele = 1.0
     normal = 1.0
-    x = (x - mu)/sigma
+    x = (x - mu) / sigma
     erf = x
-    for i in range(1,depth):
-        ele = - ele * x * x/2.0/i
+    for i in range(1, depth):
+        ele = - ele * x * x / 2.0 / i
         normal = normal + ele
         erf = erf + ele * x / (2.0 * i + 1)
 
-    return np.clip(normal/np.sqrt(2.0*np.pi)/sigma,0,None) , np.clip(erf/np.sqrt(2.0*np.pi)/sigma,-0.5,0.5)
+    return np.clip(normal / np.sqrt(2.0 * np.pi) / sigma, 0, None), np.clip(erf / np.sqrt(2.0 * np.pi) / sigma, -0.5, 0.5)
+
 
 ##########
 # truncated_integral_and_sigma
-# ancillary function of the robustGaussianFitPrivate function 
-# allows for a more precise and focused analysis of a function 
+# ancillary function of the robustGaussianFitPrivate function
+# allows for a more precise and focused analysis of a function
 # by limiting the study to particular parts of its defining set.
 def truncated_integral_and_sigma(x):
-    n,e = normal_erf(x)
-    return np.sqrt(1-n*x/e)
+    n, e = normal_erf(x)
+    return np.sqrt(1 - n * x / e)
 
 
 ############################
@@ -470,7 +474,7 @@ def truncated_integral_and_sigma(x):
 # Returns weight of sample contribution to the gaussian for the exon [float]
 @numba.njit
 def computeWeightPrivate(fpm_in_exon, mean, standard_deviation):
-    targetData = fpm_in_exon[(fpm_in_exon > (mean - (2 * standard_deviation))) &
+    targetData = fpm_in_exon[(fpm_in_exon > (mean - (2 * standard_deviation))) & 
                              (fpm_in_exon < (mean + (2 * standard_deviation))), ]
     weight = len(targetData) / len(fpm_in_exon)
 
@@ -524,7 +528,7 @@ def computeLogOddsPrivate(sample_data, params, gamma_threshold, prior_probabilit
     probability_densities_priors = np.multiply(probability_densities, prior_probabilities)
 
     ################
-    # case where one of the probabilities is equal to 0 addition of an epsilon 
+    # case where one of the probabilities is equal to 0 addition of an epsilon
     # which is 1000 times lower than the lowest probability
     probability_densities_priors = addEpsilonPrivate(probability_densities_priors)
 
@@ -539,9 +543,10 @@ def computeLogOddsPrivate(sample_data, params, gamma_threshold, prior_probabilit
         log_odd = np.log10(probability_densities_priors[i]) - np.log10(to_subtract)
 
         # probability transformation
-        emissionProba[i]=1/(1+np.exp(log_odd))
+        emissionProba[i] = 1 / (1 + np.exp(log_odd))
 
-    return emissionProba/emissionProba.sum() # normalized 
+    return emissionProba / emissionProba.sum()  # normalized
+
 
 ################
 # addEpsilonPrivate
@@ -552,11 +557,12 @@ def addEpsilonPrivate(probs, epsilon_factor=1000):
     probs = np.where(probs == 0, epsilon, probs)
     return probs
 
+
 ###################################
 # filtersPiePlotPrivate:
 # generates a plot per cluster
 # Args:
-# - clustID [str]: cluster identifier 
+# - clustID [str]: cluster identifier
 # - filterCounters (dict[str:int]): dictionary of exon counters of different filtering
 # performed for the cluster
 # - pdf (matplotlib object): store plots in a single pdf
@@ -566,11 +572,11 @@ def filtersPiePlotPrivate(clustID, filterCounters, pdf):
 
     fig = matplotlib.pyplot.figure(figsize=(10, 10))
     matplotlib.pyplot.pie(filterCounters.values(), labels=filterCounters.keys(),
-            colors=["grey", "yellow", "indianred", "mediumpurple", "royalblue", "mediumaquamarine"],
-            autopct=lambda x: str(round(x, 2)) + '%',
-            startangle=-270,
-            pctdistance=0.7,
-            labeldistance=1.1)
+                          colors=["grey", "yellow", "indianred", "mediumpurple", "royalblue", "mediumaquamarine"],
+                          autopct=lambda x: str(round(x, 2)) + '%',
+                          startangle=-270,
+                          pctdistance=0.7,
+                          labeldistance=1.1)
     matplotlib.pyplot.legend()
     matplotlib.pyplot.title("filtered and called exons for the cluster " + clustID)
 
