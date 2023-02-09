@@ -19,16 +19,12 @@ import logging
 ####### MAGE-CNV modules
 import countFrags.countsFile
 import countFrags.countFragments
-import clusterSamps.clustering
 import CNCalls.copyNumbersCalls
 
 
 # set up logger, using inherited config, in case we get called as a module
 logger = logging.getLogger(__name__)
 
-
-# set up logger, using inherited config, in case we get called as a module
-logger = logging.getLogger(__name__)
 
 ###############################################################################
 ############################ PRIVATE FUNCTIONS ################################
@@ -39,6 +35,7 @@ logger = logging.getLogger(__name__)
 # Parse and sanity check the command+arguments, provided as a list of
 # strings (eg sys.argv).
 # Return a list with everything needed by this module's main()
+# If anything is wrong, raise Exception("ERROR MESSAGE")
 def parseArgs(argv):
     scriptName = os.path.basename(argv[0])
 
@@ -49,7 +46,8 @@ def parseArgs(argv):
     priors = "0.001,0.01,0.979,0.01"
     plotDir = "./ResultPlots/"
 
-    usage = """\nCOMMAND SUMMARY:
+    usage = "NAME:\n" + scriptName + """\n
+DESCRIPTION:
 Given a TSV of exon fragment counts and a TSV with clustering information,
 calculation of emission probabilities (logOdds) for each copy number type (CN0, CN1, CN2, CN3+).
 The results are printed in the stdout in TSV format: the first 4 columns contain
@@ -70,15 +68,14 @@ ARGUMENTS:
 
     try:
         opts, args = getopt.gnu_getopt(sys.argv[1:], 'h', ["help", "counts=", "clusts=", "priors=", "plotDir="])
+
     except getopt.GetoptError as e:
-        sys.stderr.write("ERROR : " + e.msg + ". Try " + scriptName + " --help\n")
-        raise Exception()
+        raise Exception(e.msg + ". Try " + scriptName + " --help")
 
     for opt, value in opts:
-        # sanity-check and store arguments
         if (opt in ('-h', '--help')):
             sys.stderr.write(usage)
-            raise Exception()
+            sys.exit(0)
         elif (opt in ("--counts")):
             countsFile = value
         elif (opt in ("--clusts")):
@@ -88,46 +85,38 @@ ARGUMENTS:
         elif (opt in ("--plotDir")):
             plotDir = value
         else:
-            sys.stderr.write("ERROR : unhandled option " + opt + ".\n")
-            raise Exception()
+            raise Exception("unhandled option " + opt)
 
     #####################################################
     # Check that the mandatory parameter is present
     if countsFile == "":
-        sys.exit("ERROR : You must provide a counts file with --counts. Try " + scriptName + " --help.\n")
-        raise Exception()
+        raise Exception("ERROR : You must provide a counts file with --counts. Try " + scriptName + " --help.")
     elif (not os.path.isfile(countsFile)):
-        sys.stderr.write("ERROR : countsFile " + countsFile + " doesn't exist.\n")
-        raise Exception()
+        raise Exception("ERROR : countsFile " + countsFile + " doesn't exist.")
 
     if clustsFile == "":
-        sys.exit("ERROR : You must provide a clustering results file use --clusts. Try " + scriptName + " --help.\n")
-        raise Exception()
+        raise Exception("ERROR : You must provide a clustering results file use --clusts. Try " + scriptName + " --help.")
     elif (not os.path.isfile(clustsFile)):
-        sys.stderr.write("ERROR : clustsFile " + clustsFile + " doesn't exist.\n")
-        raise Exception()
+        raise Exception("ERROR : clustsFile " + clustsFile + " doesn't exist.")
 
     #####################################################
     # Check other args
     if priors == "":
-        sys.stderr.write("ERROR : You must provide four correlation values separated by commas with --priors. Try " + scriptName + " --help.\n")
-        raise Exception()
+        raise Exception("ERROR : You must provide four correlation values separated by commas with --priors. Try " + scriptName + " --help.")
     else:
         try:
             priors = [float(x) for x in priors.split(",")]
             if (sum(priors) != 1):
                 raise Exception()
         except Exception:
-            sys.stderr.write("ERROR : priors must be four float numbers whose sum is 1, not '" + priors + "'.\n")
-            raise Exception()
+            raise Exception("ERROR : priors must be four float numbers whose sum is 1, not '" + priors + "'.")
 
     # test plotDir last so we don't mkdir unless all other args are OK
     if not os.path.isdir(plotDir):
         try:
             os.mkdir(plotDir)
         except Exception:
-            sys.stderr.write("ERROR : plotDir " + plotDir + " doesn't exist and can't be mkdir'd\n")
-            raise Exception()
+            raise Exception("ERROR : plotDir " + plotDir + " doesn't exist and can't be mkdir'd")
 
     # AOK, return everything that's needed
     return(countsFile, clustsFile, priors, plotDir)
@@ -140,12 +129,17 @@ ARGUMENTS:
 ####################################################
 # main function
 # Arg: list of strings, eg sys.argv
-# If anything goes wrong, print error message to stderr and raise exception.
+# If anything goes wrong, raise Exception("SOME EXPLICIT ERROR MESSAGE"), more details
+# may be available in the log
 def main(argv):
 
     ################################################
-    # parse, check and preprocess arguments - exceptions must be caught by caller
-    (countsFile, clustsFile, priors, plotDir) = parseArgs(argv)
+    # parse, check and preprocess arguments
+    try:
+        (countsFile, clustsFile, priors, plotDir) = parseArgs(argv)
+    except Exception:
+        # problem is described in Exception, just re-raise
+        raise
 
     ################################################
     # args seem OK, start working
