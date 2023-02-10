@@ -115,28 +115,29 @@ def CNCalls(sex2Clust, exons, countsNorm, clusts2Samps, clusts2Ctrls, priors, SO
             exonFPM = clusterCounting[exon]
 
             ########################
-            #
+            # filtering exons according to different criteria.
+            # exons filtered robustGaussianParams = None
+            # if not filtered:
+            # - robustGaussianParams (list[float]): contains mean value and standard deviation for a robust gaussian 
             robustGaussianParams = exonFilteringPrivate(exonFPM, uncovExonThreshold, filterCounters)
             if robustGaussianParams is None:
                 continue
 
             filterCounters["ExonsCalls"] += 1
-
+            
             ###################
-            #
-            ###################
-            # Retrieve results for each sample XXXXXX
+            # Retrieve results for each sample
             for i in clusts2Samps[clustID]:
                 sample_data = exonFPM[sampleIndex2Process.index(i)]
-                sampIndexInemissionArray = i * 4
+                sampIndexInEmissionArray = i * 4
 
-                log_odds = computeLogOddsPrivate(sample_data, gammaParameters, uncovExonThreshold, priors, robustGaussianParams)
+                probNorm = computeProbabilitesPrivate(sample_data, gammaParameters, uncovExonThreshold, priors, robustGaussianParams)
 
                 for val in range(4):
-                    if emissionArray[exonsIndex2Process[exon], (sampIndexInemissionArray + val)] == 0:
-                        emissionArray[exonsIndex2Process[exon], (sampIndexInemissionArray + val)] = log_odds[val]
+                    if emissionArray[exonsIndex2Process[exon], (sampIndexInEmissionArray + val)] == -1:
+                        emissionArray[exonsIndex2Process[exon], (sampIndexInEmissionArray + val)] = probNorm[val]
                     else:
-                        logger.error('erase previous logOdds value')
+                        logger.error('erase previous probabilities values')
 
         filtersPiePlotPrivate(clustID, filterCounters, PDF)
 
@@ -482,7 +483,7 @@ def computeWeightPrivate(fpm_in_exon, mean, standard_deviation):
 
 
 ############################
-# computeLogOddsPrivate [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
+# computeProbabilitesPrivate [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
 # Given four models, the log odds ratio (LOR) allows to choose the best-fitting model.
 # Use of Bayes' theorem to deduce it.
 #
@@ -491,12 +492,14 @@ def computeWeightPrivate(fpm_in_exon, mean, standard_deviation):
 # - gamma_params (list(float)): estimated parameters of the gamma distribution [shape, loc, scale]
 # - gamma_threshold (float):
 # - prior_probabilities (list[float]): prior probabilities for different cases
-# - mean (float): mean value for the normal distribution
-# - standard_deviation (float): the standard deviation for the normal distribution
+# - robustGaussianParams (list[float]): contains mean value and standard deviation for the normal distribution
 #
 # Returns:
-# - log_odds (list[float]): log-odds ratios for each copy number (CN0,CN1,CN2,CN3+)
-def computeLogOddsPrivate(sample_data, params, gamma_threshold, prior_probabilities, mean, standard_deviation):
+# - probNorm (np.ndarray[float]): p(i|Ci)p(Ci) standardized for each copy number (CN0,CN1,CN2,CN3+)
+def computeProbabilitesPrivate(sample_data, params, gamma_threshold, prior_probabilities, robustGaussianParams):
+    mean = robustGaussianParams[0]
+    standard_deviation = robustGaussianParams[1]
+    
     # CN2 mean shift to get CN1 mean
     mean_cn1 = mean / 2
 
@@ -527,26 +530,30 @@ def computeLogOddsPrivate(sample_data, params, gamma_threshold, prior_probabilit
     # Add prior probabilities
     probability_densities_priors = np.multiply(probability_densities, prior_probabilities)
 
-    ################
-    # case where one of the probabilities is equal to 0 addition of an epsilon
-    # which is 1000 times lower than the lowest probability
-    probability_densities_priors = addEpsilonPrivate(probability_densities_priors)
+    # normalized probabilities
+    probNorm = probability_densities_priors / np.sum(probability_densities_priors) 
+    
+    # ################
+    # # case where one of the probabilities is equal to 0 addition of an epsilon
+    # # which is 1000 times lower than the lowest probability
+    # probability_densities_priors = addEpsilonPrivate(probability_densities_priors)
 
-    ##################
-    # Calculate the log-odds ratios
-    emissionProba = np.zeros(4)
-    for i in range(len(probability_densities_priors)):
-        # Calculate the denominator for the log-odds ratio
-        to_subtract = np.sum(probability_densities_priors[np.arange(probability_densities_priors.shape[0]) != i])
+    # ##################
+    # # Calculate the log-odds ratios
+    # emissionProba = np.zeros(4)
+    # for i in range(len(probability_densities_priors)):
+    #     # Calculate the denominator for the log-odds ratio
+    #     to_subtract = np.sum(probability_densities_priors[np.arange(probability_densities_priors.shape[0]) != i])
 
-        # Calculate the log-odds ratio for the current probability density
-        log_odd = np.log10(probability_densities_priors[i]) - np.log10(to_subtract)
+    #     # Calculate the log-odds ratio for the current probability density
+    #     log_odd = np.log10(probability_densities_priors[i]) - np.log10(to_subtract)
 
-        # probability transformation
-        emissionProba[i] = 1 / (1 + np.exp(log_odd))
+    #     # probability transformation
+    #     emissionProba[i] = 1 / (1 + np.exp(log_odd))
 
-    return emissionProba / emissionProba.sum()  # normalized
+    # return emissionProba / emissionProba.sum()  # normalized
 
+    return probNorm
 
 ################
 # addEpsilonPrivate
