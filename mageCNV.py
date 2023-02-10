@@ -87,6 +87,8 @@ Step 2 optional arguments, defaults should be OK:
                                                        "minSamps=", "maxCorr=", "minCorr=", "noGender"])
     except getopt.GetoptError as e:
         raise Exception(e.msg + ". Try " + scriptName + " --help")
+    if len(args) != 0:
+        raise Exception("bad extra arguments: " + ' '.join(args) + ". Try " + scriptName + " --help")
 
     for opt, value in opts:
         if opt in ('-h', '--help'):

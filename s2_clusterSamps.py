@@ -85,6 +85,8 @@ ARGUMENTS:
         opts, args = getopt.gnu_getopt(argv[1:], 'h', ["help", "counts=", "out=", "minSamps=", "maxCorr=", "minCorr=", "plotDir=", "noGender"])
     except getopt.GetoptError as e:
         raise Exception(e.msg + ". Try " + scriptName + " --help")
+    if len(args) != 0:
+        raise Exception("bad extra arguments: " + ' '.join(args) + ". Try " + scriptName + " --help")
 
     for opt, value in opts:
         if opt in ('-h', '--help'):
