@@ -182,7 +182,7 @@ def main(argv):
         except Exception:
             raise Exception(stepNames[0] + " BPDir " + BPDir + " doesn't exist and can't be mkdir'd")
 
-    # step2: clusterFiles are saved (date-stamped) in clustersDir
+    # step2: clusterFiles are saved (date-stamped and gzipped) in clustersDir
     clustersDir = workDir + '/ClusterFiles/'
     if not os.path.isdir(clustersDir):
         try:
@@ -237,7 +237,7 @@ def main(argv):
         step2Args.extend(["--plotDir", plotDir])
 
         # new clustersFile to create
-        clustersFile = clustersDir + '/clustersFile_' + dateStamp + '.tsv'
+        clustersFile = clustersDir + '/clustersFile_' + dateStamp + '.tsv.gz'
         if os.path.isfile(clustersFile):
             raise Exception(stepNames[2] + " clustersFile " + clustersFile + " already exists")
         step2Args.extend(["--out", clustersFile])
