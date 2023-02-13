@@ -266,7 +266,7 @@ def main(argv):
         s1_countFrags.main(step1Args)
     except Exception as e:
         logger.error("%s FAILED: %s", stepNames[1], str(e))
-        raise Exception("STEP1 FAILED, check log")
+        raise Exception("STEP1 FAILED, use the same --bed as in previous runs or specify a new --workDir")
 
     # countsFile wasn't created if it would be identical to countsFilePrev, if this
     # is the case just use countsFilePrev downstream

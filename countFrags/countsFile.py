@@ -47,10 +47,9 @@ def extractCountsFromPrev(exons, SOIs, prevCountsFile):
         (prevExons, prevSamples, prevCountsList) = parseCountsFilePrivate(prevCountsFile)
         # compare exon definitions
         if (exons != prevExons):
-            logger.error("exon definitions disagree between prevCountsFile and BED file...\n" +
-                         "\tIf the BED file or padding changed, " +
-                         "you cannot re-use a previous countsFile: all counts must be recalculated from scratch")
-            raise Exception('mismatched exon definitions between prevCountsFile and exons')
+            logger.error("exon definitions disagree between prevCountsFile and BED...\n" +
+                         "\tcountsFiles cannot be re-used if the BED file or padding changed")
+            raise Exception('mismatched exons')
 
         # fill prev2new to identify SOIs that are in prevCountsFile:
         # prev2new is a 1D numpy array, size = len(prevSamples), prev2new[prev] is the
