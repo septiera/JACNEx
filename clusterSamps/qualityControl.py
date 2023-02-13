@@ -67,31 +67,21 @@ def SampsQC(counts, SOIs, QCPDF):
         #   dim= len(binEdges)
         FPMRange, densityOnFPMRange = clusterSamps.smoothing.smoothingCoverageProfile(sampFragCounts)
 
-        # recover the threshold (FPMRange index) of the minimum density before an increase
-        # - minDensity2FPMIndex (int): FPMRange index associated with the first lowest
-        # observed density
-        # - minDensity (float): first lowest density observed
-        (minDensity2FPMIndex, minDensity) = clusterSamps.smoothing.findLocalMin(densityOnFPMRange)
-
-        # recover the threshold of the maximum density means after the minimum
-        # density means which is associated with the largest covered exons number.
-        # - maxDensity2FPMIndex (int): FPMRange index associated with the maximum density
-        # observed
-        # - maxDensity (float): maximum density
-        (maxDensity2FPMIndex, maxDensity) = findLocalMaxPrivate(densityOnFPMRange, minDensity2FPMIndex)
+        # find indexes of first local min density and first subsequent local max density
+        (minIndex, maxIndex) = findFirstLocalMinMax(densityOnFPMRange)
 
         # graphic representation of coverage profiles.
         # returns a pdf in the plotDir
-        coverageProfilPlotPrivate(SOIs[sampleIndex], FPMRange, densityOnFPMRange, minDensity2FPMIndex, maxDensity2FPMIndex, PDF)
+        coverageProfilPlotPrivate(SOIs[sampleIndex], FPMRange, densityOnFPMRange, minIndex, maxIndex, PDF)
 
         #############
         # sample validity assessment
-        if (((maxDensity - minDensity) / maxDensity) <= signalThreshold):
+        if (((densityOnFPMRange[maxIndex] - densityOnFPMRange[minIndex]) / densityOnFPMRange[maxIndex]) <= signalThreshold):
             sampsQCfailed.append(sampleIndex)
         #############
         # uncovered exons lists comparison
         else:
-            uncovExonSamp = np.where(sampFragCounts <= FPMRange[minDensity2FPMIndex])[0]
+            uncovExonSamp = np.where(sampFragCounts <= FPMRange[minIndex])[0]
             if (len(uncoveredExons) != 0):
                 uncoveredExons = np.intersect1d(uncoveredExons, uncovExonSamp)
             else:
@@ -110,27 +100,6 @@ def SampsQC(counts, SOIs, QCPDF):
 ###############################################################################
 ############################ PRIVATE FUNCTIONS ################################
 ###############################################################################
-
-###################################
-# findLocalMaxPrivate:
-#
-# Args:
-#  - densityOnFPMRange (np.ndarray[float]): probability density for all bins
-#   in the FPM range
-# this arguments is from the smoothing.smoothingCoverageProfile function.
-#  - minDensity2FPMIndex (int): index associated with the first lowest observed density
-#   in np.ndarray "densityOnFPMRange"
-# this arguments is from the slidingWindow.findLocalMin function.
-#
-# Returns a tupple (maxIndex, maxDensity), each variable is created here:
-#  - maxDensity2FPMIndex (int): FPMRange index associated with the maximum density
-# observed
-# - maxDensity (float): maximum density
-def findLocalMaxPrivate(densityOnFPMRange, minDensity2FPMIndex):
-    maxDensity = np.max(densityOnFPMRange[minDensity2FPMIndex:])
-    maxDensity2FPMIndex = np.where(densityOnFPMRange == maxDensity)[0][0]
-    return (maxDensity2FPMIndex, maxDensity)
-
 
 ###################################
 # coverageProfilPlotPrivate:

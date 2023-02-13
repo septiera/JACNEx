@@ -2,6 +2,10 @@ import numpy as np
 import scipy.stats
 
 
+# set up logger, using inherited config
+logger = logging.getLogger(__name__)
+
+
 ###############################################################################
 ############################ PUBLIC FUNCTIONS #################################
 ###############################################################################
@@ -57,47 +61,65 @@ def smoothingCoverageProfile(sampFragCounts):
 
 
 ###################################
-# findLocalMin:
-# identifies the first minimum density and the associated index in
-# densityOnFPMRange (identical in binEdges).
-# This minimum density corresponds to the threshold separating
-# capured and uncaptured exons.
+# findFirstLocalMinMax:
+# find:
+# - the first local min of data, defined as the first data value such
+#   that the next windowSize-1 values of data are >= data[minIndex]
+# - the first local max of data after minIndex, with analogous definition
 #
 # Args:
-#  - densityOnFPMRange (np.ndarray[float]): probability density for all bins in the FPM range
-# Returns a tupple (minIndex, minDensity), each variable is created here:
-# - minDensity2FPMIndex (int): FPMRange index associated with the first lowest
-# observed density
-# - minDensity (float): first lowest density observed
-def findLocalMin(densityOnFPMRange):
-    #### Fixed parameter
-    # threshold number of observed windows with density above the current
-    # minimum density (order of magnitude 0.5 FPM)
-    subseqWindowSupMin = 5
+# - data: a 1D np.ndarray of floats
+# - windowSize: int, with default value
+#
+# Returns a tuple: (minIndex, maxIndex)
+#
+# Raise exception if no local min / max is found (eg data is always decreasing, or
+# always increasing after minIndex)
+def findFirstLocalMinMax(data, windowSize=6):
+    # sanity checks
+    if windowSize <= 0:
+        logger.error("in findFirstLocalMinMax, windowSize must be a positive int, not %s", str(windowSize))
+        raise Exception('findLocalMinMax bad args')
+    if windowSize > len(data):
+        logger.error("findFirstLocalMinMax called with windowSize > len(data), useless")
+        raise Exception('findLocalMinMax bad args')
 
-    #### To Fill:
-    # initialize variables for minimum density and index
-    minDensity = densityOnFPMRange[0]
-    minDensity2FPMIndex = 0
+    # find first local min
+    minIndex = 0
+    minValue = data[minIndex]
+    # number of consecutive values >= minValue seen
+    thisWindowSize = 1
 
-    #### Accumulator:
-    # counter for number of windows with densities greater than the current
-    # minimum density
-    counter = 0
+    for i in range(1, len(data)):
+        if data[i] < minValue:
+            minIndex = i
+            minValue = data[i]
+            thisWindowSize = 1
+        else:
+            thisWindowSize += 1
+            if thisWindowSize >= windowSize:
+                break
 
-    for i in range(1, len(densityOnFPMRange)):
-        # current density is lower than the minimum density found so far
-        if densityOnFPMRange[i] < minDensity:
-            minDensity = densityOnFPMRange[i]
-            minDensity2FPMIndex = i
-            # reset counter
-            counter = 0
-        # current density is greater than the minimum density found so far
-        elif densityOnFPMRange[i] > minDensity:
-            counter += 1
+    if thisWindowSize < windowSize:
+        logger.warning("findFirstLocalMinMax can't find local min, doesn't data ever increase?")
+        raise Exception('findLocalMinMax no min')
 
-        # the counter has reached the threshold, exit the loop
-        if counter >= subseqWindowSupMin:
-            break
+    # find first local max following minIndex
+    maxIndex = minIndex
+    maxValue = minValue
+    thisWindowSize = 1
+    for i in range(minIndex + 1, len(data)):
+        if data[i] > maxValue:
+            maxIndex = i
+            maxValue = data[i]
+            thisWindowSize = 1
+        else:
+            thisWindowSize += 1
+            if thisWindowSize >= windowSize:
+                break
 
-    return (minDensity2FPMIndex, minDensity)
+    if thisWindowSize < windowSize:
+        logger.warning("findFirstLocalMinMax can't find local max, doesn't data ever decrease after minIndex?")
+        raise Exception('findLocalMinMax no max')
+
+    return(minIndex, maxIndex)
