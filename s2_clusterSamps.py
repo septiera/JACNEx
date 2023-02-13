@@ -173,7 +173,7 @@ def main(argv):
     startTime = time.time()
 
     #######################################################
-    # Parse TSV file of counts
+    # Parse counts
     ###################
     # To obtain :
     # - exons (list of lists[str,int,int,str]): CHR,START,END,EXON_ID

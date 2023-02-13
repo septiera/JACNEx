@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 #     for some samples (hopefully some of the SOIs), using the same exon definitions
 #     as in 'exons', if there is one; or '' otherwise
 #
-# Will returns a tuple (countsArray, countsFilled), each is created here:
+# Returns a tuple (countsArray, countsFilled), each is created here:
 #   - countsArray is an int numpy array, dim = NbExons x NbSOIs, initially all-zeroes
 #   - countsFilled is a 1D boolean numpy array, dim = NbSOIs, initially all-False
 #
