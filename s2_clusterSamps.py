@@ -180,7 +180,7 @@ def main(argv):
         raise Exception("parseCountsFile failed")
 
     thisTime = time.time()
-    logger.debug("Done parsing countsFile, in %.2f s", thisTime - startTime)
+    logger.debug("Done parsing countsFile, in %.2fs", thisTime - startTime)
     startTime = thisTime
 
     ###################
@@ -192,7 +192,7 @@ def main(argv):
         raise Exception("normalizeCounts failed")
 
     thisTime = time.time()
-    logger.debug("Done normalizing counts, in %.2f s", thisTime - startTime)
+    logger.debug("Done normalizing counts, in %.2fs", thisTime - startTime)
     startTime = thisTime
 
     #####################################################
@@ -212,7 +212,7 @@ def main(argv):
         raise Exception("SampQC failed")
 
     thisTime = time.time()
-    logger.debug("Done samples quality control, in %.2f s", thisTime - startTime)
+    logger.debug("Done samples quality control, in %.2fs", thisTime - startTime)
     startTime = thisTime
 
     #####################################################
@@ -246,7 +246,7 @@ def main(argv):
             raise Exception("clustersBuilds failed")
 
         thisTime = time.time()
-        logger.debug("Done clusterisation in %.2f s", thisTime - startTime)
+        logger.debug("Done clusterisation in %.2fs", thisTime - startTime)
         startTime = thisTime
 
         logger.info("### standardisation of results and validation:")
@@ -263,7 +263,7 @@ def main(argv):
             raise Exception("STDZandCheckRes failed")
 
         thisTime = time.time()
-        logger.debug("Done standardisation of results and validation in %.2f s", thisTime - startTime)
+        logger.debug("Done standardisation of results and validation in %.2fs", thisTime - startTime)
         startTime = thisTime
 
     ###########################
@@ -285,7 +285,7 @@ def main(argv):
             raise Exception("getGenderInfos failed")
 
         thisTime = time.time()
-        logger.debug("Done get gender informations in %.2f s", thisTime - startTime)
+        logger.debug("Done get gender informations in %.2fs", thisTime - startTime)
         startTime = thisTime
 
         # cutting normalized count data
@@ -316,7 +316,7 @@ def main(argv):
             raise Exception("clusterBuilds for autosomes failed")
 
         thisTime = time.time()
-        logger.debug("Done samples clustering for autosomes : in %.2f s", thisTime - startTime)
+        logger.debug("Done samples clustering for autosomes : in %.2fs", thisTime - startTime)
         startTime = thisTime
 
         #####################################################
@@ -357,7 +357,7 @@ def main(argv):
             raise Exception("genderAttribution failed")
 
         thisTime = time.time()
-        logger.debug("Done gender prediction from gonosomes : in %.2f s", thisTime - startTime)
+        logger.debug("Done gender prediction from gonosomes : in %.2fs", thisTime - startTime)
         startTime = thisTime
 
         logger.info("### standardisation of results and validation:")
@@ -378,7 +378,7 @@ def main(argv):
             raise Exception("STDZandCheckRes failed")
 
         thisTime = time.time()
-        logger.debug("Done standardisation of results and validation in %.2f s", thisTime - startTime)
+        logger.debug("Done standardisation of results and validation in %.2fs", thisTime - startTime)
         startTime = thisTime
 
     #####################################################
@@ -387,7 +387,7 @@ def main(argv):
     clusterSamps.clustering.printClustersFile(clustsResList, outFile)
 
     thisTime = time.time()
-    logger.debug("Done printing results, in %.2f s", thisTime - startTime)
+    logger.debug("Done printing results, in %.2fs", thisTime - startTime)
     logger.info("ALL DONE")
 
 
