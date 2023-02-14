@@ -166,20 +166,13 @@ def main(argv):
     # parse, check and preprocess arguments
     (countsFile, outFile, minSamps, maxCorr, minCorr, plotDir, noGender) = parseArgs(argv)
 
-    ################################################
     # args seem OK, start working
     logger.debug("called with: " + " ".join(argv[1:]))
     logger.info("starting to work")
     startTime = time.time()
 
-    #######################################################
-    # Parse counts
     ###################
-    # To obtain :
-    # - exons (list of lists[str,int,int,str]): CHR,START,END,EXON_ID
-    #   the exons are sorted according to their genomic position and padded.
-    # - SOIs (list[str]): sampleIDs copied from countsFile's header
-    # - countsArray (np.ndarray[int]): fragment counts, dim = NbExons x NbSOIs
+    # parse counts
     try:
         (exons, SOIs, countsArray) = countFrags.countsFile.parseCountsFile(countsFile)
     except Exception as e:
@@ -190,14 +183,10 @@ def main(argv):
     logger.debug("Done parsing countsFile, in %.2f s", thisTime - startTime)
     startTime = thisTime
 
-    #####################################################
-    # Normalisation:
-    ##################
-    # Fragment counts are standardised in Fragment Per Million (FPM).
-    # - FPMArray (np.ndarray[float]): normalised counts of countsArray same dimension
-    #   for arrays in input/output: NbExons*NbSOIs
+    ###################
+    # normalize counts (FPM)
     try:
-        FPMArray = countFrags.countFragments.normalizeCounts(countsArray)
+        countsFPM = countFrags.countFragments.normalizeCounts(countsArray)
     except Exception as e:
         logger.error("normalizeCounts failed for %s : %s", countsFile, repr(e))
         raise Exception("normalizeCounts failed")
@@ -215,8 +204,8 @@ def main(argv):
     # - uncapturedExons (list[int]): uncaptured exons indexes common
     #   to all samples passing quality control
     try:
-        QCPDF = os.path.join(plotDir, "CoverageProfilChecking_" + str(len(SOIs)) + "samps.pdf")
-        (sampsQCfailed, uncapturedExons) = clusterSamps.qualityControl.SampsQC(FPMArray, SOIs, QCPDF)
+        QCPDF = os.path.join(plotDir, "CoverageProfile_" + str(len(SOIs)) + "samps.pdf")
+        (sampsQCfailed, uncapturedExons) = clusterSamps.qualityControl.SampsQC(countsFPM, SOIs, QCPDF)
 
     except Exception as e:
         logger.error("SampQC failed for %s : %s", countsFile, repr(e))
@@ -234,10 +223,10 @@ def main(argv):
 
     ####################
     # filtering the counts data to recover valid samples and captured exons
-    # - validFPMArray (np.ndarray[float]): normalized fragment counts for exons captured
+    # - validCountsFPM (np.ndarray[float]): normalized fragment counts for exons captured
     # for all samples that passed quality control
-    validFPMArray = np.delete(FPMArray, sampsQCfailed, axis=1)
-    validFPMArray = np.delete(validFPMArray, uncapturedExons, axis=0)
+    validCountsFPM = np.delete(countsFPM, sampsQCfailed, axis=1)
+    validCountsFPM = np.delete(validCountsFPM, uncapturedExons, axis=0)
 
     ###########################
     #### no gender discrimination
@@ -251,7 +240,7 @@ def main(argv):
             #   key = clusterID, value = list of SOIsIndex
             # - trgt2Ctrls (dict(int : list[int])): target and controls clusters correspondance,
             #   key = target clusterID, value = list of controls clusterID
-            (clust2Samps, trgt2Ctrls) = clusterSamps.clustering.clustersBuilds(validFPMArray, maxCorr, minCorr, minSamps, dendogramPDF)
+            (clust2Samps, trgt2Ctrls) = clusterSamps.clustering.clustersBuilds(validCountsFPM, maxCorr, minCorr, minSamps, dendogramPDF)
         except Exception as e:
             logger.error("clustersBuilds failed : %s", repr(e))
             raise Exception("clustersBuilds failed")
@@ -304,10 +293,10 @@ def main(argv):
         gonoIndexFlat = np.unique([item for sublist in list(gonoIndex.values()) for item in sublist])
         # - autosomesFPM (np.ndarray[float]): normalized fragment counts for valid samples, exons captured
         # in autosomes
-        autosomesFPM = np.delete(validFPMArray, gonoIndexFlat, axis=0)
+        autosomesFPM = np.delete(validCountsFPM, gonoIndexFlat, axis=0)
         # - gonosomesFPM (np.ndarray[float]): normalized fragment counts for valid samples, exons captured
         # in gonosomes
-        gonosomesFPM = np.take(validFPMArray, gonoIndexFlat, axis=0)
+        gonosomesFPM = np.take(validCountsFPM, gonoIndexFlat, axis=0)
 
         #####################################################
         # Get Autosomes Clusters
@@ -362,7 +351,7 @@ def main(argv):
             # - kmeans (list[int]): groupID predicted by Kmeans ordered on SOIsIndex
             # - sexePred (list[str]): genderID (e.g ["M","F"]), the order
             # correspond to KMeans groupID (0=M, 1=F)
-            (kmeans, sexePred) = clusterSamps.genderDiscrimination.genderAttribution(validFPMArray, gonoIndex, genderInfo)
+            (kmeans, sexePred) = clusterSamps.genderDiscrimination.genderAttribution(validCountsFPM, gonoIndex, genderInfo)
         except Exception as e:
             logger.error("genderAttribution ie gender prediction from gonosomes failed : %s", repr(e))
             raise Exception("genderAttribution failed")
