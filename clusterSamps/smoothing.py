@@ -1,6 +1,6 @@
 import logging
 import numpy as np
-import scipy.stats
+import KDEpy
 
 
 # set up logger, using inherited config
@@ -12,53 +12,47 @@ logger = logging.getLogger(__name__)
 ###############################################################################
 
 ###################################
-# smoothingCoverageProfile:
-# Smooth the coverage profile with kernel-density estimate using Gaussian kernel
-# Limitation of the count data used to a FPM threshold (10) for extracts the exons
-# with the most coverage signals, i.e. with high density and interpretable values.
-# This cutoff is applicable on coverage data from different capture kits.
-# Definition of a sufficiently precise FPM range (0.1) to deduce the densities of the exons.
-# scipy.stats.gaussian_kde creates and uses a Gaussian probability density estimate
-# (KDE) from data.
-# The bandwidth determines the width of the Gaussian used to smooth the data when
-# estimating the probability density.
-# It's calculated automatically by scipy.stats.gaussian_kde using Scott's method.
-# bandwidth = n^(-1/(d+4)) * sigma
-#  - n is the number of elements in the data
-#  - d is the dimension of the data
-#  - sigma is the standard deviation of the data
+# Given a vector of floats, apply kernel density estimation to obtain a smoothed
+# representation of the data.
 #
 # Args:
-# - sampFragCounts (np.ndarray[float]): FPM by exon for a sample, dim=NbExons
+# - data: a 1D np.ndarray of floats (>= 0)
+# - maxData (float): data values beyond maxData are not plotted (but they ARE
+#     used to calculate the bandwidth when using a heuristic)
+# - numValues (int): approximate size of the returned x and y, default should be fine
+# - bandwidth: one of ('scott', 'silverman', 'ISJ') to use as bandwidth determination
+#     heuristic, or a float (to use a fixed bandwidth)
 #
-# Returns:
-# - binEdges (np.ndarray[floats]): FPM range
-# - densityOnFPMRange (np.ndarray[float]): probability density for all bins in the FPM range
-#   dim= len(binEdges)
-def smoothingCoverageProfile(sampFragCounts):
+# Returns a tuple (x, y, bwValue):
+# - x and y are np.ndarrays of the same size representing the smoothed density of data
+# - bwValue is the bandwidth value (float) used for the KDE
+def smoothData(data, maxData=10, numValues=1000, bandwidth='scott'):
+    # if using a bandwidth heuristic ('scott', 'silverman' or 'ISJ'):
+    # calculate bwValue using full dataset
+    if isinstance(bandwidth, str):
+        kde = KDEpy.FFTKDE(bw=bandwidth)
+        kde.fit(data).evaluate()
+        bwValue = kde.bw
+    else:
+        bwValue = bandwidth
 
-    #### Fixed parameters:
-    # - FPMSignal (int): FPM threshold
-    FPMSignal = 10
-    # -binsNb (int): number of bins to create a sufficiently precise range for the FPM
-    # in this case the size of a bin is 0.1
-    binsNb = FPMSignal * 10
+    # allow 3 bwValues (==stddev since we use gaussian kernels) beyond maxData,
+    # to avoid artifactual "dip" of the curve close to maxData
+    dataReduced = data[data <= maxData + 3 * bwValue]
 
-    # FPM data threshold limitation
-    sampFragCountsReduced = sampFragCounts[sampFragCounts <= FPMSignal]
-    # FPM range creation
-    binEdges = np.linspace(0, FPMSignal, num=binsNb)
-    # limitation of decimal points to avoid float approximations
-    binEdges = np.around(binEdges, 1)
-
-    # - density (scipy.stats.kde.gaussian_kde object): probability density for sampFragCountsReduced
-    # Beware all points are evaluated
-    density = scipy.stats.kde.gaussian_kde(sampFragCountsReduced)
-
-    # compute density probabilities for each bins in the predefined FPM range
-    densityOnFPMRange = density(binEdges)
-
-    return(binEdges, densityOnFPMRange)
+    # we have a hard lower limit at 0, this causes some of the weight of close-to-zero
+    # values to be ignored (because that weight goes to negative values)
+    # this issue can be alleviated by mirroring the data, see:
+    # https://kdepy.readthedocs.io/en/latest/examples.html#boundary-correction-using-mirroring
+    dataReducedMirrored = np.concatenate((dataReduced, -dataReduced))
+    # Compute KDE using bwValue, and twice as many grid points
+    (dataRange, density) = KDEpy.FFTKDE(bw=bwValue).fit(dataReducedMirrored).evaluate(numValues * 2)
+    # double the y-values to get integral of ~1 on the positive dataRanges
+    density = density * 2
+    # delete values outside of [0, maxData]
+    density = density[np.logical_and(0 <= dataRange, dataRange <= maxData)]
+    dataRange = dataRange[np.logical_and(0 <= dataRange, dataRange <= maxData)]
+    return(dataRange, density, bwValue)
 
 
 ###################################
