@@ -1,3 +1,4 @@
+import logging
 import numpy as np
 import scipy.stats
 
@@ -61,10 +62,10 @@ def smoothingCoverageProfile(sampFragCounts):
 
 
 ###################################
-# findFirstLocalMinMax:
 # find:
-# - the first local min of data, defined as the first data value such
-#   that the next windowSize-1 values of data are >= data[minIndex]
+# - the first local min of data, defined as the first data value such that
+#   the next windowSize-1 values of data are > data[minIndex] (ignoring
+#   stretches of equal values)
 # - the first local max of data after minIndex, with analogous definition
 #
 # Args:
@@ -82,7 +83,7 @@ def findFirstLocalMinMax(data, windowSize=6):
         raise Exception('findLocalMinMax bad args')
     if windowSize > len(data):
         logger.error("findFirstLocalMinMax called with windowSize > len(data), useless")
-        raise Exception('findLocalMinMax bad args')
+        raise Exception('findLocalMinMax data too small')
 
     # find first local min
     minIndex = 0
@@ -95,14 +96,15 @@ def findFirstLocalMinMax(data, windowSize=6):
             minIndex = i
             minValue = data[i]
             thisWindowSize = 1
-        else:
+        elif data[i] > minValue:
             thisWindowSize += 1
             if thisWindowSize >= windowSize:
                 break
+        # else data[i] == minValue, look further
 
     if thisWindowSize < windowSize:
         logger.warning("findFirstLocalMinMax can't find local min, doesn't data ever increase?")
-        raise Exception('findLocalMinMax no min')
+        raise Exception('findLocalMinMax cannot find a min')
 
     # find first local max following minIndex
     maxIndex = minIndex
@@ -113,13 +115,14 @@ def findFirstLocalMinMax(data, windowSize=6):
             maxIndex = i
             maxValue = data[i]
             thisWindowSize = 1
-        else:
+        elif data[i] < maxValue:
             thisWindowSize += 1
             if thisWindowSize >= windowSize:
                 break
+        # else continue
 
     if thisWindowSize < windowSize:
         logger.warning("findFirstLocalMinMax can't find local max, doesn't data ever decrease after minIndex?")
-        raise Exception('findLocalMinMax no max')
+        raise Exception('findLocalMinMax cannot find a max after the min')
 
     return(minIndex, maxIndex)
