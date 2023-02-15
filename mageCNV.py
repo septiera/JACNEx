@@ -58,8 +58,8 @@ blablabla
 
 ARGUMENTS:
 Global arguments:
-   --bams [str] : comma-separated list of BAM files (incompatible with --bams-from)
-   --bams-from [str] : text file listing BAM files, one per line (incompatible with --bams)
+   --bams [str] : comma-separated list of BAM files (with path)
+   --bams-from [str] : text file listing BAM files (with path), one per line
    --bed [str] : BED file, possibly gzipped, containing exon definitions (format: 4-column
            headerless tab-separated file, columns contain CHR START END EXON_ID)
    --workDir [str] : subdir where intermediate results and QC files are produced, provide a pre-existing
