@@ -207,7 +207,7 @@ def main(argv):
         plotFilePass = plotDir + "/coverageProfile_PASS.pdf"
         plotFileFail = plotDir + "/coverageProfile_FAIL.pdf"
         (sampsQCfailed, uncapturedExons) = clusterSamps.qualityControl.SampsQC(countsFPM, SOIs, plotFilePass,
-                                                                               plotFileFail, testBW=True)
+                                                                               plotFileFail, testBW=False)
     except Exception as e:
         logger.error("SampsQC failed for %s : %s", countsFile, repr(e))
         raise Exception("SampsQC failed")

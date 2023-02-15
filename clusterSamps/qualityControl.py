@@ -107,6 +107,9 @@ def SampsQC(counts, SOIs, plotFilePass, plotFileFail, minLow2high=0.2, testBW=Fa
             logger.warn("sample %s is bad: %s", SOIs[sampleIndex], str(e))
             sampsQCfailed.append(sampleIndex)
             sampleOK = False
+            # ymax needed for plotting even if we dont have a maxIndex, we don't want to use a huge
+            # value close to y(0) => find the max Y after the first 15% of dataRange
+            ymax = max(densities[0][int(len(dataRanges[0]) * 0.15):])
         else:
             (xmin, ymin) = (dataRanges[0][minIndex], densities[0][minIndex])
             (xmax, ymax) = (dataRanges[0][maxIndex], densities[0][maxIndex])
@@ -123,13 +126,12 @@ def SampsQC(counts, SOIs, plotFilePass, plotFileFail, minLow2high=0.2, testBW=Fa
 
         # plot all the densities for sampleIndex in a single plot
         title = SOIs[sampleIndex] + " density of exon FPMs"
+        # max range on Y axis for visualization, 3*ymax should be fine
+        ylim = 3 * ymax
         if sampleOK:
-            plotDensities(title, dataRanges, densities, legends, xmin, xmax, ymax, pdfPass)
+            plotDensities(title, dataRanges, densities, legends, xmin, xmax, ylim, pdfPass)
         else:
-            # arbitrary ymax needed for plotting, we don't want to use a huge
-            # value close to y(0) => ignore the first 15% of dataRange
-            ymax = max(densities[0][int(len(dataRanges[0]) * 0.15):])
-            plotDensities(title, dataRanges, densities, legends, 0, 0, ymax, pdfFail)
+            plotDensities(title, dataRanges, densities, legends, 0, 0, ylim, pdfFail)
 
     # close PDFs
     pdfPass.close()
@@ -146,44 +148,53 @@ def SampsQC(counts, SOIs, plotFilePass, plotFileFail, minLow2high=0.2, testBW=Fa
 ###############################################################################
 
 ###################################
-# coverageProfilPlotPrivate:
-# generates a plot per patient
-# x-axis: the range of FPM bins (every 0.1 between 0 and 10)
-# y-axis: exons densities
-# black curve: density data smoothed with kernel-density estimate
-# using Gaussian kernels
-# red vertical line: minimum FPM threshold, all uncovered and
-# uncaptured exons are below this threshold
-# orange vertical line: maximum FPM, corresponds to the FPM
-# value where the density of captured exons is the highest.
+# Plot one or more curves and two vertical dashed lines on a single figure.
+# Each curve is passed as an ndarray of X coordinates (eg dataRanges[2] for the
+# third curve), a corresponding ndarray of Y coordinates (densities[2]) of the
+# same length, and a legend (legends[2]).
+# The vertical dashed lines are drawn at X coordinates indexed xLow and xHigh in
+# the X vector of the FIRST curve, ie at X == dataRanges[0][xLow] and
+# dataRanges[0][xHigh] respectively. This makes sense since xLow and xHigh
+# should correspond to the local min and max of the FIRST curve - drawing the
+# mins and maxes of all the curves is too messy.
 #
 # Args:
-# - sampleName (str): sample exact name
-# - binEdges (np.ndarray[floats]): FPM range
-# - densityOnFPMRange (np.ndarray[float]): probability density for all bins in the FPM range
-#   dim= len(binEdges)
-# - minIndex (int): index associated with the first lowest density observed
-# - maxIndex (int): index associated with the maximum density observed
-# - pdf (matplotlib object): store plots in a single pdf
+# - title: plot's title (string)
+# - dataRanges: list of N ndarrays storing X coordinates
+# - densities: list of N ndarrays storing the corresponding Y coordinates
+# - legends: list of N strings identifying each (dataRange,density) pair
+# - xLow (int): index (in dataRanges[0] and densities[0]) of the local min
+#        identified in the FIRST (dataRange,density) pair
+# - xHigh (int): same as xLow but for the first local max following xLow
+# - ylim (float): Y axis high limit
+# - pdf: matplotlib PDF object where the plot will be saved
 #
 # Returns a pdf file in the output folder
-def coverageProfilPlotPrivate(sampleName, binEdges, densityOnFPMRange, minIndex, maxIndex, pdf):
+def plotDensities(title, dataRanges, densities, legends, xLow, xHigh, ylim, pdf):
+    # sanity
+    if (len(dataRanges) != len(densities)) or (len(dataRanges) != len(legends)):
+        raise Exception('plotDensities bad args, length mismatch')
+
+    # set x and y max plot limits (both axes start at 0)
+    xlim = max(dataRanges[:][-1])
+
     # Disable interactive mode
     matplotlib.pyplot.ioff()
-
     fig = matplotlib.pyplot.figure(figsize=(6, 6))
-    matplotlib.pyplot.plot(binEdges, densityOnFPMRange, color='black', label='smoothed densities')
+    for i in range(len(dataRanges)):
+        matplotlib.pyplot.plot(dataRanges[i], densities[i], label=legends[i])
 
-    matplotlib.pyplot.axvline(binEdges[minIndex], color='crimson', linestyle='dashdot', linewidth=2,
-                              label="minFPM=" + '{:0.1f}'.format(binEdges[minIndex]))
-    matplotlib.pyplot.axvline(binEdges[maxIndex], color='darkorange', linestyle='dashdot', linewidth=2,
-                              label="maxFPM=" + '{:0.1f}'.format(binEdges[maxIndex]))
+    matplotlib.pyplot.axvline(xLow, color='crimson', linestyle='dashdot', linewidth=1,
+                              label="minFPM=" + '{:0.2f}'.format(xLow))
+    matplotlib.pyplot.axvline(xHigh, color='darkorange', linestyle='dashdot', linewidth=1,
+                              label="maxFPM=" + '{:0.2f}'.format(xHigh))
 
-    matplotlib.pyplot.ylim(0, 0.5)
-    matplotlib.pyplot.ylabel("Exon densities")
-    matplotlib.pyplot.xlabel("Fragments Per Million")
-    matplotlib.pyplot.title(sampleName + " coverage profile")
-    matplotlib.pyplot.legend()
+    matplotlib.pyplot.xlabel("FPM")
+    matplotlib.pyplot.ylabel("density")
+    matplotlib.pyplot.xlim(0, xlim)
+    matplotlib.pyplot.ylim(0, ylim)
+    matplotlib.pyplot.title(title)
+    matplotlib.pyplot.legend(loc='upper right', fontsize='x-small')
 
     pdf.savefig(fig)
     matplotlib.pyplot.close()
