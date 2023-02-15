@@ -1,3 +1,4 @@
+import os
 import logging
 import numpy as np
 import matplotlib.backends.backend_pdf
@@ -36,65 +37,108 @@ logger = logging.getLogger(__name__)
 # to find those common to all validated samples.
 #
 # Args:
-#  - counts (np.ndarray[float]): normalised fragment counts
-#  - SOIs (list[str]): samples of interest names
-#  - QCPDF (str): full path to save the pdf
+# - counts (np.ndarray[float]): normalised fragment counts
+# - SOIs (list[str]): sample names
+# - plotFilePass: pdf filename (with path) where plots for QC-passing samples are made
+# - plotFileFail: same as plotFilePass but for QC-failing samples
+# - minLow2high (float): a sample's fractional density increase from min to max must
+#     be >= minLow2high to pass QC - default should be OK
+# - testBW: if True each plot includes several different KDE bandwidth algorithms/values,
+#     for testing and comparing; otherwise use what seems best in our tests
 #
-# Returns a tupple (sampsQCfailed, uncoveredExons), each variable is created here:
+# Returns a tuple (sampsQCfailed, uncapturedExons), each variable is created here:
 #  - sampsQCfailed (list[int]): sample indexes not validated by quality control
 #  - uncapturedExons (list[int]): uncaptured exons indexes common to all samples
 # passing quality control
 
-def SampsQC(counts, SOIs, QCPDF):
-    #### Fixed parameter:
-    # threshold to assess the validity of the sample coverage profile.
-    signalThreshold = 0.20
+def SampsQC(counts, SOIs, plotFilePass, plotFileFail, minLow2high=0.2, testBW=False):
+    if os.path.isfile(plotFilePass) or os.path.isfile(plotFileFail):
+        logger.error('SampsQC : plotFile(s) %s and/or %s already exist', plotFilePass, plotFileFail)
+        raise Exception("plotFilePass and/or plotFileFail already exist")
 
     #### To Fill:
     sampsQCfailed = []
-    uncoveredExons = []
+    uncapturedExons = np.arange(len(counts[:, 0]))
 
-    # create a matplotlib object and open a pdf
-    PDF = matplotlib.backends.backend_pdf.PdfPages(QCPDF)
+    # create matplotlib PDF objects
+    pdfPass = matplotlib.backends.backend_pdf.PdfPages(plotFilePass)
+    pdfFail = matplotlib.backends.backend_pdf.PdfPages(plotFileFail)
 
     for sampleIndex in range(len(SOIs)):
-        # extract sample counts
-        sampFragCounts = counts[:, sampleIndex]
+        sampleCounts = counts[:, sampleIndex]
+        sampleOK = True
 
-        # smooth the coverage profile with kernel-density estimate using Gaussian kernels
-        # - FPMRange (np.ndarray[floats]): FPM range, [0-10] each 0.01
-        # - densityOnFPMRange (np.ndarray[float]): probability density for all bins in the FPM range
-        #   dim= len(binEdges)
-        FPMRange, densityOnFPMRange = clusterSamps.smoothing.smoothingCoverageProfile(sampFragCounts)
+        # for smoothing and plotting we don't care about large counts (and they mess things up),
+        # we will only consider the bottom fracDataForSmoothing fraction of counts, default
+        # value should be fine
+        fracDataForSmoothing = 0.96
+        # corresponding max counts value
+        maxData = np.quantile(sampleCounts, fracDataForSmoothing)
 
-        # find indexes of first local min density and first subsequent local max density
-        (minIndex, maxIndex) = findFirstLocalMinMax(densityOnFPMRange)
+        # produce smoothed representation(s) (one if testBW==False, several otherwise)
+        dataRanges = []
+        densities = []
+        legends = []
 
-        # graphic representation of coverage profiles.
-        # returns a pdf in the plotDir
-        coverageProfilPlotPrivate(SOIs[sampleIndex], FPMRange, densityOnFPMRange, minIndex, maxIndex, PDF)
-
-        #############
-        # sample validity assessment
-        if (((densityOnFPMRange[maxIndex] - densityOnFPMRange[minIndex]) / densityOnFPMRange[maxIndex]) <= signalThreshold):
-            sampsQCfailed.append(sampleIndex)
-        #############
-        # uncovered exons lists comparison
+        if testBW:
+            allBWs = ('ISJ', 0.15, 0.20, 'scott', 'silverman')
         else:
-            uncovExonSamp = np.where(sampFragCounts <= FPMRange[minIndex])[0]
-            if (len(uncoveredExons) != 0):
-                uncoveredExons = np.intersect1d(uncoveredExons, uncovExonSamp)
+            # our current favorite, gasp at the python-required trailing comma...
+            allBWs = ('ISJ',)
+
+        for bw in allBWs:
+            try:
+                (dr, dens, bwValue) = clusterSamps.smoothing.smoothData(sampleCounts, maxData=maxData, bandwidth=bw)
+            except Exception as e:
+                logger.error('smoothing failed for %s : %s', str(bw), repr(e))
+                raise
+            dataRanges.append(dr)
+            densities.append(dens)
+            legend = str(bw)
+            if isinstance(bw, str):
+                legend += ' => bw={:.2f}'.format(bwValue)
+            legends.append(legend)
+
+        # find indexes of first local min density and first subsequent local max density,
+        # looking only at our first smoothed representation
+        try:
+            (minIndex, maxIndex) = clusterSamps.smoothing.findFirstLocalMinMax(densities[0])
+        except Exception as e:
+            logger.warn("sample %s is bad: %s", SOIs[sampleIndex], str(e))
+            sampsQCfailed.append(sampleIndex)
+            sampleOK = False
+        else:
+            (xmin, ymin) = (dataRanges[0][minIndex], densities[0][minIndex])
+            (xmax, ymax) = (dataRanges[0][maxIndex], densities[0][maxIndex])
+            # require at least minLow2high fractional increase from ymin to ymax
+            if ((ymax - ymin) / ymin) < minLow2high:
+                logger.warn("sample %s is bad: min (%.2f,%.2f) and max (%.2f,%.2f) densities too close",
+                            SOIs[sampleIndex], xmin, ymin, xmax, ymax)
+                sampsQCfailed.append(sampleIndex)
+                sampleOK = False
             else:
-                uncoveredExons = uncovExonSamp
+                # restrict list of uncaptured exons
+                uncovExonSamp = np.where(sampleCounts <= xmin)[0]
+                uncapturedExons = np.intersect1d(uncapturedExons, uncovExonSamp)
 
-    # close the open pdf
-    PDF.close()
+        # plot all the densities for sampleIndex in a single plot
+        title = SOIs[sampleIndex] + " density of exon FPMs"
+        if sampleOK:
+            plotDensities(title, dataRanges, densities, legends, xmin, xmax, ymax, pdfPass)
+        else:
+            # arbitrary ymax needed for plotting, we don't want to use a huge
+            # value close to y(0) => ignore the first 15% of dataRange
+            ymax = max(densities[0][int(len(dataRanges[0]) * 0.15):])
+            plotDensities(title, dataRanges, densities, legends, 0, 0, ymax, pdfFail)
 
-    # returns in stderr the results on the filtered data
-    logger.info("%s/%s uncovered exons number deleted before clustering for %s/%s valid samples.",
-                len(uncoveredExons), len(counts), (len(SOIs) - len(sampsQCfailed)), len(SOIs))
+    # close PDFs
+    pdfPass.close()
+    pdfFail.close()
 
-    return(sampsQCfailed, uncoveredExons)
+    logger.info("%s/%s uncaptured exons number deleted before clustering for %s/%s valid samples.",
+                len(uncapturedExons), len(counts), (len(SOIs) - len(sampsQCfailed)), len(SOIs))
+
+    return(sampsQCfailed, uncapturedExons)
 
 
 ###############################################################################

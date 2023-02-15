@@ -198,18 +198,19 @@ def main(argv):
     #####################################################
     # Quality control:
     ##################
-    # sample coverage profil validity assessment and identification of uncaptured exons indexes
+    # sample coverage profile validity assessment and identification of uncaptured exons indexes
     # common to the validated samples
     # - sampsQCfailed (list[int]): sample indexes not validated by quality control
     # - uncapturedExons (list[int]): uncaptured exons indexes common
     #   to all samples passing quality control
     try:
-        QCPDF = os.path.join(plotDir, "CoverageProfile_" + str(len(SOIs)) + "samps.pdf")
-        (sampsQCfailed, uncapturedExons) = clusterSamps.qualityControl.SampsQC(countsFPM, SOIs, QCPDF)
-
+        plotFilePass = plotDir + "/coverageProfile_PASS.pdf"
+        plotFileFail = plotDir + "/coverageProfile_FAIL.pdf"
+        (sampsQCfailed, uncapturedExons) = clusterSamps.qualityControl.SampsQC(countsFPM, SOIs, plotFilePass,
+                                                                               plotFileFail, testBW=True)
     except Exception as e:
-        logger.error("SampQC failed for %s : %s", countsFile, repr(e))
-        raise Exception("SampQC failed")
+        logger.error("SampsQC failed for %s : %s", countsFile, repr(e))
+        raise Exception("SampsQC failed")
 
     thisTime = time.time()
     logger.debug("Done samples quality control, in %.2fs", thisTime - startTime)
