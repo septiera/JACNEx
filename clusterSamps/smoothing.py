@@ -70,13 +70,14 @@ def smoothingCoverageProfile(sampFragCounts):
 #
 # Args:
 # - data: a 1D np.ndarray of floats
-# - windowSize: int, with default value
+# - windowSize: int, default should be fine if running on y returned by smoothData()
+#     with its default numValues
 #
 # Returns a tuple: (minIndex, maxIndex)
 #
 # Raise exception if no local min / max is found (eg data is always decreasing, or
 # always increasing after minIndex)
-def findFirstLocalMinMax(data, windowSize=6):
+def findFirstLocalMinMax(data, windowSize=20):
     # sanity checks
     if windowSize <= 0:
         logger.error("in findFirstLocalMinMax, windowSize must be a positive int, not %s", str(windowSize))
@@ -103,8 +104,7 @@ def findFirstLocalMinMax(data, windowSize=6):
         # else data[i] == minValue, look further
 
     if thisWindowSize < windowSize:
-        logger.warning("findFirstLocalMinMax can't find local min, doesn't data ever increase?")
-        raise Exception('findLocalMinMax cannot find a min')
+        raise Exception('findLocalMinMax cannot find a local min')
 
     # find first local max following minIndex
     maxIndex = minIndex
@@ -122,7 +122,6 @@ def findFirstLocalMinMax(data, windowSize=6):
         # else continue
 
     if thisWindowSize < windowSize:
-        logger.warning("findFirstLocalMinMax can't find local max, doesn't data ever decrease after minIndex?")
         raise Exception('findLocalMinMax cannot find a max after the min')
 
     return(minIndex, maxIndex)
