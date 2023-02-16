@@ -7,6 +7,9 @@ import matplotlib.pyplot
 ####### MAGE-CNV modules
 import clusterSamps.smoothing
 
+# prevent PIL flooding the logs when we are in DEBUG loglevel
+logging.getLogger('PIL').setLevel(logging.WARNING)
+
 # set up logger, using inherited config
 logger = logging.getLogger(__name__)
 
@@ -66,7 +69,6 @@ def SampsQC(counts, SOIs, plotFilePass, plotFileFail, minLow2high=0.2, testBW=Fa
 
     for sampleIndex in range(len(SOIs)):
         sampleCounts = counts[:, sampleIndex]
-        sampleOK = True
 
         # for smoothing and plotting we don't care about large counts (and they mess things up),
         # we will only consider the bottom fracDataForSmoothing fraction of counts, default
@@ -79,6 +81,11 @@ def SampsQC(counts, SOIs, plotFilePass, plotFileFail, minLow2high=0.2, testBW=Fa
         dataRanges = []
         densities = []
         legends = []
+        # vertical dashed lines: coordinates (default to 0 ie no lines) and legends
+        (xmin, xmax) = (0, 0)
+        (line1legend, line2legend) = ("", "")
+        # pdf to use for this sample
+        pdf = pdfPass
 
         if testBW:
             allBWs = ('ISJ', 0.15, 0.20, 'scott', 'silverman')
@@ -106,19 +113,21 @@ def SampsQC(counts, SOIs, plotFilePass, plotFileFail, minLow2high=0.2, testBW=Fa
         except Exception as e:
             logger.warn("sample %s is bad: %s", SOIs[sampleIndex], str(e))
             sampsQCfailed.append(sampleIndex)
-            sampleOK = False
-            # ymax needed for plotting even if we dont have a maxIndex, we don't want to use a huge
+            pdf = pdfFail
+            # ymax needed for plotting even without a maxIndex... we don't want a huge
             # value close to y(0) => find the max Y after the first 15% of dataRange
             ymax = max(densities[0][int(len(dataRanges[0]) * 0.15):])
         else:
             (xmin, ymin) = (dataRanges[0][minIndex], densities[0][minIndex])
             (xmax, ymax) = (dataRanges[0][maxIndex], densities[0][maxIndex])
+            line1legend = "min FPM = " + '{:0.2f}'.format(xmin)
+            line2legend = "max FPM = " + '{:0.2f}'.format(xmax)
             # require at least minLow2high fractional increase from ymin to ymax
             if ((ymax - ymin) / ymin) < minLow2high:
                 logger.warn("sample %s is bad: min (%.2f,%.2f) and max (%.2f,%.2f) densities too close",
                             SOIs[sampleIndex], xmin, ymin, xmax, ymax)
                 sampsQCfailed.append(sampleIndex)
-                sampleOK = False
+                pdf = pdfFail
             else:
                 # restrict list of uncaptured exons
                 uncovExonSamp = np.where(sampleCounts <= xmin)[0]
@@ -128,10 +137,7 @@ def SampsQC(counts, SOIs, plotFilePass, plotFileFail, minLow2high=0.2, testBW=Fa
         title = SOIs[sampleIndex] + " density of exon FPMs"
         # max range on Y axis for visualization, 3*ymax should be fine
         ylim = 3 * ymax
-        if sampleOK:
-            plotDensities(title, dataRanges, densities, legends, xmin, xmax, ylim, pdfPass)
-        else:
-            plotDensities(title, dataRanges, densities, legends, 0, 0, ylim, pdfFail)
+        plotDensities(title, dataRanges, densities, legends, xmin, xmax, line1legend, line2legend, ylim, pdf)
 
     # close PDFs
     pdfPass.close()
@@ -148,34 +154,31 @@ def SampsQC(counts, SOIs, plotFilePass, plotFileFail, minLow2high=0.2, testBW=Fa
 ###############################################################################
 
 ###################################
-# Plot one or more curves and two vertical dashed lines on a single figure.
+# Plot one or more curves, and optionally two vertical dashed lines, on a
+# single figure.
 # Each curve is passed as an ndarray of X coordinates (eg dataRanges[2] for the
 # third curve), a corresponding ndarray of Y coordinates (densities[2]) of the
 # same length, and a legend (legends[2]).
-# The vertical dashed lines are drawn at X coordinates indexed xLow and xHigh in
-# the X vector of the FIRST curve, ie at X == dataRanges[0][xLow] and
-# dataRanges[0][xHigh] respectively. This makes sense since xLow and xHigh
-# should correspond to the local min and max of the FIRST curve - drawing the
-# mins and maxes of all the curves is too messy.
+# The vertical dashed lines are drawn at X coordinates line1 and line2, unless
+# line1==line2==0.
 #
 # Args:
 # - title: plot's title (string)
 # - dataRanges: list of N ndarrays storing X coordinates
 # - densities: list of N ndarrays storing the corresponding Y coordinates
 # - legends: list of N strings identifying each (dataRange,density) pair
-# - xLow (int): index (in dataRanges[0] and densities[0]) of the local min
-#        identified in the FIRST (dataRange,density) pair
-# - xHigh (int): same as xLow but for the first local max following xLow
-# - ylim (float): Y axis high limit
+# - line1, line2 (floats): X coordinates of dashed vertical lines to draw
+# - line1legend, line2legend (strings): legends for the vertical lines
+# - ylim (float): Y max plot limit
 # - pdf: matplotlib PDF object where the plot will be saved
 #
 # Returns a pdf file in the output folder
-def plotDensities(title, dataRanges, densities, legends, xLow, xHigh, ylim, pdf):
+def plotDensities(title, dataRanges, densities, legends, line1, line2, line1legend, line2legend, ylim, pdf):
     # sanity
     if (len(dataRanges) != len(densities)) or (len(dataRanges) != len(legends)):
         raise Exception('plotDensities bad args, length mismatch')
 
-    # set x and y max plot limits (both axes start at 0)
+    # set X max plot limit (both axes start at 0)
     xlim = max(dataRanges[:][-1])
 
     # Disable interactive mode
@@ -184,17 +187,16 @@ def plotDensities(title, dataRanges, densities, legends, xLow, xHigh, ylim, pdf)
     for i in range(len(dataRanges)):
         matplotlib.pyplot.plot(dataRanges[i], densities[i], label=legends[i])
 
-    matplotlib.pyplot.axvline(xLow, color='crimson', linestyle='dashdot', linewidth=1,
-                              label="minFPM=" + '{:0.2f}'.format(xLow))
-    matplotlib.pyplot.axvline(xHigh, color='darkorange', linestyle='dashdot', linewidth=1,
-                              label="maxFPM=" + '{:0.2f}'.format(xHigh))
+    if (line1 != 0) or (line2 != 0):
+        matplotlib.pyplot.axvline(line1, color='crimson', linestyle='dashdot', linewidth=1, label=line1legend)
+        matplotlib.pyplot.axvline(line2, color='darkorange', linestyle='dashdot', linewidth=1, label=line2legend)
 
     matplotlib.pyplot.xlabel("FPM")
     matplotlib.pyplot.ylabel("density")
     matplotlib.pyplot.xlim(0, xlim)
     matplotlib.pyplot.ylim(0, ylim)
     matplotlib.pyplot.title(title)
-    matplotlib.pyplot.legend(loc='upper right', fontsize='x-small')
+    matplotlib.pyplot.legend(loc='upper right', fontsize='small')
 
     pdf.savefig(fig)
     matplotlib.pyplot.close()
