@@ -7,9 +7,8 @@ import matplotlib.pyplot
 import scipy.cluster.hierarchy
 import scipy.spatial.distance
 
-# prevent matplotlib DEBUG messages filling the logs when we are in DEBUG loglevel
-matplotlib_logger = logging.getLogger('matplotlib')
-matplotlib_logger.setLevel(logging.WARNING)
+# prevent matplotlib flooding the logs when we are in DEBUG loglevel
+logging.getLogger('matplotlib').setLevel(logging.WARNING)
 
 # set up logger, using inherited config
 logger = logging.getLogger(__name__)

@@ -4,9 +4,8 @@ import gzip
 import logging
 
 
-# prevent numba DEBUG messages filling the logs when we are in DEBUG loglevel
-numba_logger = logging.getLogger('numba')
-numba_logger.setLevel(logging.WARNING)
+# prevent numba flooding the logs when we are in DEBUG loglevel
+logging.getLogger('numba').setLevel(logging.WARNING)
 
 # set up logger, using inherited config
 logger = logging.getLogger(__name__)
