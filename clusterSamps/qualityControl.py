@@ -61,7 +61,7 @@ def SampsQC(counts, SOIs, plotFilePass, plotFileFail, minLow2high=0.2, testBW=Fa
 
     #### To Fill:
     sampsQCfailed = []
-    uncapturedExons = np.arange(len(counts[:, 0]))
+    capturedExons = np.zeros(len(counts[:, 0]), dtype=np.bool_)
 
     # create matplotlib PDF objects
     pdfPass = matplotlib.backends.backend_pdf.PdfPages(plotFilePass)
@@ -111,7 +111,7 @@ def SampsQC(counts, SOIs, plotFilePass, plotFileFail, minLow2high=0.2, testBW=Fa
         try:
             (minIndex, maxIndex) = clusterSamps.smoothing.findFirstLocalMinMax(densities[0])
         except Exception as e:
-            logger.warn("sample %s is bad: %s", SOIs[sampleIndex], str(e))
+            logger.info("sample %s is bad: %s", SOIs[sampleIndex], str(e))
             sampsQCfailed.append(sampleIndex)
             pdf = pdfFail
             # ymax needed for plotting even without a maxIndex... we don't want a huge
@@ -124,14 +124,12 @@ def SampsQC(counts, SOIs, plotFilePass, plotFileFail, minLow2high=0.2, testBW=Fa
             line2legend = "max FPM = " + '{:0.2f}'.format(xmax)
             # require at least minLow2high fractional increase from ymin to ymax
             if ((ymax - ymin) / ymin) < minLow2high:
-                logger.warn("sample %s is bad: min (%.2f,%.2f) and max (%.2f,%.2f) densities too close",
+                logger.info("sample %s is bad: min (%.2f,%.2f) and max (%.2f,%.2f) densities too close",
                             SOIs[sampleIndex], xmin, ymin, xmax, ymax)
                 sampsQCfailed.append(sampleIndex)
                 pdf = pdfFail
             else:
-                # restrict list of uncaptured exons
-                uncovExonSamp = np.where(sampleCounts <= xmin)[0]
-                uncapturedExons = np.intersect1d(uncapturedExons, uncovExonSamp)
+                capturedExons = np.logical_or(capturedExons, sampleCounts > xmin)
 
         # plot all the densities for sampleIndex in a single plot
         title = SOIs[sampleIndex] + " density of exon FPMs"
@@ -143,10 +141,13 @@ def SampsQC(counts, SOIs, plotFilePass, plotFileFail, minLow2high=0.2, testBW=Fa
     pdfPass.close()
     pdfFail.close()
 
-    logger.info("%s/%s uncaptured exons number deleted before clustering for %s/%s valid samples.",
-                len(uncapturedExons), len(counts), (len(SOIs) - len(sampsQCfailed)), len(SOIs))
+    if len(sampsQCfailed) > 0:
+        logger.warn("%s/%s samples fail exon-density QC (see QC plots), these samples won't get CNV calls",
+                    len(sampsQCfailed), len(SOIs))
+    logger.info("%s/%s exons are not covered/captured in any sample and will be ignored",
+                len(capturedExons[np.logical_not(capturedExons)]), len(capturedExons))
 
-    return(sampsQCfailed, uncapturedExons)
+    return(sampsQCfailed, capturedExons)
 
 
 ###############################################################################

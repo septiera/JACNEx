@@ -195,19 +195,14 @@ def main(argv):
     logger.debug("Done normalizing counts, in %.2fs", thisTime - startTime)
     startTime = thisTime
 
-    #####################################################
-    # Quality control:
-    ##################
-    # sample coverage profile validity assessment and identification of uncaptured exons indexes
-    # common to the validated samples
-    # - sampsQCfailed (list[int]): sample indexes not validated by quality control
-    # - uncapturedExons (list[int]): uncaptured exons indexes common
-    #   to all samples passing quality control
+    ###################
+    # plot exon FPM densities for all samples; use this to identify QC-failing samples,
+    # and exons with decent coverage in at least one sample (other exons can be ignored)
+    plotFilePass = plotDir + "/coverageProfile_PASS.pdf"
+    plotFileFail = plotDir + "/coverageProfile_FAIL.pdf"
     try:
-        plotFilePass = plotDir + "/coverageProfile_PASS.pdf"
-        plotFileFail = plotDir + "/coverageProfile_FAIL.pdf"
-        (sampsQCfailed, uncapturedExons) = clusterSamps.qualityControl.SampsQC(countsFPM, SOIs, plotFilePass,
-                                                                               plotFileFail, testBW=False)
+        (sampsQCfailed, capturedExons) = clusterSamps.qualityControl.SampsQC(countsFPM, SOIs, plotFilePass,
+                                                                             plotFileFail, testBW=False)
     except Exception as e:
         logger.error("SampsQC failed for %s : %s", countsFile, repr(e))
         raise Exception("SampsQC failed")
@@ -230,7 +225,7 @@ def main(argv):
     # - validCountsFPM (np.ndarray[float]): normalized fragment counts for exons captured
     # for all samples that passed quality control
     validCountsFPM = np.delete(countsFPM, sampsQCfailed, axis=1)
-    validCountsFPM = np.delete(validCountsFPM, uncapturedExons, axis=0)
+    validCountsFPM = validCountsFPM[capturedExons:]
 
     ###########################
     #### no gender discrimination
@@ -275,7 +270,7 @@ def main(argv):
     else:
 
         # - exonsToKeep (list of list[str,int,int,str]): contains exons information from captured exons
-        exonsToKeep = [val for i, val in enumerate(exons) if i not in uncapturedExons]
+        exonsToKeep = exons[capturedExons]
 
         try:
             # parse exons to extract information related to the organisms studied and their gender
