@@ -47,7 +47,7 @@ cd samtools-1.15.1
 ./configure
 make all all-htslib
 ```
-It is also necessary to have python version 3.6.
+It is also necessary to have python version >= 3.6.
 As well as the following modules:
 ```
 python3 -m venv ~/pyEnv_MageCNV
