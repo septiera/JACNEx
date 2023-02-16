@@ -216,6 +216,9 @@ def main(argv):
     logger.debug("Done samples quality control, in %.2fs", thisTime - startTime)
     startTime = thisTime
 
+    logger.info("EARLY RETURN, working on coverage plots")
+    return
+
     #####################################################
     # Clustering:
     ####################
