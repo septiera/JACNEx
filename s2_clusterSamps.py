@@ -166,6 +166,11 @@ def main(argv):
     # parse, check and preprocess arguments
     (countsFile, outFile, minSamps, maxCorr, minCorr, plotDir, noGender) = parseArgs(argv)
 
+    # should density plots compare several different KDE bandwidth algorithms and values?
+    # hard-coded here rather than set via parseArgs because this should only be set
+    # to True for dev & testing
+    testSmoothingBWs = False
+
     # args seem OK, start working
     logger.debug("called with: " + " ".join(argv[1:]))
     logger.info("starting to work")
@@ -202,7 +207,7 @@ def main(argv):
     plotFileFail = plotDir + "/coverageProfile_FAIL.pdf"
     try:
         (sampsQCfailed, capturedExons) = clusterSamps.qualityControl.SampsQC(countsFPM, SOIs, plotFilePass,
-                                                                             plotFileFail, testBW=False)
+                                                                             plotFileFail, testBW=testSmoothingBWs)
     except Exception as e:
         logger.error("SampsQC failed for %s : %s", countsFile, repr(e))
         raise Exception("SampsQC failed")
