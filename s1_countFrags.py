@@ -11,6 +11,7 @@ import os
 import math
 import re
 import time
+import gzip
 import shutil
 import logging
 import numpy as np
@@ -62,7 +63,7 @@ The "sample names" are the BAM filenames stripped of their path and .bam extensi
 Results are printed to --out in TSV format (possibly gzipped): first 4 columns hold the exon
 definitions after padding and sorting, subsequent columns (one per sample, sorted alphanumerically)
 hold the counts.
-In addition, any support for putative breakpoints is printed to sample-specific TSV files
+In addition, any support for putative breakpoints is printed to sample-specific TSV.gz files
 created in BPDir.
 If a pre-existing counts file produced by this program with the same BED is provided (with --counts),
 counts for common BAMs are copied from this file and counting is only performed for the new BAMs.
@@ -311,8 +312,8 @@ def main(argv):
         # bam2counts() returns a 3-element tuple (sampleIndex, sampleCounts, breakPoints).
         # If something went wrong, log and populate failedBams;
         # otherwise fill column at index sampleIndex in countsArray with counts stored in sampleCounts,
-        # and print info about putative CNVs with alignment-supported breakpoints as TSV
-        # to BPDir/sample.breakPoints.tsv
+        # and print info about putative CNVs with alignment-supported breakpoints as TSV.gz
+        # to BPDir/<sample>.breakPoints.tsv.gz
         def mergeCounts(futureBam2countsRes):
             e = futureBam2countsRes.exception()
             if e is not None:
@@ -327,14 +328,14 @@ def main(argv):
                     countsArray[exonIndex, si] = bam2countsRes[1][exonIndex]
                 if (len(bam2countsRes[2]) > 0):
                     try:
-                        bpFile = BPDir + '/' + samples[si] + '.breakPoints.tsv'
-                        BPFH = open(bpFile, mode='w')
+                        bpFile = BPDir + '/' + samples[si] + '.breakPoints.tsv.gz'
+                        BPFH = gzip.open(bpFile, "xt", compresslevel=6)
                         for thisBP in bam2countsRes[2]:
                             toPrint = thisBP[0] + "\t" + str(thisBP[1]) + "\t" + str(thisBP[2]) + "\t" + thisBP[3] + "\t" + thisBP[4]
-                            print(toPrint, file=BPFH)
+                            BPFH.write(toPrint)
                         BPFH.close()
                     except Exception as e:
-                        logger.warning("Discarding breakpoints info for %s because cannot open %s for writing - %s",
+                        logger.warning("Discarding breakpoints info for %s because cannot gzip-open %s for writing - %s",
                                        samples[si], bpFile, e)
                 logger.info("Done counting fragments for %s", samples[si])
 

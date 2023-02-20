@@ -11,7 +11,7 @@ For more information how obtaining the different files see https://github.com/nt
 Given a BED of exons and one or more BAM files, count the number of sequenced fragments from each BAM that overlap each exon (+- padding).<br>
 Results are printed to stdout in TSV format: first 4 columns hold the exon definitions after padding and sorting, subsequent columns (one per BAM) hold the counts.<br>
 If a pre-existing counts file produced by this program with the same BED is provided (with --counts), counts for requested BAMs are copied from this file and counting is only performed for the new BAM(s).<br>
-In addition, any support for putative breakpoints is printed to sample-specific TSV files created in BPdir.<br>
+In addition, any support for putative breakpoints is printed to sample-specific TSV.gz files created in BPdir.<br>
 
 Example:
 ```
