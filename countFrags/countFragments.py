@@ -81,12 +81,14 @@ def initExonNCLs(exons):
 # Pre-requirement: initExonNCLs must have been called to populate exonNCLs before
 # the first call to this function.
 #
-# Return a 3-element tuple (sampleIndex, sampleCounts, breakPoints) where:
+# Return a 3-element tuple (sampleIndex, sampleCounts, breakPointsTSV) where:
 # - sampleCounts is a 1D numpy int array dim = nbOfExons allocated here and filled with
 #   the counts for this sample,
-# - breakPoints is a list of 5-element lists [CHR, START, END, CNVTYPE, QNAME], where
-#   START and END are the coordinates of the putative breakpoints, CNVTYPE is 'DEL' or 'DUP',
-#   and QNAME is the supporting fragment
+# - breakPointsTSV is a single string storing a TSV file with:
+#   CHR START END CNVTYPE COUNT-QNAMES QNAMES
+#   where CHR-START-END are the coordinates of the putative CNV, CNVTYPE is 'DEL' or 'DUP',
+#   COUNT-QNAMES is the number of QNAMEs that support this CNV, and QNAMES is the
+#   comma-separated list of supporting QNAMEs.
 # If anything goes wrong, log info on exception and then always raise Exception(str(sampleIndex)),
 # so caller can catch it and know which sampleIndex we were working on.
 def bam2counts(bamFile, nbOfExons, maxGap, tmpDir, samtools, jobs, sampleIndex):
@@ -213,7 +215,9 @@ def bam2counts(bamFile, nbOfExons, maxGap, tmpDir, samtools, jobs, sampleIndex):
         os.sync()
         # sort by chrom then start then end then...
         countFrags.bed.sortExonsOrBPs(breakPoints)
-        return(sampleIndex, sampleCounts, breakPoints)
+        # count QNAMES supporting the same breakpoints and produce BP data as TSV
+        breakPointsTSV = countAndMergeBPs(breakPoints)
+        return(sampleIndex, sampleCounts, breakPointsTSV)
 
     except Exception as e:
         logger.error("bam2counts failed for %s - %s", bamFile, repr(e))
@@ -270,6 +274,35 @@ def firstNonClipped(cigar):
         else:
             break
     return(firstNonClipped)
+
+
+####################################################
+# Arg: sorted list of "breakpoints" == [CHR, START, END, CNVTYPE, QNAME]
+#
+# Count the number of consecutive lines with the same CHR-START-END-CNVTYPE,
+# and merge these into a single [CHR, START, END, CNVTYPE, COUNT-QNAMES, QNAMES].
+# Return all the resulting data as a single string storing a TSV (including
+# header, \t field separators and \n line terminations).
+def countAndMergeBPs(breakPoints):
+    allBPs = "CHR\tSTART\tEND\tCNVTYPE\tCOUNT-QNAMES\tQNAMES\n"
+    # append dummy BP to end the loop properly
+    breakPoints.append(['DUMMY', 0, 0, 'DUMMY', 'DUMMY'])
+    # accumulators, rely on the fact that the breakPoints are sorted
+    start = ""
+    count = 0
+    qnames = []
+    for bp in breakPoints:
+        thisStart = bp[0] + "\t" + str(bp[1]) + "\t" + str(bp[2]) + "\t" + bp[3]
+        if (thisStart == start):
+            count += 1
+            qnames.append(bp[4])
+        else:
+            if count != 0:
+                allBPs += start + "\t" + str(count) + "\t" + ",".join(qnames) + "\n"
+            start = thisStart
+            count = 1
+            qnames = [bp[4]]
+    return(allBPs)
 
 
 ####################################################

@@ -330,11 +330,7 @@ def main(argv):
                     try:
                         bpFile = BPDir + '/' + samples[si] + '.breakPoints.tsv.gz'
                         BPFH = gzip.open(bpFile, "xt", compresslevel=6)
-                        toPrint = "CHR\tSTART\tEND\tCNVTYPE\tQNAME\n"
-                        BPFH.write(toPrint)
-                        for thisBP in bam2countsRes[2]:
-                            toPrint = thisBP[0] + "\t" + str(thisBP[1]) + "\t" + str(thisBP[2]) + "\t" + thisBP[3] + "\t" + thisBP[4] + "\n"
-                            BPFH.write(toPrint)
+                        BPFH.write(bam2countsRes[2])
                         BPFH.close()
                     except Exception as e:
                         logger.warning("Discarding breakpoints info for %s because cannot gzip-open %s for writing - %s",
