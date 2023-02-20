@@ -9,6 +9,9 @@ import numpy as np
 import ncls
 from concurrent.futures import ProcessPoolExecutor
 
+####### MAGE-CNV modules
+import countFrags.bed
+
 # set up logger, using inherited config
 logger = logging.getLogger(__name__)
 
@@ -81,8 +84,8 @@ def initExonNCLs(exons):
 # Return a 3-element tuple (sampleIndex, sampleCounts, breakPoints) where:
 # - sampleCounts is a 1D numpy int array dim = nbOfExons allocated here and filled with
 #   the counts for this sample,
-# - breakPoints is a list of 5-element lists [CHR, BP1, BP2, CNVTYPE, QNAME], where
-#   BP1 and BP2 are the coordinates of the putative breakpoints, CNVTYPE is 'DEL' or 'DUP',
+# - breakPoints is a list of 5-element lists [CHR, START, END, CNVTYPE, QNAME], where
+#   START and END are the coordinates of the putative breakpoints, CNVTYPE is 'DEL' or 'DUP',
 #   and QNAME is the supporting fragment
 # If anything goes wrong, log info on exception and then always raise Exception(str(sampleIndex)),
 # so caller can catch it and know which sampleIndex we were working on.
@@ -208,9 +211,8 @@ def bam2counts(bamFile, nbOfExons, maxGap, tmpDir, samtools, jobs, sampleIndex):
         # tmpDirObj should get cleaned up automatically but sometimes samtools tempfiles
         # are in the process of being deleted => sync to avoid race
         os.sync()
-        # we want breakpoints grouped by chrom (but not caring that chr10 comes before chr2),
-        # then sorted by BP1 then BP2 then CNVTYPE then QNAME
-        breakPoints.sort(key=lambda row: (row[0], row[1], row[2], row[3], row[4]))
+        # sort by chrom then start then end then...
+        countFrags.bed.sortExonsOrBPs(breakPoints)
         return(sampleIndex, sampleCounts, breakPoints)
 
     except Exception as e:
@@ -281,8 +283,8 @@ def firstNonClipped(cigar):
 # Return a 2-element tuple (batchCounts, batchBPs) where:
 # - batchCounts is a 1D numpy int array dim = nbOfExons allocated here and filled with
 #   the counts for this batch of lines,
-# - batchBPs is a list of 5-element lists [CHR, BP1, BP2, CNVTYPE, QNAME], where
-#   BP1 and BP2 are the coordinates of the putative breakpoints supported by this
+# - batchBPs is a list of 5-element lists [CHR, START, END, CNVTYPE, QNAME], where
+#   START and END are the coordinates of the putative breakpoints supported by this
 #   batch of lines, CNVTYPE is 'DEL' or 'DUP',  and QNAME is the supporting fragment
 def processBatch(batchOfLines, nbOfExons, maxGap):
     # We need to process all alis for a QNAME together
@@ -422,9 +424,9 @@ def processBatch(batchOfLines, nbOfExons, maxGap):
 #   - the counts vector to update (1D numpy int array)
 #   - the maximum accepted gap length between a pair of mate reads, pairs separated by
 #     a longer gap are ignored (putative structural variant or alignment error)
-# This function updates countsVec, and returns a 3-element list [BP1, BP2, CNVTYPE] if
+# This function updates countsVec, and returns a 3-element list [START, END, CNVTYPE] if
 # the QNAME supports the presence of a CNV (CNVTYPE == 'DEL' or 'DUP') with breakpoints
-# BP1 & BP2 (ie a read spans the breakpoints), None otherwise.
+# START & END (ie a read spans the breakpoints), None otherwise.
 def Qname2ExonCount(startFList, endFList, startRList, endRList, chrom, countsVec, maxGap):
     # skip Qnames that don't have alignments on both strands
     if (len(startFList) == 0) or (len(startRList) == 0):

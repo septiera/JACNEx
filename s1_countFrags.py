@@ -330,7 +330,7 @@ def main(argv):
                     try:
                         bpFile = BPDir + '/' + samples[si] + '.breakPoints.tsv.gz'
                         BPFH = gzip.open(bpFile, "xt", compresslevel=6)
-                        toPrint = "CHR\tBP1\tBP2\tCNVTYPE\tQNAME\n"
+                        toPrint = "CHR\tSTART\tEND\tCNVTYPE\tQNAME\n"
                         BPFH.write(toPrint)
                         for thisBP in bam2countsRes[2]:
                             toPrint = thisBP[0] + "\t" + str(thisBP[1]) + "\t" + str(thisBP[2]) + "\t" + thisBP[3] + "\t" + thisBP[4] + "\n"

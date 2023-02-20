@@ -22,16 +22,6 @@ logger = logging.getLogger(__name__)
 def processBed(bedFile, padding):
     # list of exons to be returned
     exons = []
-
-    # for sorting we'll need a numerical version of CHR, but we must read the whole file
-    # beforehand => fill a CHR -> CHR_NUM dictionary
-    chr2num = {}
-    # dict to store all non-numeric chromosomes, key is the CHR stripped of 'chr' if
-    # present and value is the CHR (e.g 'Y'->'chrY')
-    nonNumChrs = {}
-    # maxCHR: max int value in CHR column (after stripping 'chr' if present)
-    maxCHR = 0
-
     # dictionary for checking that EXON_IDs are unique (key='EXON_ID', value=1)
     exonIDs = {}
 
@@ -46,7 +36,6 @@ def processBed(bedFile, padding):
 
     for line in bedFH:
         fields = line.rstrip().split("\t")
-        #############################
         # sanity checks + preprocess START+END
         # need exactly 4 fields
         if len(fields) != 4:
@@ -69,34 +58,53 @@ def processBed(bedFile, padding):
             raise Exception("processBed failed, check log")
         else:
             exonIDs[fields[3]] = 1
-        #############################
-        # populate chr2num with numeric version of CHR (if not seen yet)
-        if fields[0] not in chr2num:
-            # strip chr prefix from CHR if present
-            if fields[0].startswith('chr'):
-                chrStripped = fields[0][3:]
+        # OK, save exon definition
+        exons.append(fields)
+    bedFH.close()
+
+    # Done parsing bedFile, sort exons and return
+    sortExonsOrBPs(exons)
+    return(exons)
+
+
+####################################################
+# Sort list of exons (or breakpoints, a very similar data structure):
+# an "exon" is a 4-element list [CHR,START,END,EXON_ID],
+# a "breakpoint" is a 5-element list [CHR, START, END, CNVTYPE, QNAME].
+# In both cases we want to sort by chrom then START then END then <remaining columns>,
+# but we want chroms sorted correctly (eg chr2 < chr11, contrary to string sorting).
+#
+# Returns nothing, sort occurs in-place.
+def sortExonsOrBPs(data):
+    # key == CHR, value == numeric version of CHR
+    chr2num = {}
+    # dict to store all non-numeric chromosomes, key is the CHR stripped of 'chr' if
+    # present and value is the CHR (e.g 'Y'->'chrY')
+    nonNumChrs = {}
+    # maxCHR: max int value in CHR column (after stripping 'chr' if present)
+    maxCHR = 0
+
+    for thisData in data:
+        thisChr = thisData[0]
+        if thisChr not in chr2num:
+            # strip chr prefix if present
+            if thisChr.startswith('chr'):
+                chrStripped = thisChr[3:]
             else:
-                chrStripped = fields[0]
+                chrStripped = thisChr
 
             if chrStripped.isdigit():
                 # numeric chrom: populate chr2num
                 chrNum = int(chrStripped)
-                chr2num[fields[0]] = chrNum
+                chr2num[thisChr] = chrNum
                 if maxCHR < chrNum:
                     maxCHR = chrNum
             else:
                 # non-numeric chromosome: save in nonNumChrs for later
-                nonNumChrs[chrStripped] = fields[0]
+                nonNumChrs[chrStripped] = thisChr
                 # also populate chr2num with dummy value, to skip this chr next time we see it
-                chr2num[fields[0]] = -1
-        #############################
-        # save exon definition
-        exons.append(fields)
-    bedFH.close()
+                chr2num[thisChr] = -1
 
-    #########################
-    #### Done parsing bedFile
-    #########################
     # map non-numerical chromosomes to maxCHR+1, maxCHR+2 etc
     # first deal with X, Y, M/MT in that order
     for chrom in ["X", "Y", "M", "MT"]:
@@ -108,12 +116,14 @@ def processBed(bedFile, padding):
     for chrom in sorted(nonNumChrs):
         maxCHR += 1
         chr2num[nonNumChrs[chrom]] = maxCHR
-    # add temp CHR_NUM column to exons
-    for line in range(len(exons)):
-        exons[line].append(chr2num[exons[line][0]])
-    # sort exons by CHR_NUM, then START, then END, then EXON_ID
-    exons.sort(key=lambda row: (row[4], row[1], row[2], row[3]))
-    # delete the tmp column, and return result
-    for line in range(len(exons)):
-        exons[line].pop()
-    return(exons)
+
+    # append temp CHR_NUM column to breakpoints
+    for thisData in data:
+        thisData.append(chr2num[thisData[0]])
+    # sort by CHR_NUM then START etc..., last sort on row[4] needed for
+    # breakpoints and doesn't hurt for exons
+    data.sort(key=lambda row: (row[-1], row[1], row[2], row[3], row[4]))
+    # delete the tmp column
+    for thisData in data:
+        thisData.pop()
+    return()
