@@ -1,10 +1,11 @@
-import sys
 import getopt
 import glob
+import gzip
+import logging
 import os
 import re
+import sys
 import tempfile
-import logging
 from datetime import datetime
 
 
@@ -145,6 +146,45 @@ Step 2 optional arguments, defaults should be OK:
     return(workDir, step1Args, step2Args, step3Args, step4Args)
 
 
+####################################################
+# Args:
+# - countsFilesAll: list of pre-existing countsFiles (possibly empty), with PATH
+# - samples: list of sample names
+# Return (cf, commonSamples) where
+# - cf is the countsFile with the most common samples, or '' if list was empty or
+#   if no countsFile has any sample from samples
+# - commonSamples is the number of common samples
+def findBestPrevCF(countsFilesAll, samples):
+    bestCF = ''
+    commonSamples = 0
+    # build dict of samples, value==1
+    samplesD = {}
+    for s in samples:
+        samplesD[s] = 1
+    for cf in countsFilesAll:
+        try:
+            if cf.endswith(".gz"):
+                countsFH = gzip.open(cf, "rt")
+            else:
+                countsFH = open(cf, "r")
+        except Exception as e:
+            logger.error("Opening pre-existing countsFile %s: %s", cf, e)
+            raise Exception('cannot open pre-existing countsFile')
+        # grab samples from header
+        samplesCF = countsFH.readline().rstrip().split("\t")
+        # get rid of exon definition headers
+        del samplesCF[0:4]
+        commonSamplesCF = 0
+        for s in samplesCF:
+            if s in samplesD:
+                commonSamplesCF += 1
+        if commonSamplesCF > commonSamples:
+            bestCF = cf
+            commonSamples = commonSamplesCF
+        countsFH.close()
+    return(bestCF, commonSamples)
+
+
 ###############################################################################
 ############################ PUBLIC FUNCTIONS #################################
 ###############################################################################
@@ -213,12 +253,8 @@ def main(argv):
         # complement step1Args and check them
         step1Args.extend(["--BPDir", BPDir])
 
-        # find and reuse most recent pre-existing countsFile, if any
-        countsFilesAll = glob.glob(countsDir + '/countsFile_*.gz')
-        countsFilePrev = max(countsFilesAll, default='', key=os.path.getctime)
-        if countsFilePrev != '':
-            logger.info("will reuse most recent countsFile: " + countsFilePrev)
-            step1Args.extend(["--counts", countsFilePrev])
+        # not checking --counts here because we'll only know countsFilePrev later, but
+        # we'll make sure findBestPrevCF() returns a file that exists
 
         # new countsFile to create
         countsFile = countsDir + '/countsFile_' + dateStamp + '.tsv.gz'
@@ -226,12 +262,20 @@ def main(argv):
             raise Exception(stepNames[1] + " countsFile " + countsFile + " already exists")
         step1Args.extend(["--out", countsFile])
 
-        # check step1 args, discarding results
+        # check step1 args, keeping only the list of samples
         try:
-            s1_countFrags.parseArgs(step1Args)
+            samples = s1_countFrags.parseArgs(step1Args)[1]
         except Exception as e:
             # problem is described in Exception, complement and reraise
             raise Exception(stepNames[1] + " parseArgs problem: " + str(e))
+
+        # find pre-existing countsFile (if any) with the most common samples
+        countsFilesAll = glob.glob(countsDir + '/countsFile_*.gz')
+        (countsFilePrev, commonSamples) = findBestPrevCF(countsFilesAll, samples)
+        if commonSamples != 0:
+            logger.info("will reuse best matching countsFile (%i common samples): %s",
+                        commonSamples, countsFilePrev)
+            step1Args.extend(["--counts", countsFilePrev])
 
         #########
         # complement step2Args and check them
