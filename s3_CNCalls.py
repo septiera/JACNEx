@@ -2,8 +2,8 @@
 ######################################## MAGE-CNV step 3: Copy numbers calls ##################
 ###############################################################################################
 # Given a TSV of exon fragment counts and a TSV with clustering information,
-# normalize the counts (in FPM = fragments per million), obtaining the observation 
-# probabilities per copy number (CN), per exon and for each sample. 
+# normalize the counts (in FPM = fragments per million), obtaining the observation
+# probabilities per copy number (CN), per exon and for each sample.
 # See usage for more details.
 ###############################################################################################
 import sys
@@ -103,7 +103,7 @@ ARGUMENTS:
             raise Exception()
     except Exception:
         raise Exception("priors must be four float numbers whose sum is 1, not '" + priors + "'.")
-    
+
     # test plotdir last so we don't mkdir unless all other args are OK
     if not os.path.isdir(plotDir):
         try:
@@ -194,6 +194,8 @@ def main(argv):
     #
     #
     #
+
+
 ####################################################################################
 ######################################## Main ######################################
 ####################################################################################
