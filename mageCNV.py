@@ -281,7 +281,7 @@ def main(argv):
         # complement step2Args and check them
         thisPlotDir = plotDir + 'QCPlots_' + dateStamp
         if os.path.isdir(thisPlotDir):
-            raise Exception(stepNames[1] + " plotDir " + thisPlotDir + " already exists")
+            raise Exception(stepNames[2] + " plotDir " + thisPlotDir + " already exists")
         step2Args.extend(["--plotDir", thisPlotDir])
 
         # new clustersFile to create
