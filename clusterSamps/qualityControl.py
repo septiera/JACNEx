@@ -114,9 +114,6 @@ def SampsQC(counts, SOIs, plotFilePass, plotFileFail, minLow2high=0.2, testBW=Fa
             logger.info("sample %s is bad: %s", SOIs[sampleIndex], str(e))
             sampsQCfailed.append(sampleIndex)
             pdf = pdfFail
-            # ymax needed for plotting even without a maxIndex... we don't want a huge
-            # value close to y(0) => find the max Y after the first 15% of dataRange
-            ymax = max(densities[0][int(len(dataRanges[0]) * 0.15):])
         else:
             (xmin, ymin) = (dataRanges[0][minIndex], densities[0][minIndex])
             (xmax, ymax) = (dataRanges[0][maxIndex], densities[0][maxIndex])
@@ -130,6 +127,11 @@ def SampsQC(counts, SOIs, plotFilePass, plotFileFail, minLow2high=0.2, testBW=Fa
                 pdf = pdfFail
             else:
                 capturedExons = np.logical_or(capturedExons, sampleCounts > xmin)
+
+        if pdf == pdfFail:
+            # need ymax for plotting even if sample is bad, the max Y after the first 15%
+            # of dataRange is a good rule of thumb (not too cropped, not too zoomed out)
+            ymax = max(densities[0][int(len(dataRanges[0]) * 0.15):])
 
         # plot all the densities for sampleIndex in a single plot
         title = SOIs[sampleIndex] + " density of exon FPMs"
