@@ -14,12 +14,12 @@ import clusterSamps.genderDiscrimination
 # set up logger, using inherited config
 logger = logging.getLogger(__name__)
 
-# prevent matplotlib DEBUG messages filling the logs when we are in DEBUG loglevel
-matplotlib_logger = logging.getLogger('matplotlib')
-matplotlib_logger.setLevel(logging.WARNING)
+# prevent matplotlib flooding the logs when we are in DEBUG loglevel
+logging.getLogger('matplotlib').setLevel(logging.WARNING)
 
 # set up logger, using inherited config
 logger = logging.getLogger(__name__)
+
 
 ###############################################################################
 ############################ PUBLIC FUNCTIONS #################################
@@ -67,7 +67,7 @@ logger = logging.getLogger(__name__)
 # Returns:
 # - emissionArray (np.ndarray[float]): contain emission probabilities. dim=NbExons* (NbSOIs*[CN0,CN1,CN2,CN3+])
 def CNCalls(sex2Clust, exons, countsNorm, clusts2Samps, clusts2Ctrls, priors, SOIs, plotDir):
-    emissionArray = allocateEmissionArrayPrivate(SOIs, exons)
+    emissionArray = allocateEmissionArray(SOIs, exons)
 
     # create a matplotlib object and open a pdf
     pdfFile = os.path.join(plotDir, "ResCallsByCluster_" + str(len(SOIs)) + "samps.pdf")
@@ -87,7 +87,7 @@ def CNCalls(sex2Clust, exons, countsNorm, clusts2Samps, clusts2Ctrls, priors, SO
         # recovery of data specific to the current cluster
         # sampleIndex2Process (list[int]): indexes of interest samples (from the cluster + controls)
         # exonsIndex2Process (list[int]): indexes of the exons having allowed the formation of the cluster
-        (sampleIndex2Process, exonsIndex2Process) = extractClusterInfosPrivate(clustID, clusts2Samps, clusts2Ctrls, sex2Clust, maskAutosome_Gonosome)
+        (sampleIndex2Process, exonsIndex2Process) = extractClusterInfos(clustID, clusts2Samps, clusts2Ctrls, sex2Clust, maskAutosome_Gonosome)
 
         # Create Boolean masks for columns and rows
         col_mask = np.isin(np.arange(countsNorm[1]), sampleIndex2Process, invert=True)
@@ -108,7 +108,7 @@ def CNCalls(sex2Clust, exons, countsNorm, clusts2Samps, clusts2Ctrls, priors, SO
         # - gammaParameters [list[float]]: [shape, loc, scale]
         # - uncovExonThreshold  [float]: threshold delimiting exons not covered and exons covered
         # (95% gamma cdf)
-        gammaParameters, uncovExonThreshold = fitGammaDistributionPrivate(clusterCounting, clustID, PDF)
+        gammaParameters, uncovExonThreshold = fitGammaDistribution(clusterCounting, clustID, PDF)
 
         ##############################
         # second loop
@@ -125,20 +125,20 @@ def CNCalls(sex2Clust, exons, countsNorm, clusts2Samps, clusts2Ctrls, priors, SO
             # filtering exons according to different criteria.
             # exons filtered robustGaussianParams = None
             # if not filtered:
-            # - robustGaussianParams (list[float]): contains mean value and standard deviation for a robust gaussian 
-            robustGaussianParams = exonFilteringPrivate(exonFPM, uncovExonThreshold, filterCounters)
+            # - robustGaussianParams (list[float]): contains mean value and standard deviation for a robust gaussian
+            robustGaussianParams = exonFiltering(exonFPM, uncovExonThreshold, filterCounters)
             if robustGaussianParams is None:
                 continue
 
             filterCounters["ExonsCalls"] += 1
-            
+
             ###################
             # Retrieve results for each sample
             for i in clusts2Samps[clustID]:
                 sample_data = exonFPM[sampleIndex2Process.index(i)]
                 sampIndexInEmissionArray = i * 4
 
-                probNorm = computeProbabilitesPrivate(sample_data, gammaParameters, uncovExonThreshold, priors, robustGaussianParams)
+                probNorm = computeProbabilites(sample_data, gammaParameters, uncovExonThreshold, priors, robustGaussianParams)
 
                 for val in range(4):
                     if emissionArray[exonsIndex2Process[exon], (sampIndexInEmissionArray + val)] == -1:
@@ -146,11 +146,12 @@ def CNCalls(sex2Clust, exons, countsNorm, clusts2Samps, clusts2Ctrls, priors, SO
                     else:
                         logger.error('erase previous probabilities values')
 
-        filtersPiePlotPrivate(clustID, filterCounters, PDF)
+        filtersPiePlot(clustID, filterCounters, PDF)
 
     # close the open pdf
     PDF.close()
     return(emissionArray)
+
 
 #############################
 # printCallingFile:
@@ -175,8 +176,8 @@ def printClustersFile(emissionArray, exons, SOIs, outFile):
     toPrint = "CHR\tSTART\tEND\tEXON_ID\t"
     for i in SOIs:
         for j in range(4):
-            toPrint += f"{i}_CN{j}_prob"+"\t"
-            
+            toPrint += f"{i}_CN{j}_prob" + "\t"
+
     outFH.write(toPrint.rstrip())
     for i in range(len(exons)):
         toPrint = exons[i][0] + "\t" + str(exons[i][1]) + "\t" + str(exons[i][2]) + "\t" + exons[i][3]
@@ -192,7 +193,7 @@ def printClustersFile(emissionArray, exons, SOIs, outFile):
 
 
 #####################################
-# allocateEmissionArrayPrivate [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
+# allocateEmissionArray[PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
 # Args:
 # - exons (list of lists[str,int,int,str]): information on exon, containing CHR,START,END,EXON_ID
 # - SOIs (list[str]): sampleIDs copied from countsFile's header
@@ -200,13 +201,13 @@ def printClustersFile(emissionArray, exons, SOIs, outFile):
 # - Returns an float array with -1, adapted for
 # storing the probabilities for each type of copy number.
 # dim= NbExons x [NbSOIs x [CN0, CN1, CN2,CN3+]]
-def allocateEmissionArrayPrivate(SOIs, exons):
+def allocateEmissionArray(SOIs, exons):
     # order=F should improve performance
     return (np.full((len(exons), (len(SOIs) * 4), -1), dtype=np.float16, order='F'))
 
 
 #####################################
-# extractClusterInfosPrivate [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
+# extractClusterInfos [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
 # extraction of indexes specific to the samples contained in the cluster and
 # indexes of the exons to be processed (specific to autosomes or gonosomes)
 # Args:
@@ -218,7 +219,7 @@ def allocateEmissionArrayPrivate(SOIs, exons):
 # Returns a tupple (), each object are created here:
 # - sampleIndex2Process (list[int]): SOIs indexes in current cluster
 # - exonsIndex2Process (list[int]): exons indexes to treat the current cluster
-def extractClusterInfosPrivate(clustID, clusts2Samps, clusts2Ctrls, sex2Clust=None, mask=None):
+def extractClusterInfos(clustID, clusts2Samps, clusts2Ctrls, sex2Clust=None, mask=None):
     ##################################
     ## Select cluster specific indexes to apply to countsNorm
     ##### COLUMN indexes:
@@ -243,7 +244,7 @@ def extractClusterInfosPrivate(clustID, clusts2Samps, clusts2Ctrls, sex2Clust=No
 
 
 ############################
-# fitGammaDistributionPrivate [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
+# fitGammaDistribution [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
 # Estimate the parameters of the gamma distribution that best fits the data.
 # The gamma distribution was chosen after testing 101 continuous distribution laws,
 #  -it has few parameters (3 in total: shape, loc, scale=1/beta),
@@ -257,7 +258,7 @@ def extractClusterInfosPrivate(clustID, clusts2Samps, clusts2Ctrls, sex2Clust=No
 # - uncovExonThreshold (float): value corresponding to 95% of the cumulative distribution function
 # from the gamma, corresponds to the FPM threshold where before this the exons are not covered
 # (contains both uncaptured, poorly covered and potentially homodeleted exons).
-def fitGammaDistributionPrivate(clusterCounting, clustID, PDF):
+def fitGammaDistribution(clusterCounting, clustID, PDF):
     # compute meanFPM by exons
     # save computation time instead of taking the raw data (especially for clusters with many samples)
     meanCountByExons = np.mean(clusterCounting, axis=1)
@@ -290,13 +291,13 @@ def fitGammaDistributionPrivate(clusterCounting, clustID, PDF):
     # this value corresponds to the FPM value allowing to split covered exons from uncovered exons
     uncovExonThreshold = countsExonsNotCovered[thresholdIndex]
 
-    coverageProfilPlotPrivate(clustID, binEdges, densityOnFPMRange, minIndex, uncovExonThreshold, clusterCounting.shape[1], PDF)
+    coverageProfilPlot(clustID, binEdges, densityOnFPMRange, minIndex, uncovExonThreshold, clusterCounting.shape[1], PDF)
 
     return (gammaParams, uncovExonThreshold)
 
 
 ###################################
-# coverageProfilPlotPrivate: [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
+# coverageProfilPlot: [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
 # generates a plot per cluster
 # x-axis: the range of FPM bins (every 0.1 between 0 and 10)
 # y-axis: exons densities
@@ -316,7 +317,7 @@ def fitGammaDistributionPrivate(clusterCounting, clustID, PDF):
 # - SOIsNb (int): number of samples in the cluster
 # - pdf (matplotlib object): store plots in a single pdf
 # Returns and saves a plot in the output pdf
-def coverageProfilPlotPrivate(clustID, binEdges, densityOnFPMRange, minIndex, uncovExonThreshold, SOIsNb, PDF):
+def coverageProfilPlot(clustID, binEdges, densityOnFPMRange, minIndex, uncovExonThreshold, SOIsNb, PDF):
 
     fig = matplotlib.pyplot.figure(figsize=(6, 6))
     matplotlib.pyplot.plot(binEdges, densityOnFPMRange, color='black', label='smoothed densities')
@@ -335,7 +336,7 @@ def coverageProfilPlotPrivate(clustID, binEdges, densityOnFPMRange, minIndex, un
 
 
 ###############################################################
-# exonFilteringPrivate [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
+# exonFiltering [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
 # filtering of non-interpretable exons:
 # Filter n°1: exon not covered (median=0)
 # Filter n°2: the Gaussian fitting cannot be performed
@@ -352,7 +353,7 @@ def coverageProfilPlotPrivate(clustID, binEdges, densityOnFPMRange, minIndex, un
 # Returns :
 # if any of the filtering conditions are met returns False
 # otherwise returns the Gaussien parameters mean [float] and standard deviation [float].
-def exonFilteringPrivate(exonFPM, uncovExonThreshold, filterCounters):
+def exonFiltering(exonFPM, uncovExonThreshold, filterCounters):
     ###################
     # Filter n°1: exon not covered
     # treats several possible cases:
@@ -374,7 +375,7 @@ def exonFilteringPrivate(exonFPM, uncovExonThreshold, filterCounters):
     # in an area without point data.
     # in this case exon is not kept for the rest of the filtering and calling step
     try:
-        meanRG, stdevRG = fitRobustGaussianPrivate(exonFPM)
+        meanRG, stdevRG = fitRobustGaussian(exonFPM)
     except Exception as e:
         if str(e) == "cannot fit":
             filterCounters["cannotFitRG"] += 1
@@ -415,7 +416,7 @@ def exonFilteringPrivate(exonFPM, uncovExonThreshold, filterCounters):
     # principle: Calls are considered possible when the robust Gaussian has a sample
     # minimum contribution of 50%.
     # otherwise exon is not kept for the calling step
-    weight = computeWeightPrivate(exonFPM, meanRG, stdevRG)
+    weight = computeWeight(exonFPM, meanRG, stdevRG)
     if (weight < 0.5):
         filterCounters["sampleContribution2RG<0.5"] += 1
         return
@@ -424,7 +425,7 @@ def exonFilteringPrivate(exonFPM, uncovExonThreshold, filterCounters):
 
 
 ###################################
-# robustGaussianFitPrivate [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
+# robustGaussianFit[PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
 # Fits a single principal gaussian component around a starting guess point
 # in a 1-dimensional gaussian mixture of unknown components with EM algorithm
 # script found to :https://github.com/hmiemad/robust_Gaussian_fit (v01_2023)
@@ -436,7 +437,7 @@ def exonFilteringPrivate(exonFPM, uncovExonThreshold, filterCounters):
 # - eps (float, optional): Convergence tolerance. Defaults to 1.0e-5.
 # Returns:
 # - mu [float],sigma [float]: mean and stdev of the gaussian component
-def fitRobustGaussianPrivate(X, mu=None, sigma=None, bandwidth=2.0, eps=1.0e-5):
+def fitRobustGaussian(X, mu=None, sigma=None, bandwidth=2.0, eps=1.0e-5):
     if mu is None:
         # median is an approach as robust and naïve as possible to Expectation
         mu = np.median(X)
@@ -506,7 +507,7 @@ def truncated_integral_and_sigma(x):
 
 
 ############################
-# computeWeightPrivate[PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
+# computeWeight[PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
 # compute the sample contribution to the Gaussian obtained in a robust way.
 #
 # Args:
@@ -515,7 +516,7 @@ def truncated_integral_and_sigma(x):
 # - standard_deviation (float): std FPM value for the exon
 # Returns weight of sample contribution to the gaussian for the exon [float]
 @numba.njit
-def computeWeightPrivate(fpm_in_exon, mean, standard_deviation):
+def computeWeight(fpm_in_exon, mean, standard_deviation):
     targetData = fpm_in_exon[(fpm_in_exon > (mean - (2 * standard_deviation))) & 
                              (fpm_in_exon < (mean + (2 * standard_deviation))), ]
     weight = len(targetData) / len(fpm_in_exon)
@@ -524,7 +525,7 @@ def computeWeightPrivate(fpm_in_exon, mean, standard_deviation):
 
 
 ############################
-# computeProbabilitesPrivate [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
+# computeProbabilites [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
 # Given four models, the log odds ratio (LOR) allows to choose the best-fitting model.
 # Use of Bayes' theorem to deduce it.
 #
@@ -537,10 +538,10 @@ def computeWeightPrivate(fpm_in_exon, mean, standard_deviation):
 #
 # Returns:
 # - probNorm (np.ndarray[float]): p(i|Ci)p(Ci) standardized for each copy number (CN0,CN1,CN2,CN3+)
-def computeProbabilitesPrivate(sample_data, params, gamma_threshold, prior_probabilities, robustGaussianParams):
+def computeProbabilites(sample_data, params, gamma_threshold, prior_probabilities, robustGaussianParams):
     mean = robustGaussianParams[0]
     standard_deviation = robustGaussianParams[1]
-    
+
     # CN2 mean shift to get CN1 mean
     mean_cn1 = mean / 2
 
@@ -572,8 +573,8 @@ def computeProbabilitesPrivate(sample_data, params, gamma_threshold, prior_proba
     probability_densities_priors = np.multiply(probability_densities, prior_probabilities)
 
     # normalized probabilities
-    probNorm = probability_densities_priors / np.sum(probability_densities_priors) 
-    
+    probNorm = probability_densities_priors / np.sum(probability_densities_priors)
+
     # ################
     # # case where one of the probabilities is equal to 0 addition of an epsilon
     # # which is 1000 times lower than the lowest probability
@@ -596,10 +597,11 @@ def computeProbabilitesPrivate(sample_data, params, gamma_threshold, prior_proba
 
     return probNorm
 
+
 ################
-# addEpsilonPrivate
+# addEpsilon
 @numba.njit
-def addEpsilonPrivate(probs, epsilon_factor=1000):
+def addEpsilon(probs, epsilon_factor=1000):
     min_prob = np.min(probs[probs > 0])
     epsilon = min_prob / epsilon_factor
     probs = np.where(probs == 0, epsilon, probs)
@@ -607,7 +609,7 @@ def addEpsilonPrivate(probs, epsilon_factor=1000):
 
 
 ###################################
-# filtersPiePlotPrivate:
+# filtersPiePlot:
 # generates a plot per cluster
 # Args:
 # - clustID [str]: cluster identifier
@@ -616,7 +618,7 @@ def addEpsilonPrivate(probs, epsilon_factor=1000):
 # - pdf (matplotlib object): store plots in a single pdf
 #
 # save a plot in the output pdf
-def filtersPiePlotPrivate(clustID, filterCounters, pdf):
+def filtersPiePlot(clustID, filterCounters, pdf):
 
     fig = matplotlib.pyplot.figure(figsize=(10, 10))
     matplotlib.pyplot.pie(filterCounters.values(), labels=filterCounters.keys(),
@@ -630,7 +632,8 @@ def filtersPiePlotPrivate(clustID, filterCounters, pdf):
 
     pdf.savefig(fig)
     matplotlib.pyplot.close()
-    
+
+
 #################################################
 # calls2str:
 # return a string holding the calls from emissionArray[exonIndex],
