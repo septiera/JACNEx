@@ -2,6 +2,7 @@ import sys
 import getopt
 import glob
 import os
+import re
 import tempfile
 import logging
 from datetime import datetime
@@ -269,7 +270,11 @@ def main(argv):
         s1_countFrags.main(step1Args)
     except Exception as e:
         logger.error("%s FAILED: %s", stepNames[1], str(e))
-        raise Exception("STEP1 FAILED, use the same --bed as in previous runs or specify a new --workDir")
+        if re.search(r'mismatched exons', str(e)):
+            # specific exception string for this particular case
+            raise Exception("STEP1 FAILED, use the same --bed and --padding as in previous runs or specify a new --workDir")
+        else:
+            raise Exception("STEP2 FAILED, check log")
 
     # countsFile wasn't created if it would be identical to countsFilePrev, if this
     # is the case just use countsFilePrev downstream

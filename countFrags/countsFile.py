@@ -46,8 +46,8 @@ def extractCountsFromPrev(exons, SOIs, prevCountsFile):
         (prevExons, prevSamples, prevCountsList) = parseCountsFilePrivate(prevCountsFile)
         # compare exon definitions
         if (exons != prevExons):
-            logger.error("exon definitions disagree between prevCountsFile and BED...\n" +
-                         "\tcountsFiles cannot be re-used if the BED file or padding changed")
+            logger.error("exon definitions disagree between prevCountsFile and BED, " +
+                         "countsFiles cannot be re-used if the BED file or padding changed")
             raise Exception('mismatched exons')
 
         # fill prev2new to identify SOIs that are in prevCountsFile:
