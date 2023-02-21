@@ -242,7 +242,7 @@ def parseClustsFile(clustsFile, SOIs):
     sex2Clust = {}
 
     # skip header
-    _ = clustsFH.readline()
+    clustsFH.readline()
 
     for line in clustsFH:
         # last line of the file is associated with the sample that did not pass
