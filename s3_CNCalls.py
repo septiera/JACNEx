@@ -2,12 +2,8 @@
 ######################################## MAGE-CNV step 3: Copy numbers calls ##################
 ###############################################################################################
 # Given a TSV of exon fragment counts and a TSV with clustering information,
-# calculation of emission probabilities (logOdds) for each copy number type (CN0, CN1, CN2, CN3+).
-# The results are printed in the stdout in TSV format: the first 4 columns contain
-# the definitions of the paddled and sorted exons and the following columns
-# (4 per sample) contain the logOdds.
-# In addition, all graphical support (pie chart of exon filtering per cluster) are
-# printed in pdf files created in plotDir.
+# normalize the counts (in FPM = fragments per million), obtaining the observation 
+# probabilities per copy number (CN), per exon and for each sample. 
 # See usage for more details.
 ###############################################################################################
 import sys
@@ -21,13 +17,12 @@ import countFrags.countsFile
 import countFrags.countFragments
 import CNCalls.copyNumbersCalls
 
-
 # set up logger, using inherited config, in case we get called as a module
 logger = logging.getLogger(__name__)
 
 
 ###############################################################################
-############################ PRIVATE FUNCTIONS ################################
+############################ PUBLIC FUNCTIONS ################################
 ###############################################################################
 
 ####################################################
@@ -49,10 +44,11 @@ def parseArgs(argv):
     usage = "NAME:\n" + scriptName + """\n
 DESCRIPTION:
 Given a TSV of exon fragment counts and a TSV with clustering information,
-calculation of emission probabilities (logOdds) for each copy number type (CN0, CN1, CN2, CN3+).
-The results are printed in the stdout in TSV format: the first 4 columns contain
-the definitions of the paddled and sorted exons and the following columns
-(4 per sample) contain the logOdds.
+normalize the counts (Fragments Per Million), deduces the copy numbers (CN) observation
+probabilities, per exon and for each sample.
+Results are printed to stdout in TSV format (possibly gzipped): first 4 columns hold the exon
+definitions padded and sorted, subsequent columns (four per sample, in order CN0,CN2,CN2,CN3+)
+hold the observation probabilities.
 In addition, all graphical support (pie chart of exon filtering per cluster) are
 printed in pdf files created in plotDir.
 
@@ -60,15 +56,15 @@ ARGUMENTS:
    --counts [str]: TSV file, first 4 columns hold the exon definitions, subsequent columns
                    hold the fragment counts. File obtained from 1_countFrags.py.
    --clusts [str]: TSV file, contains 5 columns hold the sample cluster definitions.
+                   [clusterID, sampsInCluster, controlledBy, validCluster, clusterStatus]
                    File obtained from 2_clusterSamps.py.
    --priors list[float]: prior probability for each copy number type in the order [CN0, CN1,CN2,CN3+].
-                         Must be passed as a comma separated string parameter, default : """ + str(priors) + """
+                         Must be passed as a comma separated string, default : """ + str(priors) + """
    --plotDir[str]: subdir (created if needed) where result plots files will be produced, default :  """ + str(plotDir) + """
    -h , --help  : display this help and exit\n"""
 
     try:
         opts, args = getopt.gnu_getopt(sys.argv[1:], 'h', ["help", "counts=", "clusts=", "priors=", "plotDir="])
-
     except getopt.GetoptError as e:
         raise Exception(e.msg + ". Try " + scriptName + " --help")
 
@@ -90,33 +86,30 @@ ARGUMENTS:
     #####################################################
     # Check that the mandatory parameter is present
     if countsFile == "":
-        raise Exception("ERROR : You must provide a counts file with --counts. Try " + scriptName + " --help.")
+        raise Exception("you must provide a counts file with --counts. Try " + scriptName + " --help.")
     elif (not os.path.isfile(countsFile)):
-        raise Exception("ERROR : countsFile " + countsFile + " doesn't exist.")
+        raise Exception("countsFile " + countsFile + " doesn't exist.")
 
     if clustsFile == "":
-        raise Exception("ERROR : You must provide a clustering results file use --clusts. Try " + scriptName + " --help.")
+        raise Exception("you must provide a clustering results file use --clusts. Try " + scriptName + " --help.")
     elif (not os.path.isfile(clustsFile)):
-        raise Exception("ERROR : clustsFile " + clustsFile + " doesn't exist.")
+        raise Exception("clustsFile " + clustsFile + " doesn't exist.")
 
     #####################################################
     # Check other args
-    if priors == "":
-        raise Exception("ERROR : You must provide four correlation values separated by commas with --priors. Try " + scriptName + " --help.")
-    else:
-        try:
-            priors = [float(x) for x in priors.split(",")]
-            if (sum(priors) != 1):
-                raise Exception()
-        except Exception:
-            raise Exception("ERROR : priors must be four float numbers whose sum is 1, not '" + priors + "'.")
-
-    # test plotDir last so we don't mkdir unless all other args are OK
+    try:
+        priors = [float(x) for x in priors.split(",")]
+        if (sum(priors) != 1) or (len(priors) != 4):
+            raise Exception()
+    except Exception:
+        raise Exception("priors must be four float numbers whose sum is 1, not '" + priors + "'.")
+    
+    # test plotdir last so we don't mkdir unless all other args are OK
     if not os.path.isdir(plotDir):
         try:
             os.mkdir(plotDir)
-        except Exception:
-            raise Exception("ERROR : plotDir " + plotDir + " doesn't exist and can't be mkdir'd")
+        except Exception as e:
+            raise Exception("plotDir " + plotDir + " doesn't exist and can't be mkdir'd: " + str(e))
 
     # AOK, return everything that's needed
     return(countsFile, clustsFile, priors, plotDir)
