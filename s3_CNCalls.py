@@ -125,8 +125,6 @@ ARGUMENTS:
 # If anything goes wrong, raise Exception("SOME EXPLICIT ERROR MESSAGE"), more details
 # may be available in the log
 def main(argv):
-
-    ################################################
     # parse, check and preprocess arguments
     try:
         (countsFile, clustsFile, priors, plotDir) = parseArgs(argv)
@@ -134,22 +132,17 @@ def main(argv):
         # problem is described in Exception, just re-raise
         raise
 
-    ################################################
     # args seem OK, start working
     logger.debug("called with: " + " ".join(argv[1:]))
     logger.info("starting to work")
     startTime = time.time()
 
-    #####################################################
-    # Parse counts data :
-    ##################
-    # parse counts from TSV to obtain :
-    # - exons (list of lists[str,int,int,str]): information on exon, containing CHR,START,END,EXON_ID
-    # - SOIs (list[str]): sampleIDs copied from countsFile's header
-    # - countsArray (np.ndarray[int]): fragment counts, dim = NbExons x NbSOIs
+    ###################
+    # parse counts
     try:
         (exons, SOIs, countsArray) = countFrags.countsFile.parseCountsFile(countsFile)
-    except Exception:
+    except Exception as e:
+        logger.error("parseCountsFile failed for %s : %s", countsFile, repr(e))
         raise Exception("parseCountsFile failed")
 
     thisTime = time.time()
@@ -157,37 +150,26 @@ def main(argv):
     startTime = thisTime
 
     #####################################################
-    # Parse clusts data :
-    ##################
-    # parse clusters from TSV to obtain:
-    # - clusts2Samps (dict[str, List[int]]): key: clusterID , value: samples index list based on SOIs list
-    # - clusts2Ctrls (dict[str, List[str]]): key: clusterID, value: controlsID list
-    # - SampsQCFailed list[str] : sample names that failed QC
-    # - sex2Clust dict[str, list[str]]: key: "A" autosomes or "G" gonosome, value: clusterID list
+    # parse clusts
     try:
         (clusts2Samps, clusts2Ctrls, SampsQCFailed, sex2Clust) = CNCalls.copyNumbersCalls.parseClustsFile(clustsFile, SOIs)
-    except Exception:
-        raise Exception("parseClustsFile failed")
+    except Exception as e:
+        raise Exception("parseClustsFile failed for %s : %s", clustsFile, repr(e))
 
     thisTime = time.time()
     logger.debug("Done parsing clustsFile, in %.2f s", thisTime - startTime)
     startTime = thisTime
 
-    #####################################################
-    # Normalisation:
-    ##################
-    # Fragment Per Million normalisation:
-    # NormCountOneExonForOneSample=(FragsOneExonOneSample*1x10^6)/(TotalFragsAllExonsOneSample)
-    # this normalisation allows the samples to be compared
-    # - countsNorm (np.ndarray[float]): normalised counts of countsArray same dimension
-    # for arrays in input/output: NbExons*NbSOIs
+    ###################
+    # normalize counts (FPM)
     try:
-        countsNorm = countFrags.countFragments.normalizeCounts(countsArray)
-    except Exception:
-        raise Exception("FPMNormalisation failed")
+        countsFPM = countFrags.countFragments.normalizeCounts(countsArray)
+    except Exception as e:
+        logger.error("normalizeCounts failed for %s : %s", countsFile, repr(e))
+        raise Exception("normalizeCounts failed")
 
     thisTime = time.time()
-    logger.debug("Done fragments counts normalisation, in %.2f s", thisTime - startTime)
+    logger.debug("Done normalizing counts, in %.2fs", thisTime - startTime)
     startTime = thisTime
 
     ####################################################
@@ -197,7 +179,7 @@ def main(argv):
     #
     #
     try:
-        emissionArray = CNCalls.copyNumbersCalls.CNCalls(sex2Clust, exons, countsNorm, clusts2Samps, clusts2Ctrls, priors, SOIs, plotDir)
+        emissionArray = CNCalls.copyNumbersCalls.CNCalls(sex2Clust, exons, countsFPM, clusts2Samps, clusts2Ctrls, priors, SOIs, plotDir)
     except Exception:
         raise Exception("CNCalls failed")
 
