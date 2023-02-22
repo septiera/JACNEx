@@ -15,6 +15,7 @@ import logging
 ####### MAGE-CNV modules
 import countFrags.countsFile
 import countFrags.countFragments
+import clusterSamps.clustering
 import CNCalls.copyNumbersCalls
 
 # set up logger, using inherited config, in case we get called as a module
@@ -152,7 +153,7 @@ def main(argv):
     #####################################################
     # parse clusts
     try:
-        (clusts2Samps, clusts2Ctrls, SampsQCFailed, sex2Clust) = CNCalls.copyNumbersCalls.parseClustsFile(clustsFile, SOIs)
+        (clusts2Samps, clusts2Ctrls, SampsQCFailed, sex2Clust) = clusterSamps.clustering.parseClustsFile(clustsFile, SOIs)
     except Exception as e:
         raise Exception("parseClustsFile failed for %s : %s", clustsFile, repr(e))
 
@@ -179,7 +180,7 @@ def main(argv):
     #
     #
     try:
-        emissionArray = CNCalls.copyNumbersCalls.CNCalls(sex2Clust, exons, countsFPM, clusts2Samps, clusts2Ctrls, priors, SOIs, plotDir)
+        emissionArray = CNCalls.copyNumbersCalls.CNCalls(countsFPM, exons, sex2Clust, clusts2Samps, clusts2Ctrls, priors, SOIs, plotDir)
     except Exception:
         raise Exception("CNCalls failed")
 
