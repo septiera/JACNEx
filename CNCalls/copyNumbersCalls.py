@@ -11,8 +11,6 @@ import time
 import clusterSamps.smoothing
 import clusterSamps.genderDiscrimination
 
-# set up logger, using inherited config
-logger = logging.getLogger(__name__)
 
 # prevent matplotlib flooding the logs when we are in DEBUG loglevel
 logging.getLogger('matplotlib').setLevel(logging.WARNING)
@@ -47,9 +45,6 @@ logger = logging.getLogger(__name__)
 #           - extraction of density probabilities for each distribution
 #           (gamma (CN0), 3 gaussians: CN1= muRG/2, CN2= muRG, CN3+=muRG)
 #           - addition of priors
-#           - calculation of log-Odds from Bayes naive theorem for each NC.
-#           - transformation of log-Odds into probability + normalization
-#
 # Two graphical representations are generated in this function for each cluster one is a
 # histogram representing the obtained smoothed coverage data, the second is a camembert graph
 # summarising exon filtering.
@@ -245,7 +240,10 @@ def extractClusterInfos(clustID, clusts2Samps, clusts2Ctrls, sex2Clust=None, mas
 
 ############################
 # fitGammaDistribution [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
-# Estimate the parameters of the gamma distribution that best fits the data.
+# Uses the coverage data for all exons for a specific cluster.
+# Identification of the coverage pattern associated with low or no
+# coverage exons and potentially homodeleted exons (CN0). 
+# Estimate the parameters of a distribution that best fits the data.
 # The gamma distribution was chosen after testing 101 continuous distribution laws,
 #  -it has few parameters (3 in total: shape, loc, scale=1/beta),
 #  -is well-known, and had the best goodness of fit on the empirical data.
@@ -337,15 +335,22 @@ def coverageProfilPlot(clustID, binEdges, densityOnFPMRange, minIndex, uncovExon
 
 ###############################################################
 # exonFiltering [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
-# filtering of non-interpretable exons:
-# Filter n°1: exon not covered (median=0)
-# Filter n°2: the Gaussian fitting cannot be performed
-# Filter n°3: pseudoZscore < 3
-# Filter n°4: samples contribution for gaussian < 50%
-# if the exon passes all filtering Gaussian parameter extraction to continue calling.
-# Otherwise switch to the next exon treatment
+# Uses an exon coverage profile to identify if the exon is usable for the call.
+# Filter n°1: exon not covered (median=0), almost all samples have no coverage.
+# Filter n°2: exons where the distribution of samples does not allow the
+# identification of a main coverage pattern.
+# No robust Gaussian fitting.
+# Following filters respect the principle that the Gaussian parameters describe
+# the profile associated with CN2 in the majority of cases.
+# Filter n°3: exons where the main coverage profile, identified by the Gaussian,
+# is similar to the exons not covered.
+# Filter n°4: exons where the contribution of samples to the main coverage profile
+# is less than 50%.
+# the exon doesn't pass the filters a hash table listing the different filters
+# will be incremented to the corresponding filter and will return nothing.
+# the exon passes the filters the function returns the parameters of the fitted gaussian.
 # Args:
-# - exonFPM [ndarray[float]]: normalised fragment count for an exon for samples in a cluster
+# - exonFPM (ndarray[float]): normalised fragment count for an exon for samples in a cluster
 # - uncovExonThreshold  (float): value corresponding to 95% of the cumulative distribution function
 # from the gamma, corresponds to the FPM threshold where before this the exons are not covered
 # - filterCounters (dict[str:int]): dictionary of exon counters of different filtering
@@ -385,19 +390,18 @@ def exonFiltering(exonFPM, uncovExonThreshold, filterCounters):
 
     ###################
     # Filter n°3:
-    # principle: the Gaussian obtained in a robust way must not be associated
+    # the Gaussian obtained in a robust way must not be associated
     # with a copie number total loss (CN0)
     # a pseudozscore allows to exclude exons with a Gaussian overlapping the
     # threshold of not covered exons (uncovExonThreshold ).
     # To obtain the pseudoZscore it's necessary that the parameters of the
     # robust Gaussian != 0.
-
-    # exon is not kept for the rest of the filtering and calling step
+    # exon isn't kept for the rest of the filtering and calling step
     if meanRG == 0:
         filterCounters["meanRG=0"] += 1
         return
 
-    # the mean != zero and all samples have the same coverage value.
+    # the mean != 0 and all samples have the same coverage value.
     # In this case a new arbitrary standard deviation is calculated
     # (simulates 5% on each side of the mean)
     if (stdevRG == 0):
