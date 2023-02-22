@@ -25,119 +25,113 @@ logger = logging.getLogger(__name__)
 
 #####################################
 # CNCalls:
-# Given a normalized fragment counts array for each sample set of a cluster
-# returns an emission probability for each type of copy number (CN0, CN1,CN2,CN3+)
-# for each exons analysed.
-# several stages are present.
-# - analysis of each cluster:
-#   - average coverage profile per exon smoothing by kernel density estimation,
-#   - identification of a threshold separating exons little or no covered
-#   - fit a gamma distribution
-#   - recovery of gamma parameters and a maximum threshold associated with not
-#   covered exon.
-#   - analysis by exon:
-#       - filtering of non-interpretable exons and assigning an emission probability
-#         to -1 for all NCs for this.
-# 4 large filters: not all samples have coverage, a robust Gaussian (RG) cannot be fitted,
-# a pseudozscore evaluates if Gaussian overlap with the threshold of not covered exons,
-# the contribution of the samples to the Gaussian must be greater than 50%.
-#       - for non filtered exons for each cluster sample:
-#           - extraction of density probabilities for each distribution
-#           (gamma (CN0), 3 gaussians: CN1= muRG/2, CN2= muRG, CN3+=muRG)
-#           - addition of priors
-# Two graphical representations are generated in this function for each cluster one is a
-# histogram representing the obtained smoothed coverage data, the second is a camembert graph
-# summarising exon filtering.
-#
-# Args:
-# - sex2Clust dict[str, list[str]]: key: "A" autosomes or "G" gonosome, value: clusterID list
+# Given a count array and dictionaries summarising cluster information.
+# Obtaining observation probabilities for each copy number type (CN0, CN1, CN2, CN3+)
+# for each sample per exon.
+# Arguments:
+# - countsFPM (np.ndarray[float]): normalised counts
 # - exons (list of lists[str,int,int,str]): information on exon, containing CHR,START,END,EXON_ID
-# - countsNorm (np.ndarray[float]): normalised counts of countsArray same dimension
-# for arrays in input/output: NbExons*NbSOIs
+# - sex2Clust dict[str, list[str]]: key: "A" autosomes or "G" gonosome, value: clusterID list
 # - clusts2Samps (dict[str, List[int]]): key: clusterID , value: samples index list based on SOIs list
 # - clusts2Ctrls (dict[str, List[str]]): key: clusterID, value: controlsID list
 # - priors (list[float]): prior probability for each copy number type in the order [CN0, CN1,CN2,CN3+].
-# - SOIs (list[str]): sampleIDs copied from countsFile's header
+# - SOIs (list[str]): sampleIDs list
 # - plotDir (str): subdir (created if needed) where result plots files will be produced
 # Returns:
-# - emissionArray (np.ndarray[float]): contain emission probabilities. dim=NbExons* (NbSOIs*[CN0,CN1,CN2,CN3+])
-def CNCalls(sex2Clust, exons, countsNorm, clusts2Samps, clusts2Ctrls, priors, SOIs, plotDir):
-    emissionArray = allocateEmissionArray(SOIs, exons)
+# - emissionArray (np.ndarray[float]): contain probabilities. dim=NbExons * (NbSOIs*[CN0,CN1,CN2,CN3+])
+def CNCalls(countsFPM, exons, sex2Clust, clusts2Samps, clusts2Ctrls, priors, SOIs, plotDir):
+    emissionArray = allocateProbsArray(len(SOIs), len(exons))
 
     # create a matplotlib object and open a pdf
-    pdfFile = os.path.join(plotDir, "ResCallsByCluster_" + str(len(SOIs)) + "samps.pdf")
+    pdfFile = os.path.join(plotDir, "ResCNCallsByCluster_" + str(len(SOIs)) + "samps.pdf")
     PDF = matplotlib.backends.backend_pdf.PdfPages(pdfFile)
 
     # when discriminating between genders,
-    # importance of identifying autosomes and gonosomes exons index
+    # importance of identifying autosomes and gonosomes "exons" index
     # to make calls on associated reference groups.
     if sex2Clust:
         gonoIndex, _ = clusterSamps.genderDiscrimination.getGenderInfos(exons)
-        maskAutosome_Gonosome = ~np.isin(np.arange(countsNorm.shape[0]), sorted(set(sum(gonoIndex.values(), []))))
+        maskAutosome_Gonosome = ~np.isin(np.arange(countsFPM.shape[0]), sorted(set(sum(gonoIndex.values(), []))))
 
     ##############################
-    # first loop
     # Browse clusters
+    ##############################
     for clustID in clusts2Samps:
         # recovery of data specific to the current cluster
-        # sampleIndex2Process (list[int]): indexes of interest samples (from the cluster + controls)
-        # exonsIndex2Process (list[int]): indexes of the exons having allowed the formation of the cluster
-        (sampleIndex2Process, exonsIndex2Process) = extractClusterInfos(clustID, clusts2Samps, clusts2Ctrls, sex2Clust, maskAutosome_Gonosome)
+        (sampsIndex, exonsIndex) = extractClusterInfos(clustID, clusts2Samps, clusts2Ctrls, sex2Clust, maskAutosome_Gonosome)
 
         # Create Boolean masks for columns and rows
-        col_mask = np.isin(np.arange(countsNorm[1]), sampleIndex2Process, invert=True)
-        row_mask = np.isin(np.arange(countsNorm[0]), exonsIndex2Process, invert=True)
+        col_mask = np.isin(np.arange(countsFPM.shape[1]), sampsIndex, invert=True)
+        row_mask = np.isin(np.arange(countsFPM.shape[0]), exonsIndex, invert=True)
 
         # Use the masks to index the 2D numpy array
-        clusterCounting = countsNorm[np.ix_(row_mask, col_mask)]
+        clusterCounts = countsFPM[np.ix_(row_mask, col_mask)]
 
         ###########
         # Initialize  a hash allowing to detail the filtering carried out
         # as well as the calls for all the exons.
         # It is used for the pie chart representing the filtering.
-        filterCounters = dict.fromkeys(["med=0", "cannotFitRG", "meanRG=0", "pseudoZscore<3", "sampleContribution2RG<0.5"], 0)
+        filterCounters = dict.fromkeys(["notCaptured", "cannotFitRG", "RGClose2LowThreshold", "fewSampsInRG", "exonsCalls"], 0)
 
         ##################################
-        # smoothing on the set of coverage data averaged by exons.
-        # fit a gamma distribution on the non-captured exons.
-        # - gammaParameters [list[float]]: [shape, loc, scale]
-        # - uncovExonThreshold  [float]: threshold delimiting exons not covered and exons covered
-        # (95% gamma cdf)
-        gammaParameters, uncovExonThreshold = fitGammaDistribution(clusterCounting, clustID, PDF)
+        # smoothing coverage profil averaged by exons, fit gamma distribution.
+        gammaParams, lowThreshold = fitGammaDistribution(clusterCounts, clustID, PDF)
 
         ##############################
-        # second loop
         # Browse cluster-specific exons
-        for exon in range(clusterCounting.shape[0]):
+        ##############################
+        for clustExon in range(clusterCounts.shape[0]):
             # Print progress every 10000 exons
-            if exon % 10000 == 0:
-                logger.info("ClusterID %s: %s  %s ", clustID, exon, time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()))
+            if clustExon % 10000 == 0:
+                logger.info("ClusterID %s: %s  %s ", clustID, clustExon, time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()))
 
             # Get count data for the exon
-            exonFPM = clusterCounting[exon]
+            exonFPM = clusterCounts[clustExon]
 
-            ########################
-            # filtering exons according to different criteria.
-            # exons filtered robustGaussianParams = None
-            # if not filtered:
-            # - robustGaussianParams (list[float]): contains mean value and standard deviation for a robust gaussian
-            robustGaussianParams = exonFiltering(exonFPM, uncovExonThreshold, filterCounters)
-            if robustGaussianParams is None:
+            ###################
+            # Filter n°1: exon not covered in most samples.
+            # treats several possible cases:
+            # - all samples in the cluster haven't coverage for the current exon
+            # - more than 2/3 of the samples have no cover.
+            #   Warning: Potential presence of homodeletions. We have chosen don't
+            # call them because they affect too many samples
+            medianFPM = np.median(exonFPM)
+            if medianFPM == 0:
+                filterCounters["notCaptured"] += 1
                 continue
 
-            filterCounters["ExonsCalls"] += 1
+            ###################
+            # Filter n°2: robust fitting of Gaussian failed.
+            # the median (consider as the mean parameter of the Gaussian) is located
+            # in an area without point data.
+            # in this case exon is not kept for the rest of the filtering and calling step
+            try:
+                RGParams = fitRobustGaussian(exonFPM)
+            except Exception as e:
+                if str(e) == "cannot fit":
+                    filterCounters["cannotFitRG"] += 1
+                    continue
+                else:
+                    raise
+
+            ########################
+            # apply Filters n°3 and n°4:
+            if failedFilters(exonFPM, RGParams, lowThreshold, filterCounters):
+                continue
+
+            filterCounters["exonsCalls"] += 1
 
             ###################
             # Retrieve results for each sample
             for i in clusts2Samps[clustID]:
-                sample_data = exonFPM[sampleIndex2Process.index(i)]
+                sampFPM = exonFPM[sampsIndex.index(i)]
                 sampIndexInEmissionArray = i * 4
 
-                probNorm = computeProbabilites(sample_data, gammaParameters, uncovExonThreshold, priors, robustGaussianParams)
+                probNorm = computeProbabilites(sampFPM, gammaParams, RGParams, priors, lowThreshold)
 
                 for val in range(4):
-                    if emissionArray[exonsIndex2Process[exon], (sampIndexInEmissionArray + val)] == -1:
-                        emissionArray[exonsIndex2Process[exon], (sampIndexInEmissionArray + val)] = probNorm[val]
+                    if emissionArray[exonsIndex[clustExon], (sampIndexInEmissionArray + val)] == -1:
+                        emissionArray[exonsIndex[clustExon], (sampIndexInEmissionArray + val)] = probNorm[val]
                     else:
                         logger.error('erase previous probabilities values')
 
@@ -149,7 +143,7 @@ def CNCalls(sex2Clust, exons, countsNorm, clusts2Samps, clusts2Ctrls, priors, SO
 
 
 #############################
-# printCallingFile:
+# printCNCallsFile:
 # Args:
 # - emissionArray (np.ndarray[float]): contain emission probabilities. dim=NbExons* (NbSOIs*[CN0,CN1,CN2,CN3+])
 # - exons (list of lists[str,int,int,str]): information on exon, containing CHR,START,END,EXON_ID
@@ -157,16 +151,16 @@ def CNCalls(sex2Clust, exons, countsNorm, clusts2Samps, clusts2Ctrls, priors, SO
 # - outFile is a filename that doesn't exist, it can have a path component (which must exist),
 #     output will be gzipped if outFile ends with '.gz'
 #
-# Print this data to outFile as a 'callingFile' (same format parsed by parseClustsFile).
-def printClustersFile(emissionArray, exons, SOIs, outFile):
+# Print this data to outFile as a 'CNCallsFile'
+def printCNCallsFile(emissionArray, exons, SOIs, outFile):
     try:
         if outFile.endswith(".gz"):
             outFH = gzip.open(outFile, "xt", compresslevel=6)
         else:
             outFH = open(outFile, "x")
     except Exception as e:
-        logger.error("Cannot (gzip-)open clustersFile %s: %s", outFile, e)
-        raise Exception('cannot (gzip-)open clustersFile')
+        logger.error("Cannot (gzip-)open CNCallsFile %s: %s", outFile, e)
+        raise Exception('cannot (gzip-)open CNCallsFile')
 
     toPrint = "CHR\tSTART\tEND\tEXON_ID\t"
     for i in SOIs:
@@ -185,46 +179,37 @@ def printClustersFile(emissionArray, exons, SOIs, outFile):
 ###############################################################################
 ############################ PRIVATE FUNCTIONS ################################
 ###############################################################################
-
-
-#####################################
-# allocateEmissionArray[PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
+# allocateProbsArray:
 # Args:
-# - exons (list of lists[str,int,int,str]): information on exon, containing CHR,START,END,EXON_ID
-# - SOIs (list[str]): sampleIDs copied from countsFile's header
-# Return:
-# - Returns an float array with -1, adapted for
-# storing the probabilities for each type of copy number.
-# dim= NbExons x [NbSOIs x [CN0, CN1, CN2,CN3+]]
-def allocateEmissionArray(SOIs, exons):
+# - numExons, numSamples
+# Returns an float array with -1, adapted for storing the probabilities for each
+# type of copy number. dim= NbExons x (NbSOIs x [CN0, CN1, CN2,CN3+])
+def allocateProbsArray(numExons, numSamples):
     # order=F should improve performance
-    return (np.full((len(exons), (len(SOIs) * 4), -1), dtype=np.float16, order='F'))
+    return np.full((numExons, (numSamples * 4)), -1, dtype=np.float16, order='F')
 
 
-#####################################
-# extractClusterInfos [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
-# extraction of indexes specific to the samples contained in the cluster and
-# indexes of the exons to be processed (specific to autosomes or gonosomes)
+#############################################################
+# extractClusterInfos
+# Given a cluster identifier and dictionaries reporting cluster information
+# Extraction SOIs indexes and exons indexes (specific to autosomes or gonosomes)
 # Args:
 # - clustID [str] : cluster identifier
 # - clusts2Samps (dict[str: list[int]]): for each cluster identifier a list of SOIs is associated
 # - clusts2Ctrls (dict[str: list[str]]): for each target cluster identifier a list of control clusters is associated
 # - sex2Clust (dict[str, list[str]]): for "A" autosomes or "G" gonosomes a list of corresponding clusterIDs is associated
 # - mask (numpy.ndarray[bool]): boolean mask 1: autosome exon indexes, 0: gonosome exon indexes. dim=NbExons
-# Returns a tupple (), each object are created here:
+# Returns a tupple (sampleIndex2Process, exonsIndex2Process), each object are created here:
 # - sampleIndex2Process (list[int]): SOIs indexes in current cluster
 # - exonsIndex2Process (list[int]): exons indexes to treat the current cluster
 def extractClusterInfos(clustID, clusts2Samps, clusts2Ctrls, sex2Clust=None, mask=None):
-    ##################################
-    ## Select cluster specific indexes to apply to countsNorm
-    ##### COLUMN indexes:
+    ##### COLUMN indexes in countsFPM => samples
     # Get the indexes of the samples in the cluster and its controls
     sampleIndex2Process = clusts2Samps[clustID]
     if clustID in clusts2Ctrls:
         for controls in clusts2Ctrls[clustID]:
             sampleIndex2Process.extend(clusts2Samps[controls])
-
-    ##### ROW indexes:
+    ##### ROW indexes in countsFPM => exons
     # in case there are specific autosome and gonosome clusters.
     # identification of the indexes of the exons associated with the gonosomes or autosomes.
     if sex2Clust:
@@ -238,28 +223,27 @@ def extractClusterInfos(clustID, clusts2Samps, clusts2Ctrls, sex2Clust=None, mas
     return(sampleIndex2Process, exonsIndex2Process)
 
 
-############################
-# fitGammaDistribution [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
-# Uses the coverage data for all exons for a specific cluster.
-# Identification of the coverage pattern associated with low or no
-# coverage exons and potentially homodeleted exons (CN0). 
-# Estimate the parameters of a distribution that best fits the data.
-# The gamma distribution was chosen after testing 101 continuous distribution laws,
-#  -it has few parameters (3 in total: shape, loc, scale=1/beta),
-#  -is well-known, and had the best goodness of fit on the empirical data.
-# Arg:
-# - clusterCounting (np.ndarray[floats]): normalised fragment count table for samples in a cluster
+#############################################################
+# fitGammaDistribution
+# Given a counts array for a specific cluster identifier, coverage profile
+# smoothing deduced from FPM averages per exon.
+# Returns the parameters of a distribution that best fits the coverage profile
+# of poorly covered exons and a FPM threshold (lowThreshold).
+# Exons with FPM lower than this lowThreshold are both uncaptured, poorly
+# covered and potentially homodeleted.
+# Args:
+# - clusterCounts (np.ndarray[floats]): counts array
 # - clustID (str): cluster identifier
 # - PDF (matplotlib object): store plots in a single pdf
-# Returns a tupple (gamma_parameters, threshold_value), each variable is created here:
+# Returns a tupple (gammaParams, lowThreshold), each variable is created here:
 # - gammaParams (tuple of floats): estimated parameters of the gamma distribution
-# - uncovExonThreshold (float): value corresponding to 95% of the cumulative distribution function
-# from the gamma, corresponds to the FPM threshold where before this the exons are not covered
-# (contains both uncaptured, poorly covered and potentially homodeleted exons).
-def fitGammaDistribution(clusterCounting, clustID, PDF):
+# - lowThreshold (float): value corresponding to 95% of the gamma cumulative distribution
+# function
+def fitGammaDistribution(clusterCounts, clustID, PDF):
     # compute meanFPM by exons
-    # save computation time instead of taking the raw data (especially for clusters with many samples)
-    meanCountByExons = np.mean(clusterCounting, axis=1)
+    # save computation time instead of taking the raw data (especially for clusters
+    # with many samples)
+    meanCountByExons = np.mean(clusterCounts, axis=1)
 
     # smooth the coverage profile with kernel-density estimate using Gaussian kernels
     # - binEdges (np.ndarray[floats]): FPM range from 0 to 10 every 0.1
@@ -270,32 +254,33 @@ def fitGammaDistribution(clusterCounting, clustID, PDF):
     # recover the threshold of the minimum density means before an increase
     # - minIndex (int): index from "densityMeans" associated with the first lowest
     # observed mean
-    (minIndex, _) = clusterSamps.smoothing.findLocalMin(densityOnFPMRange)
+    minIndex = clusterSamps.smoothing.findLocalMin(densityOnFPMRange)[0]
 
     countsExonsNotCovered = meanCountByExons[meanCountByExons <= binEdges[minIndex]]
 
     countsExonsNotCovered.sort()  # sort data in-place
 
+    # The gamma distribution was chosen after testing 101 continuous distribution laws,
+    #  -it has few parameters (3 in total: shape, loc, scale=1/beta),
+    #  -is well-known, and had the best goodness of fit on the empirical data.
     # estimate the parameters of the gamma distribution that best fits the data
     gammaParams = scipy.stats.gamma.fit(countsExonsNotCovered)
 
-    # compute the cumulative distribution function of the gamma distribution
+    # cumulative distribution
     cdf = scipy.stats.gamma.cdf(countsExonsNotCovered, a=gammaParams[0], loc=gammaParams[1], scale=gammaParams[2])
 
     # find the index of the last element where cdf < 0.95
     thresholdIndex = np.where(cdf < 0.95)[0][-1]
 
-    # compute the value corresponding to 95% of the cumulative distribution function
-    # this value corresponds to the FPM value allowing to split covered exons from uncovered exons
-    uncovExonThreshold = countsExonsNotCovered[thresholdIndex]
+    lowThreshold = countsExonsNotCovered[thresholdIndex]
 
-    coverageProfilPlot(clustID, binEdges, densityOnFPMRange, minIndex, uncovExonThreshold, clusterCounting.shape[1], PDF)
+    coverageProfilPlot(clustID, binEdges, densityOnFPMRange, minIndex, lowThreshold, clusterCounts.shape[1], PDF)
 
-    return (gammaParams, uncovExonThreshold)
+    return (gammaParams, lowThreshold)
 
 
-###################################
-# coverageProfilPlot: [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
+#############################################################
+# coverageProfilPlot
 # generates a plot per cluster
 # x-axis: the range of FPM bins (every 0.1 between 0 and 10)
 # y-axis: exons densities
@@ -304,25 +289,24 @@ def fitGammaDistribution(clusterCounting, clustID, PDF):
 # green curve: gamma fit
 #
 # Args:
-# - sampleName (str): sample exact name
+# - sampleName (str): sample name
 # - binEdges (np.ndarray[floats]): FPM range
-# - densityOnFPMRange (np.ndarray[float]): probability density for all bins in the FPM range
-#   dim= len(binEdges)
-# - minIndex (int): index associated with the first lowest density observed
-# - uncovExonThreshold (float): value corresponding to 95% of the cumulative distribution function
+# - densityOnFPMRange (np.ndarray[float]): densities from binEdges
+# - minIndex (int): binEdges index associated with the first lowest density observed
+# - lowThreshold (float): FPM threshold
 # from the gamma, corresponds to the FPM threshold where before this the exons are not covered
 # (contains both uncaptured, poorly covered and potentially homodeleted exons).
 # - SOIsNb (int): number of samples in the cluster
 # - pdf (matplotlib object): store plots in a single pdf
 # Returns and saves a plot in the output pdf
-def coverageProfilPlot(clustID, binEdges, densityOnFPMRange, minIndex, uncovExonThreshold, SOIsNb, PDF):
+def coverageProfilPlot(clustID, binEdges, densityOnFPMRange, minIndex, lowThreshold, SOIsNb, PDF):
 
     fig = matplotlib.pyplot.figure(figsize=(6, 6))
     matplotlib.pyplot.plot(binEdges, densityOnFPMRange, color='black', label='smoothed densities')
     matplotlib.pyplot.axvline(binEdges[minIndex], color='crimson', linestyle='dashdot', linewidth=2,
                               label="minFPM=" + '{:0.1f}'.format(binEdges[minIndex]))
-    matplotlib.pyplot.axvline(uncovExonThreshold, color='blue', linestyle='dashdot', linewidth=2,
-                              label="uncovExonThreshold=" + '{:0.2f}'.format(uncovExonThreshold))
+    matplotlib.pyplot.axvline(lowThreshold, color='blue', linestyle='dashdot', linewidth=2,
+                              label="uncovExonThreshold=" + '{:0.2f}'.format(lowThreshold))
     matplotlib.pyplot.ylim(0, 0.5)
     matplotlib.pyplot.ylabel("Exon densities")
     matplotlib.pyplot.xlabel("Fragments Per Million")
@@ -333,103 +317,49 @@ def coverageProfilPlot(clustID, binEdges, densityOnFPMRange, minIndex, uncovExon
     matplotlib.pyplot.close()
 
 
-###############################################################
-# exonFiltering [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
+#############################################################
+# failedFilters
 # Uses an exon coverage profile to identify if the exon is usable for the call.
-# Filter n°1: exon not covered (median=0), almost all samples have no coverage.
-# Filter n°2: exons where the distribution of samples does not allow the
-# identification of a main coverage pattern.
-# No robust Gaussian fitting.
-# Following filters respect the principle that the Gaussian parameters describe
-# the profile associated with CN2 in the majority of cases.
-# Filter n°3: exons where the main coverage profile, identified by the Gaussian,
-# is similar to the exons not covered.
-# Filter n°4: exons where the contribution of samples to the main coverage profile
-# is less than 50%.
-# the exon doesn't pass the filters a hash table listing the different filters
-# will be incremented to the corresponding filter and will return nothing.
-# the exon passes the filters the function returns the parameters of the fitted gaussian.
+# Filter n°3: Gaussian is too close to lowThreshold.
+# Filter n°4: samples contributing to Gaussian is less than 50%.
 # Args:
-# - exonFPM (ndarray[float]): normalised fragment count for an exon for samples in a cluster
-# - uncovExonThreshold  (float): value corresponding to 95% of the cumulative distribution function
-# from the gamma, corresponds to the FPM threshold where before this the exons are not covered
-# - filterCounters (dict[str:int]): dictionary of exon counters of different filtering
-# performed for the cluster
-# Returns :
-# if any of the filtering conditions are met returns False
-# otherwise returns the Gaussien parameters mean [float] and standard deviation [float].
-def exonFiltering(exonFPM, uncovExonThreshold, filterCounters):
-    ###################
-    # Filter n°1: exon not covered
-    # treats several possible cases:
-    # - all samples in the cluster haven't coverage for the current exon
-    # - more than 2/3 of the samples have no cover.
-    #   Warning: Potential presence of homodeletions. We have chosen don't
-    # call them because they affect too many samples
-    # exon is not kept for the rest of the filtering and calling step
-    medianFPM = np.median(exonFPM)
-    if medianFPM == 0:
-        filterCounters["med=0"] += 1
-        return
-
-    ###################
-    # fits a Gaussian robustly from the exon count data
-    # meanRG [float] and stdevRG [float] are the gaussian parameters
-    # Filter n°2: the Gaussian fitting cannot be performed
-    # the median (consider as the mean parameter of the Gaussian) is located
-    # in an area without point data.
-    # in this case exon is not kept for the rest of the filtering and calling step
-    try:
-        meanRG, stdevRG = fitRobustGaussian(exonFPM)
-    except Exception as e:
-        if str(e) == "cannot fit":
-            filterCounters["cannotFitRG"] += 1
-            return
-        else:
-            raise
-
+# - exonFPM (ndarray[float]): counts for one exon
+# - RGParams (list[float]): mean and stdev from robust fitting of Gaussian 
+# - lowThreshold (float): FPM threshold for filter 3
+# - filterCounters (dict[str:int]): key: type of filter, value: number of filtered exons
+# Returns "True" if exon doesn't pass the two filters otherwise "False"
+def failedFilters(exonFPM, RGParams, lowThreshold, filterCounters):
+    meanRG = RGParams[0]
+    stdevRG = RGParams[1]
+    
     ###################
     # Filter n°3:
-    # the Gaussian obtained in a robust way must not be associated
-    # with a copie number total loss (CN0)
-    # a pseudozscore allows to exclude exons with a Gaussian overlapping the
-    # threshold of not covered exons (uncovExonThreshold ).
-    # To obtain the pseudoZscore it's necessary that the parameters of the
-    # robust Gaussian != 0.
-    # exon isn't kept for the rest of the filtering and calling step
-    if meanRG == 0:
-        filterCounters["meanRG=0"] += 1
-        return
-
     # the mean != 0 and all samples have the same coverage value.
     # In this case a new arbitrary standard deviation is calculated
     # (simulates 5% on each side of the mean)
     if (stdevRG == 0):
         stdevRG = meanRG / 20
 
-    z_score = (meanRG - uncovExonThreshold) / stdevRG
+    # meanRG != 0 because of filter 1 => stdevRG != 0
+    z_score = (meanRG - lowThreshold) / stdevRG
 
     # the exon is excluded if there are less than 3 standard deviations between
     # the threshold and the mean.
     if (z_score < 3):
-        filterCounters["pseudoZscore<3"] += 1
-        return
+        filterCounters["RGClose2LowThreshold"] += 1
+        return(True)
 
     ###################
     # Filter n°4:
-    # principle: Calls are considered possible when the robust Gaussian has a sample
-    # minimum contribution of 50%.
-    # otherwise exon is not kept for the calling step
     weight = computeWeight(exonFPM, meanRG, stdevRG)
     if (weight < 0.5):
-        filterCounters["sampleContribution2RG<0.5"] += 1
-        return
+        filterCounters["fewSampsInRG"] += 1
+        return(True)
 
-    return(meanRG, stdevRG)
+    return(False)
 
-
-###################################
-# robustGaussianFit[PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
+#############################################################
+# fitRobustGaussian
 # Fits a single principal gaussian component around a starting guess point
 # in a 1-dimensional gaussian mixture of unknown components with EM algorithm
 # script found to :https://github.com/hmiemad/robust_Gaussian_fit (v01_2023)
@@ -474,10 +404,10 @@ def fitRobustGaussian(X, mu=None, sigma=None, bandwidth=2.0, eps=1.0e-5):
         # A Gaussian fit is impossible => raise exception
         else:
             raise Exception("cannot fit")
-    return (mu, sigma)
+    return ([mu, sigma])
 
 
-###########
+#############################################################
 # normal_erf
 # ancillary function of the robustGaussianFitPrivate function
 # computes Gauss error function
@@ -500,7 +430,7 @@ def normal_erf(x, mu=0, sigma=1, depth=50):
     return np.clip(normal / np.sqrt(2.0 * np.pi) / sigma, 0, None), np.clip(erf / np.sqrt(2.0 * np.pi) / sigma, -0.5, 0.5)
 
 
-##########
+#############################################################
 # truncated_integral_and_sigma
 # ancillary function of the robustGaussianFitPrivate function
 # allows for a more precise and focused analysis of a function
@@ -510,10 +440,9 @@ def truncated_integral_and_sigma(x):
     return np.sqrt(1 - n * x / e)
 
 
-############################
-# computeWeight[PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
+#############################################################
+# computeWeight
 # compute the sample contribution to the Gaussian obtained in a robust way.
-#
 # Args:
 # - fpm_in_exon (np.ndarray[float]): FPM values for a particular exon for each sample
 # - mean (float): mean FPM value for the exon
@@ -521,63 +450,64 @@ def truncated_integral_and_sigma(x):
 # Returns weight of sample contribution to the gaussian for the exon [float]
 @numba.njit
 def computeWeight(fpm_in_exon, mean, standard_deviation):
-    targetData = fpm_in_exon[(fpm_in_exon > (mean - (2 * standard_deviation))) & 
+    targetData = fpm_in_exon[(fpm_in_exon > (mean - (2 * standard_deviation))) &
                              (fpm_in_exon < (mean + (2 * standard_deviation))), ]
     weight = len(targetData) / len(fpm_in_exon)
 
     return weight
 
 
-############################
-# computeProbabilites [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
-# Given four models, the log odds ratio (LOR) allows to choose the best-fitting model.
-# Use of Bayes' theorem to deduce it.
-#
+#############################################################
+# computeProbabilites
+# Given a coverage value for a sample and distribution parameters of a gamma
+# and a Gaussian for an exon, calculation of copy number observation probabilities.
 # Args:
-# - sample_data (float): a sample data point, FPM value
-# - gamma_params (list(float)): estimated parameters of the gamma distribution [shape, loc, scale]
-# - gamma_threshold (float):
-# - prior_probabilities (list[float]): prior probabilities for different cases
-# - robustGaussianParams (list[float]): contains mean value and standard deviation for the normal distribution
-#
+# - sampFPM (float): FPM value for a sample
+# - gammaParams (list(float)): estimated parameters of the gamma distribution [shape, loc, scale]
+# - RGParams (list[float]): contains mean value and standard deviation for the normal distribution
+# - priors (list[float]): prior probabilities for different cases
+# - lowThreshold (float): 
 # Returns:
-# - probNorm (np.ndarray[float]): p(i|Ci)p(Ci) standardized for each copy number (CN0,CN1,CN2,CN3+)
-def computeProbabilites(sample_data, params, gamma_threshold, prior_probabilities, robustGaussianParams):
-    mean = robustGaussianParams[0]
-    standard_deviation = robustGaussianParams[1]
+# - probDensPriors (np.ndarray[float]): p(i|Ci)p(Ci) for each copy number (CN0,CN1,CN2,CN3+)
+def computeProbabilites(sampFPM, gammaParams, RGParams, priors, lowThreshold):
+    mean = RGParams[0]
+    standard_deviation = RGParams[1]
 
     # CN2 mean shift to get CN1 mean
-    mean_cn1 = mean / 2
+    meanCN1 = mean / 2
 
     # To Fill
     # Initialize an empty numpy array to store the  densities for each copy number type
-    probability_densities = np.zeros(4)
+    probDensities = np.zeros(4)
 
     ###############
     # Calculate the  density for the gamma distribution (CN0 profil)
     # This is a special case because the gamma distribution has a heavy tail,
-    # which means that the  of density calculated from it can override
+    # which means that the density calculated from it can override
     # the other Gaussian distributions.
     # A condition is set up to directly associate a value of pdf to 0 if the sample FPM value
     # is higher than the mean of the Gaussian associated to CN1.
     # Reversely, the value of the pdf is truncated from the threshold value discriminating
     # covered from uncovered exons.
-    cdf_cno_threshold = scipy.stats.gamma.cdf(gamma_threshold, a=params[0], loc=params[1], scale=params[2])
-    if sample_data <= mean_cn1:
-        probability_densities[0] = (1 / (1 - cdf_cno_threshold)) * scipy.stats.gamma.pdf(sample_data, a=params[0], loc=params[1], scale=params[2])
+    cdf_cno_threshold = scipy.stats.gamma.cdf(lowThreshold, a=gammaParams[0], loc=gammaParams[1], scale=gammaParams[2])
+    if sampFPM <= meanCN1:
+        probDensities[0] = (1 / (1 - cdf_cno_threshold)) * scipy.stats.gamma.pdf(sampFPM, 
+                                                                                         a=gammaParams[0], 
+                                                                                         loc=gammaParams[1], 
+                                                                                         scale=gammaParams[2])
 
     ################
     # Calculate the probability densities for the remaining cases (CN1,CN2,CN3+) using the normal distribution
-    probability_densities[1] = scipy.stats.norm.pdf(sample_data, mean / 2, standard_deviation)
-    probability_densities[2] = scipy.stats.norm.pdf(sample_data, mean, standard_deviation)
-    probability_densities[3] = scipy.stats.norm.pdf(sample_data, 3 * mean / 2, standard_deviation)
+    probDensities[1] = scipy.stats.norm.pdf(sampFPM, meanCN1, standard_deviation)
+    probDensities[2] = scipy.stats.norm.pdf(sampFPM, mean, standard_deviation)
+    probDensities[3] = scipy.stats.norm.pdf(sampFPM, 3 * meanCN1, standard_deviation)
 
     #################
     # Add prior probabilities
-    probability_densities_priors = np.multiply(probability_densities, prior_probabilities)
+    probDensPriors = np.multiply(probDensities, priors)
 
-    # normalized probabilities
-    probNorm = probability_densities_priors / np.sum(probability_densities_priors)
+    # # normalized probabilities
+    # probNorm = probability_densities_priors / np.sum(probability_densities_priors)
 
     # ################
     # # case where one of the probabilities is equal to 0 addition of an epsilon
@@ -593,26 +523,25 @@ def computeProbabilites(sample_data, params, gamma_threshold, prior_probabilitie
 
     #     # Calculate the log-odds ratio for the current probability density
     #     log_odd = np.log10(probability_densities_priors[i]) - np.log10(to_subtract)
-
     #     # probability transformation
     #     emissionProba[i] = 1 / (1 + np.exp(log_odd))
 
     # return emissionProba / emissionProba.sum()  # normalized
 
-    return probNorm
+    return probDensPriors
 
 
-################
-# addEpsilon
-@numba.njit
-def addEpsilon(probs, epsilon_factor=1000):
-    min_prob = np.min(probs[probs > 0])
-    epsilon = min_prob / epsilon_factor
-    probs = np.where(probs == 0, epsilon, probs)
-    return probs
+# #############################################################
+# # addEpsilon
+# @numba.njit
+# def addEpsilon(probs, epsilon_factor=1000):
+#     min_prob = np.min(probs[probs > 0])
+#     epsilon = min_prob / epsilon_factor
+#     probs = np.where(probs == 0, epsilon, probs)
+#     return probs
 
 
-###################################
+#############################################################
 # filtersPiePlot:
 # generates a plot per cluster
 # Args:
@@ -626,7 +555,7 @@ def filtersPiePlot(clustID, filterCounters, pdf):
 
     fig = matplotlib.pyplot.figure(figsize=(10, 10))
     matplotlib.pyplot.pie(filterCounters.values(), labels=filterCounters.keys(),
-                          colors=["grey", "yellow", "indianred", "mediumpurple", "royalblue", "mediumaquamarine"],
+                          colors=["grey", "yellow", "mediumpurple", "royalblue", "mediumaquamarine"],
                           autopct=lambda x: str(round(x, 2)) + '%',
                           startangle=-270,
                           pctdistance=0.7,
@@ -638,7 +567,7 @@ def filtersPiePlot(clustID, filterCounters, pdf):
     matplotlib.pyplot.close()
 
 
-#################################################
+#############################################################
 # calls2str:
 # return a string holding the calls from emissionArray[exonIndex],
 # tab-separated and starting with a tab
