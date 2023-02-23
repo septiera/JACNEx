@@ -4,7 +4,7 @@
 # Given a TSV of fragment counts as produced by 1_countFrags.py:
 # normalize the counts (in FPM = fragments per million), quality-control the samples,
 # and build clusters of "comparable" samples that will be used as controls for one another.
-# See usage for more details.
+# See usage for details.
 ###############################################################################################
 import sys
 import getopt
@@ -34,22 +34,25 @@ logger = logging.getLogger(__name__)
 # Parse and sanity check the command+arguments, provided as a list of
 # strings (eg sys.argv).
 # Return a list with everything needed by this module's main()
+# If anything is wrong, raise Exception("EXPLICIT ERROR MESSAGE")
 def parseArgs(argv):
     scriptName = os.path.basename(argv[0])
+
     # mandatory args
     countsFile = ""
     outFile = ""
     # optional args with default values
-    minSamps = "20"
-    maxCorr = "0.95"
-    minCorr = "0.85"
+    minSamps = 20
+    maxCorr = 0.95
+    minCorr = 0.85
     plotDir = "./ResultPlots/"
     # boolean, will be True if --noGender is specified
     noGender = False
 
-    usage = """\nCOMMAND SUMMARY:
-Given a TSV of exon fragment counts, normalizes the counts (Fragment Per Million), performs
-quality control on the samples and forms the reference clusters for the call.
+    usage = "NAME:\n" + scriptName + """\n
+DESCRIPTION:
+Given a TSV of exon fragment counts, normalize the counts (Fragments Per Million), perform
+quality controls on the samples and form the reference clusters for the call.
 The execution of the default command separates autosomes ("A") and gonosomes ("G") for
 clustering, to avoid bias (accepted sex chromosomes: X, Y, Z, W).
 Results are printed to stdout in TSV format: 5 columns
@@ -74,7 +77,7 @@ ARGUMENTS:
                       into clusters even if they are significantly different from the rest of
                       the clusters. A too high threshold will lead to a massive elimination of
                       non-clustered samples. default: """ + str(minCorr) + """
-   --plotDir[str]: subdir (created if needed) where result plots files will be produced, default :  """ + str(plotDir) + """
+   --plotDir[str]: subdir (created if needed) where result plots files will be produced, default :  """ + plotDir + """
    --noGender : disable gender differentiation for clustering on sex chromosomes
    -h , --help  : display this help and exit\n"""
 
@@ -82,6 +85,8 @@ ARGUMENTS:
         opts, args = getopt.gnu_getopt(argv[1:], 'h', ["help", "counts=", "out=", "minSamps=", "maxCorr=", "minCorr=", "plotDir=", "noGender"])
     except getopt.GetoptError as e:
         raise Exception(e.msg + ". Try " + scriptName + " --help")
+    if len(args) != 0:
+        raise Exception("bad extra arguments: " + ' '.join(args) + ". Try " + scriptName + " --help")
 
     for opt, value in opts:
         if opt in ('-h', '--help'):
@@ -145,8 +150,8 @@ ARGUMENTS:
     if not os.path.isdir(plotDir):
         try:
             os.mkdir(plotDir)
-        except Exception:
-            raise Exception("plotDir " + plotDir + " doesn't exist and can't be mkdir'd")
+        except Exception as e:
+            raise Exception("plotDir " + plotDir + " doesn't exist and can't be mkdir'd: " + str(e))
 
     # AOK, return everything that's needed
     return(countsFile, outFile, minSamps, maxCorr, minCorr, plotDir, noGender)
@@ -155,70 +160,64 @@ ARGUMENTS:
 ####################################################
 # main function
 # Arg: list of strings, eg sys.argv
-# If anything goes wrong, print error message to stderr and raise exception.
+# If anything goes wrong, raise Exception("SOME EXPLICIT ERROR MESSAGE"), more details
+# may be available in the log
 def main(argv):
-    # parse, check and preprocess arguments - exceptions must be caught by caller
+    # parse, check and preprocess arguments
     (countsFile, outFile, minSamps, maxCorr, minCorr, plotDir, noGender) = parseArgs(argv)
 
-    ################################################
+    # should density plots compare several different KDE bandwidth algorithms and values?
+    # hard-coded here rather than set via parseArgs because this should only be set
+    # to True for dev & testing
+    testSmoothingBWs = False
+
     # args seem OK, start working
     logger.debug("called with: " + " ".join(argv[1:]))
     logger.info("starting to work")
     startTime = time.time()
 
-    #######################################################
-    # Parse TSV file of counts
     ###################
-    # To obtain :
-    # - exons (list of lists[str,int,int,str]): CHR,START,END,EXON_ID
-    #   the exons are sorted according to their genomic position and padded.
-    # - SOIs (list[str]): sampleIDs copied from countsFile's header
-    # - countsArray (np.ndarray[int]): fragment counts, dim = NbExons x NbSOIs
+    # parse counts
     try:
         (exons, SOIs, countsArray) = countFrags.countsFile.parseCountsFile(countsFile)
-    except Exception:
-        logger.error("parseCountsFile failed")
-        raise Exception()
-
-    thisTime = time.time()
-    logger.debug("Done parsing countsFile, in %.2f s", thisTime - startTime)
-    startTime = thisTime
-
-    #####################################################
-    # Normalisation:
-    ##################
-    # Fragment counts are standardised in Fragment Per Million (FPM).
-    # - FPMArray (np.ndarray[float]): normalised counts of countsArray same dimension
-    #   for arrays in input/output: NbExons*NbSOIs
-    try:
-        FPMArray = countFrags.countFragments.normalizeCounts(countsArray)
-    except Exception:
-        logger.error("normalizeCounts failed")
-        raise Exception()
-
-    thisTime = time.time()
-    logger.debug("Done normalizing counts, in %.2f s", thisTime - startTime)
-    startTime = thisTime
-
-    #####################################################
-    # Quality control:
-    ##################
-    # sample coverage profil validity assessment and identification of uncaptured exons indexes
-    # common to the validated samples
-    # - sampsQCfailed (list[int]): sample indexes not validated by quality control
-    # - uncapturedExons (list[int]): uncaptured exons indexes common
-    #   to all samples passing quality control
-    try:
-        QCPDF = os.path.join(plotDir, "CoverageProfilChecking_" + str(len(SOIs)) + "samps.pdf")
-        (sampsQCfailed, uncapturedExons) = clusterSamps.qualityControl.SampsQC(FPMArray, SOIs, QCPDF)
-
     except Exception as e:
-        logger.error("SampQC failed %s", e)
-        raise Exception()
+        logger.error("parseCountsFile failed for %s : %s", countsFile, repr(e))
+        raise Exception("parseCountsFile failed")
 
     thisTime = time.time()
-    logger.debug("Done samples quality control, in %.2f s", thisTime - startTime)
+    logger.debug("Done parsing countsFile, in %.2fs", thisTime - startTime)
     startTime = thisTime
+
+    ###################
+    # normalize counts (FPM)
+    try:
+        countsFPM = countFrags.countFragments.normalizeCounts(countsArray)
+    except Exception as e:
+        logger.error("normalizeCounts failed for %s : %s", countsFile, repr(e))
+        raise Exception("normalizeCounts failed")
+
+    thisTime = time.time()
+    logger.debug("Done normalizing counts, in %.2fs", thisTime - startTime)
+    startTime = thisTime
+
+    ###################
+    # plot exon FPM densities for all samples; use this to identify QC-failing samples,
+    # and exons with decent coverage in at least one sample (other exons can be ignored)
+    plotFilePass = plotDir + "/coverageProfile_PASS.pdf"
+    plotFileFail = plotDir + "/coverageProfile_FAIL.pdf"
+    try:
+        (sampsQCfailed, capturedExons) = clusterSamps.qualityControl.SampsQC(countsFPM, SOIs, plotFilePass,
+                                                                             plotFileFail, testBW=testSmoothingBWs)
+    except Exception as e:
+        logger.error("SampsQC failed for %s : %s", countsFile, repr(e))
+        raise Exception("SampsQC failed")
+
+    thisTime = time.time()
+    logger.debug("Done samples quality control, in %.2fs", thisTime - startTime)
+    startTime = thisTime
+
+    logger.info("EARLY RETURN, working on coverage plots")
+    return
 
     #####################################################
     # Clustering:
@@ -228,10 +227,10 @@ def main(argv):
 
     ####################
     # filtering the counts data to recover valid samples and captured exons
-    # - validFPMArray (np.ndarray[float]): normalized fragment counts for exons captured
+    # - validCountsFPM (np.ndarray[float]): normalized fragment counts for exons captured
     # for all samples that passed quality control
-    validFPMArray = np.delete(FPMArray, sampsQCfailed, axis=1)
-    validFPMArray = np.delete(validFPMArray, uncapturedExons, axis=0)
+    validCountsFPM = np.delete(countsFPM, sampsQCfailed, axis=1)
+    validCountsFPM = validCountsFPM[capturedExons:]
 
     ###########################
     #### no gender discrimination
@@ -245,13 +244,13 @@ def main(argv):
             #   key = clusterID, value = list of SOIsIndex
             # - trgt2Ctrls (dict(int : list[int])): target and controls clusters correspondance,
             #   key = target clusterID, value = list of controls clusterID
-            (clust2Samps, trgt2Ctrls) = clusterSamps.clustering.clustersBuilds(validFPMArray, maxCorr, minCorr, minSamps, dendogramPDF)
-        except Exception:
-            logger.error("clusterBuilding failed")
-            raise Exception()
+            (clust2Samps, trgt2Ctrls) = clusterSamps.clustering.clustersBuilds(validCountsFPM, maxCorr, minCorr, minSamps, dendogramPDF)
+        except Exception as e:
+            logger.error("clustersBuilds failed : %s", repr(e))
+            raise Exception("clustersBuilds failed")
 
         thisTime = time.time()
-        logger.debug("Done clusterisation in %.2f s", thisTime - startTime)
+        logger.debug("Done clusterisation in %.2fs", thisTime - startTime)
         startTime = thisTime
 
         logger.info("### standardisation of results and validation:")
@@ -263,12 +262,12 @@ def main(argv):
             # (<20 =invalid), its cluster status (here as all chromosomes are analysed together = "W" for whole)
             clustsResList = clusterSamps.clustering.STDZandCheckRes(SOIs, sampsQCfailed, clust2Samps, trgt2Ctrls, minSamps, noGender)
 
-        except Exception:
-            logger.error("standardisation of results and validation failed")
-            raise Exception()
+        except Exception as e:
+            logger.error("STDZandCheckRes ie standardisation of results and validation failed : %s", repr(e))
+            raise Exception("STDZandCheckRes failed")
 
         thisTime = time.time()
-        logger.debug("Done standardisation of results and validation in %.2f s", thisTime - startTime)
+        logger.debug("Done standardisation of results and validation in %.2fs", thisTime - startTime)
         startTime = thisTime
 
     ###########################
@@ -276,7 +275,7 @@ def main(argv):
     else:
 
         # - exonsToKeep (list of list[str,int,int,str]): contains exons information from captured exons
-        exonsToKeep = [val for i, val in enumerate(exons) if i not in uncapturedExons]
+        exonsToKeep = exons[capturedExons]
 
         try:
             # parse exons to extract information related to the organisms studied and their gender
@@ -285,12 +284,12 @@ def main(argv):
             # - genderInfo (list of list[str]):contains informations for the gender
             # identification, ie ["gender identifier","specific chromosome"].
             (gonoIndex, genderInfo) = clusterSamps.genderDiscrimination.getGenderInfos(exonsToKeep)
-        except Exception:
-            logger.error("getGenderInfos failed")
-            raise Exception()
+        except Exception as e:
+            logger.error("getGenderInfos failed : %s", repr(e))
+            raise Exception("getGenderInfos failed")
 
         thisTime = time.time()
-        logger.debug("Done get gender informations in %.2f s", thisTime - startTime)
+        logger.debug("Done get gender informations in %.2fs", thisTime - startTime)
         startTime = thisTime
 
         # cutting normalized count data
@@ -298,10 +297,10 @@ def main(argv):
         gonoIndexFlat = np.unique([item for sublist in list(gonoIndex.values()) for item in sublist])
         # - autosomesFPM (np.ndarray[float]): normalized fragment counts for valid samples, exons captured
         # in autosomes
-        autosomesFPM = np.delete(validFPMArray, gonoIndexFlat, axis=0)
+        autosomesFPM = np.delete(validCountsFPM, gonoIndexFlat, axis=0)
         # - gonosomesFPM (np.ndarray[float]): normalized fragment counts for valid samples, exons captured
         # in gonosomes
-        gonosomesFPM = np.take(validFPMArray, gonoIndexFlat, axis=0)
+        gonosomesFPM = np.take(validCountsFPM, gonoIndexFlat, axis=0)
 
         #####################################################
         # Get Autosomes Clusters
@@ -316,12 +315,12 @@ def main(argv):
             #   key = target clusterID, value = list of controls clusterID
             (clust2Samps, trgt2Ctrls) = clusterSamps.clustering.clustersBuilds(autosomesFPM, maxCorr, minCorr, minSamps, dendogramPDF)
 
-        except Exception:
-            logger.error("clusterBuilds for autosomes failed")
-            raise Exception()
+        except Exception as e:
+            logger.error("clusterBuilds for autosomes failed : %s", repr(e))
+            raise Exception("clusterBuilds for autosomes failed")
 
         thisTime = time.time()
-        logger.debug("Done samples clustering for autosomes : in %.2f s", thisTime - startTime)
+        logger.debug("Done samples clustering for autosomes : in %.2fs", thisTime - startTime)
         startTime = thisTime
 
         #####################################################
@@ -337,9 +336,9 @@ def main(argv):
             #   key = target clusterID, value = list of controls clusterID
             (clust2SampsGono, trgt2CtrlsGono) = clusterSamps.clustering.clustersBuilds(gonosomesFPM, maxCorr, minCorr, minSamps, dendogramPDF)
 
-        except Exception:
-            logger.error("clusterBuilds for gonosomesFPM failed")
-            raise Exception()
+        except Exception as e:
+            logger.error("clusterBuilds for gonosomes failed : %s", repr(e))
+            raise Exception("clusterBuilds for gonosomes failed")
 
         # unlike the processing carried out on the sets of chromosomes and autosomes,
         # it is necessary for the gonosomes to identify the sample genders.
@@ -356,13 +355,13 @@ def main(argv):
             # - kmeans (list[int]): groupID predicted by Kmeans ordered on SOIsIndex
             # - sexePred (list[str]): genderID (e.g ["M","F"]), the order
             # correspond to KMeans groupID (0=M, 1=F)
-            (kmeans, sexePred) = clusterSamps.genderDiscrimination.genderAttribution(validFPMArray, gonoIndex, genderInfo)
-        except Exception:
-            logger.error("gender prediction from gonosomes failed")
-            raise Exception()
+            (kmeans, sexePred) = clusterSamps.genderDiscrimination.genderAttribution(validCountsFPM, gonoIndex, genderInfo)
+        except Exception as e:
+            logger.error("genderAttribution ie gender prediction from gonosomes failed : %s", repr(e))
+            raise Exception("genderAttribution failed")
 
         thisTime = time.time()
-        logger.debug("Done gender prediction from gonosomes : in %.2f s", thisTime - startTime)
+        logger.debug("Done gender prediction from gonosomes : in %.2fs", thisTime - startTime)
         startTime = thisTime
 
         logger.info("### standardisation of results and validation:")
@@ -378,12 +377,12 @@ def main(argv):
             # this is not indicated by "B".
             clustsResList = clusterSamps.clustering.STDZandCheckRes(SOIs, sampsQCfailed, clust2Samps, trgt2Ctrls, minSamps,
                                                                     noGender, clust2SampsGono, trgt2CtrlsGono, kmeans, sexePred)
-        except Exception:
-            logger.error("standardisation of results and validation failed")
-            raise Exception()
+        except Exception as e:
+            logger.error("STDZandCheckRes ie standardisation of results and validation failed : %s", repr(e))
+            raise Exception("STDZandCheckRes failed")
 
         thisTime = time.time()
-        logger.debug("Done standardisation of results and validation in %.2f s", thisTime - startTime)
+        logger.debug("Done standardisation of results and validation in %.2fs", thisTime - startTime)
         startTime = thisTime
 
     #####################################################
@@ -392,7 +391,7 @@ def main(argv):
     clusterSamps.clustering.printClustersFile(clustsResList, outFile)
 
     thisTime = time.time()
-    logger.debug("Done printing results, in %.2f s", thisTime - startTime)
+    logger.debug("Done printing results, in %.2fs", thisTime - startTime)
     logger.info("ALL DONE")
 
 
@@ -400,14 +399,17 @@ def main(argv):
 ######################################## Main ######################################
 ####################################################################################
 if __name__ == '__main__':
+    scriptName = os.path.basename(sys.argv[0])
     # configure logging, sub-modules will inherit this config
-    logging.basicConfig(format='%(asctime)s %(levelname)s %(name)s %(funcName)s(): %(message)s',
+    logging.basicConfig(format='%(asctime)s %(levelname)s %(name)s: %(message)s',
                         datefmt='%Y-%m-%d %H:%M:%S',
                         level=logging.DEBUG)
     # set up logger: we want script name rather than 'root'
-    logger = logging.getLogger(os.path.basename(sys.argv[0]))
+    logger = logging.getLogger(scriptName)
+
     try:
         main(sys.argv)
-    except Exception:
-        # whoever raised the exception should have explained it on stderr, here we just die
-        exit(1)
+    except Exception as e:
+        # details on the issue should be in the exception name, print it to stderr and die
+        sys.stderr.write("ERROR in " + scriptName + " : " + str(e) + "\n")
+        sys.exit(1)

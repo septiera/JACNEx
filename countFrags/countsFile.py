@@ -4,9 +4,8 @@ import gzip
 import logging
 
 
-# prevent numba DEBUG messages filling the logs when we are in DEBUG loglevel
-numba_logger = logging.getLogger('numba')
-numba_logger.setLevel(logging.WARNING)
+# prevent numba flooding the logs when we are in DEBUG loglevel
+logging.getLogger('numba').setLevel(logging.WARNING)
 
 # set up logger, using inherited config
 logger = logging.getLogger(__name__)
@@ -25,7 +24,7 @@ logger = logging.getLogger(__name__)
 #     for some samples (hopefully some of the SOIs), using the same exon definitions
 #     as in 'exons', if there is one; or '' otherwise
 #
-# Will returns a tuple (countsArray, countsFilled), each is created here:
+# Returns a tuple (countsArray, countsFilled), each is created here:
 #   - countsArray is an int numpy array, dim = NbExons x NbSOIs, initially all-zeroes
 #   - countsFilled is a 1D boolean numpy array, dim = NbSOIs, initially all-False
 #
@@ -47,10 +46,9 @@ def extractCountsFromPrev(exons, SOIs, prevCountsFile):
         (prevExons, prevSamples, prevCountsList) = parseCountsFilePrivate(prevCountsFile)
         # compare exon definitions
         if (exons != prevExons):
-            logger.error("exon definitions disagree between prevCountsFile and BED file...\n" +
-                         "\tIf the BED file or padding changed, " +
-                         "you cannot re-use a previous countsFile: all counts must be recalculated from scratch")
-            raise Exception('mismatched exon definitions between prevCountsFile and exons')
+            logger.error("exon definitions disagree between prevCountsFile and BED, " +
+                         "countsFiles cannot be re-used if the BED file or padding changed")
+            raise Exception('mismatched exons')
 
         # fill prev2new to identify SOIs that are in prevCountsFile:
         # prev2new is a 1D numpy array, size = len(prevSamples), prev2new[prev] is the

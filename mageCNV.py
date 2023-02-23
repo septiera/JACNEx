@@ -1,9 +1,11 @@
-import sys
 import getopt
 import glob
-import os
-import tempfile
+import gzip
 import logging
+import os
+import re
+import sys
+import tempfile
 from datetime import datetime
 
 
@@ -23,7 +25,7 @@ import s2_clusterSamps
 # Return a list with:
 # - everything needed by this module's main()
 # - one sys.argv-like list (as a list of strings) for each mageCNV step
-# If anything is wrong, raise Exception("ERROR MESSAGE")
+# If anything is wrong, raise Exception("EXPLICIT ERROR MESSAGE")
 def parseArgs(argv):
     scriptName = os.path.basename(argv[0])
 
@@ -36,8 +38,8 @@ def parseArgs(argv):
     step3Args = ["s3_CNCalls.py"]
     step4Args = ["s4_TBN.py"]
 
-    # default values of global optional args
-    # jobs default: 80% of available cores, as a string
+    # default values of global optional args, as strings
+    # jobs default: 80% of available cores
     jobs = round(0.8 * len(os.sched_getaffinity(0)))
     jobs = str(jobs)
 
@@ -58,8 +60,8 @@ blablabla
 
 ARGUMENTS:
 Global arguments:
-   --bams [str] : comma-separated list of BAM files (incompatible with --bams-from)
-   --bams-from [str] : text file listing BAM files, one per line (incompatible with --bams)
+   --bams [str] : comma-separated list of BAM files (with path)
+   --bams-from [str] : text file listing BAM files (with path), one per line
    --bed [str] : BED file, possibly gzipped, containing exon definitions (format: 4-column
            headerless tab-separated file, columns contain CHR START END EXON_ID)
    --workDir [str] : subdir where intermediate results and QC files are produced, provide a pre-existing
@@ -87,6 +89,8 @@ Step 2 optional arguments, defaults should be OK:
                                                        "minSamps=", "maxCorr=", "minCorr=", "noGender"])
     except getopt.GetoptError as e:
         raise Exception(e.msg + ". Try " + scriptName + " --help")
+    if len(args) != 0:
+        raise Exception("bad extra arguments: " + ' '.join(args) + ". Try " + scriptName + " --help")
 
     for opt, value in opts:
         if opt in ('-h', '--help'):
@@ -142,6 +146,45 @@ Step 2 optional arguments, defaults should be OK:
     return(workDir, step1Args, step2Args, step3Args, step4Args)
 
 
+####################################################
+# Args:
+# - countsFilesAll: list of pre-existing countsFiles (possibly empty), with PATH
+# - samples: list of sample names
+# Return (cf, commonSamples) where
+# - cf is the countsFile with the most common samples, or '' if list was empty or
+#   if no countsFile has any sample from samples
+# - commonSamples is the number of common samples
+def findBestPrevCF(countsFilesAll, samples):
+    bestCF = ''
+    commonSamples = 0
+    # build dict of samples, value==1
+    samplesD = {}
+    for s in samples:
+        samplesD[s] = 1
+    for cf in countsFilesAll:
+        try:
+            if cf.endswith(".gz"):
+                countsFH = gzip.open(cf, "rt")
+            else:
+                countsFH = open(cf, "r")
+        except Exception as e:
+            logger.error("Opening pre-existing countsFile %s: %s", cf, e)
+            raise Exception('cannot open pre-existing countsFile')
+        # grab samples from header
+        samplesCF = countsFH.readline().rstrip().split("\t")
+        # get rid of exon definition headers
+        del samplesCF[0:4]
+        commonSamplesCF = 0
+        for s in samplesCF:
+            if s in samplesD:
+                commonSamplesCF += 1
+        if commonSamplesCF > commonSamples:
+            bestCF = cf
+            commonSamples = commonSamplesCF
+        countsFH.close()
+    return(bestCF, commonSamples)
+
+
 ###############################################################################
 ############################ PUBLIC FUNCTIONS #################################
 ###############################################################################
@@ -159,11 +202,7 @@ def main(argv):
 
     logger.info("called with: " + " ".join(argv[1:]))
     # parse, check and preprocess arguments
-    try:
-        (workDir, step1Args, step2Args, step3Args, step4Args) = parseArgs(argv)
-    except Exception:
-        # problem is described in Exception, just re-raise
-        raise
+    (workDir, step1Args, step2Args, step3Args, step4Args) = parseArgs(argv)
 
     ##################
     # hard-coded subdir hierarchy of workDir, created if needed
@@ -184,7 +223,7 @@ def main(argv):
         except Exception:
             raise Exception(stepNames[0] + " BPDir " + BPDir + " doesn't exist and can't be mkdir'd")
 
-    # step2: clusterFiles are saved (date-stamped) in clustersDir
+    # step2: clusterFiles are saved (date-stamped and gzipped) in clustersDir
     clustersDir = workDir + '/ClusterFiles/'
     if not os.path.isdir(clustersDir):
         try:
@@ -192,7 +231,7 @@ def main(argv):
         except Exception:
             raise Exception(stepNames[0] + " clustersDir " + clustersDir + "doesn't exist and can't be mkdir'd")
 
-    # step2: QC plots from step2 go in plotDir
+    # step2: QC plots from step2 go in date-stamped subdirs of plotDir
     plotDir = workDir + '/QCPlots/'
     if not os.path.isdir(plotDir):
         try:
@@ -214,12 +253,8 @@ def main(argv):
         # complement step1Args and check them
         step1Args.extend(["--BPDir", BPDir])
 
-        # find and reuse most recent pre-existing countsFile, if any
-        countsFilesAll = glob.glob(countsDir + '/countsFile_*.gz')
-        countsFilePrev = max(countsFilesAll, default='', key=os.path.getctime)
-        if countsFilePrev != '':
-            logger.info("will reuse most recent countsFile: " + countsFilePrev)
-            step1Args.extend(["--counts", countsFilePrev])
+        # not checking --counts here because we'll only know countsFilePrev later, but
+        # we'll make sure findBestPrevCF() returns a file that exists
 
         # new countsFile to create
         countsFile = countsDir + '/countsFile_' + dateStamp + '.tsv.gz'
@@ -227,19 +262,30 @@ def main(argv):
             raise Exception(stepNames[1] + " countsFile " + countsFile + " already exists")
         step1Args.extend(["--out", countsFile])
 
-        # check step1 args, discarding results
+        # check step1 args, keeping only the list of samples
         try:
-            s1_countFrags.parseArgs(step1Args)
+            samples = s1_countFrags.parseArgs(step1Args)[1]
         except Exception as e:
             # problem is described in Exception, complement and reraise
             raise Exception(stepNames[1] + " parseArgs problem: " + str(e))
 
+        # find pre-existing countsFile (if any) with the most common samples
+        countsFilesAll = glob.glob(countsDir + '/countsFile_*.gz')
+        (countsFilePrev, commonSamples) = findBestPrevCF(countsFilesAll, samples)
+        if commonSamples != 0:
+            logger.info("will reuse best matching countsFile (%i common samples): %s",
+                        commonSamples, countsFilePrev)
+            step1Args.extend(["--counts", countsFilePrev])
+
         #########
         # complement step2Args and check them
-        step2Args.extend(["--plotDir", plotDir])
+        thisPlotDir = plotDir + 'QCPlots_' + dateStamp
+        if os.path.isdir(thisPlotDir):
+            raise Exception(stepNames[2] + " plotDir " + thisPlotDir + " already exists")
+        step2Args.extend(["--plotDir", thisPlotDir])
 
         # new clustersFile to create
-        clustersFile = clustersDir + '/clustersFile_' + dateStamp + '.tsv'
+        clustersFile = clustersDir + '/clustersFile_' + dateStamp + '.tsv.gz'
         if os.path.isfile(clustersFile):
             raise Exception(stepNames[2] + " clustersFile " + clustersFile + " already exists")
         step2Args.extend(["--out", clustersFile])
@@ -268,7 +314,11 @@ def main(argv):
         s1_countFrags.main(step1Args)
     except Exception as e:
         logger.error("%s FAILED: %s", stepNames[1], str(e))
-        raise Exception("STEP1 FAILED")
+        if re.search(r'mismatched exons', str(e)):
+            # specific exception string for this particular case
+            raise Exception("STEP1 FAILED, use the same --bed and --padding as in previous runs or specify a new --workDir")
+        else:
+            raise Exception("STEP2 FAILED, check log")
 
     # countsFile wasn't created if it would be identical to countsFilePrev, if this
     # is the case just use countsFilePrev downstream
@@ -284,7 +334,7 @@ def main(argv):
         s2_clusterSamps.main(step2Args)
     except Exception as e:
         logger.error("%s FAILED: %s", stepNames[2], str(e))
-        raise Exception("STEP2 FAILED")
+        raise Exception("STEP2 FAILED, check log")
     logger.info("%s DONE", stepNames[2])
 
     logger.info("ALL DONE")

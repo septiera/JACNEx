@@ -1,3 +1,4 @@
+import os
 import logging
 import numpy as np
 import matplotlib.backends.backend_pdf
@@ -5,6 +6,9 @@ import matplotlib.pyplot
 
 ####### MAGE-CNV modules
 import clusterSamps.smoothing
+
+# prevent PIL flooding the logs when we are in DEBUG loglevel
+logging.getLogger('PIL').setLevel(logging.WARNING)
 
 # set up logger, using inherited config
 logger = logging.getLogger(__name__)
@@ -36,75 +40,116 @@ logger = logging.getLogger(__name__)
 # to find those common to all validated samples.
 #
 # Args:
-#  - counts (np.ndarray[float]): normalised fragment counts
-#  - SOIs (list[str]): samples of interest names
-#  - QCPDF (str): full path to save the pdf
+# - counts (np.ndarray[float]): normalised fragment counts
+# - SOIs (list[str]): sample names
+# - plotFilePass: pdf filename (with path) where plots for QC-passing samples are made
+# - plotFileFail: same as plotFilePass but for QC-failing samples
+# - minLow2high (float): a sample's fractional density increase from min to max must
+#     be >= minLow2high to pass QC - default should be OK
+# - testBW: if True each plot includes several different KDE bandwidth algorithms/values,
+#     for testing and comparing; otherwise use what seems best in our tests
 #
-# Returns a tupple (sampsQCfailed, uncoveredExons), each variable is created here:
+# Returns a tuple (sampsQCfailed, uncapturedExons), each variable is created here:
 #  - sampsQCfailed (list[int]): sample indexes not validated by quality control
 #  - uncapturedExons (list[int]): uncaptured exons indexes common to all samples
 # passing quality control
 
-def SampsQC(counts, SOIs, QCPDF):
-    #### Fixed parameter:
-    # threshold to assess the validity of the sample coverage profile.
-    signalThreshold = 0.20
+def SampsQC(counts, SOIs, plotFilePass, plotFileFail, minLow2high=0.2, testBW=False):
+    if os.path.isfile(plotFilePass) or os.path.isfile(plotFileFail):
+        logger.error('SampsQC : plotFile(s) %s and/or %s already exist', plotFilePass, plotFileFail)
+        raise Exception("plotFilePass and/or plotFileFail already exist")
 
     #### To Fill:
     sampsQCfailed = []
-    uncoveredExons = []
+    capturedExons = np.zeros(len(counts[:, 0]), dtype=np.bool_)
 
-    # create a matplotlib object and open a pdf
-    PDF = matplotlib.backends.backend_pdf.PdfPages(QCPDF)
+    # create matplotlib PDF objects
+    pdfPass = matplotlib.backends.backend_pdf.PdfPages(plotFilePass)
+    pdfFail = matplotlib.backends.backend_pdf.PdfPages(plotFileFail)
 
     for sampleIndex in range(len(SOIs)):
-        # extract sample counts
-        sampFragCounts = counts[:, sampleIndex]
+        sampleCounts = counts[:, sampleIndex]
 
-        # smooth the coverage profile with kernel-density estimate using Gaussian kernels
-        # - FPMRange (np.ndarray[floats]): FPM range, [0-10] each 0.01
-        # - densityOnFPMRange (np.ndarray[float]): probability density for all bins in the FPM range
-        #   dim= len(binEdges)
-        FPMRange, densityOnFPMRange = clusterSamps.smoothing.smoothingCoverageProfile(sampFragCounts)
+        # for smoothing and plotting we don't care about large counts (and they mess things up),
+        # we will only consider the bottom fracDataForSmoothing fraction of counts, default
+        # value should be fine
+        fracDataForSmoothing = 0.96
+        # corresponding max counts value
+        maxData = np.quantile(sampleCounts, fracDataForSmoothing)
 
-        # recover the threshold (FPMRange index) of the minimum density before an increase
-        # - minDensity2FPMIndex (int): FPMRange index associated with the first lowest
-        # observed density
-        # - minDensity (float): first lowest density observed
-        (minDensity2FPMIndex, minDensity) = clusterSamps.smoothing.findLocalMin(densityOnFPMRange)
+        # produce smoothed representation(s) (one if testBW==False, several otherwise)
+        dataRanges = []
+        densities = []
+        legends = []
+        # vertical dashed lines: coordinates (default to 0 ie no lines) and legends
+        (xmin, xmax) = (0, 0)
+        (line1legend, line2legend) = ("", "")
+        # pdf to use for this sample
+        pdf = pdfPass
 
-        # recover the threshold of the maximum density means after the minimum
-        # density means which is associated with the largest covered exons number.
-        # - maxDensity2FPMIndex (int): FPMRange index associated with the maximum density
-        # observed
-        # - maxDensity (float): maximum density
-        (maxDensity2FPMIndex, maxDensity) = findLocalMaxPrivate(densityOnFPMRange, minDensity2FPMIndex)
-
-        # graphic representation of coverage profiles.
-        # returns a pdf in the plotDir
-        coverageProfilPlotPrivate(SOIs[sampleIndex], FPMRange, densityOnFPMRange, minDensity2FPMIndex, maxDensity2FPMIndex, PDF)
-
-        #############
-        # sample validity assessment
-        if (((maxDensity - minDensity) / maxDensity) <= signalThreshold):
-            sampsQCfailed.append(sampleIndex)
-        #############
-        # uncovered exons lists comparison
+        if testBW:
+            allBWs = ('ISJ', 0.15, 0.20, 'scott', 'silverman')
         else:
-            uncovExonSamp = np.where(sampFragCounts <= FPMRange[minDensity2FPMIndex])[0]
-            if (len(uncoveredExons) != 0):
-                uncoveredExons = np.intersect1d(uncoveredExons, uncovExonSamp)
+            # our current favorite, gasp at the python-required trailing comma...
+            allBWs = ('ISJ',)
+
+        for bw in allBWs:
+            try:
+                (dr, dens, bwValue) = clusterSamps.smoothing.smoothData(sampleCounts, maxData=maxData, bandwidth=bw)
+            except Exception as e:
+                logger.error('smoothing failed for %s : %s', str(bw), repr(e))
+                raise
+            dataRanges.append(dr)
+            densities.append(dens)
+            legend = str(bw)
+            if isinstance(bw, str):
+                legend += ' => bw={:.2f}'.format(bwValue)
+            legends.append(legend)
+
+        # find indexes of first local min density and first subsequent local max density,
+        # looking only at our first smoothed representation
+        try:
+            (minIndex, maxIndex) = clusterSamps.smoothing.findFirstLocalMinMax(densities[0])
+        except Exception as e:
+            logger.info("sample %s is bad: %s", SOIs[sampleIndex], str(e))
+            sampsQCfailed.append(sampleIndex)
+            pdf = pdfFail
+        else:
+            (xmin, ymin) = (dataRanges[0][minIndex], densities[0][minIndex])
+            (xmax, ymax) = (dataRanges[0][maxIndex], densities[0][maxIndex])
+            line1legend = "min FPM = " + '{:0.2f}'.format(xmin)
+            line2legend = "max FPM = " + '{:0.2f}'.format(xmax)
+            # require at least minLow2high fractional increase from ymin to ymax
+            if ((ymax - ymin) / ymin) < minLow2high:
+                logger.info("sample %s is bad: min (%.2f,%.2f) and max (%.2f,%.2f) densities too close",
+                            SOIs[sampleIndex], xmin, ymin, xmax, ymax)
+                sampsQCfailed.append(sampleIndex)
+                pdf = pdfFail
             else:
-                uncoveredExons = uncovExonSamp
+                capturedExons = np.logical_or(capturedExons, sampleCounts > xmin)
 
-    # close the open pdf
-    PDF.close()
+        if pdf == pdfFail:
+            # need ymax for plotting even if sample is bad, the max Y after the first 15%
+            # of dataRange is a good rule of thumb (not too cropped, not too zoomed out)
+            ymax = max(densities[0][int(len(dataRanges[0]) * 0.15):])
 
-    # returns in stderr the results on the filtered data
-    logger.info("%s/%s uncovered exons number deleted before clustering for %s/%s valid samples.",
-                len(uncoveredExons), len(counts), (len(SOIs) - len(sampsQCfailed)), len(SOIs))
+        # plot all the densities for sampleIndex in a single plot
+        title = SOIs[sampleIndex] + " density of exon FPMs"
+        # max range on Y axis for visualization, 3*ymax should be fine
+        ylim = 3 * ymax
+        plotDensities(title, dataRanges, densities, legends, xmin, xmax, line1legend, line2legend, ylim, pdf)
 
-    return(sampsQCfailed, uncoveredExons)
+    # close PDFs
+    pdfPass.close()
+    pdfFail.close()
+
+    if len(sampsQCfailed) > 0:
+        logger.warn("%s/%s samples fail exon-density QC (see QC plots), these samples won't get CNV calls",
+                    len(sampsQCfailed), len(SOIs))
+    logger.info("%s/%s exons are not covered/captured in any sample and will be ignored",
+                len(capturedExons[np.logical_not(capturedExons)]), len(capturedExons))
+
+    return(sampsQCfailed, capturedExons)
 
 
 ###############################################################################
@@ -112,65 +157,49 @@ def SampsQC(counts, SOIs, QCPDF):
 ###############################################################################
 
 ###################################
-# findLocalMaxPrivate:
+# Plot one or more curves, and optionally two vertical dashed lines, on a
+# single figure.
+# Each curve is passed as an ndarray of X coordinates (eg dataRanges[2] for the
+# third curve), a corresponding ndarray of Y coordinates (densities[2]) of the
+# same length, and a legend (legends[2]).
+# The vertical dashed lines are drawn at X coordinates line1 and line2, unless
+# line1==line2==0.
 #
 # Args:
-#  - densityOnFPMRange (np.ndarray[float]): probability density for all bins
-#   in the FPM range
-# this arguments is from the smoothing.smoothingCoverageProfile function.
-#  - minDensity2FPMIndex (int): index associated with the first lowest observed density
-#   in np.ndarray "densityOnFPMRange"
-# this arguments is from the slidingWindow.findLocalMin function.
-#
-# Returns a tupple (maxIndex, maxDensity), each variable is created here:
-#  - maxDensity2FPMIndex (int): FPMRange index associated with the maximum density
-# observed
-# - maxDensity (float): maximum density
-def findLocalMaxPrivate(densityOnFPMRange, minDensity2FPMIndex):
-    maxDensity = np.max(densityOnFPMRange[minDensity2FPMIndex:])
-    maxDensity2FPMIndex = np.where(densityOnFPMRange == maxDensity)[0][0]
-    return (maxDensity2FPMIndex, maxDensity)
-
-
-###################################
-# coverageProfilPlotPrivate:
-# generates a plot per patient
-# x-axis: the range of FPM bins (every 0.1 between 0 and 10)
-# y-axis: exons densities
-# black curve: density data smoothed with kernel-density estimate
-# using Gaussian kernels
-# red vertical line: minimum FPM threshold, all uncovered and
-# uncaptured exons are below this threshold
-# orange vertical line: maximum FPM, corresponds to the FPM
-# value where the density of captured exons is the highest.
-#
-# Args:
-# - sampleName (str): sample exact name
-# - binEdges (np.ndarray[floats]): FPM range
-# - densityOnFPMRange (np.ndarray[float]): probability density for all bins in the FPM range
-#   dim= len(binEdges)
-# - minIndex (int): index associated with the first lowest density observed
-# - maxIndex (int): index associated with the maximum density observed
-# - pdf (matplotlib object): store plots in a single pdf
+# - title: plot's title (string)
+# - dataRanges: list of N ndarrays storing X coordinates
+# - densities: list of N ndarrays storing the corresponding Y coordinates
+# - legends: list of N strings identifying each (dataRange,density) pair
+# - line1, line2 (floats): X coordinates of dashed vertical lines to draw
+# - line1legend, line2legend (strings): legends for the vertical lines
+# - ylim (float): Y max plot limit
+# - pdf: matplotlib PDF object where the plot will be saved
 #
 # Returns a pdf file in the output folder
-def coverageProfilPlotPrivate(sampleName, binEdges, densityOnFPMRange, minIndex, maxIndex, pdf):
+def plotDensities(title, dataRanges, densities, legends, line1, line2, line1legend, line2legend, ylim, pdf):
+    # sanity
+    if (len(dataRanges) != len(densities)) or (len(dataRanges) != len(legends)):
+        raise Exception('plotDensities bad args, length mismatch')
+
+    # set X max plot limit (both axes start at 0)
+    xlim = max(dataRanges[:][-1])
+
     # Disable interactive mode
     matplotlib.pyplot.ioff()
-
     fig = matplotlib.pyplot.figure(figsize=(6, 6))
-    matplotlib.pyplot.plot(binEdges, densityOnFPMRange, color='black', label='smoothed densities')
+    for i in range(len(dataRanges)):
+        matplotlib.pyplot.plot(dataRanges[i], densities[i], label=legends[i])
 
-    matplotlib.pyplot.axvline(binEdges[minIndex], color='crimson', linestyle='dashdot', linewidth=2,
-                              label="minFPM=" + '{:0.1f}'.format(binEdges[minIndex]))
-    matplotlib.pyplot.axvline(binEdges[maxIndex], color='darkorange', linestyle='dashdot', linewidth=2,
-                              label="maxFPM=" + '{:0.1f}'.format(binEdges[maxIndex]))
+    if (line1 != 0) or (line2 != 0):
+        matplotlib.pyplot.axvline(line1, color='crimson', linestyle='dashdot', linewidth=1, label=line1legend)
+        matplotlib.pyplot.axvline(line2, color='darkorange', linestyle='dashdot', linewidth=1, label=line2legend)
 
-    matplotlib.pyplot.ylim(0, 0.5)
-    matplotlib.pyplot.ylabel("Exon densities")
-    matplotlib.pyplot.xlabel("Fragments Per Million")
-    matplotlib.pyplot.title(sampleName + " coverage profile")
-    matplotlib.pyplot.legend()
+    matplotlib.pyplot.xlabel("FPM")
+    matplotlib.pyplot.ylabel("density")
+    matplotlib.pyplot.xlim(0, xlim)
+    matplotlib.pyplot.ylim(0, ylim)
+    matplotlib.pyplot.title(title)
+    matplotlib.pyplot.legend(loc='upper right', fontsize='small')
 
     pdf.savefig(fig)
     matplotlib.pyplot.close()

@@ -7,9 +7,8 @@ import matplotlib.pyplot
 import scipy.cluster.hierarchy
 import scipy.spatial.distance
 
-# prevent matplotlib DEBUG messages filling the logs when we are in DEBUG loglevel
-matplotlib_logger = logging.getLogger('matplotlib')
-matplotlib_logger.setLevel(logging.WARNING)
+# prevent matplotlib flooding the logs when we are in DEBUG loglevel
+logging.getLogger('matplotlib').setLevel(logging.WARNING)
 
 # set up logger, using inherited config
 logger = logging.getLogger(__name__)
@@ -243,7 +242,7 @@ def parseClustsFile(clustsFile, SOIs):
     sex2Clust = {}
 
     # skip header
-    _ = clustsFH.readline()
+    clustsFH.readline()
 
     for line in clustsFH:
         # last line of the file is associated with the sample that did not pass

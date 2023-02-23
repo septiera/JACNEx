@@ -11,6 +11,7 @@ import os
 import math
 import re
 import time
+import gzip
 import shutil
 import logging
 import numpy as np
@@ -35,7 +36,7 @@ logger = logging.getLogger(__name__)
 # Parse and sanity check the command+arguments, provided as a list of
 # strings (eg sys.argv).
 # Return a list with everything needed by this module's main()
-# If anything is wrong, raise Exception("ERROR MESSAGE")
+# If anything is wrong, raise Exception("EXPLICIT ERROR MESSAGE")
 def parseArgs(argv):
     scriptName = os.path.basename(argv[0])
 
@@ -58,18 +59,19 @@ def parseArgs(argv):
 DESCRIPTION:
 Given a BED of exons and one or more BAM files, count the number of sequenced fragments
 from each BAM that overlap each exon (+- padding).
+The "sample names" are the BAM filenames stripped of their path and .bam extension.
 Results are printed to --out in TSV format (possibly gzipped): first 4 columns hold the exon
-definitions after padding and sorting, subsequent columns (one per BAM, sorted by BAM name
-alphanumerically) hold the counts.
-In addition, any support for putative breakpoints is printed to sample-specific TSV files
+definitions after padding and sorting, subsequent columns (one per sample, sorted alphanumerically)
+hold the counts.
+In addition, any support for putative breakpoints is printed to sample-specific TSV.gz files
 created in BPDir.
 If a pre-existing counts file produced by this program with the same BED is provided (with --counts),
 counts for common BAMs are copied from this file and counting is only performed for the new BAMs.
 Furthermore, if the BAMs exactly match those in --counts, the output file (--out) is not produced.
 
 ARGUMENTS:
-   --bams [str] : comma-separated list of BAM files
-   --bams-from [str] : text file listing BAM files, one per line
+   --bams [str] : comma-separated list of BAM files (with path)
+   --bams-from [str] : text file listing BAM files (with path), one per line
    --bed [str] : BED file, possibly gzipped, containing exon definitions (format: 4-column
            headerless tab-separated file, columns contain CHR START END EXON_ID)
    --out [str] : file where results will be saved (unless BAMs exactly match those in --counts), must not
@@ -90,6 +92,8 @@ ARGUMENTS:
                                                        "counts=", "jobs=", "padding=", "maxGap=", "tmp=", "samtools="])
     except getopt.GetoptError as e:
         raise Exception(e.msg + ". Try " + scriptName + " --help")
+    if len(args) != 0:
+        raise Exception("bad extra arguments: " + ' '.join(args) + ". Try " + scriptName + " --help")
 
     for opt, value in opts:
         if opt in ('-h', '--help'):
@@ -216,8 +220,8 @@ ARGUMENTS:
     if not os.path.isdir(BPDir):
         try:
             os.mkdir(BPDir)
-        except Exception:
-            raise Exception("BPDir " + BPDir + " doesn't exist and can't be mkdir'd")
+        except Exception as e:
+            raise Exception("BPDir " + BPDir + " doesn't exist and can't be mkdir'd: " + str(e))
 
     # AOK, return everything that's needed
     return(bamsToProcess, samples, bedFile, outFile, BPDir, jobs, padding, maxGap, countsFile, tmpDir, samtools)
@@ -230,11 +234,7 @@ ARGUMENTS:
 # may be available in the log
 def main(argv):
     # parse, check and preprocess arguments
-    try:
-        (bamsToProcess, samples, bedFile, outFile, BPDir, jobs, padding, maxGap, countsFile, tmpDir, samtools) = parseArgs(argv)
-    except Exception:
-        # problem is described in Exception, just re-raise
-        raise
+    (bamsToProcess, samples, bedFile, outFile, BPDir, jobs, padding, maxGap, countsFile, tmpDir, samtools) = parseArgs(argv)
 
     # args seem OK, start working
     logger.debug("called with: " + " ".join(argv[1:]))
@@ -243,10 +243,7 @@ def main(argv):
 
     # parse exons from BED to obtain a list of lists (dim=NbExon x [CHR,START,END,EXONID]),
     # the exons are sorted according to their genomic position and padded
-    try:
-        exons = countFrags.bed.processBed(bedFile, padding)
-    except Exception:
-        raise Exception("processBed failed")
+    exons = countFrags.bed.processBed(bedFile, padding)
 
     thisTime = time.time()
     logger.debug("Done pre-processing BED, in %.2fs", thisTime - startTime)
@@ -259,7 +256,7 @@ def main(argv):
     try:
         (countsArray, countsFilled) = countFrags.countsFile.extractCountsFromPrev(exons, samples, countsFile)
     except Exception as e:
-        raise Exception("parseCountsFile failed - " + str(e))
+        raise Exception("extractCountsFromPrev failed - " + str(e))
 
     thisTime = time.time()
     logger.debug("Done parsing previous countsFile, in %.2fs", thisTime - startTime)
@@ -278,7 +275,7 @@ def main(argv):
     if nbOfSamplesToProcess == 0:
         logger.info("all provided BAMs are in previous countsFile")
         # if samples exactly match those in countsFile, return immediately
-        _, prevSamples, _ = countFrags.countsFile.parseCountsFile(countsFile)
+        prevSamples = countFrags.countsFile.parseCountsFile(countsFile)[1]
         if prevSamples == samples:
             logger.info("provided BAMs exactly match those in previous countsFile, not producing a new one")
             return()
@@ -315,8 +312,8 @@ def main(argv):
         # bam2counts() returns a 3-element tuple (sampleIndex, sampleCounts, breakPoints).
         # If something went wrong, log and populate failedBams;
         # otherwise fill column at index sampleIndex in countsArray with counts stored in sampleCounts,
-        # and print info about putative CNVs with alignment-supported breakpoints as TSV
-        # to BPDir/sample.breakPoints.tsv
+        # and print info about putative CNVs with alignment-supported breakpoints as TSV.gz
+        # to BPDir/<sample>.breakPoints.tsv.gz
         def mergeCounts(futureBam2countsRes):
             e = futureBam2countsRes.exception()
             if e is not None:
@@ -331,14 +328,12 @@ def main(argv):
                     countsArray[exonIndex, si] = bam2countsRes[1][exonIndex]
                 if (len(bam2countsRes[2]) > 0):
                     try:
-                        bpFile = BPDir + '/' + samples[si] + '.breakPoints.tsv'
-                        BPFH = open(bpFile, mode='w')
-                        for thisBP in bam2countsRes[2]:
-                            toPrint = thisBP[0] + "\t" + str(thisBP[1]) + "\t" + str(thisBP[2]) + "\t" + thisBP[3] + "\t" + thisBP[4]
-                            print(toPrint, file=BPFH)
+                        bpFile = BPDir + '/' + samples[si] + '.breakPoints.tsv.gz'
+                        BPFH = gzip.open(bpFile, "xt", compresslevel=6)
+                        BPFH.write(bam2countsRes[2])
                         BPFH.close()
                     except Exception as e:
-                        logger.warning("Discarding breakpoints info for %s because cannot open %s for writing - %s",
+                        logger.warning("Discarding breakpoints info for %s because cannot gzip-open %s for writing - %s",
                                        samples[si], bpFile, e)
                 logger.info("Done counting fragments for %s", samples[si])
 
@@ -384,16 +379,17 @@ def main(argv):
 ######################################## Main ######################################
 ####################################################################################
 if __name__ == '__main__':
+    scriptName = os.path.basename(sys.argv[0])
     # configure logging, sub-modules will inherit this config
     logging.basicConfig(format='%(asctime)s %(levelname)s %(name)s: %(message)s',
                         datefmt='%Y-%m-%d %H:%M:%S',
                         level=logging.DEBUG)
     # set up logger: we want script name rather than 'root'
-    logger = logging.getLogger(os.path.basename(sys.argv[0]))
+    logger = logging.getLogger(scriptName)
 
     try:
         main(sys.argv)
     except Exception as e:
         # details on the issue should be in the exception name, print it to stderr and die
-        sys.stderr.write("ERROR in " + sys.argv[0] + " : " + str(e) + "\n")
+        sys.stderr.write("ERROR in " + scriptName + " : " + str(e) + "\n")
         sys.exit(1)

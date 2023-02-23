@@ -11,7 +11,7 @@ For more information how obtaining the different files see https://github.com/nt
 Given a BED of exons and one or more BAM files, count the number of sequenced fragments from each BAM that overlap each exon (+- padding).<br>
 Results are printed to stdout in TSV format: first 4 columns hold the exon definitions after padding and sorting, subsequent columns (one per BAM) hold the counts.<br>
 If a pre-existing counts file produced by this program with the same BED is provided (with --counts), counts for requested BAMs are copied from this file and counting is only performed for the new BAM(s).<br>
-In addition, any support for putative breakpoints is printed to sample-specific TSV files created in BPdir.<br>
+In addition, any support for putative breakpoints is printed to sample-specific TSV.gz files created in BPdir.<br>
 
 Example:
 ```
@@ -47,18 +47,19 @@ cd samtools-1.15.1
 ./configure
 make all all-htslib
 ```
-It is also necessary to have python version 3.6.
+It is also necessary to have python version >= 3.6.
 As well as the following modules:
 ```
 python3 -m venv ~/pyEnv_MageCNV
 source ~/pyEnv_MageCNV/bin/activate
 pip install --upgrade pip
-pip install numpy scipy numba ncls matplotlib scikit-learn
+pip install numpy scipy numba ncls matplotlib scikit-learn KDEpy
+
 
 numpy v1.19.5
 scipy v1.5.4
 matplotlib v3.3.4
 scikit-learn v0.24.2
-
+KDEpy-1.1.0
 
 ```
