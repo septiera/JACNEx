@@ -57,11 +57,17 @@ def CNCalls(countsFPM, exons, sex2Clust, clusts2Samps, clusts2Ctrls, priors, SOI
     # Browse clusters
     ##############################
     for clustID in clusts2Samps:
-        # recovery of data specific to the current cluster
-        (sampsIndex, exonsIndex) = extractClusterInfos(clustID, clusts2Samps, clusts2Ctrls, sex2Clust, maskAutosome_Gonosome)
-
+        # retrieve samples and exons 
+        SOIsIndex = CNCalls.copyNumbersCalls.extractSamps(clustID, clusts2Samps, clusts2Ctrls)
+        logger.info("Cluster %s, nb SOIs sortie fonction %s", clustID, len(SOIsIndex))
+        
+        if sex2Clust:
+            exonsIndex = CNCalls.copyNumbersCalls.extractExons(clustID, sex2Clust, maskAutosome_Gonosome)
+        else:
+            exonsIndex = range(len(exons))
+            
         # Create Boolean masks for columns and rows
-        col_mask = np.isin(np.arange(countsFPM.shape[1]), sampsIndex, invert=True)
+        col_mask = np.isin(np.arange(countsFPM.shape[1]), SOIsIndex, invert=True)
         row_mask = np.isin(np.arange(countsFPM.shape[0]), exonsIndex, invert=True)
 
         # Use the masks to index the 2D numpy array
@@ -124,7 +130,7 @@ def CNCalls(countsFPM, exons, sex2Clust, clusts2Samps, clusts2Ctrls, priors, SOI
             ###################
             # Retrieve results for each sample
             for i in clusts2Samps[clustID]:
-                sampFPM = exonFPM[sampsIndex.index(i)]
+                sampFPM = exonFPM[SOIsIndex.index(i)]
                 sampIndexInEmissionArray = i * 4
 
                 probNorm = computeProbabilites(sampFPM, gammaParams, RGParams, priors, lowThreshold)
@@ -190,37 +196,48 @@ def allocateProbsArray(numExons, numSamples):
 
 
 #############################################################
-# extractClusterInfos
+# extractSamps
 # Given a cluster identifier and dictionaries reporting cluster information
-# Extraction SOIs indexes and exons indexes (specific to autosomes or gonosomes)
+# Extraction SOIs indexes
 # Args:
 # - clustID [str] : cluster identifier
-# - clusts2Samps (dict[str: list[int]]): for each cluster identifier a list of SOIs is associated
-# - clusts2Ctrls (dict[str: list[str]]): for each target cluster identifier a list of control clusters is associated
-# - sex2Clust (dict[str, list[str]]): for "A" autosomes or "G" gonosomes a list of corresponding clusterIDs is associated
-# - mask (numpy.ndarray[bool]): boolean mask 1: autosome exon indexes, 0: gonosome exon indexes. dim=NbExons
-# Returns a tupple (sampleIndex2Process, exonsIndex2Process), each object are created here:
-# - sampleIndex2Process (list[int]): SOIs indexes in current cluster
-# - exonsIndex2Process (list[int]): exons indexes to treat the current cluster
-def extractClusterInfos(clustID, clusts2Samps, clusts2Ctrls, sex2Clust=None, mask=None):
+# - clusts2Samps (dict[str: list[int]]): key:cluster identifier, value: SOIs indexes list
+# - clusts2Ctrls (dict[str: list[str]]): key:cluster identifier, value: list of control clusters
+# Returns:
+# - SOIsIndex (list[int]): SOIs indexes in current cluster
+def extractSamps(clustID, clusts2Samps, clusts2Ctrls):
     ##### COLUMN indexes in countsFPM => samples
     # Get the indexes of the samples in the cluster and its controls
-    sampleIndex2Process = clusts2Samps[clustID]
+    SOIsIndex = clusts2Samps[clustID].copy()
     if clustID in clusts2Ctrls:
-        for controls in clusts2Ctrls[clustID]:
-            sampleIndex2Process.extend(clusts2Samps[controls])
+        for control in clusts2Ctrls[clustID]:
+            SOIsIndex.extend(clusts2Samps[control].copy())
+    return SOIsIndex
+
+
+#############################################################
+# extractExons
+# Given a cluster identifier and dictionaries reporting cluster sexual information
+# Extraction exons indexes (specific to autosomes or gonosomes)
+# Args:
+# - clustID [str] : cluster identifier
+# - sex2Clust (dict[str, list[str]]): for "A" autosomes or "G" gonosomes a list of corresponding clusterIDs is associated
+# - mask (numpy.ndarray[bool]): boolean mask 1: autosome exon indexes, 0: gonosome exon indexes. dim=NbExons
+# Returns:
+# - SOIsIndex (list[int]): SOIs indexes in current cluster
+def extractExons(clustID, sex2Clust, mask):
     ##### ROW indexes in countsFPM => exons
     # in case there are specific autosome and gonosome clusters.
     # identification of the indexes of the exons associated with the gonosomes or autosomes.
     if sex2Clust:
         if clustID in sex2Clust["A"]:
-            exonsIndex2Process = np.flatnonzero(mask)
+            exonsIndex = np.where(mask)[0]
         else:
-            exonsIndex2Process = np.where(~mask)[0]
+            exonsIndex = np.where(~mask)[0]
     else:
-        exonsIndex2Process = range(len(mask))
+        exonsIndex = range(len(mask))
 
-    return(sampleIndex2Process, exonsIndex2Process)
+    return exonsIndex
 
 
 #############################################################
@@ -324,14 +341,13 @@ def coverageProfilPlot(clustID, binEdges, densityOnFPMRange, minIndex, lowThresh
 # Filter n°4: samples contributing to Gaussian is less than 50%.
 # Args:
 # - exonFPM (ndarray[float]): counts for one exon
-# - RGParams (list[float]): mean and stdev from robust fitting of Gaussian 
+# - RGParams (list[float]): mean and stdev from robust fitting of Gaussian
 # - lowThreshold (float): FPM threshold for filter 3
 # - filterCounters (dict[str:int]): key: type of filter, value: number of filtered exons
 # Returns "True" if exon doesn't pass the two filters otherwise "False"
 def failedFilters(exonFPM, RGParams, lowThreshold, filterCounters):
     meanRG = RGParams[0]
     stdevRG = RGParams[1]
-    
     ###################
     # Filter n°3:
     # the mean != 0 and all samples have the same coverage value.
@@ -357,6 +373,7 @@ def failedFilters(exonFPM, RGParams, lowThreshold, filterCounters):
         return(True)
 
     return(False)
+
 
 #############################################################
 # fitRobustGaussian
@@ -466,7 +483,7 @@ def computeWeight(fpm_in_exon, mean, standard_deviation):
 # - gammaParams (list(float)): estimated parameters of the gamma distribution [shape, loc, scale]
 # - RGParams (list[float]): contains mean value and standard deviation for the normal distribution
 # - priors (list[float]): prior probabilities for different cases
-# - lowThreshold (float): 
+# - lowThreshold (float):
 # Returns:
 # - probDensPriors (np.ndarray[float]): p(i|Ci)p(Ci) for each copy number (CN0,CN1,CN2,CN3+)
 def computeProbabilites(sampFPM, gammaParams, RGParams, priors, lowThreshold):
@@ -491,10 +508,10 @@ def computeProbabilites(sampFPM, gammaParams, RGParams, priors, lowThreshold):
     # covered from uncovered exons.
     cdf_cno_threshold = scipy.stats.gamma.cdf(lowThreshold, a=gammaParams[0], loc=gammaParams[1], scale=gammaParams[2])
     if sampFPM <= meanCN1:
-        probDensities[0] = (1 / (1 - cdf_cno_threshold)) * scipy.stats.gamma.pdf(sampFPM, 
-                                                                                         a=gammaParams[0], 
-                                                                                         loc=gammaParams[1], 
-                                                                                         scale=gammaParams[2])
+        probDensities[0] = (1 / (1 - cdf_cno_threshold)) * scipy.stats.gamma.pdf(sampFPM,
+                                                                                 a=gammaParams[0],
+                                                                                 loc=gammaParams[1],
+                                                                                 scale=gammaParams[2])
 
     ################
     # Calculate the probability densities for the remaining cases (CN1,CN2,CN3+) using the normal distribution
