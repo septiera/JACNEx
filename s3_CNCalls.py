@@ -37,8 +37,10 @@ def parseArgs(argv):
 
     # mandatory args
     countsFile = ""
-    clustsFile = ""
+    newClustsFile = ""
     # optionnal args with default values
+    CNCallsFile = ""
+    prevClustFile = ""
     priors = "0.001,0.01,0.979,0.01"
     plotDir = "./ResultPlots/"
 
@@ -50,24 +52,35 @@ probabilities, per exon and for each sample.
 Results are printed to stdout in TSV format (possibly gzipped): first 4 columns hold the exon
 definitions padded and sorted, subsequent columns (four per sample, in order CN0,CN2,CN2,CN3+)
 hold the observation probabilities.
+If a pre-existing copy number calls file (with --cncalls) produced by this program associated with
+a previous clustering file are provided (with --prevclusts), extraction of the observation probabilities
+for the samples in homogeneous clusters between the two versions, otherwise the copy number calls is performed.
 In addition, all graphical support (pie chart of exon filtering per cluster) are
 printed in pdf files created in plotDir.
 
 ARGUMENTS:
-   --counts [str]: TSV file, first 4 columns hold the exon definitions, subsequent columns
-                   hold the fragment counts. File obtained from 1_countFrags.py.
-   --clusts [str]: TSV file, contains 5 columns hold the sample cluster definitions.
-                   [clusterID, sampsInCluster, controlledBy, validCluster, clusterStatus]
-                   File obtained from 2_clusterSamps.py.
-   --priors list[float]: prior probability for each copy number type in the order [CN0, CN1,CN2,CN3+].
-                         Must be passed as a comma separated string, default : """ + str(priors) + """
-   --plotDir[str]: subdir (created if needed) where result plots files will be produced, default :  """ + str(plotDir) + """
-   -h , --help  : display this help and exit\n"""
+    --counts [str]: TSV file, first 4 columns hold the exon definitions, subsequent columns
+            hold the fragment counts. File obtained from 1_countFrags.py.
+    --clusts [str]: TSV file, contains 5 columns hold the sample cluster definitions.
+            [clusterID, sampsInCluster, controlledBy, validCluster, clusterStatus]
+            File obtained from 2_clusterSamps.py.
+    --cncalls [str] optional: pre-existing copy number calls file produced by this program, 
+            possibly gzipped, the observation probabilities of copy number types are copied
+            for samples contained in immutable clusters between old and new versions of the clustering files.
+    --prevclusts [str] optional: pre-existing clustering file produced by s2_clusterSamps.py for the same
+            timestamp as the pre-existing copy number call file.
+    --priors list[float]: prior probability for each copy number type in the order [CN0, CN1,CN2,CN3+].
+            Must be passed as a comma separated string, default : """ + str(priors) + """
+    --plotDir[str]: subdir (created if needed) where result plots files will be produced, default :  """ + str(plotDir) + """
+    -h , --help  : display this help and exit\n"""
 
     try:
-        opts, args = getopt.gnu_getopt(sys.argv[1:], 'h', ["help", "counts=", "clusts=", "priors=", "plotDir="])
+        opts, args = getopt.gnu_getopt(sys.argv[1:], 'h', ["help", "counts=", "clusts=", "cncalls=", "prevclusts=",
+                                                           "priors=", "plotDir="])
     except getopt.GetoptError as e:
         raise Exception(e.msg + ". Try " + scriptName + " --help")
+    if len(args) != 0:
+        raise Exception("bad extra arguments: " + ' '.join(args) + ". Try " + scriptName + " --help")
 
     for opt, value in opts:
         if (opt in ('-h', '--help')):
@@ -76,7 +89,11 @@ ARGUMENTS:
         elif (opt in ("--counts")):
             countsFile = value
         elif (opt in ("--clusts")):
-            clustsFile = value
+            newClustsFile = value
+        elif (opt in ("--cncalls")):
+            CNCallsFile = value
+        elif (opt in ("--prevclusts")):
+            prevClustFile = value    
         elif (opt in ("--priors")):
             priors = value
         elif (opt in ("--plotDir")):
@@ -91,13 +108,22 @@ ARGUMENTS:
     elif (not os.path.isfile(countsFile)):
         raise Exception("countsFile " + countsFile + " doesn't exist.")
 
-    if clustsFile == "":
+    if newClustsFile == "":
         raise Exception("you must provide a clustering results file use --clusts. Try " + scriptName + " --help.")
-    elif (not os.path.isfile(clustsFile)):
-        raise Exception("clustsFile " + clustsFile + " doesn't exist.")
+    elif (not os.path.isfile(newClustsFile)):
+        raise Exception("clustsFile " + newClustsFile + " doesn't exist.")
 
     #####################################################
     # Check other args
+    if (CNCallsFile != "" and prevClustFile == "") or (CNCallsFile == "" and prevClustFile != ""):
+        raise Exception("you should not use --cncalls and --prevclusts alone but together. Try " + scriptName + " --help")
+    
+    if (CNCallsFile != "") and (not os.path.isfile(CNCallsFile)):
+        raise Exception("CNCallsFile " + CNCallsFile + " doesn't exist")
+ 
+    if (prevClustFile != "") and (not os.path.isfile(prevClustFile)):
+        raise Exception("previous clustering File " + prevClustFile + " doesn't exist")
+        
     try:
         priors = [float(x) for x in priors.split(",")]
         if (sum(priors) != 1) or (len(priors) != 4):
@@ -113,7 +139,7 @@ ARGUMENTS:
             raise Exception("plotDir " + plotDir + " doesn't exist and can't be mkdir'd: " + str(e))
 
     # AOK, return everything that's needed
-    return(countsFile, clustsFile, priors, plotDir)
+    return(countsFile, newClustsFile, CNCallsFile, prevClustFile, priors, plotDir)
 
 
 ###############################################################################
@@ -128,7 +154,7 @@ ARGUMENTS:
 def main(argv):
     # parse, check and preprocess arguments
     try:
-        (countsFile, clustsFile, priors, plotDir) = parseArgs(argv)
+        (countsFile, clustsFile, CNCallsFile, prevClustFile, priors, plotDir) = parseArgs(argv)
     except Exception:
         # problem is described in Exception, just re-raise
         raise
