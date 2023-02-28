@@ -125,10 +125,10 @@ def STDZandCheckRes(SOIs, sampsQCfailed, clust2Samps, trgt2Ctrls, minSamps, noge
         listOflist[0] = i
         if i < len(clust2Samps.keys()):
             # Get the samples in the current cluster and join them into a string separated by commas
-            listOflist[1] = ", ".join([vSOIs[i] for i in clust2Samps[clustIDList[i]]])
+            listOflist[1] = ",".join([vSOIs[i] for i in clust2Samps[clustIDList[i]]])
             if clustIDList[i] in trgt2Ctrls.keys():
                 # Get the control clusters for the current target cluster and join their IDs into a string separated by commas
-                listOflist[2] = ", ".join(str(clustIDList.index(i)) for i in trgt2Ctrls[clustIDList[i]])
+                listOflist[2] = ",".join(str(clustIDList.index(i)) for i in trgt2Ctrls[clustIDList[i]])
 
             if len(clust2Samps[clustIDList[i]]) < minSamps and listOflist[2] == "":
                 # If the cluster does not have enough samples and has no control clusters, mark it as invalid
@@ -143,10 +143,10 @@ def STDZandCheckRes(SOIs, sampsQCfailed, clust2Samps, trgt2Ctrls, minSamps, noge
                 listOflist[4] = "A"
         else:
             # Get the samples in the current cluster and join them into a string separated by commas
-            listOflist[1] = ", ".join([vSOIs[i] for i in clust2SampsGono[clustIDList[i]]])
+            listOflist[1] = ",".join([vSOIs[i] for i in clust2SampsGono[clustIDList[i]]])
             if clustIDList[i] in trgt2CtrlsGono.keys():
                 # Get the control clusters for the current target cluster and join their IDs into a string separated by commas
-                listOflist[2] = ", ".join(str(clustIDList[len(clust2Samps):].index(i) + len(clust2Samps))
+                listOflist[2] = ",".join(str(clustIDList[len(clust2Samps):].index(i) + len(clust2Samps))
                                           for i in trgt2CtrlsGono[clustIDList[i]])
             if len(clust2SampsGono[clustIDList[i]]) < minSamps and listOflist[2] == "":
                 # If the cluster does not have enough samples and has no control clusters, mark it as invalid
@@ -164,7 +164,7 @@ def STDZandCheckRes(SOIs, sampsQCfailed, clust2Samps, trgt2Ctrls, minSamps, noge
                 listOflist[4] = "G_B"
         # Add the sublist to the final list of clusters
         clustsResList.append(listOflist)
-    clustsResList.append(["Samps_QCFailed", ", ".join(SOIs_QCFailed), "", "", ""])
+    clustsResList.append(["Samps_QCFailed", ",".join(SOIs_QCFailed), "", "", ""])
     return(clustsResList)
 
 
@@ -260,7 +260,7 @@ def parseClustsFile(clustsFile, SOIs):
             if validCluster == "1":
             """
             # populate clust2Samps
-            sampsInCluster = sampsInCluster.split(", ")
+            sampsInCluster = sampsInCluster.split(",")
             clusts2Samps[clusterID] = [i for i, x in enumerate(SOIs) if x in sampsInCluster]
 
             # populate clusts2Ctrls
