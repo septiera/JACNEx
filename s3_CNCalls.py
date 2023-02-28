@@ -16,6 +16,7 @@ import logging
 import countFrags.countsFile
 import countFrags.countFragments
 import clusterSamps.clustering
+import CNCalls.CNCallsFile
 import CNCalls.copyNumbersCalls
 
 # set up logger, using inherited config, in case we get called as a module
@@ -39,7 +40,7 @@ def parseArgs(argv):
     countsFile = ""
     newClustsFile = ""
     # optionnal args with default values
-    CNCallsFile = ""
+    prevCNCallsFile = ""
     prevClustFile = ""
     priors = "0.001,0.01,0.979,0.01"
     plotDir = "./ResultPlots/"
@@ -64,7 +65,7 @@ ARGUMENTS:
     --clusts [str]: TSV file, contains 5 columns hold the sample cluster definitions.
             [clusterID, sampsInCluster, controlledBy, validCluster, clusterStatus]
             File obtained from 2_clusterSamps.py.
-    --cncalls [str] optional: pre-existing copy number calls file produced by this program, 
+    --prevcncalls [str] optional: pre-existing copy number calls file produced by this program, 
             possibly gzipped, the observation probabilities of copy number types are copied
             for samples contained in immutable clusters between old and new versions of the clustering files.
     --prevclusts [str] optional: pre-existing clustering file produced by s2_clusterSamps.py for the same
@@ -75,7 +76,7 @@ ARGUMENTS:
     -h , --help  : display this help and exit\n"""
 
     try:
-        opts, args = getopt.gnu_getopt(sys.argv[1:], 'h', ["help", "counts=", "clusts=", "cncalls=", "prevclusts=",
+        opts, args = getopt.gnu_getopt(sys.argv[1:], 'h', ["help", "counts=", "clusts=", "prevcncalls=", "prevclusts=",
                                                            "priors=", "plotDir="])
     except getopt.GetoptError as e:
         raise Exception(e.msg + ". Try " + scriptName + " --help")
@@ -90,8 +91,8 @@ ARGUMENTS:
             countsFile = value
         elif (opt in ("--clusts")):
             newClustsFile = value
-        elif (opt in ("--cncalls")):
-            CNCallsFile = value
+        elif (opt in ("--prevcncalls")):
+            prevCNCallsFile = value
         elif (opt in ("--prevclusts")):
             prevClustFile = value    
         elif (opt in ("--priors")):
@@ -115,11 +116,11 @@ ARGUMENTS:
 
     #####################################################
     # Check other args
-    if (CNCallsFile != "" and prevClustFile == "") or (CNCallsFile == "" and prevClustFile != ""):
+    if (prevCNCallsFile != "" and prevClustFile == "") or (prevCNCallsFile == "" and prevClustFile != ""):
         raise Exception("you should not use --cncalls and --prevclusts alone but together. Try " + scriptName + " --help")
     
-    if (CNCallsFile != "") and (not os.path.isfile(CNCallsFile)):
-        raise Exception("CNCallsFile " + CNCallsFile + " doesn't exist")
+    if (prevCNCallsFile != "") and (not os.path.isfile(prevCNCallsFile)):
+        raise Exception("CNCallsFile " + prevCNCallsFile + " doesn't exist")
  
     if (prevClustFile != "") and (not os.path.isfile(prevClustFile)):
         raise Exception("previous clustering File " + prevClustFile + " doesn't exist")
@@ -139,7 +140,7 @@ ARGUMENTS:
             raise Exception("plotDir " + plotDir + " doesn't exist and can't be mkdir'd: " + str(e))
 
     # AOK, return everything that's needed
-    return(countsFile, newClustsFile, CNCallsFile, prevClustFile, priors, plotDir)
+    return(countsFile, newClustsFile, prevCNCallsFile, prevClustFile, priors, plotDir)
 
 
 ###############################################################################
@@ -154,7 +155,7 @@ ARGUMENTS:
 def main(argv):
     # parse, check and preprocess arguments
     try:
-        (countsFile, clustsFile, CNCallsFile, prevClustFile, priors, plotDir) = parseArgs(argv)
+        (countsFile, clustsFile, prevCNCallsFile, prevClustFile, priors, plotDir) = parseArgs(argv)
     except Exception:
         # problem is described in Exception, just re-raise
         raise
@@ -163,8 +164,8 @@ def main(argv):
     logger.debug("called with: " + " ".join(argv[1:]))
     logger.info("starting to work")
     startTime = time.time()
-
-    ###################
+    
+    ######################################################
     # parse counts
     try:
         (exons, SOIs, countsArray) = countFrags.countsFile.parseCountsFile(countsFile)
@@ -187,7 +188,20 @@ def main(argv):
     logger.debug("Done parsing clustsFile, in %.2f s", thisTime - startTime)
     startTime = thisTime
 
-    ###################
+    ######################################################
+    # allocate observedProbsArray, and populate it with pre-calculated obeserved probabilities
+    # if CNCallsFile and prevClustFile are provided.
+    #
+    try:
+        callsArray = CNCalls.CNCallsFile.extractObservedProbsFromPrev(exons, SOIs, clusts2Samps, SampsQCFailed, prevCNCallsFile, prevClustFile)
+    except Exception as e:
+        raise Exception("extractEmissionPBFromPrev failed - " + str(e))
+
+    thisTime = time.time()
+    logger.debug("Done parsing previous CNCallsFile and prevClustFile, in %.2fs", thisTime - startTime)
+    startTime = thisTime
+
+    ######################################################
     # normalize counts (FPM)
     try:
         countsFPM = countFrags.countFragments.normalizeCounts(countsArray)
@@ -206,7 +220,7 @@ def main(argv):
     #
     #
     try:
-        emissionArray = CNCalls.copyNumbersCalls.CNCalls(countsFPM, exons, sex2Clust, clusts2Samps, clusts2Ctrls, priors, SOIs, plotDir)
+        callsArray = CNCalls.copyNumbersCalls.CNCalls(countsFPM, exons, sex2Clust, clusts2Samps, clusts2Ctrls, priors, SOIs, plotDir)
     except Exception:
         raise Exception("CNCalls failed")
 
