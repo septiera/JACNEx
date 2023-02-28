@@ -65,7 +65,7 @@ ARGUMENTS:
     --clusts [str]: TSV file, contains 5 columns hold the sample cluster definitions.
             [clusterID, sampsInCluster, controlledBy, validCluster, clusterStatus]
             File obtained from 2_clusterSamps.py.
-    --prevcncalls [str] optional: pre-existing copy number calls file produced by this program, 
+    --prevcncalls [str] optional: pre-existing copy number calls file produced by this program,
             possibly gzipped, the observation probabilities of copy number types are copied
             for samples contained in immutable clusters between old and new versions of the clustering files.
     --prevclusts [str] optional: pre-existing clustering file produced by s2_clusterSamps.py for the same
@@ -94,7 +94,7 @@ ARGUMENTS:
         elif (opt in ("--prevcncalls")):
             prevCNCallsFile = value
         elif (opt in ("--prevclusts")):
-            prevClustFile = value    
+            prevClustFile = value
         elif (opt in ("--priors")):
             priors = value
         elif (opt in ("--plotDir")):
@@ -118,13 +118,13 @@ ARGUMENTS:
     # Check other args
     if (prevCNCallsFile != "" and prevClustFile == "") or (prevCNCallsFile == "" and prevClustFile != ""):
         raise Exception("you should not use --cncalls and --prevclusts alone but together. Try " + scriptName + " --help")
-    
+
     if (prevCNCallsFile != "") and (not os.path.isfile(prevCNCallsFile)):
         raise Exception("CNCallsFile " + prevCNCallsFile + " doesn't exist")
- 
+
     if (prevClustFile != "") and (not os.path.isfile(prevClustFile)):
         raise Exception("previous clustering File " + prevClustFile + " doesn't exist")
-        
+
     try:
         priors = [float(x) for x in priors.split(",")]
         if (sum(priors) != 1) or (len(priors) != 4):
@@ -164,7 +164,7 @@ def main(argv):
     logger.debug("called with: " + " ".join(argv[1:]))
     logger.info("starting to work")
     startTime = time.time()
-    
+
     ######################################################
     # parse counts
     try:
@@ -189,19 +189,6 @@ def main(argv):
     startTime = thisTime
 
     ######################################################
-    # allocate observedProbsArray, and populate it with pre-calculated obeserved probabilities
-    # if CNCallsFile and prevClustFile are provided.
-    #
-    try:
-        callsArray = CNCalls.CNCallsFile.extractObservedProbsFromPrev(exons, SOIs, clusts2Samps, SampsQCFailed, prevCNCallsFile, prevClustFile)
-    except Exception as e:
-        raise Exception("extractEmissionPBFromPrev failed - " + str(e))
-
-    thisTime = time.time()
-    logger.debug("Done parsing previous CNCallsFile and prevClustFile, in %.2fs", thisTime - startTime)
-    startTime = thisTime
-
-    ######################################################
     # normalize counts (FPM)
     try:
         countsFPM = countFrags.countFragments.normalizeCounts(countsArray)
@@ -213,14 +200,23 @@ def main(argv):
     logger.debug("Done normalizing counts, in %.2fs", thisTime - startTime)
     startTime = thisTime
 
+    ######################################################
+    # allocate CNcallsArray, and populate it with pre-calculated obeserved probabilities
+    # if CNCallsFile and prevClustFile are provided.
+    # also returns a boolean np.array to identify the samples to be reanalysed if the clusters change
+    try:
+        (CNcallsArray, callsFilled) = CNCalls.CNCallsFile.extractObservedProbsFromPrev(exons, SOIs, clusts2Samps, prevCNCallsFile, prevClustFile)
+    except Exception as e:
+        raise Exception("extractObservedProbsFromPrev failed - " + str(e))
+
+    thisTime = time.time()
+    logger.debug("Done parsing previous CNCallsFile and prevClustFile, in %.2fs", thisTime - startTime)
+    startTime = thisTime
+
     ####################################################
     # CN Calls
-    ####################
-    #
-    #
-    #
     try:
-        callsArray = CNCalls.copyNumbersCalls.CNCalls(countsFPM, exons, sex2Clust, clusts2Samps, clusts2Ctrls, priors, SOIs, plotDir)
+        CNcallsArray = CNCalls.copyNumbersCalls.CNCalls(countsFPM, exons, sex2Clust, clusts2Samps, clusts2Ctrls, priors, SOIs, plotDir)
     except Exception:
         raise Exception("CNCalls failed")
 
