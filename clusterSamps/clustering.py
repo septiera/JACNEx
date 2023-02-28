@@ -200,32 +200,14 @@ def printClustersFile(clustsResList, outFile):
 
 #####################################
 # parseClustsFile
-# Split the line by tab character and assign the resulting
-# values to the following variables (variable names identical to the column names in the file):
-# - clusterID [str]: clusterID or "Samps_QCFailed"
-# - sampleInCluster [list[str]]: samples name
-# - controlledBy [str]: control clusterID (if several are separated by commas)
-# - validClust [int]: cluster validity, number of samples in the cluster > 20
-# (0: invalid, 1: valid)
-# - clusterStatus [str]: cluster characteristics, "W" the cluster comes from the
-# analysis on all chromosomes, "A" only autosomes, "G_M" concern gonsomes and
-# contains only male samples, "G_F" gonosomes and only female, "G_B" gonosome
-# and contains both male and female samples
-# Save the data in two dictionaries, one containing the sample count for each cluster
-# and the other the target clusterIDs and their associated control.
-# Determines the type of clustering analysis performed in the previous step,
-# gender discrimination or not.
-#
-# Args:
+# Arg:
 # - clustsFile (str): a clusterFile produced by 2_clusterSamps.py, possibly gzipped
-# - SOIs (List[str]): samples of interest names list
 #
-# Returns a tupple (clusts2Samps, clusts2Ctrls, nogender) , each variable is created here:
-# - clusts2Samps (dict[str, List[int]]): key: clusterID , value: samples index list based on SOIs list
+# Returns a tupple (clusts2Samps, clusts2Ctrls, sex2Clust) , each variable is created here:
+# - clusts2Samps (dict[str, List[int]]): key: clusterID , value: SOIs list
 # - clusts2Ctrls (dict[str, List[str]]): key: clusterID, value: controlsID list
-# - SampsQCFailed list[str] : sample names that failed QC
-# - sex2Clust dict[str, list[str]]: key: "A" autosomes or "G" gonosome, value: clusterID list
-def parseClustsFile(clustsFile, SOIs):
+# - sex2Clust (dict[str, list[str]]): key: "A" autosomes or "G" gonosome, value: clusterID list
+def parseClustsFile(clustsFile):
     try:
         if clustsFile.endswith(".gz"):
             clustsFH = gzip.open(clustsFile, "rt")
@@ -249,8 +231,8 @@ def parseClustsFile(clustsFile, SOIs):
         # the quality control only the first two columns are informative
         if line.startswith("Samps_QCFailed"):
             SampsQCFailed = line.rstrip().split("\t", maxsplit=1)[1]
-            # replace sample names by SOIs indexes
-            SampsQCFailed = [i for i, x in enumerate(SOIs) if x in SampsQCFailed]
+            SampsQCFailed = SampsQCFailed.split(",")
+            clusts2Samps["Samps_QCFailed"] = SampsQCFailed
         else:
             # finding information from the 5 columns
             clusterID, sampsInCluster, controlledBy, validCluster, clusterStatus = line.rstrip().split("\t", maxsplit=4)
@@ -261,7 +243,7 @@ def parseClustsFile(clustsFile, SOIs):
             """
             # populate clust2Samps
             sampsInCluster = sampsInCluster.split(",")
-            clusts2Samps[clusterID] = [i for i, x in enumerate(SOIs) if x in sampsInCluster]
+            clusts2Samps[clusterID] = sampsInCluster
 
             # populate clusts2Ctrls
             if controlledBy != "":
@@ -280,7 +262,7 @@ def parseClustsFile(clustsFile, SOIs):
                     sex2Clust["G"] = [clusterID]
 
     clustsFH.close()
-    return(clusts2Samps, clusts2Ctrls, SampsQCFailed, sex2Clust)
+    return(clusts2Samps, clusts2Ctrls, sex2Clust)
 
 
 ###############################################################################
