@@ -1,6 +1,5 @@
 import logging
 import os
-import gzip
 import numpy as np
 import numba
 import scipy.stats
@@ -32,18 +31,16 @@ logger = logging.getLogger(__name__)
 # - countsFPM (np.ndarray[float]): normalised counts
 # - exons (list of lists[str,int,int,str]): information on exon, containing CHR,START,END,EXON_ID
 # - sex2Clust dict[str, list[str]]: key: "A" autosomes or "G" gonosome, value: clusterID list
-# - clusts2Samps (dict[str, List[int]]): key: clusterID , value: samples index list based on SOIs list
+# - clusts2Samps (dict[str, List[int]]): key: clusterID , value: samples index list
 # - clusts2Ctrls (dict[str, List[str]]): key: clusterID, value: controlsID list
 # - priors (list[float]): prior probability for each copy number type in the order [CN0, CN1,CN2,CN3+].
-# - SOIs (list[str]): sampleIDs list
 # - plotDir (str): subdir (created if needed) where result plots files will be produced
 # Returns:
-# - emissionArray (np.ndarray[float]): contain probabilities. dim=NbExons * (NbSOIs*[CN0,CN1,CN2,CN3+])
-def CNCalls(countsFPM, exons, sex2Clust, clusts2Samps, clusts2Ctrls, priors, SOIs, plotDir):
-    emissionArray = allocateProbsArray(len(SOIs), len(exons))
+# - emissionArray (np.ndarray[float]): contain probabilities. dim=NbExons * (NbSamples*[CN0,CN1,CN2,CN3+])
+def CNCalls(countsFPM, CNcallsArray, callsFilled, exons, sex2Clust, clusts2Samps, clusts2Ctrls, priors, plotDir):
 
     # create a matplotlib object and open a pdf
-    pdfFile = os.path.join(plotDir, "ResCNCallsByCluster_" + str(len(SOIs)) + "samps.pdf")
+    pdfFile = os.path.join(plotDir, "ResCNCallsByCluster.pdf")
     PDF = matplotlib.backends.backend_pdf.PdfPages(pdfFile)
 
     # when discriminating between genders,
@@ -57,17 +54,25 @@ def CNCalls(countsFPM, exons, sex2Clust, clusts2Samps, clusts2Ctrls, priors, SOI
     # Browse clusters
     ##############################
     for clustID in clusts2Samps:
-        # retrieve samples and exons 
-        SOIsIndex = CNCalls.copyNumbersCalls.extractSamps(clustID, clusts2Samps, clusts2Ctrls)
-        logger.info("Cluster %s, nb SOIs sortie fonction %s", clustID, len(SOIsIndex))
+        
+        if clustID == "Samps_QCFailed":
+            continue
+
+        if np.all(callsFilled[clusts2Samps[clustID]] != -1):
+            logger.info("Cluster %s, has already been analysed and the data is available in CNcallsArray.", clustID)
+            continue
+
+        # retrieve samples and exons
+        samplesIndex = extractSamps(clustID, clusts2Samps, clusts2Ctrls)
+        logger.info("Cluster %s, nb samples sortie fonction %s", clustID, len(samplesIndex))
 
         if sex2Clust:
-            exonsIndex = CNCalls.copyNumbersCalls.extractExons(clustID, sex2Clust, maskAutosome_Gonosome)
+            exonsIndex = extractExons(clustID, sex2Clust, maskAutosome_Gonosome)
         else:
             exonsIndex = range(len(exons))
 
         # Create Boolean masks for columns and rows
-        col_mask = np.isin(np.arange(countsFPM.shape[1]), SOIsIndex, invert=True)
+        col_mask = np.isin(np.arange(countsFPM.shape[1]), samplesIndex, invert=True)
         row_mask = np.isin(np.arange(countsFPM.shape[0]), exonsIndex, invert=True)
 
         # Use the masks to index the 2D numpy array
@@ -130,14 +135,14 @@ def CNCalls(countsFPM, exons, sex2Clust, clusts2Samps, clusts2Ctrls, priors, SOI
             ###################
             # Retrieve results for each sample
             for i in clusts2Samps[clustID]:
-                sampFPM = exonFPM[SOIsIndex.index(i)]
+                sampFPM = exonFPM[samplesIndex.index(i)]
                 sampIndexInEmissionArray = i * 4
 
                 probNorm = computeProbabilites(sampFPM, gammaParams, RGParams, priors, lowThreshold)
 
                 for val in range(4):
-                    if emissionArray[exonsIndex[clustExon], (sampIndexInEmissionArray + val)] == -1:
-                        emissionArray[exonsIndex[clustExon], (sampIndexInEmissionArray + val)] = probNorm[val]
+                    if CNcallsArray[exonsIndex[clustExon], (sampIndexInEmissionArray + val)] == -1:
+                        CNcallsArray[exonsIndex[clustExon], (sampIndexInEmissionArray + val)] = probNorm[val]
                     else:
                         logger.error('erase previous probabilities values')
 
@@ -145,7 +150,7 @@ def CNCalls(countsFPM, exons, sex2Clust, clusts2Samps, clusts2Ctrls, priors, SOI
 
     # close the open pdf
     PDF.close()
-    return(emissionArray)
+    return(CNcallsArray)
 
 
 ###############################################################################
@@ -153,21 +158,21 @@ def CNCalls(countsFPM, exons, sex2Clust, clusts2Samps, clusts2Ctrls, priors, SOI
 ###############################################################################
 # extractSamps
 # Given a cluster identifier and dictionaries reporting cluster information
-# Extraction SOIs indexes
+# Extraction samples indexes
 # Args:
 # - clustID [str] : cluster identifier
-# - clusts2Samps (dict[str: list[int]]): key:cluster identifier, value: SOIs indexes list
+# - clusts2Samps (dict[str: list[int]]): key:cluster identifier, value: samples indexes list
 # - clusts2Ctrls (dict[str: list[str]]): key:cluster identifier, value: list of control clusters
 # Returns:
-# - SOIsIndex (list[int]): SOIs indexes in current cluster
+# - samplesIndex (list[int]): samples indexes in current cluster
 def extractSamps(clustID, clusts2Samps, clusts2Ctrls):
     ##### COLUMN indexes in countsFPM => samples
     # Get the indexes of the samples in the cluster and its controls
-    SOIsIndex = clusts2Samps[clustID].copy()
+    samplesIndex = clusts2Samps[clustID].copy()
     if clustID in clusts2Ctrls:
         for control in clusts2Ctrls[clustID]:
-            SOIsIndex.extend(clusts2Samps[control].copy())
-    return SOIsIndex
+            samplesIndex.extend(clusts2Samps[control].copy())
+    return samplesIndex
 
 
 #############################################################
@@ -179,7 +184,7 @@ def extractSamps(clustID, clusts2Samps, clusts2Ctrls):
 # - sex2Clust (dict[str, list[str]]): for "A" autosomes or "G" gonosomes a list of corresponding clusterIDs is associated
 # - mask (numpy.ndarray[bool]): boolean mask 1: autosome exon indexes, 0: gonosome exon indexes. dim=NbExons
 # Returns:
-# - SOIsIndex (list[int]): SOIs indexes in current cluster
+# - exonsIndex (list[int]): exons indexes in current cluster
 def extractExons(clustID, sex2Clust, mask):
     ##### ROW indexes in countsFPM => exons
     # in case there are specific autosome and gonosome clusters.
@@ -268,10 +273,10 @@ def fitGammaDistribution(clusterCounts, clustID, PDF):
 # - lowThreshold (float): FPM threshold
 # from the gamma, corresponds to the FPM threshold where before this the exons are not covered
 # (contains both uncaptured, poorly covered and potentially homodeleted exons).
-# - SOIsNb (int): number of samples in the cluster
+# - samplesNb (int): number of samples in the cluster
 # - pdf (matplotlib object): store plots in a single pdf
 # Returns and saves a plot in the output pdf
-def coverageProfilPlot(clustID, binEdges, densityOnFPMRange, minIndex, lowThreshold, SOIsNb, PDF):
+def coverageProfilPlot(clustID, binEdges, densityOnFPMRange, minIndex, lowThreshold, samplesNb, PDF):
 
     fig = matplotlib.pyplot.figure(figsize=(6, 6))
     matplotlib.pyplot.plot(binEdges, densityOnFPMRange, color='black', label='smoothed densities')
@@ -282,7 +287,7 @@ def coverageProfilPlot(clustID, binEdges, densityOnFPMRange, minIndex, lowThresh
     matplotlib.pyplot.ylim(0, 0.5)
     matplotlib.pyplot.ylabel("Exon densities")
     matplotlib.pyplot.xlabel("Fragments Per Million")
-    matplotlib.pyplot.title("ClusterID:" + clustID + " coverage profile (" + str(SOIsNb) + ")")
+    matplotlib.pyplot.title("ClusterID:" + clustID + " coverage profile (" + str(samplesNb) + ")")
     matplotlib.pyplot.legend()
 
     PDF.savefig(fig)
