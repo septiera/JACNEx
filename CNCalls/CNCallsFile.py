@@ -18,31 +18,31 @@ logger = logging.getLogger(__name__)
 # extractObservedProbsFromPrev
 # Args:
 #   - exons (list of list[str,int,int,str]): exon definitions, padded and sorted
-#   - SOIs (list[str]): samples of interest
-#   - clusts2Samps (dict[str, List[int]]): key: clusterID , value: samples index list based on SOIs list
+#   - samples (list[str]): sample of interest names
+#   - clusts2Samps (dict[str, List[int]]): key: clusterID , value: samples index list
 #   - prevCNCallsFile [str]: a CNCalls file (possibly gzipped) produced by printCNCallsFile
-#     for some samples (hopefully some of the SOIs), using the same exon definitions
+#     for some samples (hopefully some of the samples), using the same exon definitions
 #     as in 'exons', if there is one; or '' otherwise
 #   - prevClustFile [str]: a cluster definition file (possibly gzipped) produced by
 #   s2_clusterSamps same timestamp as prevCNCallsFile
 #
 # Returns a tuple (CNcallsArray, callsFilled), each is created here:
-#   - CNcallsArray is an float numpy array, dim = NbExons x (NbSOIs*4), initially -1
-#   - callsFilled is a 1D boolean numpy array, dim = NbSOIs, initially all-False
+#   - CNcallsArray is an float numpy array, dim = NbExons x (NbSamples*4), initially -1
+#   - callsFilled is a 1D boolean numpy array, dim = NbSamples, initially all-False
 #
 # If prevCNCallsFile=='' return the (-1/all(-False) arrays
 # Otherwise:
-# -> for any sample present in both prevCNCallsFile, prevClustFile and SOIs, and the
+# -> for any sample present in both prevCNCallsFile, prevClustFile and samples, and the
 # cluster definition not changes fill the sample's columns in CNcallsArray by
 # copying data from prevCNCallsFile, and set callsFilled[sample] to True
-def extractObservedProbsFromPrev(exons, SOIs, clusts2Samps, prevCNCallsFile, prevClustFile):
+def extractObservedProbsFromPrev(exons, samples, clusts2Samps, prevCNCallsFile, prevClustFile):
     # numpy arrays to be returned:
     # observedProbsArray[exonIndex,sampleIndex] will store the specified probabilities
     # for each copy number type (CN0,CN1,CN2,CN3+)
-    CNcallsArray = allocateCNCallsArray(len(exons), len(SOIs))
+    CNcallsArray = allocateCNCallsArray(len(exons), len(samples))
     # callsFilled: same size and order as sampleNames, value will be set
     # to True if probabilities were filled from callsFile
-    callsFilled = np.array([False] * len(SOIs))
+    callsFilled = np.array([False] * len(samples))
 
     if (prevCNCallsFile != ''):  # identical to prevClustFile != ''
         ###################################
@@ -59,9 +59,9 @@ def extractObservedProbsFromPrev(exons, SOIs, clusts2Samps, prevCNCallsFile, pre
         # we have a prevClusts file parse it
         prevclusts2Samps = clusterSamps.clustering.parseClustsFile(prevClustFile)[0]
 
-        # fill prev2new to identify SOIs that are in prevCallsFile:
+        # fill prev2new to identify samples that are in prevCallsFile:
         # prev2new is a 1D numpy array, size = len(prevSamples), prev2new[prev] is the
-        # index in SOIs of sample prevSamples[prev] if it's present, -1 otherwise
+        # samples indexes 
         prev2new = np.full(len(prevSamples), -1, dtype=int)
         # prevIndexes: temp dict, key = sample identifier, value = index in prevSamples
         prevIndexes = {}
@@ -76,8 +76,8 @@ def extractObservedProbsFromPrev(exons, SOIs, clusts2Samps, prevCNCallsFile, pre
             for keyPrev, valuePrev in prevclusts2Samps.items():
                 if valueCurrent == valuePrev:
                     for i in valueCurrent:
-                        prev2new[prevIndexes[SOIs.index[i]]] = prevIndexes[i]
-                        callsFilled[SOIs.index[i]] = True
+                        prev2new[prevIndexes[samples.index[i]]] = prevIndexes[i]
+                        callsFilled[samples.index[i]] = True
 
         # Fill CNcallsArray with prev probabilities data
         for i in range(len(exons)):
@@ -113,14 +113,14 @@ def parseCNcallsFile(CNcallsFile):
 #############################
 # printCNCallsFile:
 # Args:
-# - emissionArray (np.ndarray[float]): contain emission probabilities. dim=NbExons* (NbSOIs*[CN0,CN1,CN2,CN3+])
+# - emissionArray (np.ndarray[float]): contain emission probabilities. dim=NbExons* (NbSamples*[CN0,CN1,CN2,CN3+])
 # - exons (list of lists[str,int,int,str]): information on exon, containing CHR,START,END,EXON_ID
-# - SOIs (list[str]): sampleIDs copied from countsFile's header
+# - samples (list[str]): sample names copied from countsFile's header
 # - outFile is a filename that doesn't exist, it can have a path component (which must exist),
 #     output will be gzipped if outFile ends with '.gz'
 #
 # Print this data to outFile as a 'CNCallsFile'
-def printCNCallsFile(emissionArray, exons, SOIs, outFile):
+def printCNCallsFile(emissionArray, exons, samples, outFile):
     try:
         if outFile.endswith(".gz"):
             outFH = gzip.open(outFile, "xt", compresslevel=6)
@@ -131,7 +131,7 @@ def printCNCallsFile(emissionArray, exons, SOIs, outFile):
         raise Exception('cannot (gzip-)open CNCallsFile')
 
     toPrint = "CHR\tSTART\tEND\tEXON_ID\t"
-    for i in SOIs:
+    for i in samples:
         for j in range(4):
             toPrint += f"{i}_CN{j}_prob" + "\t"
 
@@ -204,7 +204,7 @@ def parseCNCallsPrivate(CNCallsFile):
 # Args:
 # - numExons, numSamples
 # Returns an float array with -1, adapted for storing the probabilities for each
-# type of copy number. dim= NbExons x (NbSOIs x [CN0, CN1, CN2,CN3+])
+# type of copy number. dim= NbExons x (NbSamples x [CN0, CN1, CN2,CN3+])
 def allocateCNCallsArray(numExons, numSamples):
     # order=F should improve performance
     return np.full((numExons, (numSamples * 4)), -1, dtype=np.float16, order='F')
@@ -216,12 +216,11 @@ def allocateCNCallsArray(numExons, numSamples):
 # know which prev samples (ie columns from prev2new) go where in CNcallsArray[exonIndex].
 # This small auxiliary function enables numba optimizations.
 # Args:
-#   - CNcallsArray is an float numpy array to populate, dim = NbExons x (NbSOIs*4)
-#   - exonIndex is the index of the current exon
-#   - prevCalls contains the prev probabilities for exon exonIndex, in a 1D np array
-#   - prev2new is a 1D np array of ints of size len(prevCalls), prev2new[i] is
-#    the column index in callsArray where probabilities for prev sample i (in prevCalls) must
-#    be stored, or -1 if sample i must be discarded
+#   - CNcallsArray (np.ndarray[float]): observed probabilities, dim = NbExons x (NbSamples*4)
+#   - exonIndex (int): index of the current exon
+#   - prevCalls (np.ndarray[float]): contains the prev probabilities for an exon
+#   - prev2new (np.ndarray[int]): size len(prevCalls), prev2new[i] is the column index in callsArray
+#   where probabilities for prev sample i (in prevCalls) must be stored, or -1 if sample i must be discarded
 @numba.njit
 def prevCallsVec2CallsArray(CNcallsArray, exonIndex, prevCalls, prev2new):
     for i in numba.prange(len(prev2new)):
@@ -235,9 +234,9 @@ def prevCallsVec2CallsArray(CNcallsArray, exonIndex, prevCalls, prev2new):
 # callsVec2array
 # fill callsArray[exonIndex] with calls from callsVector (same order)
 # Args:
-#   - callsArray is an int numpy array to populate
-#   - exonIndex is the index of the current exon
-#   - callsVector contains the probabilities for exon exonIndex, in a 1D np array
+#   - callsArray (np.ndarray[int])
+#   - exonIndex (int): is the index of the current exon
+#   - callsVector (np.ndarray[float]): contains the probabilities for an exon
 @numba.njit
 def callsVec2array(callsArray, exonIndex, callsVector):
     for i in numba.prange(len(callsVector)):
