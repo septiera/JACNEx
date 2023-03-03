@@ -168,7 +168,7 @@ def main(argv):
     ######################################################
     # parse counts
     try:
-        (exons, SOIs, countsArray) = countFrags.countsFile.parseCountsFile(countsFile)
+        (exons, samples, countsArray) = countFrags.countsFile.parseCountsFile(countsFile)
     except Exception as e:
         logger.error("parseCountsFile failed for %s : %s", countsFile, repr(e))
         raise Exception("parseCountsFile failed")
@@ -180,7 +180,7 @@ def main(argv):
     #####################################################
     # parse clusts
     try:
-        (clusts2Samps, clusts2Ctrls, SampsQCFailed, sex2Clust) = clusterSamps.clustering.parseClustsFile(clustsFile, SOIs)
+        (clusts2Samps, clusts2Ctrls, sex2Clust) = clusterSamps.clustering.parseClustsFile(clustsFile, samples)
     except Exception as e:
         raise Exception("parseClustsFile failed for %s : %s", clustsFile, repr(e))
 
@@ -205,7 +205,7 @@ def main(argv):
     # if CNCallsFile and prevClustFile are provided.
     # also returns a boolean np.array to identify the samples to be reanalysed if the clusters change
     try:
-        (CNcallsArray, callsFilled) = CNCalls.CNCallsFile.extractObservedProbsFromPrev(exons, SOIs, clusts2Samps, prevCNCallsFile, prevClustFile)
+        (CNcallsArray, callsFilled) = CNCalls.CNCallsFile.extractObservedProbsFromPrev(exons, samples, clusts2Samps, prevCNCallsFile, prevClustFile)
     except Exception as e:
         raise Exception("extractObservedProbsFromPrev failed - " + str(e))
 
@@ -213,24 +213,33 @@ def main(argv):
     logger.debug("Done parsing previous CNCallsFile and prevClustFile, in %.2fs", thisTime - startTime)
     startTime = thisTime
 
-    ####################################################
-    # CN Calls
-    try:
-        CNcallsArray = CNCalls.copyNumbersCalls.CNCalls(countsFPM, exons, sex2Clust, clusts2Samps, clusts2Ctrls, priors, SOIs, plotDir)
-    except Exception:
-        raise Exception("CNCalls failed")
+    # total number of samples that still need to be processed
+    nbOfSamplesToProcess = len(samples)
+    for samplesIndex in range(len(samples)):
+        if callsFilled[samplesIndex] and samplesIndex not in clusts2Ctrls["Samps_QCFailed"]:
+            nbOfSamplesToProcess -= 1
+            
+    if nbOfSamplesToProcess == 0:
+        logger.info("all provided samples are in previous callsFile and clusters are the same, not producing a new one")
+    else:
+        ####################################################
+        # CN Calls
+        try:
+            futureRes = CNCalls.copyNumbersCalls.CNCalls(countsFPM, CNcallsArray, callsFilled, exons, sex2Clust, clusts2Samps, clusts2Ctrls, priors, plotDir)
+        except Exception:
+            raise Exception("CNCalls failed")
 
-    thisTime = time.time()
-    logger.debug("Done Copy Number Calls, in %.2f s", thisTime - startTime)
-    startTime = thisTime
+        thisTime = time.time()
+        logger.debug("Done Copy Number Calls, in %.2f s", thisTime - startTime)
+        startTime = thisTime
 
-    ####################################################
-    # print results
-    ####################
-    #
-    #
-    #
-    #
+        ####################################################
+        # print results
+        ####################
+        #
+        #
+        #
+        #
 
 
 ####################################################################################
