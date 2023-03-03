@@ -11,8 +11,8 @@ import clusterSamps.smoothing
 import clusterSamps.genderDiscrimination
 
 
-# prevent matplotlib flooding the logs when we are in DEBUG loglevel
-logging.getLogger('matplotlib').setLevel(logging.WARNING)
+# prevent PIL flooding the logs when we are in DEBUG loglevel
+logging.getLogger('PIL').setLevel(logging.WARNING)
 
 # set up logger, using inherited config
 logger = logging.getLogger(__name__)
@@ -38,6 +38,10 @@ logger = logging.getLogger(__name__)
 # Returns:
 # - emissionArray (np.ndarray[float]): contain probabilities. dim=NbExons * (NbSamples*[CN0,CN1,CN2,CN3+])
 def CNCalls(countsFPM, CNcallsArray, callsFilled, exons, sex2Clust, clusts2Samps, clusts2Ctrls, priors, plotDir):
+    # should density plots compare several different KDE bandwidth algorithms and values?
+    # hard-coded here rather than set via parseArgs because this should only be set
+    # to True for dev & testing
+    testSmoothingBWs = False
 
     # create a matplotlib object and open a pdf
     pdfFile = os.path.join(plotDir, "ResCNCallsByCluster.pdf")
@@ -86,7 +90,11 @@ def CNCalls(countsFPM, CNcallsArray, callsFilled, exons, sex2Clust, clusts2Samps
 
         ##################################
         # smoothing coverage profil averaged by exons, fit gamma distribution.
-        gammaParams, lowThreshold = fitGammaDistribution(clusterCounts, clustID, PDF)
+        try:
+            (gammaParams, lowThreshold) = fitGammaDistribution(clusterCounts, clustID, PDF, testBW=testSmoothingBWs)
+        except Exception as e:
+            logger.error("fitGammaDistribution failed for cluster %s : %s", clustID, repr(e))
+            raise Exception("fitGammaDistribution failed")    
 
         ##############################
         # Browse cluster-specific exons
@@ -211,47 +219,107 @@ def extractExons(clustID, sex2Clust, mask):
 # Args:
 # - clusterCounts (np.ndarray[floats]): counts array
 # - clustID (str): cluster identifier
-# - PDF (matplotlib object): store plots in a single pdf
+# - pdf (matplotlib object): store plots in a single pdf
+# - minLow2high (float): a sample's fractional density increase from min to max must
+#     be >= minLow2high to pass QC - default should be OK
+# - testBW: if True each plot includes several different KDE bandwidth algorithms/values,
+#     for testing and comparing; otherwise use what seems best in our tests
 # Returns a tupple (gammaParams, lowThreshold), each variable is created here:
 # - gammaParams (tuple of floats): estimated parameters of the gamma distribution
 # - lowThreshold (float): value corresponding to 95% of the gamma cumulative distribution
 # function
-def fitGammaDistribution(clusterCounts, clustID, PDF):
+def fitGammaDistribution(clusterCounts, clustID, pdf, minLow2high=0.2, testBW=False):
+    #### To Fill:
+    gammaParams = []
+    lowThreshold = 0
+    
     # compute meanFPM by exons
     # save computation time instead of taking the raw data (especially for clusters
     # with many samples)
     meanCountByExons = np.mean(clusterCounts, axis=1)
 
-    # smooth the coverage profile with kernel-density estimate using Gaussian kernels
-    # - binEdges (np.ndarray[floats]): FPM range from 0 to 10 every 0.1
-    # - densityOnFPMRange (np.ndarray[float]): probability density for all bins in the FPM range
-    #   dim= len(binEdges)
-    binEdges, densityOnFPMRange = clusterSamps.smoothing.smoothingCoverageProfile(meanCountByExons)
+    # for smoothing and plotting we don't care about large counts (and they mess things up),
+    # we will only consider the bottom fracDataForSmoothing fraction of counts, default
+    # value should be fine
+    fracDataForSmoothing = 0.96
+    # corresponding max counts value
+    maxData = np.quantile(meanCountByExons, fracDataForSmoothing)
 
-    # recover the threshold of the minimum density means before an increase
-    # - minIndex (int): index from "densityMeans" associated with the first lowest
-    # observed mean
-    minIndex = clusterSamps.smoothing.findLocalMin(densityOnFPMRange)[0]
+    # produce smoothed representation(s) (one if testBW==False, several otherwise)
+    dataRanges = []
+    densities = []
+    legends = []
 
-    countsExonsNotCovered = meanCountByExons[meanCountByExons <= binEdges[minIndex]]
+    # vertical dashed lines: coordinates (default to 0 ie no lines) and legends
+    (xmin, xmax) = (0, 0)
+    (line1legend, line2legend) = ("", "")
+    
+    if testBW:
+        allBWs = ('ISJ', 0.15, 0.20, 'scott', 'silverman')
+    else:
+        # our current favorite, gasp at the python-required trailing comma...
+        allBWs = ('ISJ',)
 
-    countsExonsNotCovered.sort()  # sort data in-place
+    for bw in allBWs:
+        try:
+            (dr, dens, bwValue) = clusterSamps.smoothing.smoothData(meanCountByExons, maxData=maxData, bandwidth=bw)
+        except Exception as e:
+            logger.error('smoothing failed for %s : %s', str(bw), repr(e))
+            raise
+        dataRanges.append(dr)
+        densities.append(dens)
+        legend = str(bw)
+        if isinstance(bw, str):
+            legend += ' => bw={:.2f}'.format(bwValue)
+        legends.append(legend)
+        
+    # find indexes of first local min density and first subsequent local max density,
+    # looking only at our first smoothed representation
+    try:
+        (minIndex, maxIndex) = clusterSamps.smoothing.findFirstLocalMinMax(densities[0])
+    except Exception as e:
+        logger.info("coverage profil of cluster %s is bad: %s", clustID, str(e))
+    else:
+        (xmin, ymin) = (dataRanges[0][minIndex], densities[0][minIndex])
+        (xmax, ymax) = (dataRanges[0][maxIndex], densities[0][maxIndex])
+        line1legend = "min FPM = " + '{:0.2f}'.format(xmin)
+        
+        # require at least minLow2high fractional increase from ymin to ymax
+        if ((ymax - ymin) / ymin) < minLow2high:
+            logger.info("coverage profil of cluster %s is bad: min (%.2f,%.2f) and max (%.2f,%.2f) densities too close",
+                        clustID, xmin, ymin, xmax, ymax)
 
-    # The gamma distribution was chosen after testing 101 continuous distribution laws,
-    #  -it has few parameters (3 in total: shape, loc, scale=1/beta),
-    #  -is well-known, and had the best goodness of fit on the empirical data.
-    # estimate the parameters of the gamma distribution that best fits the data
-    gammaParams = scipy.stats.gamma.fit(countsExonsNotCovered)
+        countsExonsNotCovered = meanCountByExons[meanCountByExons <= dr[minIndex]]
 
-    # cumulative distribution
-    cdf = scipy.stats.gamma.cdf(countsExonsNotCovered, a=gammaParams[0], loc=gammaParams[1], scale=gammaParams[2])
+        countsExonsNotCovered.sort()  # sort data in-place
 
-    # find the index of the last element where cdf < 0.95
-    thresholdIndex = np.where(cdf < 0.95)[0][-1]
+        # The gamma distribution was chosen after testing 101 continuous distribution laws,
+        #  -it has few parameters (3 in total: shape, loc, scale=1/beta),
+        #  -is well-known, and had the best goodness of fit on the empirical data.
+        # estimate the parameters of the gamma distribution that best fits the data
+        gammaParams = scipy.stats.gamma.fit(countsExonsNotCovered)
 
-    lowThreshold = countsExonsNotCovered[thresholdIndex]
+        # cumulative distribution
+        cdf = scipy.stats.gamma.cdf(countsExonsNotCovered, a=gammaParams[0], loc=gammaParams[1], scale=gammaParams[2])
 
-    coverageProfilPlot(clustID, binEdges, densityOnFPMRange, minIndex, lowThreshold, clusterCounts.shape[1], PDF)
+        # find the index of the last element where cdf < 0.95
+        thresholdIndex = np.where(cdf < 0.95)[0][-1]
+
+        lowThreshold = countsExonsNotCovered[thresholdIndex]
+        line2legend = "low threshold FPM = " + '{:0.2f}'.format(lowThreshold)
+
+
+    # plot all the densities for sampleIndex in a single plot
+    title = clustID + " density of exon mean FPMs"
+    # max range on Y axis for visualization, 3*ymax should be fine
+    ylim = 3 * ymax
+
+    coverageProfilPlot(title, dataRanges, densities, legends, xmin, lowThreshold, ylim, line1legend, line2legend, pdf)
+
+    if len(gammaParams) == 0:
+        raise ValueError("no fit of gamma distribution")
+    elif lowThreshold == 0:
+        raise ValueError("low threshold cannot be calculated")
 
     return (gammaParams, lowThreshold)
 
@@ -276,6 +344,7 @@ def fitGammaDistribution(clusterCounts, clustID, PDF):
 # - samplesNb (int): number of samples in the cluster
 # - pdf (matplotlib object): store plots in a single pdf
 # Returns and saves a plot in the output pdf
+
 def coverageProfilPlot(clustID, binEdges, densityOnFPMRange, minIndex, lowThreshold, samplesNb, PDF):
 
     fig = matplotlib.pyplot.figure(figsize=(6, 6))
