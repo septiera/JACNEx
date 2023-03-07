@@ -20,40 +20,34 @@ logger = logging.getLogger(__name__)
 
 ###################################
 # SampsQC :
-# evaluates the coverage profile of the samples and identifies the uncaptured
-# exons for all valid samples.
-# This allows to identify the non optimal informations (unvalid samples, uncaptured exons)
-# for clustering.
-# A sample coverage profile is deduced by computing the exon densities from the FPM values.
-# To gain accuracy, this coverage profile is smoothed.
-# A good coverage profile differentiates between uncovered and covered exons.
-# A first density drop is associated with uncovered and uncaptured exons, a threshold is
-# deduced from the first lowest density obtained.
-# Then the density increases which is the signal associated with captured exons,
-# a threshold is deduced from the highest density obtained.
-# If the difference between these two thresholds is less than 20% of the highest
-# density threshold, the coverage profile is not processable.
-# Invalidation of the sample for the rest of the analyses.
-# For validated samples, recovery of uncaptured exon indexes that have a FPM
-# value lower than the FPM value associated with the lowest density threshold.
-# An intersection of the different lists of uncaptured exons is performed in order
-# to find those common to all validated samples.
+# With a typical exome, the density plot of FPM counts over all exons appears as
+# a mixture of:
+# A) a sharp peak at 0 FPM (eg exons that are not captured by the exome kit)
+# B) a vaguely bell-shaped curve with a heavy tail (captured exons).
+# MAGe-CNV relies on this mixture (the A profile is used to call homo-deletions), and
+# cannot call CNVs for samples whose FPM density profile does not fit this expectation.
+# Furthermore, some exons have close-to-zero FPM in every sample (eg they are not
+# targeted by the capture kits, or are in hard-to-align genomic regions).
+# MAGe-CNV cannot make any CNV calls for such exons, they just slow down and
+# possibly cloud up the analyses for other exons.
+# This function identifies any atypical "QC-failing" samples, and also any
+# "never-captured" exons. In addition, FPM density plots for PASSing and FAILing
+# samples are produced.
 #
 # Args:
 # - counts (np.ndarray[float]): normalised fragment counts
 # - SOIs (list[str]): sample names
 # - plotFilePass: pdf filename (with path) where plots for QC-passing samples are made
 # - plotFileFail: same as plotFilePass but for QC-failing samples
-# - minLow2high (float): a sample's fractional density increase from min to max must
-#     be >= minLow2high to pass QC - default should be OK
+# - minLow2high (float): a sample's FPM density must increase by a fraction at least
+#     minLowToHigh between it's first local min and it's subsequent max to pass QC
 # - testBW: if True each plot includes several different KDE bandwidth algorithms/values,
 #     for testing and comparing; otherwise use what seems best in our tests
 #
-# Returns a tuple (sampsQCfailed, uncapturedExons), each variable is created here:
-#  - sampsQCfailed (list[int]): sample indexes not validated by quality control
-#  - uncapturedExons (list[int]): uncaptured exons indexes common to all samples
-# passing quality control
-
+# Return (sampsQCfailed, capturedExons):
+#  - sampsQCfailed: list of indexes (in SOIs) of samples that fail QC
+#  - capturedExons: np.ndarray of bools, length = number of exons, True iff corresponding exon is
+#    "captured" (FPM > first local min, see findFirstLocalMinMax) in at least one QC-passing sample
 def SampsQC(counts, SOIs, plotFilePass, plotFileFail, minLow2high=0.2, testBW=False):
     if os.path.isfile(plotFilePass) or os.path.isfile(plotFileFail):
         logger.error('SampsQC : plotFile(s) %s and/or %s already exist', plotFilePass, plotFileFail)
