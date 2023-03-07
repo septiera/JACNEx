@@ -216,8 +216,8 @@ def main(argv):
     logger.debug("Done samples quality control, in %.2fs", thisTime - startTime)
     startTime = thisTime
 
-    logger.info("EARLY RETURN, working on coverage plots")
-    return
+    #logger.info("EARLY RETURN, working on coverage plots")
+    #return
 
     #####################################################
     # Clustering:
@@ -230,7 +230,7 @@ def main(argv):
     # - validCountsFPM (np.ndarray[float]): normalized fragment counts for exons captured
     # for all samples that passed quality control
     validCountsFPM = np.delete(countsFPM, sampsQCfailed, axis=1)
-    validCountsFPM = validCountsFPM[capturedExons:]
+    validCountsFPM = validCountsFPM[capturedExons]
 
     ###########################
     #### no gender discrimination
@@ -275,7 +275,7 @@ def main(argv):
     else:
 
         # - exonsToKeep (list of list[str,int,int,str]): contains exons information from captured exons
-        exonsToKeep = exons[capturedExons]
+        exonsToKeep = [exons[i] for i, m in enumerate(capturedExons) if m]
 
         try:
             # parse exons to extract information related to the organisms studied and their gender
