@@ -39,6 +39,7 @@ def parseArgs(argv):
     # mandatory args
     countsFile = ""
     newClustsFile = ""
+    outFile = ""
     # optionnal args with default values
     prevCNCallsFile = ""
     prevClustFile = ""
@@ -65,6 +66,8 @@ ARGUMENTS:
     --clusts [str]: TSV file, contains 5 columns hold the sample cluster definitions.
             [clusterID, sampsInCluster, controlledBy, validCluster, clusterStatus]
             File obtained from 2_clusterSamps.py.
+    --out [str] : file where results will be saved, must not pre-exist, will be gzipped if it ends
+            with '.gz', can have a path component but the subdir must exist
     --prevcncalls [str] optional: pre-existing copy number calls file produced by this program,
             possibly gzipped, the observation probabilities of copy number types are copied
             for samples contained in immutable clusters between old and new versions of the clustering files.
@@ -76,8 +79,8 @@ ARGUMENTS:
     -h , --help  : display this help and exit\n"""
 
     try:
-        opts, args = getopt.gnu_getopt(sys.argv[1:], 'h', ["help", "counts=", "clusts=", "prevcncalls=", "prevclusts=",
-                                                           "priors=", "plotDir="])
+        opts, args = getopt.gnu_getopt(sys.argv[1:], 'h', ["help", "counts=", "clusts=", "out=", "prevcncalls=",
+                                                           "prevclusts=", "priors=", "plotDir="])
     except getopt.GetoptError as e:
         raise Exception(e.msg + ". Try " + scriptName + " --help")
     if len(args) != 0:
@@ -91,6 +94,8 @@ ARGUMENTS:
             countsFile = value
         elif (opt in ("--clusts")):
             newClustsFile = value
+        elif opt in ("--out"):
+            outFile = value
         elif (opt in ("--prevcncalls")):
             prevCNCallsFile = value
         elif (opt in ("--prevclusts")):
@@ -113,6 +118,13 @@ ARGUMENTS:
         raise Exception("you must provide a clustering results file use --clusts. Try " + scriptName + " --help.")
     elif (not os.path.isfile(newClustsFile)):
         raise Exception("clustsFile " + newClustsFile + " doesn't exist.")
+
+    if outFile == "":
+        raise Exception("you must provide an outFile with --out. Try " + scriptName + " --help")
+    elif os.path.exists(outFile):
+        raise Exception("outFile " + outFile + " already exists")
+    elif (os.path.dirname(outFile) != '') and (not os.path.isdir(os.path.dirname(outFile))):
+        raise Exception("the directory where outFile " + outFile + " should be created doesn't exist")
 
     #####################################################
     # Check other args
@@ -140,7 +152,7 @@ ARGUMENTS:
             raise Exception("plotDir " + plotDir + " doesn't exist and can't be mkdir'd: " + str(e))
 
     # AOK, return everything that's needed
-    return(countsFile, newClustsFile, prevCNCallsFile, prevClustFile, priors, plotDir)
+    return(countsFile, newClustsFile, outFile, prevCNCallsFile, prevClustFile, priors, plotDir)
 
 
 ###############################################################################
@@ -154,7 +166,7 @@ ARGUMENTS:
 # may be available in the log
 def main(argv):
     # parse, check and preprocess arguments
-    (countsFile, clustsFile, prevCNCallsFile, prevClustFile, priors, plotDir) = parseArgs(argv)
+    (countsFile, clustsFile, outFile, prevCNCallsFile, prevClustFile, priors, plotDir) = parseArgs(argv)
 
     # should density plots compare several different KDE bandwidth algorithms and values?
     # hard-coded here rather than set via parseArgs because this should only be set
@@ -205,7 +217,6 @@ def main(argv):
     # allocate CNcallsArray, and populate it with pre-calculated observed probabilities
     # if CNCallsFile and prevClustFile are provided.
     # also returns a boolean np.array to identify the samples to be reanalysed if the clusters change
-    
     try:
         (CNcallsArray, callsFilled) = CNCalls.CNCallsFile.extractObservedProbsFromPrev(exons, samples, clusts2Samps, prevCNCallsFile, prevClustFile)
     except Exception as e:
@@ -227,7 +238,7 @@ def main(argv):
         ####################################################
         # CN Calls
         try:
-            futureRes = CNCalls.copyNumbersCalls.CNCalls(countsFPM, CNcallsArray, samples, callsFilled, 
+            futureRes = CNCalls.copyNumbersCalls.CNCalls(countsFPM, CNcallsArray, samples, callsFilled,
                                                          exons, sex2Clust, clusts2Samps, clusts2Ctrls, priors,
                                                          testSmoothingBWs, plotDir)
         except Exception:
@@ -237,13 +248,13 @@ def main(argv):
         logger.debug("Done Copy Number Calls, in %.2f s", thisTime - startTime)
         startTime = thisTime
 
-        ####################################################
-        # print results
-        ####################
-        #
-        #
-        #
-        #
+        #####################################################
+        # Print exon defs + calls to outFile
+        CNCalls.CNCallsFile.printCNCallsFile(futureRes, exons, samples, outFile)
+
+        thisTime = time.time()
+        logger.debug("Done printing calls for all (non-failed) samples, in %.2fs", thisTime - startTime)
+        logger.info("ALL DONE")
 
 
 ####################################################################################
