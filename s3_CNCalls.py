@@ -154,11 +154,12 @@ ARGUMENTS:
 # may be available in the log
 def main(argv):
     # parse, check and preprocess arguments
-    try:
-        (countsFile, clustsFile, prevCNCallsFile, prevClustFile, priors, plotDir) = parseArgs(argv)
-    except Exception:
-        # problem is described in Exception, just re-raise
-        raise
+    (countsFile, clustsFile, prevCNCallsFile, prevClustFile, priors, plotDir) = parseArgs(argv)
+
+    # should density plots compare several different KDE bandwidth algorithms and values?
+    # hard-coded here rather than set via parseArgs because this should only be set
+    # to True for dev & testing
+    testSmoothingBWs = False
 
     # args seem OK, start working
     logger.debug("called with: " + " ".join(argv[1:]))
@@ -180,7 +181,7 @@ def main(argv):
     #####################################################
     # parse clusts
     try:
-        (clusts2Samps, clusts2Ctrls, sex2Clust) = clusterSamps.clustering.parseClustsFile(clustsFile, samples)
+        (clusts2Samps, clusts2Ctrls, sex2Clust) = clusterSamps.clustering.parseClustsFile(clustsFile)
     except Exception as e:
         raise Exception("parseClustsFile failed for %s : %s", clustsFile, repr(e))
 
@@ -201,9 +202,10 @@ def main(argv):
     startTime = thisTime
 
     ######################################################
-    # allocate CNcallsArray, and populate it with pre-calculated obeserved probabilities
+    # allocate CNcallsArray, and populate it with pre-calculated observed probabilities
     # if CNCallsFile and prevClustFile are provided.
     # also returns a boolean np.array to identify the samples to be reanalysed if the clusters change
+    
     try:
         (CNcallsArray, callsFilled) = CNCalls.CNCallsFile.extractObservedProbsFromPrev(exons, samples, clusts2Samps, prevCNCallsFile, prevClustFile)
     except Exception as e:
@@ -218,14 +220,16 @@ def main(argv):
     for samplesIndex in range(len(samples)):
         if callsFilled[samplesIndex] and samplesIndex not in clusts2Ctrls["Samps_QCFailed"]:
             nbOfSamplesToProcess -= 1
-            
+
     if nbOfSamplesToProcess == 0:
         logger.info("all provided samples are in previous callsFile and clusters are the same, not producing a new one")
     else:
         ####################################################
         # CN Calls
         try:
-            futureRes = CNCalls.copyNumbersCalls.CNCalls(countsFPM, CNcallsArray, callsFilled, exons, sex2Clust, clusts2Samps, clusts2Ctrls, priors, plotDir)
+            futureRes = CNCalls.copyNumbersCalls.CNCalls(countsFPM, CNcallsArray, samples, callsFilled, 
+                                                         exons, sex2Clust, clusts2Samps, clusts2Ctrls, priors,
+                                                         testSmoothingBWs, plotDir)
         except Exception:
             raise Exception("CNCalls failed")
 

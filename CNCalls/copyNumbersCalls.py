@@ -34,14 +34,12 @@ logger = logging.getLogger(__name__)
 # - clusts2Samps (dict[str, List[int]]): key: clusterID , value: samples index list
 # - clusts2Ctrls (dict[str, List[str]]): key: clusterID, value: controlsID list
 # - priors (list[float]): prior probability for each copy number type in the order [CN0, CN1,CN2,CN3+].
+# - testBW: if True each plot includes several different KDE bandwidth algorithms/values,
+#     for testing and comparing; otherwise use what seems best in our tests
 # - plotDir (str): subdir (created if needed) where result plots files will be produced
 # Returns:
 # - emissionArray (np.ndarray[float]): contain probabilities. dim=NbExons * (NbSamples*[CN0,CN1,CN2,CN3+])
-def CNCalls(countsFPM, CNcallsArray, callsFilled, exons, sex2Clust, clusts2Samps, clusts2Ctrls, priors, plotDir):
-    # should density plots compare several different KDE bandwidth algorithms and values?
-    # hard-coded here rather than set via parseArgs because this should only be set
-    # to True for dev & testing
-    testSmoothingBWs = False
+def CNCalls(countsFPM, CNcallsArray, samples, callsFilled, exons, sex2Clust, clusts2Samps, clusts2Ctrls, priors, testBW, plotDir):
 
     # create a matplotlib object and open a pdf
     pdfFile = os.path.join(plotDir, "ResCNCallsByCluster.pdf")
@@ -58,17 +56,22 @@ def CNCalls(countsFPM, CNcallsArray, callsFilled, exons, sex2Clust, clusts2Samps
     # Browse clusters
     ##############################
     for clustID in clusts2Samps:
-        
+
+        # no calling for failed samples
         if clustID == "Samps_QCFailed":
             continue
 
-        if np.all(callsFilled[clusts2Samps[clustID]] != -1):
-            logger.info("Cluster %s, has already been analysed and the data is available in CNcallsArray.", clustID)
+        # test if the samples of the cluster have already been analysed 
+        # and the filling of CNcallsArray has been done
+        sampsIndex = [i for i, val in enumerate(samples) if val in clusts2Samps[clustID]]
+        sub_t = callsFilled[sampsIndex]
+        if all(sub_t):
+            logger.info("samples in cluster %s, already filled from prevCallsFile", clustID)
             continue
 
-        # retrieve samples and exons
-        samplesIndex = extractSamps(clustID, clusts2Samps, clusts2Ctrls)
-        logger.info("Cluster %s, nb samples sortie fonction %s", clustID, len(samplesIndex))
+        # retrieve sample names and exons index
+        samps2Compare = extractSamps(clustID, clusts2Samps, clusts2Ctrls)
+        logger.info("Cluster %s, nb samples sortie fonction %s", clustID, len(samps2Compare))
 
         if sex2Clust:
             exonsIndex = extractExons(clustID, sex2Clust, maskAutosome_Gonosome)
@@ -76,7 +79,7 @@ def CNCalls(countsFPM, CNcallsArray, callsFilled, exons, sex2Clust, clusts2Samps
             exonsIndex = range(len(exons))
 
         # Create Boolean masks for columns and rows
-        col_mask = np.isin(np.arange(countsFPM.shape[1]), samplesIndex, invert=True)
+        col_mask = np.isin(np.arange(countsFPM.shape[1]), samps2Compare, invert=True)
         row_mask = np.isin(np.arange(countsFPM.shape[0]), exonsIndex, invert=True)
 
         # Use the masks to index the 2D numpy array
@@ -91,10 +94,10 @@ def CNCalls(countsFPM, CNcallsArray, callsFilled, exons, sex2Clust, clusts2Samps
         ##################################
         # smoothing coverage profil averaged by exons, fit gamma distribution.
         try:
-            (gammaParams, lowThreshold) = fitGammaDistribution(clusterCounts, clustID, PDF, testBW=testSmoothingBWs)
+            (gammaParams, lowThreshold) = fitGammaDistribution(clusterCounts, clustID, PDF, testBW=testBW)
         except Exception as e:
             logger.error("fitGammaDistribution failed for cluster %s : %s", clustID, repr(e))
-            raise Exception("fitGammaDistribution failed")    
+            raise Exception("fitGammaDistribution failed")
 
         ##############################
         # Browse cluster-specific exons
@@ -143,7 +146,7 @@ def CNCalls(countsFPM, CNcallsArray, callsFilled, exons, sex2Clust, clusts2Samps
             ###################
             # Retrieve results for each sample
             for i in clusts2Samps[clustID]:
-                sampFPM = exonFPM[samplesIndex.index(i)]
+                sampFPM = exonFPM[samps2Compare.index(i)]
                 sampIndexInEmissionArray = i * 4
 
                 probNorm = computeProbabilites(sampFPM, gammaParams, RGParams, priors, lowThreshold)
@@ -166,21 +169,20 @@ def CNCalls(countsFPM, CNcallsArray, callsFilled, exons, sex2Clust, clusts2Samps
 ###############################################################################
 # extractSamps
 # Given a cluster identifier and dictionaries reporting cluster information
-# Extraction samples indexes
+# Extraction sample names 
 # Args:
 # - clustID [str] : cluster identifier
-# - clusts2Samps (dict[str: list[int]]): key:cluster identifier, value: samples indexes list
+# - clusts2Samps (dict[str: list[int]]): key:cluster identifier, value: samples names list
 # - clusts2Ctrls (dict[str: list[str]]): key:cluster identifier, value: list of control clusters
 # Returns:
-# - samplesIndex (list[int]): samples indexes in current cluster
+# - samplesIndex (list[int]): samples names in current cluster
 def extractSamps(clustID, clusts2Samps, clusts2Ctrls):
-    ##### COLUMN indexes in countsFPM => samples
-    # Get the indexes of the samples in the cluster and its controls
-    samplesIndex = clusts2Samps[clustID].copy()
+    # Get sample names in the cluster and its controls
+    sampsList = clusts2Samps[clustID].copy()
     if clustID in clusts2Ctrls:
-        for control in clusts2Ctrls[clustID]:
-            samplesIndex.extend(clusts2Samps[control].copy())
-    return samplesIndex
+        for sampInControl in clusts2Ctrls[clustID]:
+            sampsList.extend(clusts2Samps[sampInControl].copy())
+    return sampsList
 
 
 #############################################################
@@ -232,7 +234,7 @@ def fitGammaDistribution(clusterCounts, clustID, pdf, minLow2high=0.2, testBW=Fa
     #### To Fill:
     gammaParams = []
     lowThreshold = 0
-    
+
     # compute meanFPM by exons
     # save computation time instead of taking the raw data (especially for clusters
     # with many samples)
@@ -253,7 +255,7 @@ def fitGammaDistribution(clusterCounts, clustID, pdf, minLow2high=0.2, testBW=Fa
     # vertical dashed lines: coordinates (default to 0 ie no lines) and legends
     (xmin, xmax) = (0, 0)
     (line1legend, line2legend) = ("", "")
-    
+
     if testBW:
         allBWs = ('ISJ', 0.15, 0.20, 'scott', 'silverman')
     else:
@@ -272,7 +274,7 @@ def fitGammaDistribution(clusterCounts, clustID, pdf, minLow2high=0.2, testBW=Fa
         if isinstance(bw, str):
             legend += ' => bw={:.2f}'.format(bwValue)
         legends.append(legend)
-        
+
     # find indexes of first local min density and first subsequent local max density,
     # looking only at our first smoothed representation
     try:
@@ -283,7 +285,7 @@ def fitGammaDistribution(clusterCounts, clustID, pdf, minLow2high=0.2, testBW=Fa
         (xmin, ymin) = (dataRanges[0][minIndex], densities[0][minIndex])
         (xmax, ymax) = (dataRanges[0][maxIndex], densities[0][maxIndex])
         line1legend = "min FPM = " + '{:0.2f}'.format(xmin)
-        
+
         # require at least minLow2high fractional increase from ymin to ymax
         if ((ymax - ymin) / ymin) < minLow2high:
             logger.info("coverage profil of cluster %s is bad: min (%.2f,%.2f) and max (%.2f,%.2f) densities too close",
@@ -307,7 +309,6 @@ def fitGammaDistribution(clusterCounts, clustID, pdf, minLow2high=0.2, testBW=Fa
 
         lowThreshold = countsExonsNotCovered[thresholdIndex]
         line2legend = "low threshold FPM = " + '{:0.2f}'.format(lowThreshold)
-
 
     # plot all the densities for sampleIndex in a single plot
     title = clustID + " density of exon mean FPMs"
@@ -497,7 +498,7 @@ def truncated_integral_and_sigma(x):
 @numba.njit
 def computeWeight(fpm_in_exon, mean, standard_deviation):
     targetData = fpm_in_exon[(fpm_in_exon > (mean - (2 * standard_deviation))) &
-                             (fpm_in_exon < (mean + (2 * standard_deviation))), ]
+                             (fpm_in_exon < (mean + (2 * standard_deviation))),]
     weight = len(targetData) / len(fpm_in_exon)
 
     return weight
