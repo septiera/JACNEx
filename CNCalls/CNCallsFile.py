@@ -61,7 +61,7 @@ def extractObservedProbsFromPrev(exons, samples, clusts2Samps, prevCNCallsFile, 
 
         # fill prev2new to identify samples that are in prevCallsFile:
         # prev2new is a 1D numpy array, size = len(prevSamples), prev2new[prev] is the
-        # samples indexes 
+        # samples indexes
         prev2new = np.full(len(prevSamples), -1, dtype=int)
         # prevIndexes: temp dict, key = sample identifier, value = index in prevSamples
         prevIndexes = {}
@@ -78,14 +78,10 @@ def extractObservedProbsFromPrev(exons, samples, clusts2Samps, prevCNCallsFile, 
                     for i in valueCurrent:
                         prev2new[prevIndexes[samples.index[i]]] = prevIndexes[i]
                         callsFilled[samples.index[i]] = True
-        
+
         # Fill CNcallsArray with prev probabilities data
         for i in range(len(exons)):
-            prevCallsVec2CallsArray(CNcallsArray, i, prevCallsList[i], prev2new)        
-    
-    for i in clusts2Samps['Samps_QCFailed']:
-        if callsFilled[samples.index(i)] == False:
-            callsFilled[samples.index(i)] = True
+            prevCallsVec2CallsArray(CNcallsArray, i, prevCallsList[i], prev2new)
 
     # return the arrays, whether we had a prevCNCallsFile or not
     return(CNcallsArray, callsFilled)
