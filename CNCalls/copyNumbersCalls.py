@@ -9,7 +9,7 @@ import time
 
 import clusterSamps.smoothing
 import clusterSamps.genderDiscrimination
-
+import clusterSamps.qualityControl
 
 # prevent PIL flooding the logs when we are in DEBUG loglevel
 logging.getLogger('PIL').setLevel(logging.WARNING)
@@ -29,6 +29,9 @@ logger = logging.getLogger(__name__)
 # for each sample per exon.
 # Arguments:
 # - countsFPM (np.ndarray[float]): normalised counts
+# - CNcallsArray (np.ndarray[float): probabilities, dim = NbExons x (NbSamples*4), initially -1
+# - samples: sample of interest names
+# - callsFilled (np.ndarray[bool]): samples filled from prevCallsArray, dim = NbSamples
 # - exons (list of lists[str,int,int,str]): information on exon, containing CHR,START,END,EXON_ID
 # - sex2Clust dict[str, list[str]]: key: "A" autosomes or "G" gonosome, value: clusterID list
 # - clusts2Samps (dict[str, List[int]]): key: clusterID , value: samples index list
@@ -46,7 +49,7 @@ def CNCalls(countsFPM, CNcallsArray, samples, callsFilled, exons, sex2Clust, clu
     PDF = matplotlib.backends.backend_pdf.PdfPages(pdfFile)
 
     # when discriminating between genders,
-    # importance of identifying autosomes and gonosomes "exons" index
+    # identifying autosomes and gonosomes "exons" index
     # to make calls on associated reference groups.
     if sex2Clust:
         gonoIndex, _ = clusterSamps.genderDiscrimination.getGenderInfos(exons)
@@ -56,12 +59,13 @@ def CNCalls(countsFPM, CNcallsArray, samples, callsFilled, exons, sex2Clust, clu
     # Browse clusters
     ##############################
     for clustID in clusts2Samps:
-
+        ##################################
+        ##### cluster sanity filters
         # no calling for failed samples
         if clustID == "Samps_QCFailed":
             continue
 
-        # test if the samples of the cluster have already been analysed 
+        # test if the samples of the cluster have already been analysed
         # and the filling of CNcallsArray has been done
         sampsIndex = [i for i, val in enumerate(samples) if val in clusts2Samps[clustID]]
         sub_t = callsFilled[sampsIndex]
@@ -69,8 +73,11 @@ def CNCalls(countsFPM, CNcallsArray, samples, callsFilled, exons, sex2Clust, clu
             logger.info("samples in cluster %s, already filled from prevCallsFile", clustID)
             continue
 
+        ##################################
+        ##### extract cluster infos
         # retrieve sample names and exons index
         samps2Compare = extractSamps(clustID, clusts2Samps, clusts2Ctrls)
+        samps2CompareIndex = [i for i, val in enumerate(samples) if val in clusts2Samps[clustID]]
         logger.info("Cluster %s, nb samples sortie fonction %s", clustID, len(samps2Compare))
 
         if sex2Clust:
@@ -78,15 +85,15 @@ def CNCalls(countsFPM, CNcallsArray, samples, callsFilled, exons, sex2Clust, clu
         else:
             exonsIndex = range(len(exons))
 
-        # Create Boolean masks for columns and rows
-        col_mask = np.isin(np.arange(countsFPM.shape[1]), samps2Compare, invert=True)
+        # Create Boolean masks for columns and rows (speed method)
+        col_mask = np.isin(np.arange(countsFPM.shape[1]), samps2CompareIndex, invert=True)
         row_mask = np.isin(np.arange(countsFPM.shape[0]), exonsIndex, invert=True)
 
         # Use the masks to index the 2D numpy array
         clusterCounts = countsFPM[np.ix_(row_mask, col_mask)]
 
         ###########
-        # Initialize  a hash allowing to detail the filtering carried out
+        # Initialize a hash allowing to detail the filtering carried out
         # as well as the calls for all the exons.
         # It is used for the pie chart representing the filtering.
         filterCounters = dict.fromkeys(["notCaptured", "cannotFitRG", "RGClose2LowThreshold", "fewSampsInRG", "exonsCalls"], 0)
@@ -144,16 +151,17 @@ def CNCalls(countsFPM, CNcallsArray, samples, callsFilled, exons, sex2Clust, clu
             filterCounters["exonsCalls"] += 1
 
             ###################
-            # Retrieve results for each sample
+            # compute probabilities for each sample and each CN type
+            # fill CNCallsArray
             for i in clusts2Samps[clustID]:
                 sampFPM = exonFPM[samps2Compare.index(i)]
-                sampIndexInEmissionArray = i * 4
+                sampIndexInCallsArray = samples.index(i) * 4
 
                 probNorm = computeProbabilites(sampFPM, gammaParams, RGParams, priors, lowThreshold)
 
                 for val in range(4):
-                    if CNcallsArray[exonsIndex[clustExon], (sampIndexInEmissionArray + val)] == -1:
-                        CNcallsArray[exonsIndex[clustExon], (sampIndexInEmissionArray + val)] = probNorm[val]
+                    if CNcallsArray[exonsIndex[clustExon], (sampIndexInCallsArray + val)] == -1:
+                        CNcallsArray[exonsIndex[clustExon], (sampIndexInCallsArray + val)] = probNorm[val]
                     else:
                         logger.error('erase previous probabilities values')
 
@@ -169,7 +177,7 @@ def CNCalls(countsFPM, CNcallsArray, samples, callsFilled, exons, sex2Clust, clu
 ###############################################################################
 # extractSamps
 # Given a cluster identifier and dictionaries reporting cluster information
-# Extraction sample names 
+# Extraction sample names
 # Args:
 # - clustID [str] : cluster identifier
 # - clusts2Samps (dict[str: list[int]]): key:cluster identifier, value: samples names list
@@ -311,11 +319,11 @@ def fitGammaDistribution(clusterCounts, clustID, pdf, minLow2high=0.2, testBW=Fa
         line2legend = "low threshold FPM = " + '{:0.2f}'.format(lowThreshold)
 
     # plot all the densities for sampleIndex in a single plot
-    title = clustID + " density of exon mean FPMs"
+    title = clustID + " density of exon mean FPMs (SampsNB=" + str(clusterCounts.shape[0]) + ")"
     # max range on Y axis for visualization, 3*ymax should be fine
     ylim = 3 * ymax
 
-    coverageProfilPlot(title, dataRanges, densities, legends, xmin, lowThreshold, ylim, line1legend, line2legend, pdf)
+    clusterSamps.qualityControl.plotDensities(title, dataRanges, densities, legends, xmin, lowThreshold, line1legend, line2legend, ylim, pdf)
 
     if len(gammaParams) == 0:
         raise ValueError("no fit of gamma distribution")
@@ -323,45 +331,6 @@ def fitGammaDistribution(clusterCounts, clustID, pdf, minLow2high=0.2, testBW=Fa
         raise ValueError("low threshold cannot be calculated")
 
     return (gammaParams, lowThreshold)
-
-
-#############################################################
-# coverageProfilPlot
-# generates a plot per cluster
-# x-axis: the range of FPM bins (every 0.1 between 0 and 10)
-# y-axis: exons densities
-# black curve: density data smoothed with kernel-density estimate using Gaussian kernels
-# red vertical line: minimum FPM threshold, all uncovered exons are below this threshold
-# green curve: gamma fit
-#
-# Args:
-# - sampleName (str): sample name
-# - binEdges (np.ndarray[floats]): FPM range
-# - densityOnFPMRange (np.ndarray[float]): densities from binEdges
-# - minIndex (int): binEdges index associated with the first lowest density observed
-# - lowThreshold (float): FPM threshold
-# from the gamma, corresponds to the FPM threshold where before this the exons are not covered
-# (contains both uncaptured, poorly covered and potentially homodeleted exons).
-# - samplesNb (int): number of samples in the cluster
-# - pdf (matplotlib object): store plots in a single pdf
-# Returns and saves a plot in the output pdf
-
-def coverageProfilPlot(clustID, binEdges, densityOnFPMRange, minIndex, lowThreshold, samplesNb, PDF):
-
-    fig = matplotlib.pyplot.figure(figsize=(6, 6))
-    matplotlib.pyplot.plot(binEdges, densityOnFPMRange, color='black', label='smoothed densities')
-    matplotlib.pyplot.axvline(binEdges[minIndex], color='crimson', linestyle='dashdot', linewidth=2,
-                              label="minFPM=" + '{:0.1f}'.format(binEdges[minIndex]))
-    matplotlib.pyplot.axvline(lowThreshold, color='blue', linestyle='dashdot', linewidth=2,
-                              label="uncovExonThreshold=" + '{:0.2f}'.format(lowThreshold))
-    matplotlib.pyplot.ylim(0, 0.5)
-    matplotlib.pyplot.ylabel("Exon densities")
-    matplotlib.pyplot.xlabel("Fragments Per Million")
-    matplotlib.pyplot.title("ClusterID:" + clustID + " coverage profile (" + str(samplesNb) + ")")
-    matplotlib.pyplot.legend()
-
-    PDF.savefig(fig)
-    matplotlib.pyplot.close()
 
 
 #############################################################
@@ -498,7 +467,7 @@ def truncated_integral_and_sigma(x):
 @numba.njit
 def computeWeight(fpm_in_exon, mean, standard_deviation):
     targetData = fpm_in_exon[(fpm_in_exon > (mean - (2 * standard_deviation))) &
-                             (fpm_in_exon < (mean + (2 * standard_deviation))),]
+                             (fpm_in_exon < (mean + (2 * standard_deviation))), ]
     weight = len(targetData) / len(fpm_in_exon)
 
     return weight
@@ -553,29 +522,30 @@ def computeProbabilites(sampFPM, gammaParams, RGParams, priors, lowThreshold):
     # Add prior probabilities
     probDensPriors = np.multiply(probDensities, priors)
 
-    # # normalized probabilities
-    # probNorm = probability_densities_priors / np.sum(probability_densities_priors)
+    # normalized probabilities
+    probNorm = probDensPriors / np.sum(probDensPriors)
 
-    # ################
-    # # case where one of the probabilities is equal to 0 addition of an epsilon
-    # # which is 1000 times lower than the lowest probability
-    # probability_densities_priors = addEpsilonPrivate(probability_densities_priors)
+    return probNorm
 
-    # ##################
-    # # Calculate the log-odds ratios
-    # emissionProba = np.zeros(4)
-    # for i in range(len(probability_densities_priors)):
-    #     # Calculate the denominator for the log-odds ratio
-    #     to_subtract = np.sum(probability_densities_priors[np.arange(probability_densities_priors.shape[0]) != i])
+    ######## EARLY RETURN, for dev step4
+    ################
+    # case where one of the probabilities is equal to 0 addition of an epsilon
+    # which is 1000 times lower than the lowest probability
+    probability_densities_priors = addEpsilonPrivate(probability_densities_priors)
 
-    #     # Calculate the log-odds ratio for the current probability density
-    #     log_odd = np.log10(probability_densities_priors[i]) - np.log10(to_subtract)
-    #     # probability transformation
-    #     emissionProba[i] = 1 / (1 + np.exp(log_odd))
+    ##################
+    # Calculate the log-odds ratios
+    emissionProba = np.zeros(4)
+    for i in range(len(probability_densities_priors)):
+        # Calculate the denominator for the log-odds ratio
+        to_subtract = np.sum(probability_densities_priors[np.arange(probability_densities_priors.shape[0]) != i])
 
-    # return emissionProba / emissionProba.sum()  # normalized
+        # Calculate the log-odds ratio for the current probability density
+        log_odd = np.log10(probability_densities_priors[i]) - np.log10(to_subtract)
+        # probability transformation
+        emissionProba[i] = 1 / (1 + np.exp(log_odd))
 
-    return probDensPriors
+    return emissionProba / emissionProba.sum()  # normalized
 
 
 # #############################################################
@@ -590,7 +560,7 @@ def computeProbabilites(sampFPM, gammaParams, RGParams, priors, lowThreshold):
 
 #############################################################
 # filtersPiePlot:
-# generates a plot per cluster
+# generates a pie by cluster resuming the filtering of exons
 # Args:
 # - clustID [str]: cluster identifier
 # - filterCounters (dict[str:int]): dictionary of exon counters of different filtering
