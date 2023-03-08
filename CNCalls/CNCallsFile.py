@@ -193,7 +193,7 @@ def parseCNCallsPrivate(CNCallsFile):
         exon = [splitLine[0], int(splitLine[1]), int(splitLine[2]), splitLine[3]]
         exons.append(exon)
         # convert calls to 1D np array and save
-        calls = np.fromstring(splitLine[4], dtype=np.float16, sep='\t')
+        calls = np.fromstring(splitLine[4], dtype=np.float32, sep='\t')
         callsList.append(calls)
     callsFH.close()
     return(exons, samples, callsList)
@@ -207,7 +207,7 @@ def parseCNCallsPrivate(CNCallsFile):
 # type of copy number. dim= NbExons x (NbSamples x [CN0, CN1, CN2,CN3+])
 def allocateCNCallsArray(numExons, numSamples):
     # order=F should improve performance
-    return np.full((numExons, (numSamples * 4)), -1, dtype=np.float16, order='F')
+    return np.full((numExons, (numSamples * 4)), -1, dtype=np.float32, order='F')
 
 
 #################################################
