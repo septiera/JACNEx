@@ -319,7 +319,7 @@ def fitGammaDistribution(clusterCounts, clustID, pdf, minLow2high=0.2, testBW=Fa
         line2legend = "low threshold FPM = " + '{:0.2f}'.format(lowThreshold)
 
     # plot all the densities for sampleIndex in a single plot
-    title = clustID + " density of exon mean FPMs (SampsNB=" + str(clusterCounts.shape[0]) + ")"
+    title = "density of exon mean FPMs from cluster n°"+ clustID + "\nSampsNB=" + str(clusterCounts.shape[1]) + "\nExonsNB=" + str(clusterCounts.shape[0]) 
     # max range on Y axis for visualization, 3*ymax should be fine
     ylim = 3 * ymax
 
@@ -570,15 +570,13 @@ def computeProbabilites(sampFPM, gammaParams, RGParams, priors, lowThreshold):
 # save a plot in the output pdf
 def filtersPiePlot(clustID, filterCounters, pdf):
 
-    fig = matplotlib.pyplot.figure(figsize=(10, 10))
+    fig = matplotlib.pyplot.figure(figsize=(6, 6))
     matplotlib.pyplot.pie(filterCounters.values(), labels=filterCounters.keys(),
-                          colors=["grey", "yellow", "mediumpurple", "royalblue", "mediumaquamarine"],
                           autopct=lambda x: str(round(x, 2)) + '%',
                           startangle=-270,
                           pctdistance=0.7,
                           labeldistance=1.1)
-    matplotlib.pyplot.legend()
-    matplotlib.pyplot.title("filtered and called exons for the cluster " + clustID)
+    matplotlib.pyplot.title("Filtered and called exons from cluster " + clustID)
 
     pdf.savefig(fig)
     matplotlib.pyplot.close()
