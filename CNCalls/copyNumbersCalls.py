@@ -87,7 +87,7 @@ def CNCalls(countsFPM, CNcallsArray, samples, callsFilled, exons, sex2Clust, clu
 
         # Create Boolean masks for columns and rows (speed method)
         col_mask = np.isin(np.arange(countsFPM.shape[1]), samps2CompareIndex, invert=True)
-        row_mask = np.isin(np.arange(countsFPM.shape[0]), exonsIndex, invert=True)
+        row_mask = np.isin(np.arange(countsFPM.shape[0]), exonsIndex, invert=False)
 
         # Use the masks to index the 2D numpy array
         clusterCounts = countsFPM[np.ix_(row_mask, col_mask)]
