@@ -345,6 +345,8 @@ def fitGammaDistribution(clusterCounts, clustID, pdf, minLow2high=0.2, testBW=Fa
 # - filterCounters (dict[str:int]): key: type of filter, value: number of filtered exons
 # Returns "True" if exon doesn't pass the two filters otherwise "False"
 def failedFilters(exonFPM, RGParams, lowThreshold, filterCounters):
+    # setting a threshold associated with standard deviation tolerated around the lowThreshold
+    sdThreshold = 3
     meanRG = RGParams[0]
     stdevRG = RGParams[1]
     ###################
@@ -360,7 +362,7 @@ def failedFilters(exonFPM, RGParams, lowThreshold, filterCounters):
 
     # the exon is excluded if there are less than 3 standard deviations between
     # the threshold and the mean.
-    if (z_score < 3):
+    if (z_score < sdThreshold):
         filterCounters["RGClose2LowThreshold"] += 1
         return(True)
 
