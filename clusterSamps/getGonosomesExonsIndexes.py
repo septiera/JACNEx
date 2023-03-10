@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 ###############################################################################
 
 ###############################################################################
-# getGonoExIndexes:
+# getSexChrIndexes:
 # - identifies the sex chromosomes (gonosomes) presents in the "countsFile"
 # input data and extracts the associated exon indexes.
 # Please note that in this script only X, Y, Z and W chromosomes can be found.
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 #  - exons (list of lists[str,int,int,str]): information on exon, containing CHR,START,END,EXON_ID
 # Returns a boolean numpy.ndarray where the indices of the exons
 # corresponding to the gonosomes are True and False for the autosomes.
-def getGonoExIndexes(exons):
+def getSexChrIndexes(exons):
     # sex chromosome list
     gonoChromList = ["X", "Y", "W", "Z"]
 
