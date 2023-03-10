@@ -1,6 +1,7 @@
 import logging
+import numpy as np
 import matplotlib.pyplot
-
+import scipy.cluster.hierarchy
 
 # prevent PIL flooding the logs when we are in DEBUG loglevel
 logging.getLogger('PIL').setLevel(logging.WARNING)
@@ -60,3 +61,59 @@ def plotDensities(title, dataRanges, densities, legends, line1, line2, line1lege
 
     pdf.savefig(fig)
     matplotlib.pyplot.close()
+    
+
+#############################
+# visualisation of clustering results
+# Args:
+# - clust2Samps (dict(int : list[int])): clusterID associated to valid sample indexes
+#   key = clusterID, value = list of valid sample indexes
+# - trgt2Ctrls (dict(int : list[int])): target and controls clusters correspondance,
+#   key = target clusterID, value = list of controls clusterID
+# - linksMatrix (np.ndarray[float])
+# - minDist (float): is the distance to start cluster construction
+# - outputFile (str): full path to save the png
+# Returns a png file in the output folder
+def DendogramsPrivate(clust2Samps, trgt2Ctrls, linksMatrix, minDist, outputFile):
+    # maxClust: int variable contains total clusters number
+    maxClust = len(clust2Samps.keys())
+
+    # To Fill
+    # labelArray (np.ndarray[str]): status for each cluster as a character, dim=NbSOIs*NbClusters
+    # " ": sample does not contribute to the cluster
+    # "x": sample contributes to the cluster
+    # "-": sample controls the cluster
+    labelArray = np.empty([len(linksMatrix) + 1, maxClust + 1], dtype="U1")
+    labelArray.fill(" ")
+    # labelsGp (list[str]): labels for each sample list to be passed when plotting the dendogram
+    labelsGp = []
+
+    keysList = list(clust2Samps.keys())
+
+    # browse the different cluster identifiers
+    for clusterID in range(len(keysList)):
+        # retrieving the SOIs involved for the clusterID
+        SOIsindex = clust2Samps[keysList[clusterID]]
+        # associate the label for the samples contributing to the clusterID for the
+        # associated cluster index position
+        labelArray[SOIsindex, clusterID] = "x"
+
+        # associate the label for the samples controlling the current clusterID
+        if keysList[clusterID] in trgt2Ctrls.keys():
+            listctrl = trgt2Ctrls[keysList[clusterID]]
+            for ctrl in listctrl:
+                CTRLindex = clust2Samps[ctrl]
+                labelArray[CTRLindex, clusterID] = "-"
+
+    # browse the np array of labels to build the str list
+    for i in labelArray:
+        # separation of labels for readability
+        strToBind = "  ".join(i)
+        labelsGp.append(strToBind)
+
+    # dendogram plot
+    matplotlib.pyplot.figure(figsize=(15, 5), facecolor="white")
+    matplotlib.pyplot.title("Average linkage hierarchical clustering")
+    dn1 = scipy.cluster.hierarchy.dendrogram(linksMatrix, labels=labelsGp, color_threshold=minDist)
+    matplotlib.pyplot.ylabel("Distance √(1-ρ) ")
+    matplotlib.pyplot.savefig(outputFile, dpi=520, format="pdf", bbox_inches='tight')
