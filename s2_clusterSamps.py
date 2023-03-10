@@ -17,8 +17,9 @@ import numpy as np
 import countFrags.countsFile
 import countFrags.countFragments
 import clusterSamps.qualityControl
-import clusterSamps.genderDiscrimination
+import clusterSamps.getGonosomesExonsIndexes
 import clusterSamps.clustering
+import clusterSamps.clustFile
 
 
 # set up logger, using inherited config, in case we get called as a module
@@ -211,183 +212,110 @@ def main(argv):
     logger.debug("Done samples quality control, in %.2fs", thisTime - startTime)
     startTime = thisTime
 
-    logger.info("EARLY RETURN, working on coverage plots")
-    return
-
-    #####################################################
+    ###################
     # Clustering:
-    ####################
-    # objective: establish the most optimal clustering(s) from the data validated
+    # goal: establish the most optimal clustering(s) from the data validated
     # (exons and samples) by the quality control.
+    
+    maskGonoExIndexes = clusterSamps.getGonosomesExonsIndexes.getSexChrIndexes(exons)
 
-    ####################
-    # filtering the counts data to recover valid samples and captured exons
-    # - validCountsFPM (np.ndarray[float]): normalized fragment counts for exons captured
-    # for all samples that passed quality control
-    validCountsFPM = np.delete(countsFPM, sampsQCfailed, axis=1)
-    validCountsFPM = validCountsFPM[capturedExons]
+    # - exonsToKeep (list of list[str,int,int,str]): contains exons information from captured exons
+    exonsToKeep = [exons[i] for i, m in enumerate(capturedExons) if m]
 
-    ###########################
-    #### no gender discrimination
-    # clustering algorithm direct application
-    if noGender:
-        logger.info("### Samples clustering:")
-        try:
-            dendogramPDF = os.path.join(plotDir, "Dendogram_" + str(len(SOIs)) + "Samps_FullChrom.pdf")
-            # applying hierarchical clustering and obtaining 2 outputs:
-            # - clust2Samps (dict(int : list[int])): clusterID associated to SOIsIndex
-            #   key = clusterID, value = list of SOIsIndex
-            # - trgt2Ctrls (dict(int : list[int])): target and controls clusters correspondance,
-            #   key = target clusterID, value = list of controls clusterID
-            (clust2Samps, trgt2Ctrls) = clusterSamps.clustering.clustersBuilds(validCountsFPM, maxCorr, minCorr, minSamps, dendogramPDF)
-        except Exception as e:
-            logger.error("clustersBuilds failed : %s", repr(e))
-            raise Exception("clustersBuilds failed")
+    #####
+    # Get Autosomes Clusters
+    logger.info("### Autosomes, sample clustering:")
+    try:
+        autosomesFPM = countsFPM[~maskGonoExIndexes]
+        plotAutoDendogramm = os.path.join(plotDir, "Dendogram_" + str(autosomesFPM.shape[1]) + "Samps_autosomes.pdf")
+        # applying hierarchical clustering and obtaining 2 outputs autosome-specific:
+        # - clust2Samps (dict(int : list[int])): clusterID associated to SOIsIndex
+        #   key = clusterID, value = list of SOIsIndex
+        # - trgt2Ctrls (dict(int : list[int])): target and controls clusters correspondance,
+        #   key = target clusterID, value = list of controls clusterID
+        (clust2Samps, trgt2Ctrls) = clusterSamps.clustering.clustersBuilds(autosomesFPM, maxCorr, minCorr, minSamps, plotAutoDendogramm)
 
-        thisTime = time.time()
-        logger.debug("Done clusterisation in %.2fs", thisTime - startTime)
-        startTime = thisTime
-
-        logger.info("### standardisation of results and validation:")
-        try:
-            # standardisation and verification of clustering results:
-            # - clustsResList (list of lists[str,str,str,int,str]): to be printed in STDOUT
-            # contains the following information: clusterID, list of samples added to compose the cluster,
-            # clusterIDs controlling this cluster, validity of the cluster according to its total number
-            # (<20 =invalid), its cluster status (here as all chromosomes are analysed together = "W" for whole)
-            clustsResList = clusterSamps.clustering.STDZandCheckRes(SOIs, sampsQCfailed, clust2Samps, trgt2Ctrls, minSamps, noGender)
-
-        except Exception as e:
-            logger.error("STDZandCheckRes ie standardisation of results and validation failed : %s", repr(e))
-            raise Exception("STDZandCheckRes failed")
-
-        thisTime = time.time()
-        logger.debug("Done standardisation of results and validation in %.2fs", thisTime - startTime)
-        startTime = thisTime
-
-    ###########################
-    #### gender discrimination
-    else:
-
-        # - exonsToKeep (list of list[str,int,int,str]): contains exons information from captured exons
-        exonsToKeep = [exons[i] for i, m in enumerate(capturedExons) if m]
-
-        try:
-            # parse exons to extract information related to the organisms studied and their gender
-            # - gonoIndex (dict(str: list(int))): is a dictionary where key=GonosomeID(e.g 'chrX'),
-            # value=list of gonosome exon index.
-            # - genderInfo (list of list[str]):contains informations for the gender
-            # identification, ie ["gender identifier","specific chromosome"].
-            (gonoIndex, genderInfo) = clusterSamps.genderDiscrimination.getGenderInfos(exonsToKeep)
-        except Exception as e:
-            logger.error("getGenderInfos failed : %s", repr(e))
-            raise Exception("getGenderInfos failed")
-
-        thisTime = time.time()
-        logger.debug("Done get gender informations in %.2fs", thisTime - startTime)
-        startTime = thisTime
-
-        # cutting normalized count data
-        # - gonoIndexFlat (np.ndarray[int]): flat gonosome exon indexes list
-        gonoIndexFlat = np.unique([item for sublist in list(gonoIndex.values()) for item in sublist])
-        # - autosomesFPM (np.ndarray[float]): normalized fragment counts for valid samples, exons captured
-        # in autosomes
-        autosomesFPM = np.delete(validCountsFPM, gonoIndexFlat, axis=0)
-        # - gonosomesFPM (np.ndarray[float]): normalized fragment counts for valid samples, exons captured
-        # in gonosomes
-        gonosomesFPM = np.take(validCountsFPM, gonoIndexFlat, axis=0)
-
-        #####################################################
-        # Get Autosomes Clusters
-        ##################
-        logger.info("### Autosomes, sample clustering:")
-        try:
-            dendogramPDF = os.path.join(plotDir, "Dendogram_" + str(autosomesFPM.shape[1]) + "Samps_autosomes.pdf")
-            # applying hierarchical clustering and obtaining 2 outputs autosome-specific:
-            # - clust2Samps (dict(int : list[int])): clusterID associated to SOIsIndex
-            #   key = clusterID, value = list of SOIsIndex
-            # - trgt2Ctrls (dict(int : list[int])): target and controls clusters correspondance,
-            #   key = target clusterID, value = list of controls clusterID
-            (clust2Samps, trgt2Ctrls) = clusterSamps.clustering.clustersBuilds(autosomesFPM, maxCorr, minCorr, minSamps, dendogramPDF)
-
-        except Exception as e:
-            logger.error("clusterBuilds for autosomes failed : %s", repr(e))
-            raise Exception("clusterBuilds for autosomes failed")
-
-        thisTime = time.time()
-        logger.debug("Done samples clustering for autosomes : in %.2fs", thisTime - startTime)
-        startTime = thisTime
-
-        #####################################################
-        # Get Gonosomes Clusters
-        ##################
-        logger.info("### Gonosomes, sample clustering:")
-        try:
-            dendogramPDF = os.path.join(plotDir, "Dendogram_" + str(gonosomesFPM.shape[1]) + "Samps_gonosomes.png")
-            # applying hierarchical clustering and obtaining 2 outputs gonosome-specific:
-            # - clust2SampsGono (dict(int : list[int])): clusterID associated to SOIsIndex
-            #   key = clusterID, value = list of SOIsIndex
-            # - trgt2CtrlsGono (dict(int : list[int])): target and controls clusters correspondance,
-            #   key = target clusterID, value = list of controls clusterID
-            (clust2SampsGono, trgt2CtrlsGono) = clusterSamps.clustering.clustersBuilds(gonosomesFPM, maxCorr, minCorr, minSamps, dendogramPDF)
-
-        except Exception as e:
-            logger.error("clusterBuilds for gonosomes failed : %s", repr(e))
-            raise Exception("clusterBuilds for gonosomes failed")
-
-        # unlike the processing carried out on the sets of chromosomes and autosomes,
-        # it is necessary for the gonosomes to identify the sample genders.
-        # This makes it possible to identify the clusters made up of the two genders
-        # which can potentially lead to copy number calls errors.
-        # e.g. in humans compared males and females: it is possible to observe
-        # heterodel calls on the X chromosome in males and homodel calls on the Y
-        # chromosome in females.
-        logger.info("### Gonosomes, gender prediction:")
-        try:
-            # prediction of two groups based on kmeans from count data,
-            # assignment of genders to each group based on sex chromosome coverage ratios.
-            # obtaining 2 outputs:
-            # - kmeans (list[int]): groupID predicted by Kmeans ordered on SOIsIndex
-            # - sexePred (list[str]): genderID (e.g ["M","F"]), the order
-            # correspond to KMeans groupID (0=M, 1=F)
-            (kmeans, sexePred) = clusterSamps.genderDiscrimination.genderAttribution(validCountsFPM, gonoIndex, genderInfo)
-        except Exception as e:
-            logger.error("genderAttribution ie gender prediction from gonosomes failed : %s", repr(e))
-            raise Exception("genderAttribution failed")
-
-        thisTime = time.time()
-        logger.debug("Done gender prediction from gonosomes : in %.2fs", thisTime - startTime)
-        startTime = thisTime
-
-        logger.info("### standardisation of results and validation:")
-        try:
-            # grouping clustering results between autosomes and gonosomes
-            # standardisation and verification of clustering results:
-            # - clustsResList (list of lists[str,str,str,int,str]): to be printed in STDOUT
-            # contains the following information: clusterID, list of samples added to compose the cluster,
-            # clusterIDs controlling this cluster, validity of the cluster according to its total number
-            # (<20 =invalid), its cluster status ("A" for clusters from autosomes, "G" for gonosomes and adding gender
-            # composition "M" only males, "F" only females, "B" both genders are present in the cluster)
-            # beware if a target cluster of one gender has a control cluster with the another gender,
-            # this is not indicated by "B".
-            clustsResList = clusterSamps.clustering.STDZandCheckRes(SOIs, sampsQCfailed, clust2Samps, trgt2Ctrls, minSamps,
-                                                                    noGender, clust2SampsGono, trgt2CtrlsGono, kmeans, sexePred)
-        except Exception as e:
-            logger.error("STDZandCheckRes ie standardisation of results and validation failed : %s", repr(e))
-            raise Exception("STDZandCheckRes failed")
-
-        thisTime = time.time()
-        logger.debug("Done standardisation of results and validation in %.2fs", thisTime - startTime)
-        startTime = thisTime
-
-    #####################################################
-    # print results
-    ##################
-    clusterSamps.clustering.printClustersFile(clustsResList, outFile)
+    except Exception as e:
+        logger.error("clusterBuilds for autosomes failed : %s", repr(e))
+        raise Exception("clusterBuilds for autosomes failed")
 
     thisTime = time.time()
-    logger.debug("Done printing results, in %.2fs", thisTime - startTime)
-    logger.info("ALL DONE")
+    logger.debug("Done samples clustering for autosomes : in %.2fs", thisTime - startTime)
+    startTime = thisTime
+
+    #####
+    # Get Gonosomes Clusters
+    logger.info("### Gonosomes, sample clustering:")
+    gonoFailed = False
+    try:
+        gonosomesFPM = countsFPM[maskGonoExIndexes]
+        
+        # need to test if there are gonosomal exons
+        # e.g target sequencing
+        # if not present no clustering returns a message in the log
+        if gonosomesFPM.shape[0] != 0:
+            plotGonoDendogramm = os.path.join(plotDir, "Dendogram_" + str(gonosomesFPM.shape[1]) + "Samps_gonosomes.png")
+            (clust2SampsGono, trgt2CtrlsGono) = clusterSamps.clustering.clustersBuilds(gonosomesFPM, maxCorr, minCorr, minSamps, plotGonoDendogramm)
+        else:
+            logger.info("No gonosomic exons, clustering can be done.")
+            gonoFailed = True
+    except Exception as e:
+        logger.error("clusterBuilds for gonosomes failed : %s", repr(e))
+        raise Exception("clusterBuilds for gonosomes failed")
+
+    # # unlike the processing carried out on the sets of chromosomes and autosomes,
+    # # it is necessary for the gonosomes to identify the sample genders.
+    # # This makes it possible to identify the clusters made up of the two genders
+    # # which can potentially lead to copy number calls errors.
+    # # e.g. in humans compared males and females: it is possible to observe
+    # # heterodel calls on the X chromosome in males and homodel calls on the Y
+    # # chromosome in females.
+    # logger.info("### Gonosomes, gender prediction:")
+    # try:
+    #     # prediction of two groups based on kmeans from count data,
+    #     # assignment of genders to each group based on sex chromosome coverage ratios.
+    #     # obtaining 2 outputs:
+    #     # - kmeans (list[int]): groupID predicted by Kmeans ordered on SOIsIndex
+    #     # - sexePred (list[str]): genderID (e.g ["M","F"]), the order
+    #     # correspond to KMeans groupID (0=M, 1=F)
+    #     (kmeans, sexePred) = clusterSamps.genderDiscrimination.genderAttribution(validCountsFPM, gonoIndex, genderInfo)
+    # except Exception as e:
+    #     logger.error("genderAttribution ie gender prediction from gonosomes failed : %s", repr(e))
+    #     raise Exception("genderAttribution failed")
+
+    # thisTime = time.time()
+    # logger.debug("Done gender prediction from gonosomes : in %.2fs", thisTime - startTime)
+    # startTime = thisTime
+
+    # logger.info("### standardisation of results and validation:")
+    # try:
+    #     # grouping clustering results between autosomes and gonosomes
+    #     # standardisation and verification of clustering results:
+    #     # - clustsResList (list of lists[str,str,str,int,str]): to be printed in STDOUT
+    #     # contains the following information: clusterID, list of samples added to compose the cluster,
+    #     # clusterIDs controlling this cluster, validity of the cluster according to its total number
+    #     # (<20 =invalid), its cluster status ("A" for clusters from autosomes, "G" for gonosomes and adding gender
+    #     # composition "M" only males, "F" only females, "B" both genders are present in the cluster)
+    #     # beware if a target cluster of one gender has a control cluster with the another gender,
+    #     # this is not indicated by "B".
+    #     clustsResList = clusterSamps.clustering.STDZandCheckRes(SOIs, sampsQCfailed, clust2Samps, trgt2Ctrls, minSamps,
+    #                                                             noGender, clust2SampsGono, trgt2CtrlsGono, kmeans, sexePred)
+    # except Exception as e:
+    #     logger.error("STDZandCheckRes ie standardisation of results and validation failed : %s", repr(e))
+    #     raise Exception("STDZandCheckRes failed")
+
+    # thisTime = time.time()
+    # logger.debug("Done standardisation of results and validation in %.2fs", thisTime - startTime)
+    # startTime = thisTime
+
+    # #####################################################
+    # # print results
+    # ##################
+    # clusterSamps.clustering.printClustersFile(clustsResList, outFile)
+
+    # thisTime = time.time()
+    # logger.debug("Done printing results, in %.2fs", thisTime - startTime)
+    # logger.info("ALL DONE")
 
 
 ####################################################################################
