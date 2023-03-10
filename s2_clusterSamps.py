@@ -46,8 +46,6 @@ def parseArgs(argv):
     maxCorr = 0.95
     minCorr = 0.85
     plotDir = "./ResultPlots/"
-    # boolean, will be True if --noGender is specified
-    noGender = False
 
     usage = "NAME:\n" + scriptName + """\n
 DESCRIPTION:
@@ -78,11 +76,10 @@ ARGUMENTS:
                       the clusters. A too high threshold will lead to a massive elimination of
                       non-clustered samples. default: """ + str(minCorr) + """
    --plotDir[str]: subdir (created if needed) where result plots files will be produced, default :  """ + plotDir + """
-   --noGender : disable gender differentiation for clustering on sex chromosomes
    -h , --help  : display this help and exit\n"""
 
     try:
-        opts, args = getopt.gnu_getopt(argv[1:], 'h', ["help", "counts=", "out=", "minSamps=", "maxCorr=", "minCorr=", "plotDir=", "noGender"])
+        opts, args = getopt.gnu_getopt(argv[1:], 'h', ["help", "counts=", "out=", "minSamps=", "maxCorr=", "minCorr=", "plotDir="])
     except getopt.GetoptError as e:
         raise Exception(e.msg + ". Try " + scriptName + " --help")
     if len(args) != 0:
@@ -104,8 +101,6 @@ ARGUMENTS:
             minCorr = value
         elif (opt in ("--plotDir")):
             plotDir = value
-        elif (opt in ("--noGender")):
-            noGender = True
         else:
             raise Exception("unhandled option " + opt)
 
@@ -154,7 +149,7 @@ ARGUMENTS:
             raise Exception("plotDir " + plotDir + " doesn't exist and can't be mkdir'd: " + str(e))
 
     # AOK, return everything that's needed
-    return(countsFile, outFile, minSamps, maxCorr, minCorr, plotDir, noGender)
+    return(countsFile, outFile, minSamps, maxCorr, minCorr, plotDir)
 
 
 ####################################################
@@ -164,7 +159,7 @@ ARGUMENTS:
 # may be available in the log
 def main(argv):
     # parse, check and preprocess arguments
-    (countsFile, outFile, minSamps, maxCorr, minCorr, plotDir, noGender) = parseArgs(argv)
+    (countsFile, outFile, minSamps, maxCorr, minCorr, plotDir) = parseArgs(argv)
 
     # should density plots compare several different KDE bandwidth algorithms and values?
     # hard-coded here rather than set via parseArgs because this should only be set
@@ -216,8 +211,8 @@ def main(argv):
     logger.debug("Done samples quality control, in %.2fs", thisTime - startTime)
     startTime = thisTime
 
-    #logger.info("EARLY RETURN, working on coverage plots")
-    #return
+    logger.info("EARLY RETURN, working on coverage plots")
+    return
 
     #####################################################
     # Clustering:
