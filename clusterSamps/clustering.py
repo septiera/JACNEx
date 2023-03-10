@@ -48,7 +48,7 @@ logger = logging.getLogger(__name__)
 #  - minSamps (int): minimal sample number to validate a cluster
 #  - outputFile (str): full path (+ file name) for saving a dendogram
 #
-# Returns a tuple (clusters, ctrls, validSampClust):
+# Returns a tuple (clust2Samps, trgt2Ctrls):
 # - clust2Samps (dict(int : list[int])): clusterID associated to SOIsIndex
 #   key = clusterID, value = list of SOIsIndex
 # - trgt2Ctrls (dict(int : list[int])): target and controls clusters correspondance,
@@ -61,9 +61,9 @@ def clustersBuilds(FPMarray, maxCorr, minCorr, minSamps, outputFile):
 
     # - linksMatrix (np.ndarray[float]): the hierarchical clustering encoded as a linkage
     #  matrix, dim = (NbSOIs-1)*[clusterID1,clusterID2,distValue,NbSOIsInClust]
-    linksMatrix = computeSampLinksPrivate(FPMarray)
+    linksMatrix = computeSampLinks(FPMarray)
 
-    (clust2Samps, trgt2Ctrls) = links2ClustersPrivate(linksMatrix, minDist, maxDist, minSamps)
+    (clust2Samps, trgt2Ctrls) = links2Clusters(linksMatrix, minDist, maxDist, minSamps)
 
     # Optionnal plot a dendogram based on clustering results
     figures.plots.plotDendogram(clust2Samps, trgt2Ctrls, linksMatrix, minDist, outputFile)
@@ -76,7 +76,7 @@ def clustersBuilds(FPMarray, maxCorr, minCorr, minSamps, outputFile):
 ###############################################################################
 
 #############################
-# computeSampLinksPrivate [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
+# computeSampLinks
 # Pearson correlation distance (sqrt(1-r)) is unlikely to be a sensible
 # distance when clustering samples.
 # (sqrt(1-r)) is a true distance respecting symmetry, separation and triangular
@@ -90,7 +90,7 @@ def clustersBuilds(FPMarray, maxCorr, minCorr, minSamps, outputFile):
 # Return:
 # - linksMatrix (np.ndarray[float]): the hierarchical clustering encoded as a linkage
 #  matrix, dim = (NbVSOIs-1)*[clusterID1,clusterID2,distValue,NbVSOIsInClust]
-def computeSampLinksPrivate(FPMarray):
+def computeSampLinks(FPMarray):
 
     correlation = np.round(np.corrcoef(FPMarray, rowvar=False), 2)
     dissimilarity = (1 - correlation)**0.5
@@ -103,7 +103,7 @@ def computeSampLinksPrivate(FPMarray):
 
 
 #############################
-# links2ClustersPrivate [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
+# links2Clusters
 # parse the linkage matrix produced by computeSampLinksPrivate,
 # clusters formation and identification of controls/targets clusters
 # Conditions for building a cluster:
@@ -129,7 +129,7 @@ def computeSampLinksPrivate(FPMarray):
 #   key = clusterID, value = list of valid sample indexes
 # - trgt2Ctrls (dict(int : list[int])): target and controls clusters correspondance,
 #   key = target clusterID, value = list of controls clusterID
-def links2ClustersPrivate(linksMatrix, minDist, maxDist, minSamps):
+def links2Clusters(linksMatrix, minDist, maxDist, minSamps):
     # To Fill and returns
     clust2Samps = {}
     trgt2Ctrls = {}
@@ -147,7 +147,7 @@ def links2ClustersPrivate(linksMatrix, minDist, maxDist, minSamps):
     # - clusterID [int]: cluster identifiers
     # e.g first formed samples cluster => NbRow from linksMatrix +1 (e.q NbVSOIs)
     clusterID = len(linksMatrix)
-
+    
     for clusterLine in linksMatrix:
         ##########################
         # PARSE LINKS MATRIX
@@ -159,13 +159,13 @@ def links2ClustersPrivate(linksMatrix, minDist, maxDist, minSamps):
 
         distValue = clusterLine[2]
 
-        # VSOIsIndexInParents (list[int]): parent clusters VSOIs indexes
-        # nbVSOIsInParents (list[int]): samples number in each parent clusters
-        (VSOIsIndexInParents, nbVSOIsInParents) = getParentsClustsInfosPrivate(parentClustsIDs, links2Clusters, len(linksMatrix))
+        # parentsSOIsIndexes (list[int]): parent clusters VSOIs indexes
+        # parentsSOIsNB (list[int]): samples number in each parent clusters
+        (parentsSOIsIndexes, parentsSOIsNB) = getParentsClustsInfos(parentClustsIDs, links2Clusters, len(linksMatrix))
 
         ################
         # Fill links2Clusters
-        links2Clusters[clusterID] = VSOIsIndexInParents
+        links2Clusters[clusterID] = parentsSOIsIndexes
 
         """
         ################
@@ -187,7 +187,7 @@ def links2ClustersPrivate(linksMatrix, minDist, maxDist, minSamps):
         # allows to keep the small clusters after the last threshold maxDists.
         # all samples are taken
         if (distValue < minDist):
-            clust2Samps[clusterID] = VSOIsIndexInParents
+            clust2Samps[clusterID] = parentsSOIsIndexes
             # deletion of old groups when forming new ones
             for key in parentClustsIDs:
                 if key in clust2Samps:
@@ -202,32 +202,33 @@ def links2ClustersPrivate(linksMatrix, minDist, maxDist, minSamps):
             ##########
             # condition 2: estimate the samples number to create a cluster
             # sufficient samples in current cluster
-            if (len(VSOIsIndexInParents) >= minSamps):
+            if (len(parentsSOIsIndexes) >= minSamps):
 
                 ###############
                 # Different cases to complete the two dictionaries
                 # Knowing that we are dealing with two parent clusters
                 # Case 1: both parent clusters have sufficient numbers to be controls
-                if ((nbVSOIsInParents[0] >= minSamps) and (nbVSOIsInParents[1] >= minSamps)):
+                if ((parentsSOIsNB[0] >= minSamps) and (parentsSOIsNB[1] >= minSamps)):
 
                     # parent clusters are previously saved in clust2samps
-                    if clust2Samps.keys() >= {parentClustsIDs[0], parentClustsIDs[1]}:
+                    if parentClustsIDs[0] in clust2Samps and parentClustsIDs[1] in clust2Samps:
                         # fill trgt2Ctrl
                         trgt2Ctrls[clusterID] = parentClustsIDs
                         # case that parentClustIDs are already controlled
                         for parentID in parentClustsIDs:
                             if parentID in trgt2Ctrls:
                                 trgt2Ctrls[clusterID] = trgt2Ctrls[clusterID] + trgt2Ctrls[parentID]
+                    
                     # parent clusterID not in clust2samps
                     else:
-                        clust2Samps[clusterID] = VSOIsIndexInParents
+                        clust2Samps[clusterID] = parentsSOIsIndexes
 
                 # Case 2: one parent has a sufficient number of samples not the second parent
-                elif max(VSOIsIndexInParents) >= 20:
+                elif max(parentsSOIsIndexes) >= 20:
                     # identification of the control parent and the target parent
                     # index corresponding to nbVSOIsInParents and parentClustsIDs (e.g list: [parent1, parent2])
-                    indexCtrlParent = np.argmax(nbVSOIsInParents)  # control
-                    indexNewParent = np.argmin(nbVSOIsInParents)  # target
+                    indexCtrlParent = np.argmax(parentsSOIsNB)  # control
+                    indexNewParent = np.argmin(parentsSOIsNB)  # target
 
                     if parentClustsIDs[indexCtrlParent] in clust2Samps.keys():
                         # fill trgt2Ctrl
@@ -240,11 +241,17 @@ def links2ClustersPrivate(linksMatrix, minDist, maxDist, minSamps):
                         # fill clust2Samps
                         # Keep only VSOIs index from the parent with few sample
                         if (indexNewParent == 0):
-                            clust2Samps[clusterID] = VSOIsIndexInParents[:nbVSOIsInParents[indexNewParent]]
+                            clust2Samps[clusterID] = parentsSOIsIndexes[:parentsSOIsNB[indexNewParent]]
                         else:
-                            clust2Samps[clusterID] = VSOIsIndexInParents[-nbVSOIsInParents[indexNewParent]:]
+                            clust2Samps[clusterID] = parentsSOIsIndexes[-parentsSOIsNB[indexNewParent]:]
+                    
+                    # case where the parent cluster comes from two clusters with sufficient samples
+                    # not present in clusts2Samps but in trgt2Ctrls
+                    elif parentClustsIDs[indexCtrlParent] in trgt2Ctrls.keys():
+                        clust2Samps[clusterID] = parentsSOIsIndexes[:parentsSOIsNB[indexNewParent]]
+                        trgt2Ctrls[clusterID] = trgt2Ctrls[parentClustsIDs[indexCtrlParent]]
                     else:
-                        clust2Samps[clusterID] = VSOIsIndexInParents
+                        clust2Samps[clusterID] = parentsSOIsIndexes
 
                     if parentClustsIDs[indexNewParent] in clust2Samps:
                         del clust2Samps[parentClustsIDs[indexNewParent]]
@@ -252,7 +259,7 @@ def links2ClustersPrivate(linksMatrix, minDist, maxDist, minSamps):
                 # Case 3: each parent cluster has an insufficient number of samples.
                 # the current clusterID becomes a control cluster.
                 else:
-                    clust2Samps[clusterID] = VSOIsIndexInParents
+                    clust2Samps[clusterID] = parentsSOIsIndexes
                     if parentClustsIDs[0] in clust2Samps:
                         del clust2Samps[parentClustsIDs[0]]
                     if parentClustsIDs[1] in clust2Samps:
@@ -261,7 +268,7 @@ def links2ClustersPrivate(linksMatrix, minDist, maxDist, minSamps):
             # clusters too small
             # complete clust2Samps with new clusterID and remove old clustersID
             else:
-                clust2Samps[clusterID] = VSOIsIndexInParents
+                clust2Samps[clusterID] = parentsSOIsIndexes
                 for key in parentClustsIDs:
                     if key in clust2Samps:
                         del clust2Samps[key]
@@ -273,9 +280,9 @@ def links2ClustersPrivate(linksMatrix, minDist, maxDist, minSamps):
 
 
 #############################
-# getParentsClustsInfosPrivate [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
+# getParentsClustsInfos
 # function used in another private function links2ClustersFormationPrivate
-# Extract parents informations : VSOIs indexes list and samples number
+# Extract parents informations : SOIs indexes list and samples number
 #
 # Args:
 # - parentClustsIDs (list[int]): two parents clusters identifiers to be combined
@@ -284,24 +291,24 @@ def links2ClustersPrivate(linksMatrix, minDist, maxDist, minSamps):
 #   key = current clusterID, value = list of VSOIs indexes
 # - nbLinks (int): links number in linksMatrix (row count)
 #
-# Returns a tuple (VSOIsIndexInParents, nbVSOIsInParents), each is created here:
-# - VSOIsIndexInParents (list[int]): parent clusters VSOIs indexes
-# - nbVSOIsInParents (list[int]): samples number in each parent clusters
-def getParentsClustsInfosPrivate(parentClustsIDs, links2Clusters, NbLinks):
-    VSOIsIndexInParents = []
-    nbVSOIsInParents = []
+# Returns a tuple (parentsSOIsIndexes, parentsSOIsNB), each is created here:
+# - parentsSOIsIndexes (list[int]): parent clusters VSOIs indexes
+# - parentsSOIsNB (list[int]): samples number in each parent clusters
+def getParentsClustsInfos(parentClustsIDs, links2Clusters, NbLinks):
+    parentsSOIsIndexes = []
+    parentsSOIsNB = []
 
     for parentID in parentClustsIDs:
         #####
         # where it's a sample identifier not a cluster
         # the clusterID corresponds to the SOI index
         if (parentID <= NbLinks):
-            VSOIsIndexInParents.append(parentID)
-            nbVSOIsInParents.append(1)
+            parentsSOIsIndexes.append(parentID)
+            parentsSOIsNB.append(1)
         #####
         # where it's a cluster identifier
         # we get indexes lists
         else:
-            VSOIsIndexInParents = VSOIsIndexInParents + links2Clusters[parentID]
-            nbVSOIsInParents.append(len(links2Clusters[parentID]))
-    return(VSOIsIndexInParents, nbVSOIsInParents)
+            parentsSOIsIndexes = parentsSOIsIndexes + links2Clusters[parentID]
+            parentsSOIsNB.append(len(links2Clusters[parentID]))
+    return(parentsSOIsIndexes, parentsSOIsNB)
