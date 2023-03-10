@@ -61,7 +61,7 @@ def plotDensities(title, dataRanges, densities, legends, line1, line2, line1lege
 
     pdf.savefig(fig)
     matplotlib.pyplot.close()
-    
+
 
 #############################
 # visualisation of clustering results
@@ -74,7 +74,7 @@ def plotDensities(title, dataRanges, densities, legends, line1, line2, line1lege
 # - minDist (float): is the distance to start cluster construction
 # - outputFile (str): full path to save the png
 # Returns a png file in the output folder
-def DendogramsPrivate(clust2Samps, trgt2Ctrls, linksMatrix, minDist, outputFile):
+def plotDendogram(clust2Samps, trgt2Ctrls, linksMatrix, minDist, outputFile):
     # maxClust: int variable contains total clusters number
     maxClust = len(clust2Samps.keys())
 
