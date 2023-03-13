@@ -74,36 +74,43 @@ def plotDensities(title, dataRanges, densities, legends, line1, line2, line1lege
 # - minDist (float): is the distance to start cluster construction
 # - outputFile (str): full path to save the png
 # Returns a png file in the output folder
-def plotDendogram(clust2Samps, trgt2Ctrls, linksMatrix, minDist, outputFile):
+def plotDendogram(clusters, samples, linksMatrix, minDist, outputFile):
     # maxClust: int variable contains total clusters number
-    maxClust = len(clust2Samps.keys())
+    maxClust = len(clusters)
 
     # To Fill
     # labelArray (np.ndarray[str]): status for each cluster as a character, dim=NbSOIs*NbClusters
     # " ": sample does not contribute to the cluster
     # "x": sample contributes to the cluster
     # "-": sample controls the cluster
-    labelArray = np.empty([len(linksMatrix) + 1, maxClust + 1], dtype="U1")
+    # "O": sample not clustered
+    labelArray = np.empty([len(samples), maxClust + 1], dtype="U1")
     labelArray.fill(" ")
     # labelsGp (list[str]): labels for each sample list to be passed when plotting the dendogram
     labelsGp = []
 
-    keysList = list(clust2Samps.keys())
-
     # browse the different cluster identifiers
-    for clusterID in range(len(keysList)):
-        # retrieving the SOIs involved for the clusterID
-        SOIsindex = clust2Samps[keysList[clusterID]]
+    for i in range(len(clusters)):
+        # retrieving the samples involved for the clusterID
+        sampsNames = "".join(clusters[i][1]).split(",")
+        sampsIndex = [samples.index(sampsName) for sampsName in sampsNames]
+
+        if clusters[i][0] == "Samps_ClustFailed":
+            labelArray[sampsIndex, i] = "O"
+            continue
+
         # associate the label for the samples contributing to the clusterID for the
         # associated cluster index position
-        labelArray[SOIsindex, clusterID] = "x"
+        labelArray[sampsIndex, i] = "x"
 
         # associate the label for the samples controlling the current clusterID
-        if keysList[clusterID] in trgt2Ctrls.keys():
-            listctrl = trgt2Ctrls[keysList[clusterID]]
+        if clusters[i][2] != "":
+            listctrl = [x.strip() for x in clusters[i][2].split(",")]
             for ctrl in listctrl:
-                CTRLindex = clust2Samps[ctrl]
-                labelArray[CTRLindex, clusterID] = "-"
+                CTRLclustInfo = [sublist[1] for sublist in clusters if sublist[0] == ctrl]
+                CTRLsampsNames = "".join(CTRLclustInfo).split(",")
+                CTRLsampsIndex = [samples.index(sampsName) for sampsName in CTRLsampsNames]
+                labelArray[CTRLsampsIndex, i] = "-"
 
     # browse the np array of labels to build the str list
     for i in labelArray:
