@@ -175,7 +175,7 @@ def main(argv):
     ###################
     # parse counts
     try:
-        (exons, SOIs, countsArray) = countFrags.countsFile.parseCountsFile(countsFile)
+        (exons, samples, countsArray) = countFrags.countsFile.parseCountsFile(countsFile)
     except Exception as e:
         logger.error("parseCountsFile failed for %s : %s", countsFile, repr(e))
         raise Exception("parseCountsFile failed")
@@ -202,7 +202,7 @@ def main(argv):
     plotFilePass = plotDir + "/coverageProfile_PASS.pdf"
     plotFileFail = plotDir + "/coverageProfile_FAIL.pdf"
     try:
-        (sampsQCfailed, capturedExons) = clusterSamps.qualityControl.SampsQC(countsFPM, SOIs, plotFilePass,
+        (sampsQCfailed, capturedExons) = clusterSamps.qualityControl.SampsQC(countsFPM, samples, plotFilePass,
                                                                              plotFileFail, testBW=testSmoothingBWs)
     except Exception as e:
         logger.error("SampsQC failed for %s : %s", countsFile, repr(e))
@@ -216,7 +216,7 @@ def main(argv):
     # Clustering:
     # goal: establish the most optimal clustering(s) from the data validated
     # (exons and samples) by the quality control.
-    
+
     maskGonoExIndexes = clusterSamps.getGonosomesExonsIndexes.getSexChrIndexes(exons)
 
     # - exonsToKeep (list of list[str,int,int,str]): contains exons information from captured exons
@@ -228,12 +228,8 @@ def main(argv):
     try:
         autosomesFPM = countsFPM[~maskGonoExIndexes]
         plotAutoDendogramm = os.path.join(plotDir, "Dendogram_" + str(autosomesFPM.shape[1]) + "Samps_autosomes.pdf")
-        # applying hierarchical clustering and obtaining 2 outputs autosome-specific:
-        # - clust2Samps (dict(int : list[int])): clusterID associated to SOIsIndex
-        #   key = clusterID, value = list of SOIsIndex
-        # - trgt2Ctrls (dict(int : list[int])): target and controls clusters correspondance,
-        #   key = target clusterID, value = list of controls clusterID
-        (clust2Samps, trgt2Ctrls) = clusterSamps.clustering.clustersBuilds(autosomesFPM, maxCorr, minCorr, minSamps, plotAutoDendogramm)
+        # applying hierarchical clustering for autosomes exons
+        autosClusters = clusterSamps.clustering.clustersBuilds(autosomesFPM, samples, maxCorr, minCorr, minSamps, plotAutoDendogramm)
 
     except Exception as e:
         logger.error("clusterBuilds for autosomes failed : %s", repr(e))
@@ -249,20 +245,23 @@ def main(argv):
     gonoFailed = False
     try:
         gonosomesFPM = countsFPM[maskGonoExIndexes]
-        
         # need to test if there are gonosomal exons
         # e.g target sequencing
         # if not present no clustering returns a message in the log
         if gonosomesFPM.shape[0] != 0:
-            plotGonoDendogramm = os.path.join(plotDir, "Dendogram_" + str(gonosomesFPM.shape[1]) + "Samps_gonosomes.png")
-            (clust2SampsGono, trgt2CtrlsGono) = clusterSamps.clustering.clustersBuilds(gonosomesFPM, maxCorr, minCorr, minSamps, plotGonoDendogramm)
+            plotGonoDendogramm = os.path.join(plotDir, "Dendogram_" + str(gonosomesFPM.shape[1]) + "Samps_gonosomes.pdf")
+            gonosClusters = clusterSamps.clustering.clustersBuilds(gonosomesFPM, samples, maxCorr, minCorr, minSamps, plotGonoDendogramm)
         else:
             logger.info("No gonosomic exons, clustering can be done.")
             gonoFailed = True
     except Exception as e:
         logger.error("clusterBuilds for gonosomes failed : %s", repr(e))
         raise Exception("clusterBuilds for gonosomes failed")
-
+    
+    thisTime = time.time()
+    logger.debug("Done samples clustering for gonosomes : in %.2fs", thisTime - startTime)
+    startTime = thisTime
+    
     # # unlike the processing carried out on the sets of chromosomes and autosomes,
     # # it is necessary for the gonosomes to identify the sample genders.
     # # This makes it possible to identify the clusters made up of the two genders
