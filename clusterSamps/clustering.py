@@ -1,5 +1,6 @@
 import logging
 import numpy as np
+import os
 
 # different scipy submodules are used for the application of hierachical clustering
 import scipy.cluster.hierarchy
@@ -41,15 +42,20 @@ logger = logging.getLogger(__name__)
 # Args:
 #  - FPMarray (np.ndarray[float]): normalised fragment counts for QC validated samples,
 #  dim = NbCapturedExons x NbSOIsQCValidated
+#  - samples (list[str]): samples of interest names
 #  - maxCorr (float): maximal Pearson correlation score tolerated by the user to start
 #   build clusters
 #  - minCorr (float): minimal Pearson correlation score tolerated by the user to end
 #   build clusters
 #  - minSamps (int): minimal sample number to validate a cluster
-#  - outputFile (str): full path (+ file name) for saving a dendogram
+#  - plotFile (str): full path (+ file name) for saving a dendogram
 #
 # return a string list of list of dim = nbClust * ["clustID", "SampsInCluster", "validCluster"]
-def clustersBuilds(FPMarray, SOIs, maxCorr, minCorr, minSamps, outputFile):
+def clustersBuilds(FPMarray, samples, maxCorr, minCorr, minSamps, plotFile):
+    if os.path.isfile(plotFile):
+        logger.error('clustering dendogramm : plotFile %s already exist', plotFile)
+        raise Exception("plotFile already exist")
+
     # - minDist (float): is the distance to start cluster construction
     minDist = (1 - maxCorr)**0.5
     # - maxDist (float): is the distance to finalise the cluster construction
@@ -59,10 +65,15 @@ def clustersBuilds(FPMarray, SOIs, maxCorr, minCorr, minSamps, outputFile):
     #  matrix, dim = (NbSOIs-1)*[clusterID1,clusterID2,distValue,NbSOIsInClust]
     linksMatrix = computeSampLinks(FPMarray)
 
-    clusters = links2Clusters(SOIs, linksMatrix, minDist, maxDist, minSamps)
+    (clust2Samps, trgt2Ctrls) = links2Clusters(linksMatrix, minDist, maxDist, minSamps)
 
-    # Optionnal plot a dendogram based on clustering results
-    figures.plots.plotDendogram(clusters, linksMatrix, minDist, outputFile)
+    # results formatting and checking
+    try:
+        clusters = parseResults(samples, clust2Samps, trgt2Ctrls, minSamps)
+        # plot a dendogram based on clustering results
+        figures.plots.plotDendogram(clusters, samples, linksMatrix, minDist, plotFile)
+    except Exception as e:
+        raise e
 
     return(clusters)
 
@@ -115,21 +126,20 @@ def computeSampLinks(FPMarray):
 # Args:
 # - linksMatrix (np.ndarray[float]): the hierarchical clustering encoded as a linkage
 #  matrix, dim = (NbSamples-1)*[clusterID1,clusterID2,distValue,NbSOIsInClust]
-# - samples (list[str]): samples of interest
 # - minDist (float): is the distance to start cluster construction
 # - maxDist (float): is the distance to stop cluster construction
 # - minSamps (int): minimal sample number to validate a cluster
 #
-# return a string list of list of dim = nbClust * ["clustID", "SampsInCluster", "validCluster"]
 
-def links2Clusters(linksMatrix, samples, minDist, maxDist, minSamps):
-    # To Fill and not returns
-    # - clust2Samps (dict(int : list[int])): clusterID associated to sample indexes
-    #   key = clusterID, value = list of sample indexes
-    # only add indexed samples are contained in the list (no samples indexes from the control cluster)
+# Returns a tuple (clust2Samps, trgt2Ctrls) each variables are created here:
+# - clust2Samps (dict(int : list[int])): clusterID associated to sample indexes
+#   key = clusterID, value = list of sample indexes
+# only add indexed samples are contained in the list (no samples indexes from the control cluster)
+# - trgt2Ctrls (dict(int : list[int])): target and controls clusters correspondance,
+#   key = target clusterID, value = list of controls clusterID
+def links2Clusters(linksMatrix, minDist, maxDist, minSamps):
+    # To Fill and returns
     clust2Samps = {}
-    # - trgt2Ctrls (dict(int : list[int])): target and controls clusters correspondance,
-    #   key = target clusterID, value = list of controls clusterID
     trgt2Ctrls = {}
 
     # To increment
@@ -148,8 +158,8 @@ def links2Clusters(linksMatrix, samples, minDist, maxDist, minSamps):
 
         distValue = currentCluster[2]
 
-        # clustSOIsIndexes (list[int]): cluster sample indexes (from parents clusters)
-        # parentsSOIsNB (list[int]): samples number in each parent clusters
+        # clustSampsIndexes (list[int]): cluster sample indexes (from parents clusters)
+        # parentsSampsNB (list[int]): samples number in each parent clusters
         (clustSampsIndexes, parentsSampsNB) = getParentsClustsInfos(parentClustsIDs, clust2Samps, len(linksMatrix))
 
         ################
@@ -184,7 +194,7 @@ def links2Clusters(linksMatrix, samples, minDist, maxDist, minSamps):
         # Different cases to complete the two dictionaries
         # Knowing that we are dealing with two parent clusters
         # Case 1: both parent clusters have sufficient numbers to be controls
-        if ((parentsSampsNB[0] >= minSamps) and (parentsSampsNB[1] >= minSamps)):            
+        if ((parentsSampsNB[0] >= minSamps) and (parentsSampsNB[1] >= minSamps)):
             # parent clusters are in clust2samps
             if (parentClustsIDs[0] in clust2Samps) and (parentClustsIDs[1] in clust2Samps):
                 # fill trgt2Ctrl
@@ -246,14 +256,7 @@ def links2Clusters(linksMatrix, samples, minDist, maxDist, minSamps):
             if parentClustsIDs[1] in clust2Samps:
                 del clust2Samps[parentClustsIDs[1]]
 
-    # the transformation of results is carried out here to avoid using (non-stable)
-    # dictionaries outside their definition function
-    try:
-        clusters = parseResults(samples, clust2Samps, trgt2Ctrls, minSamps)
-    except Exception as e:
-        raise
-
-    return(clusters)
+    return(clust2Samps, trgt2Ctrls)
 
 
 #############################
@@ -300,7 +303,7 @@ def getParentsClustsInfos(parentClustsIDs, clust2Samps, NbLinks):
 # output end as "Samps_ClustFailed"
 #
 # Args:
-# - SOIs (list[str]): samples of interest
+# - samples (list[str]): samples of interest names
 # - clust2Samps (dict([int]:list[int])): a dictionary mapping cluster IDs to lists of samples
 # indexes in those clusters
 # - trgt2Ctrls (dict([int]:list[int])): a dictionary mapping target cluster IDs to lists of
