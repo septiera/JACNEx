@@ -65,15 +65,9 @@ def clustersBuilds(FPMarray, samples, maxCorr, minCorr, minSamps, plotFile):
     #  matrix, dim = (NbSOIs-1)*[clusterID1,clusterID2,distValue,NbSOIsInClust]
     linksMatrix = computeSampLinks(FPMarray)
 
-    (clust2Samps, trgt2Ctrls) = links2Clusters(linksMatrix, minDist, maxDist, minSamps)
+    clusters = links2Clusters(linksMatrix, minDist, maxDist, minSamps)
 
-    # results formatting and checking
-    try:
-        clusters = parseResults(samples, clust2Samps, trgt2Ctrls, minSamps)
-        # plot a dendogram based on clustering results
-        figures.plots.plotDendogram(clusters, samples, linksMatrix, minDist, plotFile)
-    except Exception as e:
-        raise e
+    figures.plots.plotDendogram(clusters, samples, linksMatrix, minDist, plotFile)
 
     return(clusters)
 
@@ -114,11 +108,11 @@ def computeSampLinks(FPMarray):
 # parse the linkage matrix produced by computeSampLinks,
 # clusters formation and identification of controls/targets clusters
 # Conditions for building a cluster:
-# 1- The distance between samples in the cluster must be less than maxDist.
-# 2- The number of samples in the cluster must be above a threshold,
+# 1- The number of samples in the cluster must be above a threshold,
 # specified by the minSamps parameter.
+# 2- The distance between samples in the cluster must be less than maxDist.
 # a cluster called control has for attribute:
-#  -contains enough samples (>=20)
+#  -contains enough samples (>=20 by default)
 #  -formed at very small distances (generally as soon as minDist)
 #  -the samples of this cluster are used to form another cluster with more
 # distant samples. The cluster then formed is called target.
@@ -130,234 +124,173 @@ def computeSampLinks(FPMarray):
 # - maxDist (float): is the distance to stop cluster construction
 # - minSamps (int): minimal sample number to validate a cluster
 #
-
-# Returns a tuple (clust2Samps, trgt2Ctrls) each variables are created here:
-# - clust2Samps (dict(int : list[int])): clusterID associated to sample indexes
-#   key = clusterID, value = list of sample indexes
-# only add indexed samples are contained in the list (no samples indexes from the control cluster)
-# - trgt2Ctrls (dict(int : list[int])): target and controls clusters correspondance,
-#   key = target clusterID, value = list of controls clusterID
+# return a list of list of dim = nbClust * ["newClustID","SampsInCluster","controlsClustersID"]
 def links2Clusters(linksMatrix, minDist, maxDist, minSamps):
-    # To Fill and returns
+    # To Fill and not returns
+    # as each line of linksMatrix corresponds to the association of samples in clusters
+    # according to an increasing level of distance => cluster construction tracking,
+    # facilitates the search for parent clusters.
+    # must not be modified
+    # keys: clusterID (from linksMatrix), value: cluster samples
     clust2Samps = {}
+
+    # a list of int containing all cluster identifiers passing the filters:
+    # nbsamples >= minSamps and distvalue<maxDist.
+    validClustsIDs = []
+    # list of sample lists for each cluster present in validClustsIDs
+    validClustsSamps = []
+
+    # key : clusterID of the cluster (target) formed from another cluster,
+    # value: list of the reference cluster(s)
     trgt2Ctrls = {}
+
+    # numpy boolean array to check that all samples are in valid clusters
+    # (0: clustering failed, 1: clustering valid), dim = samplesNB
+    checkClusteredSamps = np.zeros(len(linksMatrix) + 1, dtype=np.bool_)
 
     # To increment
     # - clusterID [int]: cluster identifiers
-    # e.g first formed samples cluster => NbRow from linksMatrix +1 (e.q Nbsamples)
+    # e.g first formed samples cluster => NbRow from linksMatrix +1 (e.q samplesNB)
     clusterID = len(linksMatrix)
 
     for currentCluster in linksMatrix:
-
         clusterID += 1
         ##########################
         # PARSE LINKS MATRIX
         ##########
-        # keep parent clusters ID and convert it to int for extract easily SOIs indexes
+        # keep parent clusters ID and convert it to int for extract easily samples indexes
         parentClustsIDs = [np.int(currentCluster[0]), np.int(currentCluster[1])]
+
+        # If the key does not exist, insert the key, with the specified value
+        # is only possible when adding a single sample
+        for p in parentClustsIDs:
+            clust2Samps.setdefault(p, [p])
 
         distValue = currentCluster[2]
 
-        # clustSampsIndexes (list[int]): cluster sample indexes (from parents clusters)
-        # parentsSampsNB (list[int]): samples number in each parent clusters
-        (clustSampsIndexes, parentsSampsNB) = getParentsClustsInfos(parentClustsIDs, clust2Samps, len(linksMatrix))
+        # extraction of the list of sample indexes from both parents
+        # important for filling validClustSamps
+        clustSampsIndexes = clust2Samps[parentClustsIDs[0]].copy()
+        clustSampsIndexes.extend(clust2Samps[parentClustsIDs[1]].copy())
 
-        ################
-        # DEV CONTROL ; check that the sample number for a cluster is correct
-        # TO REMOVE
-        NbSampsInClust = currentCluster[3]
-        if (len(clustSampsIndexes) != NbSampsInClust):
-            break
+        # ################
+        # # DEV CONTROL ; check that the sample number for a cluster is correct
+        # # TO REMOVE
+        # NbSampsInClust = currentCluster[3]
+        # if (len(clustSampsIndexes) != NbSampsInClust):
+        #     logger.error("Not Same samples in current cluster %s and parents clusters %s", clusterID, ",".join(parentClustsIDs))
+        #     break
+
+        # Populate "clust2Samps"
+        clust2Samps[clusterID] = clustSampsIndexes
 
         ##########################
         # CONDITIONS FOR CLUSTER CREATION
-        # Populate "clust2Samps" and "trgt2Ctrls"
+        # populate "trgt2Ctrls", "validClustsIDs", "validClustsSamps", "clustSamps"
         ##########
         # condition for creating valid clusters
-        # - the distance is between minDist and maxDist
-        # - the number of samples in current cluster is less than minSamps
-        # if not, create a new cluster and remove the parents in clust2Samps.
-        # This allows the most correlated clusters to be constructed first,
-        # even if they don't meet the conditions.
-        if (distValue < minDist) or (len(clustSampsIndexes) < minSamps):
-            clust2Samps[clusterID] = clustSampsIndexes
-            for key in parentClustsIDs:
-                if key in clust2Samps:
-                    del clust2Samps[key]
+        # - the number of samples to validate a cluster must be greater than minSamps
+        # stringent condition
+        if (len(clustSampsIndexes) < minSamps):
+            continue
+
+        # - the distance must be between minDist and maxDist to create clusters.
+        # However flexibility is tolerated if distValue is lower than minDist
+        # => allows to recover the most correlated clusters.
+        # Overwrite the latter in case they form other clusters under the minDist threshold.
+        if (distValue < minDist):
+            validClustsIDs.append(clusterID)
+            validClustsSamps.append(clustSampsIndexes)
+            checkClusteredSamps[clustSampsIndexes] = 1
+            for p in parentClustsIDs:
+                if p in validClustsIDs:
+                    indexToreplace = validClustsIDs.index(p)
+                    del validClustsIDs[indexToreplace]
+                    del validClustsSamps[indexToreplace]
             continue
         # current distance larger than maxDist we stop the loop on linksMatrix rows
-        # avoids going through the rest of the clusters
+        # avoids going through the rest of the cluster lines
         elif (distValue > maxDist):
             break
 
-        ###############
-        # Different cases to complete the two dictionaries
-        # Knowing that we are dealing with two parent clusters
-        # Case 1: both parent clusters have sufficient numbers to be controls
-        if ((parentsSampsNB[0] >= minSamps) and (parentsSampsNB[1] >= minSamps)):
-            # parent clusters are in clust2samps
-            if (parentClustsIDs[0] in clust2Samps) and (parentClustsIDs[1] in clust2Samps):
-                # fill trgt2Ctrl
-                trgt2Ctrls[clusterID] = parentClustsIDs
-                # case that parentClustIDs are already controlled
-                for parentID in parentClustsIDs:
-                    if parentID in trgt2Ctrls:
-                        trgt2Ctrls[clusterID] = trgt2Ctrls[clusterID].copy() + trgt2Ctrls[parentID].copy()
-
-            # parent clusterID not in clust2samps
+        # here the clusters have a distance between minDist and maxDist and the number of
+        # their samples is greater than minSamps
+        # several conditions for a clear storage of the clustering information have to be respected:
+        # 1) - neither parent clusters identifiers is in the validClustsIDs list
+        # in some cases the current cluster has for parent a cluster formed by two valid clusters
+        # so it is not in validClustsIDs but in trgt2Ctrls => update trgt2Ctrls
+        # both parents are not in validClustIDs nor in trgt2Ctrls validation of current cluster
+        if (parentClustsIDs[0] not in validClustsIDs) and (parentClustsIDs[1] not in validClustsIDs):
+            if parentClustsIDs[0] not in trgt2Ctrls and parentClustsIDs[1]not in trgt2Ctrls:
+                validClustsIDs.append(clusterID)
+                validClustsSamps.append(clustSampsIndexes)
+                checkClusteredSamps[clustSampsIndexes] = 1
             else:
-                # fill clust2Samps
-                clust2Samps[clusterID] = clustSampsIndexes
+                trgt2Ctrls[clusterID] = [parentClustsIDs[0], parentClustsIDs[1]]
+                for p in parentClustsIDs:
+                    if p in trgt2Ctrls:
+                        trgt2Ctrls[clusterID] = trgt2Ctrls[p].copy() + trgt2Ctrls[clusterID].copy()
+                    else:
+                        continue
 
-        # Case 2: one parent has a sufficient number of samples not the second parent
-        elif max(parentsSampsNB) >= 20:
-            # identification of the control parent and the target parent
-            # index corresponding to nbSampsInParents and parentClustsIDs (e.g list: [parent1, parent2])
-            indexCtrlParent = np.argmax(parentsSampsNB)  # control
-            indexNewParent = np.argmin(parentsSampsNB)  # target
-
-            # parent cluster control are in clust2samps
-            if parentClustsIDs[indexCtrlParent] in clust2Samps.keys():
-                # fill trgt2Ctrl
-                # case that the parent control has previous controls
-                if (parentClustsIDs[indexCtrlParent] in trgt2Ctrls.keys()):
-                    trgt2Ctrls[clusterID] = trgt2Ctrls[parentClustsIDs[indexCtrlParent]].copy() + [parentClustsIDs[indexCtrlParent]].copy()
+        # 2)- both parent clusters identifiers are in the validClustsIDs list
+        # fill trgt2Ctrls
+        elif (parentClustsIDs[0] in validClustsIDs) and (parentClustsIDs[1] in validClustsIDs):
+            trgt2Ctrls[clusterID] = [parentClustsIDs[0], parentClustsIDs[1]]
+            for p in parentClustsIDs:
+                if p in trgt2Ctrls:
+                    trgt2Ctrls[clusterID] = trgt2Ctrls[p].copy() + trgt2Ctrls[clusterID].copy()
                 else:
-                    trgt2Ctrls[clusterID] = [parentClustsIDs[indexCtrlParent]]
+                    continue
 
-                # fill clust2Samps
-                # Keep only sample indexes from the parent with few sample (target)
-                if (indexNewParent == 0):
-                    clust2Samps[clusterID] = clustSampsIndexes[:parentsSampsNB[indexNewParent]]
+        # 3)- at least one of the two parent clusters identifiers is in the validClustsIDs list
+        # identify the already validated parent, and extract only the samples from the
+        # non-validated parent cluster.
+        elif (parentClustsIDs[0] in validClustsIDs) or (parentClustsIDs[1] in validClustsIDs):
+            for p in parentClustsIDs:
+                if (p in validClustsIDs):
+                    inverseParent = parentClustsIDs[len(parentClustsIDs) - 1 - parentClustsIDs.index(p)]
+                    validClustsIDs.append(clusterID)
+                    validClustsSamps.append(clust2Samps[inverseParent].copy())
+                    checkClusteredSamps[clust2Samps[inverseParent]] = 1
+                    trgt2Ctrls[clusterID] = [p]
                 else:
-                    clust2Samps[clusterID] = clustSampsIndexes[-parentsSampsNB[indexNewParent]:]
-
-            # the parent cluster control comes from two control clusters
-            # not present in clusts2Samps but in trgt2Ctrls (update them)
-            elif parentClustsIDs[indexCtrlParent] in trgt2Ctrls.keys():
-                clust2Samps[clusterID] = clustSampsIndexes[:parentsSampsNB[indexNewParent]]
-                trgt2Ctrls[clusterID] = trgt2Ctrls[parentClustsIDs[indexCtrlParent]].copy()
-
-            # the parent cluster control not exist in clusts2Samps and in trgt2Ctrls
-            # is formed with small distances so not referenced
-            else:
-                clust2Samps[clusterID] = clustSampsIndexes
-
-            # deleting the cluster with few samples
-            if parentClustsIDs[indexNewParent] in clust2Samps:
-                del clust2Samps[parentClustsIDs[indexNewParent]]
-
-        # Case 3: each parent cluster has an insufficient number of samples.
-        # the current clusterID becomes a valid cluster.
-        else:
-            clust2Samps[clusterID] = clustSampsIndexes
-            if parentClustsIDs[0] in clust2Samps:
-                del clust2Samps[parentClustsIDs[0]]
-            if parentClustsIDs[1] in clust2Samps:
-                del clust2Samps[parentClustsIDs[1]]
-
-    return(clust2Samps, trgt2Ctrls)
-
-
-#############################
-# getParentsClustsInfos
-# function used by links2Clusters function
-# Extract for each parents : samples indexes list and samples number
-#
-# Args:
-# - parentClustsIDs (list[int]): two parents clusters identifiers to be combined
-# - clust2Samps (dict(int : list[int])): cluster formed thanks to the linksMatrix
-#   parsing associated with sample indexes.
-#   key = current clusterID, value = list of samples indexes
-# - nbLinks (int): links number in linksMatrix (row count)
-#
-# Returns a tuple (parentsSampsIndexes, parentsSampsNB), each is created here:
-# - parentsSOIsIndexes (list[int]): parent clusters SOIs indexes
-# - parentsSOIsNB (list[int]): samples number in each parent clusters
-def getParentsClustsInfos(parentClustsIDs, clust2Samps, NbLinks):
-    parentsSampsIndexes = []
-    parentsSampsNB = []
-
-    for parentID in parentClustsIDs:
-        #####
-        # where it's a sample identifier not a cluster
-        # the clusterID corresponds to the SOI index
-        if (parentID <= NbLinks):
-            parentsSampsIndexes.append(parentID)
-            parentsSampsNB.append(1)
-        #####
-        # where it's a cluster identifier
-        # we get indexes lists
-        else:
-            parentsSampsIndexes = parentsSampsIndexes + clust2Samps[parentID].copy()
-            parentsSampsNB.append(len(clust2Samps[parentID]))
-    return(parentsSampsIndexes, parentsSampsNB)
+                    continue
+        clusters = formatClustRes(validClustsIDs, validClustsSamps, trgt2Ctrls, checkClusteredSamps)
+    return(clusters)
 
 
 ###########################
-# parseResults
+# formatClustRes
 # formatting the clustering results
 # generalisation of cluster identifiers (from 1 to nbclusters)
-# invalid cluster identification => number of samples less than minDist
 # identifications of samples that could not be clustered placed in the
-# output end as "Samps_ClustFailed"
+# list of lists output end as "Samps_ClustFailed"
 #
 # Args:
-# - samples (list[str]): samples of interest names
-# - clust2Samps (dict([int]:list[int])): a dictionary mapping cluster IDs to lists of samples
-# indexes in those clusters
+# - validClustsIDs (list[int]): clusterIDs from linksMatrix row ordering
+# - validClustsSamps (list of list[int]): samples indexes for each clustersID in validClustsIDs
 # - trgt2Ctrls (dict([int]:list[int])): a dictionary mapping target cluster IDs to lists of
 # control cluster IDs.
-# - minSamps [int]: the minimum number of samples required for a cluster to be considered valid
-# return a string list of list of dim = nbClust * ["clustID", "SampsInCluster", "validCluster"]
-def parseResults(samples, clust2Samps, trgt2Ctrls, minSamps):
-    # To Fill and return
-    resList = []
+# - checkClusteredSamps (np.ndarray[bool]): for each sample index score 0:failed clustering,
+# 1:successful clustering
+# return a list of list of dim = nbClust * ["newClustID","SampsInCluster","controlsClustersID"]
+def formatClustRes(validClustsIDs, validClustsSamps, trgt2Ctrls, checkClusteredSamps):
+    # To Fill and returns
+    clusters = []
 
-    # To Fill and not return
-    # string list of sample names included in a cluster (valid or not)
-    totalSamps = []
-    listToFill = []
-
-    # extraction of the key list of clust2Samps to use the indices of each clusterID
-    # as new clusterID
-    clustersIDList = list(clust2Samps.keys())
-
-    for cluster in clustersIDList:
-        # Fixed parameters
+    for i in range(len(validClustsIDs)):
         ctrlList = []  # list of new control clustID
-        clusterValidity = 1
-
-        # correspondence between sample names and sample indexes
-        SampsList = [samples[i] for i in clust2Samps[cluster]]
-
         # case of controlled target cluster replacement of clustID of controls
-        if cluster in trgt2Ctrls:
-            for ctrl in trgt2Ctrls[cluster]:
-                ctrlList.extend(str(clustersIDList.index(ctrl)))
-        # case where the cluster is not controlled
-        # validated test => nb sample must be greater than minSamps
-        else:
-            if len(SampsList) < minSamps:
-                logger.info("cluster n°%s : does not contain enough sample to be valid (%s)", clustersIDList.index(cluster), len(SampsList))
-                clusterValidity = 0
+        if validClustsIDs[i] in trgt2Ctrls:
+            for ctrl in trgt2Ctrls[validClustsIDs[i]]:
+                ctrlList.append(validClustsIDs.index(ctrl))
+        listToFill = [i, validClustsSamps[i], ctrlList]
+        clusters.append(listToFill)
 
-        # Fill resList
-        listToFill = [str(clustersIDList.index(cluster)), ",".join(SampsList), ",".join(ctrlList), clusterValidity]
-        resList.append(listToFill)
+    # samples are either included in clusters with small numbers or
+    # have distances too far to be included in a cluster
+    sampsClustFailed = [i for i, x in enumerate(checkClusteredSamps) if not x]
+    clusters.append(["Samps_ClustFailed", sampsClustFailed, ""])
 
-        totalSamps.extend(SampsList)
-
-    # test 1: each sample must be included in a single cluster
-    if len(totalSamps) != len(set(totalSamps)):
-        duplicateSamps = list(set([item for item in totalSamps if totalSamps.count(item) > 1]))
-        logger.info("Sample(s) %s is(are) contained in two clusters which is not allowed.", ",".join(duplicateSamps))
-        raise Exception('sample contained in several reference clusters')
-    # test 2: some samples do not cluster because they are too distant
-    if len(totalSamps) != len(samples):
-        failedSampsClust = set(samples).difference(set(totalSamps))
-        logger.info("Samples %s are too far away from the other samples to be associated with a cluster.", ",".join(failedSampsClust))
-        listToFill = ["Samps_ClustFailed", ",".join(failedSampsClust), "", ""]
-        resList.append(listToFill)
-
-    return(resList)
+    return(clusters)
