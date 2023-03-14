@@ -74,7 +74,7 @@ def plotDensities(title, dataRanges, densities, legends, line1, line2, line1lege
 # - minDist (float): is the distance to start cluster construction
 # - outputFile (str): full path to save the png
 # Returns a png file in the output folder
-def plotDendogram(clusters, samples, linksMatrix, minDist, outputFile):
+def plotDendogram(clusters, linksMatrix, minDist, outputFile):
     # maxClust: int variable contains total clusters number
     maxClust = len(clusters)
 
@@ -83,8 +83,8 @@ def plotDendogram(clusters, samples, linksMatrix, minDist, outputFile):
     # " ": sample does not contribute to the cluster
     # "x": sample contributes to the cluster
     # "-": sample controls the cluster
-    # "O": sample not clustered
-    labelArray = np.empty([len(samples), maxClust + 1], dtype="U1")
+    # "O": sample is not successfully clustered
+    labelArray = np.empty([len(linksMatrix) + 1, maxClust + 1], dtype="U1")
     labelArray.fill(" ")
     # labelsGp (list[str]): labels for each sample list to be passed when plotting the dendogram
     labelsGp = []
@@ -92,8 +92,7 @@ def plotDendogram(clusters, samples, linksMatrix, minDist, outputFile):
     # browse the different cluster identifiers
     for i in range(len(clusters)):
         # retrieving the samples involved for the clusterID
-        sampsNames = "".join(clusters[i][1]).split(",")
-        sampsIndex = [samples.index(sampsName) for sampsName in sampsNames]
+        sampsIndex = clusters[i][1]
 
         if clusters[i][0] == "Samps_ClustFailed":
             labelArray[sampsIndex, i] = "O"
@@ -105,11 +104,9 @@ def plotDendogram(clusters, samples, linksMatrix, minDist, outputFile):
 
         # associate the label for the samples controlling the current clusterID
         if clusters[i][2] != "":
-            listctrl = [x.strip() for x in clusters[i][2].split(",")]
+            listctrl = clusters[i][2]
             for ctrl in listctrl:
-                CTRLclustInfo = [sublist[1] for sublist in clusters if sublist[0] == ctrl]
-                CTRLsampsNames = "".join(CTRLclustInfo).split(",")
-                CTRLsampsIndex = [samples.index(sampsName) for sampsName in CTRLsampsNames]
+                CTRLsampsIndex = [sublist[1] for sublist in clusters if sublist[0] == ctrl]
                 labelArray[CTRLsampsIndex, i] = "-"
 
     # browse the np array of labels to build the str list
