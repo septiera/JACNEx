@@ -42,7 +42,6 @@ logger = logging.getLogger(__name__)
 # Args:
 #  - FPMarray (np.ndarray[float]): normalised fragment counts for QC validated samples,
 #  dim = NbCapturedExons x NbSOIsQCValidated
-#  - samples (list[str]): samples of interest names
 #  - maxCorr (float): maximal Pearson correlation score tolerated by the user to start
 #   build clusters
 #  - minCorr (float): minimal Pearson correlation score tolerated by the user to end
@@ -51,7 +50,7 @@ logger = logging.getLogger(__name__)
 #  - plotFile (str): full path (+ file name) for saving a dendogram
 #
 # return a string list of list of dim = nbClust * ["clustID", "SampsInCluster", "validCluster"]
-def clustersBuilds(FPMarray, samples, maxCorr, minCorr, minSamps, plotFile):
+def clustersBuilds(FPMarray, maxCorr, minCorr, minSamps, plotFile):
     if os.path.isfile(plotFile):
         logger.error('clustering dendogramm : plotFile %s already exist', plotFile)
         raise Exception("plotFile already exist")
@@ -67,7 +66,7 @@ def clustersBuilds(FPMarray, samples, maxCorr, minCorr, minSamps, plotFile):
 
     clusters = links2Clusters(linksMatrix, minDist, maxDist, minSamps)
 
-    figures.plots.plotDendogram(clusters, samples, linksMatrix, minDist, plotFile)
+    figures.plots.plotDendogram(clusters, linksMatrix, minDist, plotFile)
 
     return(clusters)
 
@@ -75,7 +74,6 @@ def clustersBuilds(FPMarray, samples, maxCorr, minCorr, minSamps, plotFile):
 ###############################################################################
 ############################ PRIVATE FUNCTIONS ################################
 ###############################################################################
-
 #############################
 # computeSampLinks
 # Pearson correlation distance (sqrt(1-r)) is unlikely to be a sensible
@@ -254,6 +252,8 @@ def links2Clusters(linksMatrix, minDist, maxDist, minSamps):
                     validClustsSamps.append(clust2Samps[inverseParent].copy())
                     checkClusteredSamps[clust2Samps[inverseParent]] = 1
                     trgt2Ctrls[clusterID] = [p]
+                    if p in trgt2Ctrls:
+                        trgt2Ctrls[clusterID] = trgt2Ctrls[p].copy() + trgt2Ctrls[clusterID].copy()
                 else:
                     continue
         clusters = formatClustRes(validClustsIDs, validClustsSamps, trgt2Ctrls, checkClusteredSamps)
@@ -263,7 +263,7 @@ def links2Clusters(linksMatrix, minDist, maxDist, minSamps):
 ###########################
 # formatClustRes
 # formatting the clustering results
-# generalisation of cluster identifiers (from 1 to nbclusters)
+# generalisation of cluster identifiers (from 0 to nbclusters-1)
 # identifications of samples that could not be clustered placed in the
 # list of lists output end as "Samps_ClustFailed"
 #
@@ -291,6 +291,8 @@ def formatClustRes(validClustsIDs, validClustsSamps, trgt2Ctrls, checkClusteredS
     # samples are either included in clusters with small numbers or
     # have distances too far to be included in a cluster
     sampsClustFailed = [i for i, x in enumerate(checkClusteredSamps) if not x]
+    logger.warnings("%s/%s samples fail clustering (see dendogramm plot), these samples are contained in small \
+                    clusters or are too distant from other clusters to be included.", len(sampsClustFailed), len(checkClusteredSamps))
     clusters.append(["Samps_ClustFailed", sampsClustFailed, ""])
 
     return(clusters)
