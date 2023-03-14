@@ -229,7 +229,7 @@ def main(argv):
         autosomesFPM = countsFPM[~maskGonoExIndexes]
         plotAutoDendogramm = os.path.join(plotDir, "Dendogram_" + str(autosomesFPM.shape[1]) + "Samps_autosomes.pdf")
         # applying hierarchical clustering for autosomes exons
-        autosClusters = clusterSamps.clustering.clustersBuilds(autosomesFPM, samples, maxCorr, minCorr, minSamps, plotAutoDendogramm)
+        autosClusters = clusterSamps.clustering.clustersBuilds(autosomesFPM, maxCorr, minCorr, minSamps, plotAutoDendogramm)
 
     except Exception as e:
         logger.error("clusterBuilds for autosomes failed : %s", repr(e))
@@ -250,18 +250,18 @@ def main(argv):
         # if not present no clustering returns a message in the log
         if gonosomesFPM.shape[0] != 0:
             plotGonoDendogramm = os.path.join(plotDir, "Dendogram_" + str(gonosomesFPM.shape[1]) + "Samps_gonosomes.pdf")
-            gonosClusters = clusterSamps.clustering.clustersBuilds(gonosomesFPM, samples, maxCorr, minCorr, minSamps, plotGonoDendogramm)
+            gonosClusters = clusterSamps.clustering.clustersBuilds(gonosomesFPM, maxCorr, minCorr, minSamps, plotGonoDendogramm)
         else:
             logger.info("No gonosomic exons, clustering can be done.")
             gonoFailed = True
     except Exception as e:
         logger.error("clusterBuilds for gonosomes failed : %s", repr(e))
         raise Exception("clusterBuilds for gonosomes failed")
-    
+
     thisTime = time.time()
     logger.debug("Done samples clustering for gonosomes : in %.2fs", thisTime - startTime)
     startTime = thisTime
-    
+
     # # unlike the processing carried out on the sets of chromosomes and autosomes,
     # # it is necessary for the gonosomes to identify the sample genders.
     # # This makes it possible to identify the clusters made up of the two genders
