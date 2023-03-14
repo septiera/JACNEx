@@ -242,7 +242,6 @@ def main(argv):
     #####
     # Get Gonosomes Clusters
     logger.info("### Gonosomes, sample clustering:")
-    gonoFailed = False
     try:
         gonosomesFPM = countsFPM[maskGonoExIndexes]
         # need to test if there are gonosomal exons
@@ -253,7 +252,7 @@ def main(argv):
             gonosClusters = clusterSamps.clustering.clustersBuilds(gonosomesFPM, maxCorr, minCorr, minSamps, plotGonoDendogramm)
         else:
             logger.info("No gonosomic exons, clustering can be done.")
-            gonoFailed = True
+            gonosClusters = []
     except Exception as e:
         logger.error("clusterBuilds for gonosomes failed : %s", repr(e))
         raise Exception("clusterBuilds for gonosomes failed")
@@ -307,14 +306,14 @@ def main(argv):
     # logger.debug("Done standardisation of results and validation in %.2fs", thisTime - startTime)
     # startTime = thisTime
 
-    # #####################################################
-    # # print results
-    # ##################
-    # clusterSamps.clustering.printClustersFile(clustsResList, outFile)
+    #####################################################
+    # print results
+    ##################
+    clusterSamps.clustering.printClustsFile(sampsQCfailed, autosClusters, gonosClusters, samples, outFile)
 
-    # thisTime = time.time()
-    # logger.debug("Done printing results, in %.2fs", thisTime - startTime)
-    # logger.info("ALL DONE")
+    thisTime = time.time()
+    logger.debug("Done printing results, in %.2fs", thisTime - startTime)
+    logger.info("ALL DONE")
 
 
 ####################################################################################

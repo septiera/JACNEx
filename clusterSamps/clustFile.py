@@ -76,15 +76,18 @@ def parseClustsFile(clustsFile):
 
 
 #############################
-# printClustersFile:
+# printClustsFile:
+# convert sample indexes to samples names before printing
 # Args:
-# - clustsResList (list of lists[str]): returned by STDZandCheck Function, ie each cluster is a lists
-#     of 5 scalars containing [clusterID,Samples,controlledBy,validCluster,status]
+# - sampsQCfailed (list[int]) : samples indexes that fail QC
+# - autosClusters (list of lists[int]): [clusterID,[Samples],[controlledBy]]
+# - gonosClusters (list of lists[int]): can be empty
+# - samples (list[str]): samples names
 # - 'outFile' is a filename that doesn't exist, it can have a path component (which must exist),
 #     output will be gzipped if outFile ends with '.gz'
 #
 # Print this data to outFile as a 'clustsFile' (same format parsed by parseClustsFile).
-def printClustersFile(clustsResList, outFile):
+def printClustsFile(sampsQCfailed, autosClusters, gonosClusters, samples, outFile):
     try:
         if outFile.endswith(".gz"):
             outFH = gzip.open(outFile, "xt", compresslevel=6)
@@ -94,12 +97,26 @@ def printClustersFile(clustsResList, outFile):
         logger.error("Cannot (gzip-)open clustersFile %s: %s", outFile, e)
         raise Exception('cannot (gzip-)open clustersFile')
 
-    toPrint = "clusterID\tSamples\tcontrolledBy\tvalidCluster\tstatus\n"
+    toPrint = "clusterID\tSamples\tcontrolledBy\tspecifics\n"
     outFH.write(toPrint)
-    for i in range(len(clustsResList)):
-        toPrint = "{}\t{}\t{}\t{}\t{}".format(clustsResList[i][0], clustsResList[i][1],
-                                              clustsResList[i][2], clustsResList[i][3],
-                                              clustsResList[i][4])
+    for i in range(len(autosClusters)):
+        samplesNames = [samples[j] for j in autosClusters[i][1]]
+        toPrint = "{}\t{}\t{}\t{}".format(autosClusters[i][0], ",".join(samplesNames),
+                                        ",".join([str(j) for j in autosClusters[i][2]]), "Autosomes")
         toPrint += "\n"
         outFH.write(toPrint)
+
+    if gonosClusters:
+        for i in range(len(gonosClusters)):
+            samplesNames = [samples[j] for j in gonosClusters[i][1]]
+            toPrint = "{}\t{}\t{}\t{}".format(gonosClusters[i][0], ",".join(samplesNames),
+                                            ",".join([str(j) for j in gonosClusters[i][2]]), "Gonosomes")
+            toPrint += "\n"
+            outFH.write(toPrint)   
+            
+    samplesNamesFailed = [samples[i] for i in sampsQCfailed]
+    toPrint = "{}\t{}\t{}\t{}".format("Samps_QCFailed", ",".join(samplesNamesFailed),"", "")
+    toPrint += "\n"
+    outFH.write(toPrint) 
+    
     outFH.close()
