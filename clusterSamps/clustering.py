@@ -68,7 +68,7 @@ def clustersBuilds(FPMarray, maxCorr, minCorr, minSamps, plotFile):
 
     figures.plots.plotDendogram(clusters, linksMatrix, minDist, plotFile)
 
-    return(clusters)
+    return(clusters, linksMatrix)
 
 
 ###############################################################################
@@ -216,8 +216,8 @@ def links2Clusters(linksMatrix, minDist, maxDist, minSamps):
         # several conditions for a clear storage of the clustering information have to be respected:
         # 1) - neither parent clusters identifiers is in the validClustsIDs list
         # in some cases the current cluster has for parent a cluster formed by two valid clusters
-        # so it is not in validClustsIDs but in trgt2Ctrls => update trgt2Ctrls
-        # both parents are not in validClustIDs nor in trgt2Ctrls validation of current cluster
+        # so it's not in validClustsIDs but in trgt2Ctrls => update trgt2Ctrls
+        # other case both parents are not in validClustIDs nor in trgt2Ctrls validation of current cluster
         if (parentClustsIDs[0] not in validClustsIDs) and (parentClustsIDs[1] not in validClustsIDs):
             if parentClustsIDs[0] not in trgt2Ctrls and parentClustsIDs[1]not in trgt2Ctrls:
                 validClustsIDs.append(clusterID)
@@ -291,8 +291,8 @@ def formatClustRes(validClustsIDs, validClustsSamps, trgt2Ctrls, checkClusteredS
     # samples are either included in clusters with small numbers or
     # have distances too far to be included in a cluster
     sampsClustFailed = [i for i, x in enumerate(checkClusteredSamps) if not x]
-    logger.warnings("%s/%s samples fail clustering (see dendogramm plot), these samples are contained in small \
-                    clusters or are too distant from other clusters to be included.", len(sampsClustFailed), len(checkClusteredSamps))
     clusters.append(["Samps_ClustFailed", sampsClustFailed, ""])
+    if len(sampsClustFailed) > 0:
+        logger.warn("%s/%s samples fail clustering (see dendogramm plot).", len(sampsClustFailed), len(checkClusteredSamps))
 
     return(clusters)
