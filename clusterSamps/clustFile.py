@@ -79,7 +79,7 @@ def parseClustsFile(clustsFile):
 # printClustsFile:
 # convert sample indexes to samples names before printing
 # Args:
-# - sampsQCfailed (list[int]) : samples indexes that fail QC
+# - sampsQCfailed (list[int]) : samples names that fail QC
 # - autosClusters (list of lists[int]): [clusterID,[Samples],[controlledBy]]
 # - gonosClusters (list of lists[int]): can be empty
 # - samples (list[str]): samples names
@@ -99,9 +99,10 @@ def printClustsFile(sampsQCfailed, autosClusters, gonosClusters, samples, outFil
 
     toPrint = "clusterID\tSamples\tcontrolledBy\tspecifics\n"
     outFH.write(toPrint)
+    
     for i in range(len(autosClusters)):
         samplesNames = [samples[j] for j in autosClusters[i][1]]
-        toPrint = "{}\t{}\t{}\t{}".format(autosClusters[i][0], ",".join(samplesNames),
+        toPrint = "{}\t{}\t{}\t{}".format(str(autosClusters[i][0]), ",".join(samplesNames),
                                         ",".join([str(j) for j in autosClusters[i][2]]), "Autosomes")
         toPrint += "\n"
         outFH.write(toPrint)
@@ -109,13 +110,12 @@ def printClustsFile(sampsQCfailed, autosClusters, gonosClusters, samples, outFil
     if gonosClusters:
         for i in range(len(gonosClusters)):
             samplesNames = [samples[j] for j in gonosClusters[i][1]]
-            toPrint = "{}\t{}\t{}\t{}".format(gonosClusters[i][0], ",".join(samplesNames),
+            toPrint = "{}\t{}\t{}\t{}".format(str(gonosClusters[i][0]), ",".join(samplesNames),
                                             ",".join([str(j) for j in gonosClusters[i][2]]), "Gonosomes")
             toPrint += "\n"
             outFH.write(toPrint)   
             
-    samplesNamesFailed = [samples[i] for i in sampsQCfailed]
-    toPrint = "{}\t{}\t{}\t{}".format("Samps_QCFailed", ",".join(samplesNamesFailed),"", "")
+    toPrint = "{}\t{}\t{}\t{}".format("Samps_QCFailed", ",".join(sampsQCfailed),"", "")
     toPrint += "\n"
     outFH.write(toPrint) 
     
