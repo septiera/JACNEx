@@ -196,21 +196,23 @@ def main(argv):
     logger.debug("Done normalizing counts, in %.2fs", thisTime - startTime)
     startTime = thisTime
 
-    ###################
-    # plot exon FPM densities for all samples; use this to identify QC-failing samples,
-    # and exons with decent coverage in at least one sample (other exons can be ignored)
-    plotFilePass = plotDir + "/coverageProfile_PASS.pdf"
-    plotFileFail = plotDir + "/coverageProfile_FAIL.pdf"
-    try:
-        (sampsQCfailed, capturedExons) = clusterSamps.qualityControl.SampsQC(countsFPM, samples, plotFilePass,
-                                                                             plotFileFail, testBW=testSmoothingBWs)
-    except Exception as e:
-        logger.error("SampsQC failed for %s : %s", countsFile, repr(e))
-        raise Exception("SampsQC failed")
+    # data quality control suspension
+    # reason 1: Deleting too much patient sequencing data cannot be a safe option.
+    # reason 2: With the addition of intergenic windows it is possible to identify 
+    # a profile of uncovered exons without a clean coverage densities per patient.
+    # However, it will be necessary to study the calling results for patients with questionable coverage profiles.
+    # ###################
+    # # plot exon FPM densities for all samples; use this to identify QC-failing samples,
+    # # and exons with decent coverage in at least one sample (other exons can be ignored)
+    # plotFilePass = plotDir + "/coverageProfile_PASS.pdf"
+    # plotFileFail = plotDir + "/coverageProfile_FAIL.pdf"
+    # try:
+    #     (sampsQCfailed, capturedExons) = clusterSamps.qualityControl.SampsQC(countsFPM, samples, plotFilePass,
+    #                                                                          plotFileFail, testBW=testSmoothingBWs)
 
-    thisTime = time.time()
-    logger.debug("Done samples quality control, in %.2fs", thisTime - startTime)
-    startTime = thisTime
+    # thisTime = time.time()
+    # logger.debug("Done samples quality control, in %.2fs", thisTime - startTime)
+    # startTime = thisTime
 
     ###################
     # Clustering:
@@ -218,9 +220,6 @@ def main(argv):
     # (exons and samples) by the quality control.
 
     maskGonoExIndexes = clusterSamps.getGonosomesExonsIndexes.getSexChrIndexes(exons)
-
-    # - exonsToKeep (list of list[str,int,int,str]): contains exons information from captured exons
-    exonsToKeep = [exons[i] for i, m in enumerate(capturedExons) if m]
 
     #####
     # Get Autosomes Clusters
@@ -309,7 +308,7 @@ def main(argv):
     #####################################################
     # print results
     ##################
-    clusterSamps.clustering.printClustsFile(sampsQCfailed, autosClusters, gonosClusters, samples, outFile)
+    clusterSamps.clustFile.printClustsFile(sampsQCfailed, autosClusters, gonosClusters, samples, outFile)
 
     thisTime = time.time()
     logger.debug("Done printing results, in %.2fs", thisTime - startTime)
