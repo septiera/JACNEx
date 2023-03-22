@@ -67,7 +67,7 @@ def clustersBuilds(FPMarray, maxCorr, minCorr, minSamps, plotFile):
 
     figures.plots.plotDendogram(clusters, linksMatrix, minDist, plotFile)
 
-    return(clusters, linksMatrix)
+    return clusters
 
 
 ###############################################################################
@@ -239,7 +239,7 @@ def links2Clusters(linksMatrix, minDist, maxDist, minSamps):
                     continue
 
     clusters = formatClustRes(validClustsIDs, validClustsSamps, trgt2Ctrls, checkClusteredSamps)
-    return(clusters)
+    return clusters
 
 
 ###########################
@@ -307,6 +307,6 @@ def formatClustRes(validClustsIDs, validClustsSamps, trgt2Ctrls, checkClusteredS
     # have distances too far to be included in a cluster
     sampsClustFailed = np.where(checkClusteredSamps == False)[0]
     logger.warn("%s/%s samples fail clustering (see dendogramm plot), smalls clusters or too distant.", len(sampsClustFailed), len(checkClusteredSamps))
-    clusters.append(["Samps_ClustFailed", sampsClustFailed, ""])
+    clusters.append(["Samps_ClustFailed", sampsClustFailed.tolist(), ""])
 
-    return(clusters)
+    return clusters
