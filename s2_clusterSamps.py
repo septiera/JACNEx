@@ -162,11 +162,6 @@ def main(argv):
     # parse, check and preprocess arguments
     (countsFile, outFile, minSamps, maxCorr, minCorr, plotDir) = parseArgs(argv)
 
-    # should density plots compare several different KDE bandwidth algorithms and values?
-    # hard-coded here rather than set via parseArgs because this should only be set
-    # to True for dev & testing
-    testSmoothingBWs = False
-
     # args seem OK, start working
     logger.debug("called with: " + " ".join(argv[1:]))
     logger.info("starting to work")
@@ -196,6 +191,7 @@ def main(argv):
     logger.debug("Done normalizing counts, in %.2fs", thisTime - startTime)
     startTime = thisTime
 
+    ###########################################
     # data quality control suspension
     # reason 1: Deleting too much patient sequencing data cannot be a safe option.
     # reason 2: With the addition of intergenic windows it is possible to identify 
@@ -204,27 +200,33 @@ def main(argv):
     # ###################
     # # plot exon FPM densities for all samples; use this to identify QC-failing samples,
     # # and exons with decent coverage in at least one sample (other exons can be ignored)
+    # # should density plots compare several different KDE bandwidth algorithms and values?
+    # # hard-coded here rather than set via parseArgs because this should only be set
+    # # to True for dev & testing
+    # testSmoothingBWs = False
+    #
     # plotFilePass = plotDir + "/coverageProfile_PASS.pdf"
     # plotFileFail = plotDir + "/coverageProfile_FAIL.pdf"
     # try:
     #     (sampsQCfailed, capturedExons) = clusterSamps.qualityControl.SampsQC(countsFPM, samples, plotFilePass,
     #                                                                          plotFileFail, testBW=testSmoothingBWs)
-
     # thisTime = time.time()
     # logger.debug("Done samples quality control, in %.2fs", thisTime - startTime)
     # startTime = thisTime
 
     ###################
     # Clustering:
-    # goal: establish the most optimal clustering(s) from the data validated
-    # (exons and samples) by the quality control.
-
+    # goal: establish the most optimal clustering(s) from hierarchical clustering
+    # need to segment the analysis between gonosomes and autosomes to avoid getting 
+    # aberrant CNs in the calling step. 
+    # (e.g Human : Male versus female => heterozygous CNV on the X)
     maskGonoExIndexes = clusterSamps.getGonosomesExonsIndexes.getSexChrIndexes(exons)
 
     #####
     # Get Autosomes Clusters
     logger.info("### Autosomes, sample clustering:")
     try:
+        # get autosomes exons counts
         autosomesFPM = countsFPM[~maskGonoExIndexes]
         plotAutoDendogramm = os.path.join(plotDir, "Dendogram_" + str(autosomesFPM.shape[1]) + "Samps_autosomes.pdf")
         # applying hierarchical clustering for autosomes exons
@@ -243,8 +245,8 @@ def main(argv):
     logger.info("### Gonosomes, sample clustering:")
     try:
         gonosomesFPM = countsFPM[maskGonoExIndexes]
-        # need to test if there are gonosomal exons
-        # e.g target sequencing
+        # Test if there are gonosomal exons 
+        # (e.g target sequencing may not be provided in some cases)
         # if not present no clustering returns a message in the log
         if gonosomesFPM.shape[0] != 0:
             plotGonoDendogramm = os.path.join(plotDir, "Dendogram_" + str(gonosomesFPM.shape[1]) + "Samps_gonosomes.pdf")
@@ -259,7 +261,20 @@ def main(argv):
     thisTime = time.time()
     logger.debug("Done samples clustering for gonosomes : in %.2fs", thisTime - startTime)
     startTime = thisTime
-
+    
+    #####################################################
+    # print clustering results
+    ##################
+    try:
+        clusterSamps.clustFile.printClustsFile(autosClusters, gonosClusters, samples, outFile)
+    except Exception as e:
+        logger.error("printing results failed : %s", repr(e))
+        raise Exception("printClustsFile failed")
+    
+    thisTime = time.time()
+    logger.debug("Done printing results, in %.2fs", thisTime - startTime)
+    startTime = thisTime
+    
     # # unlike the processing carried out on the sets of chromosomes and autosomes,
     # # it is necessary for the gonosomes to identify the sample genders.
     # # This makes it possible to identify the clusters made up of the two genders
@@ -305,13 +320,7 @@ def main(argv):
     # logger.debug("Done standardisation of results and validation in %.2fs", thisTime - startTime)
     # startTime = thisTime
 
-    #####################################################
-    # print results
-    ##################
-    clusterSamps.clustFile.printClustsFile(sampsQCfailed, autosClusters, gonosClusters, samples, outFile)
 
-    thisTime = time.time()
-    logger.debug("Done printing results, in %.2fs", thisTime - startTime)
     logger.info("ALL DONE")
 
 
