@@ -85,7 +85,7 @@ def sexAssignment(gonosomesFPM, gonosomesExons, samples):
 # getRatioGono2KmeanGp
 # cover ratio = median(sums of samples counts in a Kmeans group) for one gonosome
 # Args:
-# - GonoNames (list[str])
+# - gonoNames (list[str])
 # - kmeans (list[int]): sampsNB length where for each sample index in 'samples'
 # is associated a group predicted by Kmeans (always 0 or 1)
 # - gonosomesFPM (np.ndarray(float))
@@ -138,7 +138,7 @@ def sexAssignmentPrivate(ratioGono, gonoNames, chrSexUniq, chrSexDup, sexNames):
 
     for i in range(len(ratioGono)):
         # first prediction
-        # the first group has a ratio greater than 10x the second group 
+        # the first group has a ratio greater than 10x the second group
         # => the first group is associated with the sex with a single specific gonosome
         # if not, reverse the list
         if ((gonoNames[i] == "chr" + chrSexUniq) or (gonoNames[i] == chrSexUniq)):
@@ -147,13 +147,17 @@ def sexAssignmentPrivate(ratioGono, gonoNames, chrSexUniq, chrSexDup, sexNames):
             else:
                 pred1 = sexNames
         # second prediction
-        # 
+        # the first group has a ratio between 1.5x and 3x the ratio of the second group
+        # => the first group is associated with the sex with the two identical gonosomes,
+        # if not, reverse the list
         if ((gonoNames[i] == "chr" + chrSexDup) or (gonoNames[i] == chrSexDup)):
             if (ratioGono[i][0] > (3 * ratioGono[i][1] / 2)) and (ratioGono[i][0] < (3 * ratioGono[i][1])):
                 pred2 = sexNames[::-1]
             else:
                 pred2 = sexNames
 
+    # check that the two predictions are in agreement to secure the assignment.
+    # If not, returns an error message and an exception
     if (pred1 == pred2):
         return pred1
 
