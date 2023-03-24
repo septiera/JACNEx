@@ -97,7 +97,7 @@ def printClustsFile(autosClusters, gonosClusters, samples, sexAssign, outFile):
         logger.error("Cannot (gzip-)open clustersFile %s: %s", outFile, e)
         raise Exception('cannot (gzip-)open clustersFile')
 
-    toPrint = "CLUSTER_ID\tSAMPLES\tCONTROLLED_BY\tSPECIFICS\n"
+    toPrint = "CLUSTER_ID\tSAMPLES\tCONTROLLED_BY\tVALIDITY\tSPECIFICS\n"
     outFH.write(toPrint)
 
     for index in range(2):
@@ -112,18 +112,21 @@ def printClustsFile(autosClusters, gonosClusters, samples, sexAssign, outFile):
         if len(clustList) != 0:
             for cluster in range(len(clustList)):
                 samplesNames = [samples[j] for j in clustList[cluster][1]]
-                toPrint = "{}\t{}\t{}\t{}".format(str(clustList[cluster][0]),
-                                                  ",".join(samplesNames),
-                                                  ",".join([str(j) for j in clustList[cluster][2]]),
-                                                  specifics)
+                toPrint = "{}\t{}\t{}\t{}\t{}".format(str(clustList[cluster][0]),
+                                                      ",".join(samplesNames),
+                                                      ",".join([str(j) for j in clustList[cluster][2]]),
+                                                      str(clustList[cluster][3]),
+                                                      specifics)
                 toPrint += "\n"
                 outFH.write(toPrint)
+
     if len(sexAssign) != 0:
         for sexInd in range(len(sexAssign)):
-            toPrint = "{}\t{}\t{}\t{}".format(sexAssign[sexInd][0],
-                                              ",".join(sexAssign[sexInd][1]),
-                                              "",
-                                              "")
+            toPrint = "{}\t{}\t{}\t{}\t{}".format(sexAssign[sexInd][0],
+                                                  ",".join(sexAssign[sexInd][1]),
+                                                  "",
+                                                  "",
+                                                  "")
             toPrint += "\n"
             outFH.write(toPrint)
 
