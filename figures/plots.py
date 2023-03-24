@@ -65,59 +65,27 @@ def plotDensities(title, dataRanges, densities, legends, line1, line2, line1lege
 
 #############################
 # visualisation of clustering results
+# the labels correspond from bottom to top to the clusters formation 
+# in decreasing order of correlation
+# " ": sample does not contribute to the cluster
+# "x": sample contributes to the cluster
+# "-": sample controls the cluster
+# "O": sample is not successfully clustered
+# 
 # Args:
-# - clust2Samps (dict(int : list[int])): clusterID associated to valid sample indexes
-#   key = clusterID, value = list of valid sample indexes
-# - trgt2Ctrls (dict(int : list[int])): target and controls clusters correspondance,
-#   key = target clusterID, value = list of controls clusterID
 # - linksMatrix (np.ndarray[float])
+# - labelsGp (np.ndarray[str]): labels for each sample within each cluster, dim=NbSOIs*NbClusters
 # - minDist (float): is the distance to start cluster construction
-# - outputFile (str): full path to save the png
-# Returns a png file in the output folder
-def plotDendogram(clusters, linksMatrix, minDist, outputFile):
-    # maxClust: int variable contains total clusters number
-    maxClust = len(clusters)
-
-    # To Fill
-    # labelArray (np.ndarray[str]): status for each cluster as a character, dim=NbSOIs*NbClusters
-    # " ": sample does not contribute to the cluster
-    # "x": sample contributes to the cluster
-    # "-": sample controls the cluster
-    # "O": sample is not successfully clustered
-    labelArray = np.empty([len(linksMatrix) + 1, maxClust + 1], dtype="U1")
-    labelArray.fill(" ")
-    # labelsGp (list[str]): labels for each sample list to be passed when plotting the dendogram
-    labelsGp = []
-
-    # browse the different cluster identifiers
-    for i in range(len(clusters)):
-        # retrieving the samples involved for the clusterID
-        sampsIndex = clusters[i][1]
-
-        if clusters[i][0] == "Samps_ClustFailed":
-            labelArray[sampsIndex, i] = "O"
-            continue
-
-        # associate the label for the samples contributing to the clusterID for the
-        # associated cluster index position
-        labelArray[sampsIndex, i] = "x"
-
-        # associate the label for the samples controlling the current clusterID
-        if clusters[i][2] != "":
-            listctrl = clusters[i][2]
-            for ctrl in listctrl:
-                CTRLsampsIndex = [sublist[1] for sublist in clusters if sublist[0] == ctrl]
-                labelArray[CTRLsampsIndex, i] = "-"
-
-    # browse the np array of labels to build the str list
-    for i in labelArray:
-        # separation of labels for readability
-        strToBind = "  ".join(i)
-        labelsGp.append(strToBind)
-
-    # dendogram plot
-    matplotlib.pyplot.figure(figsize=(15, 5), facecolor="white")
+# - pdf: matplotlib PDF object where the plot will be saved
+#
+# Returns a pdf file in the output folder
+def plotDendogram(linksMatrix, labelsGp, minDist, pdf):
+    # Disable interactive mode
+    #matplotlib.pyplot.ioff()
+    fig = matplotlib.pyplot.figure(figsize=(15, 5), facecolor="white")
     matplotlib.pyplot.title("Average linkage hierarchical clustering")
     dn1 = scipy.cluster.hierarchy.dendrogram(linksMatrix, labels=labelsGp, color_threshold=minDist)
     matplotlib.pyplot.ylabel("Distance √(1-ρ) ")
-    matplotlib.pyplot.savefig(outputFile, dpi=520, format="pdf", bbox_inches='tight')
+    fig.subplots_adjust(bottom=0.3)
+    pdf.savefig(fig)
+    matplotlib.pyplot.close()
