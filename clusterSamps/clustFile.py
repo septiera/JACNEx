@@ -82,11 +82,12 @@ def parseClustsFile(clustsFile):
 # - autosClusters (list of lists[int]): [clusterID,[Samples],[controlledBy]]
 # - gonosClusters (list of lists[int]): can be empty
 # - samples (list[str]): samples names
+# - sexAssign (list of lists[str]): for each sexe is assigned samples list
 # - 'outFile' is a filename that doesn't exist, it can have a path component (which must exist),
 #     output will be gzipped if outFile ends with '.gz'
 #
 # Print this data to outFile as a 'clustsFile' (same format parsed by parseClustsFile).
-def printClustsFile(autosClusters, gonosClusters, samples, outFile):
+def printClustsFile(autosClusters, gonosClusters, samples, sexAssign, outFile):
     try:
         if outFile.endswith(".gz"):
             outFH = gzip.open(outFile, "xt", compresslevel=6)
@@ -95,20 +96,20 @@ def printClustsFile(autosClusters, gonosClusters, samples, outFile):
     except Exception as e:
         logger.error("Cannot (gzip-)open clustersFile %s: %s", outFile, e)
         raise Exception('cannot (gzip-)open clustersFile')
-    
-    toPrint = "clusterID\tsamples\tcontrolledBy\tspecifics\n"
-    outFH.write(toPrint)    
+
+    toPrint = "CLUSTER_ID\tSAMPLES\tCONTROLLED_BY\tSPECIFICS\n"
+    outFH.write(toPrint)
 
     for index in range(2):
         if index == 0:
             clustList = autosClusters
             specifics = "Autosomes"
         else:
-            clustList = gonosClusters 
+            clustList = gonosClusters
             specifics = "Gonosomes"
-            
+
         # no print if clustering could not be performed
-        if clustList:
+        if len(clustList) != 0:
             for cluster in range(len(clustList)):
                 samplesNames = [samples[j] for j in clustList[cluster][1]]
                 toPrint = "{}\t{}\t{}\t{}".format(str(clustList[cluster][0]),
@@ -117,4 +118,13 @@ def printClustsFile(autosClusters, gonosClusters, samples, outFile):
                                                   specifics)
                 toPrint += "\n"
                 outFH.write(toPrint)
+    if len(sexAssign) != 0:
+        for sexInd in range(len(sexAssign)):
+            toPrint = "{}\t{}\t{}\t{}".format(sexAssign[sexInd][0],
+                                              ",".join(sexAssign[sexInd][1]),
+                                              "",
+                                              "")
+            toPrint += "\n"
+            outFH.write(toPrint)
+
     outFH.close()
