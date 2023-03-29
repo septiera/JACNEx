@@ -1,5 +1,6 @@
 import gzip
 import logging
+import numpy as np
 
 # set up logger, using inherited config
 logger = logging.getLogger(__name__)
@@ -62,6 +63,8 @@ def processBed(bedFile, padding):
         exons.append(fields)
     bedFH.close()
 
+    # add intronic windows
+    exons = addIntronicWindows(exons)
     # Done parsing bedFile, sort exons and return
     sortExonsOrBPs(exons)
     return(exons)
@@ -127,3 +130,88 @@ def sortExonsOrBPs(data):
     for thisData in data:
         thisData.pop()
     return()
+
+
+####################################################
+# addition of intronic regions to canonical exons to generate a reliable non-coverage profile.
+# The objective is to create windows that do not cover any canonical exons with distances
+# between exons and new windows as far apart as possible.
+# This is achieved by keeping a natural pattern by calculating the median length of exons
+# and the median distance between exons of different genes.
+# Arg:
+# - exons (list of list[str, int, int, str]): exons definition [CHR, START, END, EXON_ID]
+# Returns the same format as the input but with the addition of intronic regions
+def addIntronicWindows(exons):
+    # fixed parameter
+    # avoids generating windows in the centromere regions (dubious sequencing)
+    nbWindowLimit = 100
+
+    # To Fill and not returns
+    # list of int containing the lengths of each exon
+    lengthExons = []
+    # numpy array of zeros of the length between exons,
+    # if exons overlap the value remains 0
+    distances = np.zeros((len(exons)), dtype=np.int)
+    # list of exons indexes where the next exon is a new gene
+    exonsIndexExtraGenes = []
+    # list of list in the same format as "exons" to store intronic windows
+    intronicWindows = []
+
+    # first run through of exons definitions to extract processing parameters
+    for exon in range(len(exons) - 1):
+        lengthExons.append(exons[exon][2] - exons[exon][1])
+
+        # where the exons overlap no distance is calculated
+        if exons[exon + 1][1] < exons[exon][2]:
+            continue
+
+        distances[exon] = np.round(exons[exon + 1][1] - exons[exon][2])
+
+        # extraction of indices from exons where the next exon is on a different gene
+        nameENSTexon = exons[exon][3].split("_")
+        nameENSTexon1 = exons[exon + 1][3].split("_")
+        if nameENSTexon[0] != nameENSTexon1[0]:
+            exonsIndexExtraGenes.append(exon)
+
+    medianLength = np.int(np.median(lengthExons))
+
+    # recovery of the median of the distances between genes.
+    # Important for MANE transcripts => distances are greater between
+    # genes than between exons of the same gene.
+    # Allows calculation of intronic windows with optimal distances to
+    # canonical exons.
+    medianDistances = np.int(np.median(distances[exonsIndexExtraGenes]))
+
+    # minimum distance between two exons to create a window
+    distances2Target = (medianLength + (2 * medianDistances))
+    # counter to assign a unique EXON_ID for each new window
+    counter = 0
+
+    # second run through of exons definitions to create intronic windows
+    for i in range(len(exons)):
+        # identification of the number of windows to be created
+        intronicWindowsNB = np.int(np.floor(distances[i] / distances2Target))
+
+        # limiting the creation of windows to avoid centromeric regions
+        if intronicWindowsNB >= 1 and intronicWindowsNB < nbWindowLimit:
+            # calculation of the distance to position the window centers
+            # optimally (as far away as possible)
+            cut = np.int(distances[i] / intronicWindowsNB)
+            for f in range(intronicWindowsNB):
+                counter += 1
+                # the range starts at 0, so it is necessary to increment
+                modFactor = f + 1
+                START = np.int(exons[i][2] + (cut * modFactor) - (medianLength / 2))
+                END = np.int(exons[i][2] + (cut * modFactor) + (medianLength / 2))
+                listToFill = [exons[i][0], START, END, "intronic_window_" + str(counter)]
+
+                intronicWindows.append(listToFill)
+        else:
+            continue
+
+    logger.info("adding %s new intronic windows to %s canonical exons", len(intronicWindows), len(exons))
+
+    # intronic window additions to "exons"
+    exons.extend(intronicWindows)
+
+    return exons
