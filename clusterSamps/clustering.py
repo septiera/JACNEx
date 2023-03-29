@@ -69,7 +69,7 @@ def clustersBuilds(FPMarray, maxCorr, minCorr, minSamps, plotFile):
     maxDist = (1 - minCorr)**0.5
 
     # hierarchical clustering
-    linksMatrix = computeSampsLinks(FPMarray)
+    linksMatrix = computeSampsLinks(FPMarray, CM)
 
     samps2Clusters, trgt2Ctrls = links2Clusters(linksMatrix, minDist, maxDist, minSamps)
     clustsList = np.unique(samps2Clusters)
