@@ -239,7 +239,7 @@ def main(argv):
         autosomesFPM = countsFPM[~maskGonoExIndexes]
         plotAutoDendogramm = os.path.join(plotDir, "Dendogram_" + str(autosomesFPM.shape[1]) + "Samps_autosomes.pdf")
         # applying hierarchical clustering for autosomes exons
-        autosClusters = clusterSamps.clustering.clustersBuilds(autosomesFPM, maxCorr, minCorr, minSamps, plotAutoDendogramm)
+        autosClusters = clusterSamps.clustering.clustersBuilds(autosomesFPM, maxCorr, minCorr, minSamps, plotAutoDendogramm)[0]
 
     except Exception as e:
         logger.error("clusterBuilds for autosomes failed : %s", repr(e))
@@ -259,7 +259,7 @@ def main(argv):
         # if not present, no clustering, returns a message in the log
         if gonosomesFPM.shape[0] != 0:
             plotGonoDendogramm = os.path.join(plotDir, "Dendogram_" + str(gonosomesFPM.shape[1]) + "Samps_gonosomes.pdf")
-            gonosClusters = clusterSamps.clustering.clustersBuilds(gonosomesFPM, maxCorr, minCorr, minSamps, plotGonoDendogramm)
+            gonosClusters = clusterSamps.clustering.clustersBuilds(gonosomesFPM, maxCorr, minCorr, minSamps, plotGonoDendogramm)[0]
         else:
             logger.info("no gonosomic exons, clustering can be done")
             gonosClusters = []
