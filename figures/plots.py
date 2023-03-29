@@ -64,26 +64,28 @@ def plotDensities(title, dataRanges, densities, legends, line1, line2, line1lege
 
 
 #############################
-# visualisation of clustering results
-# the labels correspond from bottom to top to the clusters formation 
-# in decreasing order of correlation
+# visualisation of clustering results by a dendogram
+# the labels below the figure correspond from bottom to top 
+# to the clusters formation in decreasing order of correlation
+# label types:
 # " ": sample does not contribute to the cluster
 # "x": sample contributes to the cluster
 # "-": sample controls the cluster
 # "O": sample is not successfully clustered
-# 
+#
 # Args:
 # - linksMatrix (np.ndarray[float])
-# - labelsGp (np.ndarray[str]): labels for each sample within each cluster, dim=NbSOIs*NbClusters
+# - labelsGp (list[str]): labels for each sample within each cluster, dim=NbSOIs*NbClusters
 # - minDist (float): is the distance to start cluster construction
+# - CM [str]: clustering method
 # - pdf: matplotlib PDF object where the plot will be saved
 #
 # Returns a pdf file in the output folder
-def plotDendogram(linksMatrix, labelsGp, minDist, pdf):
+def plotDendogram(linksMatrix, labelsGp, minDist, CM, pdf):
     # Disable interactive mode
-    #matplotlib.pyplot.ioff()
+    matplotlib.pyplot.ioff()
     fig = matplotlib.pyplot.figure(figsize=(15, 5), facecolor="white")
-    matplotlib.pyplot.title("Average linkage hierarchical clustering")
+    matplotlib.pyplot.title(CM+" linkage hierarchical clustering")
     dn1 = scipy.cluster.hierarchy.dendrogram(linksMatrix, labels=labelsGp, color_threshold=minDist)
     matplotlib.pyplot.ylabel("Distance √(1-ρ) ")
     fig.subplots_adjust(bottom=0.3)
