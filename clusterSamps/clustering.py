@@ -43,8 +43,12 @@ logger = logging.getLogger(__name__)
 #  - minSamps (int): minimal sample number to validate a cluster
 #  - plotFile (str): full path (+ file name) for saving a dendogram
 #
-# returns a list of list[int, list[int], list[int], int] containing cluster definitions
+# Returns (clusters, linksMatrix):
+#  - clusters (list of list[int, list[int], list[int], int]): cluster definitions
 # dim = nbClust * ["CLUSTER_ID","SAMPLES","CONTROLLED_BY","VALIDITY"]
+#  - linksMatrix (np.ndarray[float]): the hierarchical clustering encoded as a linkage
+#  matrix, dim = (NbSamples-1)*[clusterID1,clusterID2,distValue,NbSamplesInClust]
+# this output is only used for testing and debugging
 def clustersBuilds(FPMarray, maxCorr, minCorr, minSamps, plotFile):
     if os.path.isfile(plotFile):
         logger.error('clustering dendogramm : plotFile %s already exist', plotFile)
@@ -53,6 +57,9 @@ def clustersBuilds(FPMarray, maxCorr, minCorr, minSamps, plotFile):
     # create matplotlib PDF objects
     pdf = matplotlib.backends.backend_pdf.PdfPages(plotFile)
 
+    # clustering method
+    CM = "average"
+    
     # To Fill and returns
     clusters = []
 
@@ -61,68 +68,66 @@ def clustersBuilds(FPMarray, maxCorr, minCorr, minSamps, plotFile):
     # - maxDist (float): is the distance to finalise the cluster construction
     maxDist = (1 - minCorr)**0.5
 
-    # - linksMatrix (np.ndarray[float]): the hierarchical clustering encoded as a linkage
-    #  matrix, dim = (NbSOIs-1)*[clusterID1,clusterID2,distValue,NbSOIsInClust]
+    # hierarchical clustering
     linksMatrix = computeSampsLinks(FPMarray)
 
     samps2Clusters, trgt2Ctrls = links2Clusters(linksMatrix, minDist, maxDist, minSamps)
     clustsList = np.unique(samps2Clusters)
-    
+
     # To Fill not returns
     # labelArray (np.ndarray[str]): labels for each sample within each cluster, dim=NbSOIs*NbClusters
     labelArray = np.empty([len(samps2Clusters), len(clustsList)], dtype="U1")
-    labelArray.fill(" ")
+    labelArray.fill("")
     # labelsGp (list[str]): labels for each sample list to be passed when plotting the dendogram
     labelsGp = []
-    
+
     # labels definitions for dendogram
     label1 = "x"  # sample contributes to the cluster
     label2 = "-"  # sample controls the cluster
     label3 = "O"  # sample is not successfully clustered
-    
+
     #######
     # results formatting and preparation of the graphic representation
-    # replacement of cluster identifiers by decreasing correlation order of formation
-    # cluster validity check based on counts and if all samples were clustered (0 invalid, 1 valid)
+    # replacement of cluster identifiers by decreasing correlation order
+    # validity check based on counts and if all samples were clustered (0 invalid, 1 valid)
     for i in range(len(clustsList)):
         validityStatus = 1
 
         # keep samples indexes for current cluster
         sampsClustIndex = list(np.where(samps2Clusters == clustsList[i])[0])
 
-        # associate the label for the samples contributing to the clusterID for the
-        # associated cluster index position
+        # associate the label to the sample index(column) and the cluster index position(row)
         labelArray[sampsClustIndex, i] = label1
-        
+
         # list to store new control clusterID
         ctrlList = []
         CTRLsampsIndex = []
-        # case of controlled target cluster replacement of controls clusterID
+        # controlled cluster replacement of controls clusterID
         if clustsList[i] in trgt2Ctrls:
             for ctrl in trgt2Ctrls[clustsList[i]]:
                 ctrlList.extend(list(np.where(clustsList == ctrl))[0])
                 CTRLsampsIndex.extend(list(np.where(samps2Clusters == ctrl)[0]))
-        
+
         labelArray[CTRLsampsIndex, i] = label2
 
         # check validity
-        if ((len(sampsClustIndex)+len(CTRLsampsIndex)) < minSamps) or (clustsList[i] == 0):
+        if ((len(sampsClustIndex) + len(CTRLsampsIndex)) < minSamps) or (clustsList[i] == 0):
             validityStatus = 0
             labelArray[sampsClustIndex, i] = label3
 
         listToFill = [i, sampsClustIndex, ctrlList, validityStatus]
         clusters.append(listToFill)
 
-    # browse the np array of labels to build the str list
+    # browse the np array of labels to build the str list (need for plot dendogram)
     for i in labelArray:
         # separation of labels for readability
         strToBind = "  ".join(i)
         labelsGp.append(strToBind)
-        
-    figures.plots.plotDendogram(linksMatrix, labelsGp, minDist, pdf)
+
+    figures.plots.plotDendogram(linksMatrix, labelsGp, minDist, CM, pdf)
     pdf.close()
-    
-    return clusters
+
+    return (clusters, linksMatrix)
 
 
 ###############################################################################
@@ -138,11 +143,11 @@ def clustersBuilds(FPMarray, maxCorr, minCorr, minSamps, plotFile):
 #
 # Args:
 # - FPMarray (np.ndarray[float]): normalised fragment counts, dim = NbCapturedExons x NbSamples
-#
+# - CM [str]: clustering method
 # Returns:
 # - linksMatrix (np.ndarray[float]): the hierarchical clustering encoded as a linkage
 #  matrix, dim = (NbSamples-1)*[clusterID1,clusterID2,distValue,NbSamplesInClust]
-def computeSampsLinks(FPMarray):
+def computeSampsLinks(FPMarray, CM):
 
     correlation = np.round(np.corrcoef(FPMarray, rowvar=False), 2)
     dissimilarity = (1 - correlation)**0.5
@@ -150,7 +155,7 @@ def computeSampsLinks(FPMarray):
     # "squareform" transform squared distance matrix in a triangular matrix
     # "optimal_ordering": linkage matrix will be reordered so that the distance between
     # successive leaves is minimal.
-    linksMatrix = scipy.cluster.hierarchy.linkage(scipy.spatial.distance.squareform(dissimilarity), 'average', optimal_ordering=True)
+    linksMatrix = scipy.cluster.hierarchy.linkage(scipy.spatial.distance.squareform(dissimilarity), CM, optimal_ordering=True)
     return(linksMatrix)
 
 
