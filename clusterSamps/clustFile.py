@@ -1,4 +1,5 @@
 import logging
+import numpy as np
 import gzip
 
 # set up logger, using inherited config
@@ -13,11 +14,10 @@ logger = logging.getLogger(__name__)
 # Arg:
 # - clustsFile (str): a clusterFile produced by 2_clusterSamps.py, possibly gzipped
 #
-# Returns a tupple (clusts2Samps, clusts2Ctrls, sex2Clust) , each variable is created here:
+# Returns a tupple (clusts2Samps, clusts2Ctrls), each variable is created here:
 # - clusts2Samps (dict[str, List[int]]): key: clusterID , value: SOIs list
 # - clusts2Ctrls (dict[str, List[str]]): key: clusterID, value: controlsID list
-# - sex2Clust (dict[str, list[str]]): key: "A" autosomes or "G" gonosome, value: clusterID list
-def parseClustsFile(clustsFile):
+def parseClustsFile(clustsFile, samples):
     try:
         if clustsFile.endswith(".gz"):
             clustsFH = gzip.open(clustsFile, "rt")
@@ -28,56 +28,42 @@ def parseClustsFile(clustsFile):
         raise Exception('cannot open clustsFile')
 
     # To Fill and returns
-    # Initialize the dictionaries to store the clustering information
-    clusts2Samps = {}
+    samps2Clusters = {}
     clusts2Ctrls = {}
-    sex2Clust = {}
 
     # skip header
     clustsFH.readline()
 
+    # path of each clusterID
     for line in clustsFH:
-        # last line of the file is associated with the sample that did not pass
-        # the quality control only the first two columns are informative
-        if line.startswith("Samps_QCFailed"):
-            SampsQCFailed = line.rstrip().split("\t", maxsplit=1)[1]
-            SampsQCFailed = SampsQCFailed.split(",")
-            clusts2Samps["Samps_QCFailed"] = SampsQCFailed
+        if line.startswith("M") or line.startswith("F"):
+            continue
         else:
             # finding information from the 5 columns
-            clusterID, sampsInCluster, controlledBy, validCluster, clusterStatus = line.rstrip().split("\t", maxsplit=4)
+            clusterID, sampsInCluster, controlledBy, validCluster, specifics = line.rstrip().split("\t", maxsplit=4)
 
-            """
-            #### DEV : For first test step integration of all clusters
-            if validCluster == "1":
-            """
-            # populate clust2Samps
+            # For DEV evaluate small clusters
+            # if validCluster == 0:
+            #     continue
+
             sampsInCluster = sampsInCluster.split(",")
-            clusts2Samps[clusterID] = sampsInCluster
+            sampsIndInCluster = [i for i in range(len(samples)) if samples[i] in sampsInCluster]
 
-            # populate clusts2Ctrls
+            # populate samps2Clusters
+            samps2Clusters[clusterID] = sampsIndInCluster
             if controlledBy != "":
+                # populate clusts2Ctrls
                 clusts2Ctrls[clusterID] = controlledBy.split(",")
 
-            # populate sex2Clust
-            if clusterStatus.startswith("A"):
-                if "A" in sex2Clust:
-                    sex2Clust["A"].append(clusterID)
-                else:
-                    sex2Clust["A"] = [clusterID]
-            elif clusterStatus.startswith("G"):
-                if "G" in sex2Clust:
-                    sex2Clust["G"].append(clusterID)
-                else:
-                    sex2Clust["G"] = [clusterID]
-
     clustsFH.close()
-    return(clusts2Samps, clusts2Ctrls, sex2Clust)
+
+    return(samps2Clusters, clusts2Ctrls)
 
 
 #############################
 # printClustsFile:
 # convert sample indexes to samples names before printing
+# clustersID from gonosomes are renamed (+ nbClusterAutosomes)
 # Args:
 # - autosClusters (list of lists[int]): [clusterID,[Samples],[controlledBy]]
 # - gonosClusters (list of lists[int]): can be empty
@@ -100,11 +86,15 @@ def printClustsFile(autosClusters, gonosClusters, samples, sexAssign, outFile):
     toPrint = "CLUSTER_ID\tSAMPLES\tCONTROLLED_BY\tVALIDITY\tSPECIFICS\n"
     outFH.write(toPrint)
 
+    # browsing the two clustering result tables
     for index in range(2):
+        # to give a different name to the gonosomal clusters
+        incremName = 0
         if index == 0:
             clustList = autosClusters
             specifics = "Autosomes"
         else:
+            incremName = len(autosClusters)
             clustList = gonosClusters
             specifics = "Gonosomes"
 
@@ -112,14 +102,16 @@ def printClustsFile(autosClusters, gonosClusters, samples, sexAssign, outFile):
         if len(clustList) != 0:
             for cluster in range(len(clustList)):
                 samplesNames = [samples[j] for j in clustList[cluster][1]]
-                toPrint = "{}\t{}\t{}\t{}\t{}".format(str(clustList[cluster][0]),
+                toPrint = "{}\t{}\t{}\t{}\t{}".format(str(clustList[cluster][0] + incremName),
                                                       ",".join(samplesNames),
-                                                      ",".join([str(j) for j in clustList[cluster][2]]),
+                                                      ",".join([str(j + incremName) for j in clustList[cluster][2]]),
                                                       str(clustList[cluster][3]),
                                                       specifics)
                 toPrint += "\n"
                 outFH.write(toPrint)
 
+    # sex prediction has been made
+    # addition of two lines Male , Female with the list of corresponding samples
     if len(sexAssign) != 0:
         for sexInd in range(len(sexAssign)):
             toPrint = "{}\t{}\t{}\t{}\t{}".format(sexAssign[sexInd][0],
