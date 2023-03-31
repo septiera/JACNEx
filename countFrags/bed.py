@@ -19,7 +19,9 @@ logger = logging.getLogger(__name__)
 # Returns a list of [numberOfExons] lists of 4 scalars (types: str,int,int,str)
 # containing CHR,START,END,EXON_ID, and where:
 # - exons are padded, ie -padding for START (never negative) and +padding for END
-# - exons are sorted by CHR, then START, then END, then EXON_ID
+# - intergenic regions are introduced
+# - exons and intergenic regions are sorted by CHR, then START, then END, then EXON_ID
+
 def processBed(bedFile, padding):
     # list of exons to be returned
     exons = []
@@ -63,11 +65,12 @@ def processBed(bedFile, padding):
         exons.append(fields)
     bedFH.close()
 
-    # add intronic windows
-    exons = addIntronicWindows(exons)
     # Done parsing bedFile, sort exons and return
     sortExonsOrBPs(exons)
-    return(exons)
+    # add intergenic windows
+    exonsAndInterRegions = addIntergenicWindows(exons)
+    
+    return(exonsAndInterRegions)
 
 
 ####################################################
@@ -133,85 +136,129 @@ def sortExonsOrBPs(data):
 
 
 ####################################################
-# addition of intronic regions to canonical exons to generate a reliable non-coverage profile.
-# The objective is to create windows that do not cover any canonical exons with distances
-# between exons and new windows as far apart as possible.
-# This is achieved by keeping a natural pattern by calculating the median length of exons
-# and the median distance between exons of different genes.
+# addition of intergenic regions to canonical exons to generate a reliable 
+# non-coverage profile.
+# The aim is to create intergenic windows that do not cover any canonical exon.
+# These intergenic windows must be optimally spaced.
+# This is achieved by maintaining a natural pattern by calculating the median 
+# exon length and a distance between exons derived from the largest majority of exons 
+# (or overlap and or chromosomal difference).
 # Arg:
 # - exons (list of list[str, int, int, str]): exons definition [CHR, START, END, EXON_ID]
-# Returns the same format as the input but with the addition of intronic regions
-def addIntronicWindows(exons):
-    # fixed parameter
-    # avoids generating windows in the centromere regions (dubious sequencing)
-    nbWindowLimit = 100
-
-    # To Fill and not returns
+# Returns the same format as the input but with the addition of intergenic regions
+# the output remains sorted
+def addIntergenicWindows(exons):
+    # To Fill and returns
+    exonsAndInterRegion = []
+    
+    # To Fill not returns
     # list of int containing the lengths of each exon
-    lengthExons = []
-    # numpy array of zeros of the length between exons,
-    # if exons overlap the value remains 0
-    distances = np.zeros((len(exons)), dtype=np.int)
-    # list of exons indexes where the next exon is a new gene
-    exonsIndexExtraGenes = []
-    # list of list in the same format as "exons" to store intronic windows
-    intronicWindows = []
+    lenEx = []
 
-    # first run through of exons definitions to extract processing parameters
+    # numpy array of exon lengths set to zero,
+    # if exons overlap, or are on different chromosomes the value remains 0
+    dists = np.zeros((len(exons)), dtype=np.int)
+
+    ####################################
+    # extraction of distances between exons and exon lengths
+    
+    # storing the END position of the current exon when overlapping, 
+    # avoids retrieving the END of the next one as a reference if smaller.
+    prevEND = 0
+
+    for exon in range(len(exons)-1):
+        # parameters to be compared
+        currentCHR = exons[exon][0]
+        currentSTART =  exons[exon][1]
+        currentEND = exons[exon][2]
+        
+        nextCHR = exons[exon + 1][0]
+        nextSTART = exons[exon + 1][1]
+        
+        # extracts exon length
+        lenEx.append(currentEND - currentSTART)
+        
+        # case exons on different chromosomes => next 
+        if (currentCHR != nextCHR):
+            continue
+        
+        # the next overlapping exon is shorter than the previous one
+        if prevEND != 0:
+            if prevEND > currentEND:
+                currentEND = prevEND
+        
+        # where the exons overlap no distance can be calculated => next
+        if (nextSTART - currentEND) <= 0:
+            prevEND = currentEND
+            continue
+        
+        prevEND = 0
+        
+        # extracts the distance between exons once the filters have been passed,
+        # if not it remains at 0
+        dists[exon] = (nextSTART - currentEND)    
+    
+    # to identify the optimal distance between exons the median and mean 
+    # are too influenced by the small intronic distances.
+    # we will only consider the bottom fracDistance fraction of distances, default
+    # value should be fine
+    fracDistance = 0.80
+    # corresponding max distance value, don't take the distances at 0
+    # which are the result of the different filtering
+    interDist = np.quantile(dists[dists > 0], fracDistance)
+
+    # identification of a threshold limit associated with the largest permissible inter-distance,
+    # we assume that the 50 largest distances contain the centromeric regions
+    largeDist = 50
+    sortDist = sorted(dists, reverse=True)
+    maxDist = sortDist[largeDist-1]
+
+    medLenEx = np.median(lenEx)
+    
+    ####################################
+    # populating exonsAndInterRegion
+    # unique naming of each intergenic window created with a counter
+    windowIndex = 1
+
     for exon in range(len(exons) - 1):
-        lengthExons.append(exons[exon][2] - exons[exon][1])
-
-        # where the exons overlap no distance is calculated
-        if exons[exon + 1][1] < exons[exon][2]:
+        # parameters to be compared
+        currentCHR = exons[exon][0]
+        currentEND = exons[exon][2]
+        
+        # Fill current exon
+        exonsAndInterRegion.append(exons[exon])
+        
+        # 0 is associated with overlapping exons or exons on different chromosomes
+        if dists[exon] == 0:
             continue
-
-        distances[exon] = np.round(exons[exon + 1][1] - exons[exon][2])
-
-        # extraction of indices from exons where the next exon is on a different gene
-        nameENSTexon = exons[exon][3].split("_")
-        nameENSTexon1 = exons[exon + 1][3].split("_")
-        if nameENSTexon[0] != nameENSTexon1[0]:
-            exonsIndexExtraGenes.append(exon)
-
-    medianLength = np.int(np.median(lengthExons))
-
-    # recovery of the median of the distances between genes.
-    # Important for MANE transcripts => distances are greater between
-    # genes than between exons of the same gene.
-    # Allows calculation of intronic windows with optimal distances to
-    # canonical exons.
-    medianDistances = np.int(np.median(distances[exonsIndexExtraGenes]))
-
-    # minimum distance between two exons to create a window
-    distances2Target = (medianLength + (2 * medianDistances))
-    # counter to assign a unique EXON_ID for each new window
-    counter = 0
-
-    # second run through of exons definitions to create intronic windows
-    for i in range(len(exons)):
-        # identification of the number of windows to be created
-        intronicWindowsNB = np.int(np.floor(distances[i] / distances2Target))
-
-        # limiting the creation of windows to avoid centromeric regions
-        if intronicWindowsNB >= 1 and intronicWindowsNB < nbWindowLimit:
-            # calculation of the distance to position the window centers
-            # optimally (as far away as possible)
-            cut = np.int(distances[i] / intronicWindowsNB)
-            for f in range(intronicWindowsNB):
-                counter += 1
-                # the range starts at 0, so it is necessary to increment
-                modFactor = f + 1
-                START = np.int(exons[i][2] + (cut * modFactor) - (medianLength / 2))
-                END = np.int(exons[i][2] + (cut * modFactor) + (medianLength / 2))
-                listToFill = [exons[i][0], START, END, "intronic_window_" + str(counter)]
-
-                intronicWindows.append(listToFill)
-        else:
+        
+        # skip centromeric regions
+        if dists[exon] > maxDist:
             continue
+        
+        # the distance is too small to create new windows
+        if dists[exon] < ((2 * interDist) + medLenEx):
+            continue
+        
+        ######
+        # new windows creation
+        # factor(rounded down to the nearest integer) associated with the window number
+        # to be inserted in the distance between exons
+        nbWindows = np.int((dists[exon] - interDist) // (interDist + medLenEx))
+        # new optimal distance deduced from the factor 
+        optiInterDist = np.round((dists[exon] - (nbWindows * medLenEx)) / (nbWindows + 1))
+        
+        # genomic position to define the coordinates for each new window
+        coord = currentEND
+        for i in range(nbWindows): 
+            coord += optiInterDist
+            # Fill the new intergenic window
+            exonsAndInterRegion.append([currentCHR, np.int(coord), np.int(coord + medLenEx) ,
+                                        "intergenic_window_"+str(windowIndex)])
+            coord += medLenEx
+            windowIndex += 1
+            
+    # addition of the last exon
+    exonsAndInterRegion.append(exons[-1])
 
-    logger.info("adding %s new intronic windows to %s canonical exons", len(intronicWindows), len(exons))
-
-    # intronic window additions to "exons"
-    exons.extend(intronicWindows)
-
-    return exons
+    return exonsAndInterRegion
