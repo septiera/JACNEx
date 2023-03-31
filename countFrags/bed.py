@@ -180,10 +180,13 @@ def addIntergenicWindows(exons):
 
         # case exons on different chromosomes => next
         if (currentCHR != nextCHR):
+            # must be reset at each chromosome change
+            prevEND = 0 
             continue
 
         # the next overlapping exon is shorter than the previous one
         if prevEND != 0:
+            # the old exon is longer than the current, keep the old END position
             if prevEND > currentEND:
                 currentEND = prevEND
 
@@ -192,6 +195,7 @@ def addIntergenicWindows(exons):
             prevEND = currentEND
             continue
 
+        # reset because the exons don't overlap 
         prevEND = 0
 
         # extracts the distance between exons once the filters have been passed,
@@ -205,15 +209,16 @@ def addIntergenicWindows(exons):
     fracDistance = 0.80
     # corresponding max distance value, don't take the distances at 0
     # which are the result of the different filtering
-    interDist = np.quantile(dists[dists > 0], fracDistance)
+    interDist = np.int(np.quantile(dists[dists > 0], fracDistance))
 
     # identification of a threshold limit associated with the largest permissible inter-distance,
-    # we assume that the 50 largest distances contain the centromeric regions
-    largeDist = 50
+    # we assume that the 100 largest distances contain the centromeric regions
+    largeDist = 100
     sortDist = sorted(dists, reverse=True)
-    maxDist = sortDist[largeDist - 1]
+    maxDist = np.int(sortDist[largeDist - 1])
 
-    medLenEx = np.median(lenEx)
+    medLenEx = np.int(np.median(lenEx))
+
 
     ####################################
     # populating exonsAndInterRegion
