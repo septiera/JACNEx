@@ -166,6 +166,10 @@ def addIntergenicWindows(exons):
     # avoids retrieving the END of the next one as a reference if smaller.
     prevEND = 0
 
+    # storage int variable for indexes corresponding to the beginning
+    # of each chromosome, used to filter out centromeric regions for each chromosome
+    startChrom = 0
+
     for exon in range(len(exons) - 1):
         # parameters to be compared
         currentCHR = exons[exon][0]
@@ -179,9 +183,16 @@ def addIntergenicWindows(exons):
         lenEx.append(currentEND - currentSTART)
 
         # case exons on different chromosomes => next
-        if (currentCHR != nextCHR):
+        if (currentCHR != nextCHR) or (exon == len(exons) - 2):
             # must be reset at each chromosome change
-            prevEND = 0 
+            prevEND = 0
+
+            # identification of the index of the max distance in dists per
+            # chromosome and replacement by 0
+            # avoids centromeric regions
+            max_index = np.argmax(dists[startChrom:exon])
+            dists[startChrom:exon][max_index] = 0
+            startChrom = exon + 1
             continue
 
         # the next overlapping exon is shorter than the previous one
@@ -195,7 +206,7 @@ def addIntergenicWindows(exons):
             prevEND = currentEND
             continue
 
-        # reset because the exons don't overlap 
+        # reset because the exons don't overlap
         prevEND = 0
 
         # extracts the distance between exons once the filters have been passed,
@@ -211,14 +222,7 @@ def addIntergenicWindows(exons):
     # which are the result of the different filtering
     interDist = np.int(np.quantile(dists[dists > 0], fracDistance))
 
-    # identification of a threshold limit associated with the largest permissible inter-distance,
-    # we assume that the 100 largest distances contain the centromeric regions
-    largeDist = 100
-    sortDist = sorted(dists, reverse=True)
-    maxDist = np.int(sortDist[largeDist - 1])
-
     medLenEx = np.int(np.median(lenEx))
-
 
     ####################################
     # populating exonsAndInterRegion
@@ -235,10 +239,6 @@ def addIntergenicWindows(exons):
 
         # 0 is associated with overlapping exons or exons on different chromosomes
         if dists[exon] == 0:
-            continue
-
-        # skip centromeric regions
-        if dists[exon] > maxDist:
             continue
 
         # the distance is too small to create new windows
