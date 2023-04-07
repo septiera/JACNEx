@@ -2,8 +2,7 @@
 ######################################## MAGE-CNV step 2: Sample clustering  ##################
 ###############################################################################################
 # Given a TSV of fragment counts as produced by 1_countFrags.py:
-# normalize the counts (in FPM = fragments per million), build samples clusters
-# that will be used as controls for one another.
+# build samples clusters that will be used as controls for one another.
 # See usage for details.
 ###############################################################################################
 import sys
@@ -49,10 +48,9 @@ def parseArgs(argv):
 
     usage = "NAME:\n" + scriptName + """\n
 DESCRIPTION:
-Given a TSV of exon fragment counts, normalize the counts (Fragments Per Million), perform
-quality controls on the samples and form the reference clusters for the call.
-The execution of the default command separates autosomes ("A") and gonosomes ("G") for
-clustering, to avoid bias (accepted sex chromosomes: X, Y, Z, W).
+Given a TSV of exon fragment counts, form the reference clusters for the call.
+The default command execution pertains to exons and involves the separation of autosomes ('A')
+and gonosomes ('G') for clustering to prevent bias. The accepted sex chromosomes are X, Y, Z, and W.
 Results are printed to stdout in TSV format: 5 columns
 [CLUSTER_ID, SAMPLES, CONTROLLED_BY, VALIDITY, SPECIFICS]
 In addition, all graphical support (quality control histogram for each sample and
@@ -172,27 +170,15 @@ def main(argv):
     startTime = time.time()
 
     ###################
-    # parse counts
+    # parse counts, performs FPM normalization, distinguishes between intergenic regions and exons
     try:
-        (exons, samples, countsArray) = countFrags.countsFile.parseCountsFile(countsFile)
+        (exons, intergenics, samples, exonsFPM, intergenicsFPM) = countFrags.countsFile.preprocessingCounts(countsFile)
     except Exception as e:
-        logger.error("parseCountsFile failed for %s : %s", countsFile, repr(e))
-        raise Exception("parseCountsFile failed")
+        logger.error("preprocessingCounts failed for %s : %s", countsFile, repr(e))
+        raise Exception("preprocessingCounts failed")
 
     thisTime = time.time()
-    logger.debug("Done parsing countsFile, in %.2fs", thisTime - startTime)
-    startTime = thisTime
-
-    ###################
-    # normalize counts (FPM)
-    try:
-        countsFPM = countFrags.countFragments.normalizeCounts(countsArray)
-    except Exception as e:
-        logger.error("normalizeCounts failed for %s : %s", countsFile, repr(e))
-        raise Exception("normalizeCounts failed")
-
-    thisTime = time.time()
-    logger.debug("Done normalizing counts, in %.2fs", thisTime - startTime)
+    logger.debug("Done preprocess countsFile, in %.2fs", thisTime - startTime)
     startTime = thisTime
 
     # ##########################################
@@ -236,7 +222,7 @@ def main(argv):
     logger.info("### Autosomes, sample clustering:")
     try:
         # get autosomes exons counts
-        autosomesFPM = countsFPM[~maskGonoExIndexes]
+        autosomesFPM = exonsFPM[~maskGonoExIndexes]
         plotAutoDendogramm = os.path.join(plotDir, "Dendogram_" + str(autosomesFPM.shape[1]) + "Samps_autosomes.pdf")
         # applying hierarchical clustering for autosomes exons
         autosClusters = clusterSamps.clustering.clustersBuilds(autosomesFPM, maxCorr, minCorr, minSamps, plotAutoDendogramm)[0]
@@ -253,7 +239,7 @@ def main(argv):
     # Get Gonosomes Clusters
     logger.info("### Gonosomes, sample clustering:")
     try:
-        gonosomesFPM = countsFPM[maskGonoExIndexes]
+        gonosomesFPM = exonsFPM[maskGonoExIndexes]
         # Test if there are gonosomal exons
         # (e.g target sequencing may not be provided in some cases)
         # if not present, no clustering, returns a message in the log
@@ -281,7 +267,7 @@ def main(argv):
         if gonosomesFPM.shape[0] != 0:
             try:
                 gonosomesExons = [exons[i] for i in range(len(exons)) if maskGonoExIndexes[i]]
-                sexAssign = clusterSamps.genderPrediction.sexAssignment(countsFPM, gonosomesExons, samples)
+                sexAssign = clusterSamps.genderPrediction.sexAssignment(exonsFPM, gonosomesExons, samples)
             except Exception as e:
                 logger.error("gender prediction failed: %s", repr(e))
                 raise Exception("genderPrediction failed")

@@ -224,22 +224,6 @@ def bam2counts(bamFile, nbOfExons, maxGap, tmpDir, samtools, jobs, sampleIndex):
         raise Exception(str(sampleIndex))
 
 
-#############################################################
-# normalizeCounts:
-# Normalize the fragment counts, as fragments per million (FPM).
-# This allows to compare samples with each other.
-# Arg: an np.ndarray[int] storing the fragment counts, Dim=NbExons*NbSOIs
-# Returns an np.ndarray[float] with the normalized counts (FPM), same size as countsArray
-@numba.njit
-def normalizeCounts(countsArray):
-    # empty array to be filled with the normalized counts
-    countsNorm = np.zeros_like(countsArray, dtype=np.float32)
-    for sampleCol in range(countsArray.shape[1]):
-        SampleCountsSum = np.sum(countsArray[:, sampleCol])
-        countsNorm[:, sampleCol] = countsArray[:, sampleCol] * (1e6 / SampleCountsSum)
-    return countsNorm
-
-
 ###############################################################################
 ############################ PRIVATE FUNCTIONS ################################
 ###############################################################################
