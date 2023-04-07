@@ -148,8 +148,7 @@ def sortExonsOrBPs(data):
 # The output format remains sorted even after the addition of intergenic regions, with the fourth column
 # indicating unique region names in the format 'intergenic_window_n'.
 def addIntergenicWindows(exons):
-    # To Fill and returns
-    # 
+    # To Fill and return
     genomicWindows = []
 
     # To Fill not returns
@@ -257,7 +256,7 @@ def addIntergenicWindows(exons):
             coord += optiInterDist
             # Fill the new intergenic window
             genomicWindows.append([currentCHR, np.int(coord), np.int(coord + medLenEx),
-                                        "intergenic_window_" + str(windowIndex)])
+                                   "intergenic_window_" + str(windowIndex)])
             coord += medLenEx
             windowIndex += 1
 
