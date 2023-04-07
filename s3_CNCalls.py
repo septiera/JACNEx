@@ -2,8 +2,7 @@
 ######################################## MAGE-CNV step 3: Copy numbers calls ##################
 ###############################################################################################
 # Given a TSV of exon fragment counts and a TSV with clustering information,
-# normalize the counts (in FPM = fragments per million), obtaining the observation
-# probabilities per copy number (CN), per exon and for each sample.
+# obtaining the observation probabilities per copy number (CN), per exon and for each sample.
 # See usage for more details.
 ###############################################################################################
 import sys
@@ -49,8 +48,7 @@ def parseArgs(argv):
     usage = "NAME:\n" + scriptName + """\n
 DESCRIPTION:
 Given a TSV of exon fragment counts and a TSV with clustering information,
-normalize the counts (Fragments Per Million), deduces the copy numbers (CN) observation
-probabilities, per exon and for each sample.
+deduces the copy numbers (CN) observation probabilities, per exon and for each sample.
 Results are printed to stdout in TSV format (possibly gzipped): first 4 columns hold the exon
 definitions padded and sorted, subsequent columns (four per sample, in order CN0,CN2,CN2,CN3+)
 hold the observation probabilities.
@@ -178,16 +176,16 @@ def main(argv):
     logger.info("starting to work")
     startTime = time.time()
 
-    ######################################################
-    # parse counts
+    ###################
+    # parse counts, performs FPM normalization, distinguishes between intergenic regions and exons
     try:
-        (exons, samples, countsArray) = countFrags.countsFile.parseCountsFile(countsFile)
+        (exons, intergenics, samples, exonsFPM, intergenicsFPM) = countFrags.countsFile.preprocessingCounts(countsFile)
     except Exception as e:
-        logger.error("parseCountsFile failed for %s : %s", countsFile, repr(e))
-        raise Exception("parseCountsFile failed")
+        logger.error("preprocessingCounts failed for %s : %s", countsFile, repr(e))
+        raise Exception("preprocessingCounts failed")
 
     thisTime = time.time()
-    logger.debug("Done parsing countsFile, in %.2f s", thisTime - startTime)
+    logger.debug("Done preprocess countsFile, in %.2fs", thisTime - startTime)
     startTime = thisTime
 
     #####################################################
@@ -199,18 +197,6 @@ def main(argv):
 
     thisTime = time.time()
     logger.debug("Done parsing clustsFile, in %.2f s", thisTime - startTime)
-    startTime = thisTime
-
-    ######################################################
-    # normalize counts (FPM)
-    try:
-        countsFPM = countFrags.countFragments.normalizeCounts(countsArray)
-    except Exception as e:
-        logger.error("normalizeCounts failed for %s : %s", countsFile, repr(e))
-        raise Exception("normalizeCounts failed")
-
-    thisTime = time.time()
-    logger.debug("Done normalizing counts, in %.2fs", thisTime - startTime)
     startTime = thisTime
 
     ######################################################
@@ -238,7 +224,7 @@ def main(argv):
         ####################################################
         # CN Calls
         try:
-            futureRes = CNCalls.copyNumbersCalls.CNCalls(countsFPM, CNcallsArray, samples, callsFilled,
+            futureRes = CNCalls.copyNumbersCalls.CNCalls(exonsFPM, CNcallsArray, samples, callsFilled,
                                                          exons, sex2Clust, clusts2Samps, clusts2Ctrls, priors,
                                                          testSmoothingBWs, plotDir)
         except Exception:
