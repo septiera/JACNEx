@@ -55,7 +55,7 @@ def CNCalls(CNcallsArray, clustID, sampsInClusts, ctrlsInClusts, specClusts, exo
     # and indexes of the genomic regions that need to be analyzed
     (allSampsInClust, exonsIndexToProcess, intergenicIndexToProcess) = CNCalls.copyNumbersCalls.extractClustCounts(clustID, sampsInClusts, ctrlsInClusts,
                                                                                                                    specClusts, maskGonoExonsInd, maskGonoIntergenicsInd)
-    exonsFPMClust = exonFPM[exonsIndexToProcess][:, allSampsInClust]
+    exonsFPMClust = exonsFPM[exonsIndexToProcess][:, allSampsInClust]
     intergenicsFPMClust = intergenicsFPM[intergenicIndexToProcess][:, allSampsInClust]
 
     ###########
