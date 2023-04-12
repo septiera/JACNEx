@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 #   - prevCNCallsFile [str]: a CNCalls file (possibly gzipped) produced by printCNCallsFile
 #     for some samples (hopefully some of the samples), using the same exon definitions
 #     as in 'exons', if there is one; or '' otherwise
-#   - prevClustFile [str]: a cluster definition file (possibly gzipped) produced by
+#   - prevClustsFile [str]: a cluster definition file (possibly gzipped) produced by
 #   s2_clusterSamps same timestamp as prevCNCallsFile
 #
 # Returns a tuple (CNcallsArray, callsFilled), each is created here:
@@ -35,14 +35,14 @@ logger = logging.getLogger(__name__)
 # -> for any sample present in both prevCNCallsFile, prevClustFile and samples, and the
 # cluster definition not changes fill the sample's columns in CNcallsArray by
 # copying data from prevCNCallsFile, and set callsFilled[sample] to True
-def extractObservedProbsFromPrev(exons, samples, clusts2Samps, prevCNCallsFile, prevClustFile):
+def extractObservedProbsFromPrev(exons, samples, clusts2Samps, prevCNCallsFile, prevClustsFile):
     # numpy arrays to be returned:
     # observedProbsArray[exonIndex,sampleIndex] will store the specified probabilities
     # for each copy number type (CN0,CN1,CN2,CN3+)
     CNcallsArray = allocateCNCallsArray(len(exons), len(samples))
     # callsFilled: same size and order as sampleNames, value will be set
     # to True if probabilities were filled from callsFile
-    callsFilled = np.array([False] * len(samples))
+    callsFilled = np.zeros(len(samples), dtype=bool)
 
     if (prevCNCallsFile != ''):  # identical to prevClustFile != ''
         ###################################
@@ -57,7 +57,7 @@ def extractObservedProbsFromPrev(exons, samples, clusts2Samps, prevCNCallsFile, 
 
         ###################################
         # we have a prevClusts file parse it
-        prevclusts2Samps = clusterSamps.clustering.parseClustsFile(prevClustFile)[0]
+        prevclusts2Samps = clusterSamps.clustering.parseClustsFile(prevClustsFile)[0]
 
         # fill prev2new to identify samples that are in prevCallsFile:
         # prev2new is a 1D numpy array, size = len(prevSamples), prev2new[prev] is the
@@ -72,12 +72,12 @@ def extractObservedProbsFromPrev(exons, samples, clusts2Samps, prevCNCallsFile, 
         # compare clusters definitions
         # warning : the clusters obtained between one version and another can have a different
         # cluster identifier (key) but the composition of the group remains unchanged
-        for keyCurrent, valueCurrent in clusts2Samps.items():
-            for keyPrev, valuePrev in prevclusts2Samps.items():
+        for valueCurrent in clusts2Samps.values():
+            for valuePrev in prevclusts2Samps.values():
                 if valueCurrent == valuePrev:
                     for i in valueCurrent:
                         prev2new[prevIndexes[samples.index[i]]] = prevIndexes[i]
-                        callsFilled[samples.index[i]] = True
+                        callsFilled[samples.index[i]] = 1
 
         # Fill CNcallsArray with prev probabilities data
         for i in range(len(exons)):
@@ -130,12 +130,15 @@ def printCNCallsFile(emissionArray, exons, samples, outFile):
         logger.error("Cannot (gzip-)open CNCallsFile %s: %s", outFile, e)
         raise Exception('cannot (gzip-)open CNCallsFile')
 
+    ### header definitions
     toPrint = "CHR\tSTART\tEND\tEXON_ID\t"
     for i in samples:
         for j in range(4):
             toPrint += f"{i}_CN{j}_prob" + "\t"
 
     outFH.write(toPrint.rstrip())
+    
+    #### fill results
     for i in range(len(exons)):
         toPrint = exons[i][0] + "\t" + str(exons[i][1]) + "\t" + str(exons[i][2]) + "\t" + exons[i][3]
         toPrint += calls2str(emissionArray, i)
@@ -148,7 +151,7 @@ def printCNCallsFile(emissionArray, exons, samples, outFile):
 ############################ PRIVATE FUNCTIONS ################################
 ###############################################################################
 #############################################################
-# parseCNCallsPrivate: [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
+# parseCNCallsPrivate
 # Arg:
 #  - CNcallsFile [str]: produced by s3_CNCalls.py, possibly gzipped
 #
