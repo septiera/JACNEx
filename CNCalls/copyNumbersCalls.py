@@ -28,32 +28,27 @@ logger = logging.getLogger(__name__)
 # Obtaining observation probabilities for each copy number type (CN0, CN1, CN2, CN3+)
 # for each sample per exon.
 # Arguments:
-# - countsFPM (np.ndarray[float]): normalised counts
 # - CNcallsArray (np.ndarray[float): probabilities, dim = NbExons x (NbSamples*4), initially -1
-# - samples: sample of interest names
 # - callsFilled (np.ndarray[bool]): samples filled from prevCallsArray, dim = NbSamples
+# - exonsFPM (np.ndarray[float]): normalised counts from exons
+# - intergenicsFPM (np.ndarray[float]): normalised counts from intergenic windows
 # - exons (list of lists[str,int,int,str]): information on exon, containing CHR,START,END,EXON_ID
-# - sex2Clust dict[str, list[str]]: key: "A" autosomes or "G" gonosome, value: clusterID list
 # - clusts2Samps (dict[str, List[int]]): key: clusterID , value: samples index list
 # - clusts2Ctrls (dict[str, List[str]]): key: clusterID, value: controlsID list
+# - gonoClustIDStart [str]: first clusterID from gonosomes clustering results
 # - priors (list[float]): prior probability for each copy number type in the order [CN0, CN1,CN2,CN3+].
-# - testBW: if True each plot includes several different KDE bandwidth algorithms/values,
-#     for testing and comparing; otherwise use what seems best in our tests
 # - plotDir (str): subdir (created if needed) where result plots files will be produced
 # Returns:
-# - emissionArray (np.ndarray[float]): contain probabilities. dim=NbExons * (NbSamples*[CN0,CN1,CN2,CN3+])
-def CNCalls(countsFPM, CNcallsArray, samples, callsFilled, exons, sex2Clust, clusts2Samps, clusts2Ctrls, priors, testBW, plotDir):
+# - CNcallsArray (np.ndarray[float]): contain probabilities. dim=NbExons * (NbSamples*[CN0,CN1,CN2,CN3+])
+def CNCalls(CNcallsArray, callsFilled, exonsFPM, intergenicsFPM, exons, clusts2Samps, clusts2Ctrls, gonoClustIDStart, priors, plotDir):
 
     # create a matplotlib object and open a pdf
     pdfFile = os.path.join(plotDir, "ResCNCallsByCluster.pdf")
     PDF = matplotlib.backends.backend_pdf.PdfPages(pdfFile)
 
-    # when discriminating between genders,
     # identifying autosomes and gonosomes "exons" index
     # to make calls on associated reference groups.
-    if sex2Clust:
-        gonoIndex, _ = clusterSamps.genderDiscrimination.getGenderInfos(exons)
-        maskAutosome_Gonosome = ~np.isin(np.arange(countsFPM.shape[0]), sorted(set(sum(gonoIndex.values(), []))))
+    maskGonoExIndexes = clusterSamps.getGonosomesExonsIndexes.getSexChrIndexes(exons)
 
     ##############################
     # Browse clusters
@@ -61,13 +56,9 @@ def CNCalls(countsFPM, CNcallsArray, samples, callsFilled, exons, sex2Clust, clu
     for clustID in clusts2Samps:
         ##################################
         ##### cluster sanity filters
-        # no calling for failed samples
-        if clustID == "Samps_QCFailed":
-            continue
-
         # test if the samples of the cluster have already been analysed
         # and the filling of CNcallsArray has been done
-        sampsIndex = [i for i, val in enumerate(samples) if val in clusts2Samps[clustID]]
+        sampsIndex = clusts2Samps[clustID]
         sub_t = callsFilled[sampsIndex]
         if all(sub_t):
             logger.info("samples in cluster %s, already filled from prevCallsFile", clustID)
@@ -75,22 +66,17 @@ def CNCalls(countsFPM, CNcallsArray, samples, callsFilled, exons, sex2Clust, clu
 
         ##################################
         ##### extract cluster infos
-        # retrieve sample names and exons index
-        samps2Compare = extractSamps(clustID, clusts2Samps, clusts2Ctrls)
-        samps2CompareIndex = [i for i, val in enumerate(samples) if val in clusts2Samps[clustID]]
-        logger.info("Cluster %s, nb samples sortie fonction %s", clustID, len(samps2Compare))
-
-        if sex2Clust:
-            exonsIndex = extractExons(clustID, sex2Clust, maskAutosome_Gonosome)
+        # warning this generates views on the initial table but has no impact on the code 
+        # as no modification is required on these sub parts of the table
+        # select samples
+        exonsFPMClust = exonsFPM[:, sampsIndex]
+        intergenicsFPMClust = intergenicsFPM[:, sampsIndex]
+        
+        # selection of clustering-specific exons (gonosomes or autosomes)
+        if clustID >= gonoClustIDStart:
+            exonsFPMClust = exonsFPMClust[maskGonoExIndexes]
         else:
-            exonsIndex = range(len(exons))
-
-        # Create Boolean masks for columns and rows (speed method)
-        col_mask = np.isin(np.arange(countsFPM.shape[1]), samps2CompareIndex, invert=True)
-        row_mask = np.isin(np.arange(countsFPM.shape[0]), exonsIndex, invert=False)
-
-        # Use the masks to index the 2D numpy array
-        clusterCounts = countsFPM[np.ix_(row_mask, col_mask)]
+            exonsFPMClust = exonsFPMClust[~maskGonoExIndexes]
 
         ###########
         # Initialize a hash allowing to detail the filtering carried out
@@ -101,21 +87,21 @@ def CNCalls(countsFPM, CNcallsArray, samples, callsFilled, exons, sex2Clust, clu
         ##################################
         # smoothing coverage profil averaged by exons, fit gamma distribution.
         try:
-            (gammaParams, lowThreshold) = fitGammaDistribution(clusterCounts, clustID, PDF, testBW=testBW)
+            (expParams, UncoverThreshold) = fitExponential(intergenicsFPMClust)
         except Exception as e:
-            logger.error("fitGammaDistribution failed for cluster %s : %s", clustID, repr(e))
-            raise Exception("fitGammaDistribution failed")
+            logger.error("fitExponential failed for cluster %s : %s", clustID, repr(e))
+            raise Exception("fitExponential failed")
 
         ##############################
         # Browse cluster-specific exons
         ##############################
-        for clustExon in range(clusterCounts.shape[0]):
+        for clustExon in range(exonsFPMClust.shape[0]):
             # Print progress every 10000 exons
             if clustExon % 10000 == 0:
                 logger.info("ClusterID %s: %s  %s ", clustID, clustExon, time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()))
 
             # Get count data for the exon
-            exonFPM = clusterCounts[clustExon]
+            exonFPM = exonsFPMClust[clustExon]
 
             ###################
             # Filter n°1: exon not covered in most samples.
@@ -145,7 +131,7 @@ def CNCalls(countsFPM, CNcallsArray, samples, callsFilled, exons, sex2Clust, clu
 
             ########################
             # apply Filters n°3 and n°4:
-            if failedFilters(exonFPM, RGParams, lowThreshold, filterCounters):
+            if failedFilters(exonFPM, RGParams, UncoverThreshold, filterCounters):
                 continue
 
             filterCounters["exonsCalls"] += 1
@@ -175,162 +161,65 @@ def CNCalls(countsFPM, CNcallsArray, samples, callsFilled, exons, sex2Clust, clu
 ###############################################################################
 ############################ PRIVATE FUNCTIONS ################################
 ###############################################################################
-# extractSamps
-# Given a cluster identifier and dictionaries reporting cluster information
-# Extraction sample names
-# Args:
-# - clustID [str] : cluster identifier
-# - clusts2Samps (dict[str: list[int]]): key:cluster identifier, value: samples names list
-# - clusts2Ctrls (dict[str: list[str]]): key:cluster identifier, value: list of control clusters
-# Returns:
-# - samplesIndex (list[int]): samples names in current cluster
-def extractSamps(clustID, clusts2Samps, clusts2Ctrls):
-    # Get sample names in the cluster and its controls
-    sampsList = clusts2Samps[clustID].copy()
-    if clustID in clusts2Ctrls:
-        for sampInControl in clusts2Ctrls[clustID]:
-            sampsList.extend(clusts2Samps[sampInControl].copy())
-    return sampsList
-
-
 #############################################################
-# extractExons
-# Given a cluster identifier and dictionaries reporting cluster sexual information
-# Extraction exons indexes (specific to autosomes or gonosomes)
-# Args:
-# - clustID [str] : cluster identifier
-# - sex2Clust (dict[str, list[str]]): for "A" autosomes or "G" gonosomes a list of corresponding clusterIDs is associated
-# - mask (numpy.ndarray[bool]): boolean mask 1: autosome exon indexes, 0: gonosome exon indexes. dim=NbExons
-# Returns:
-# - exonsIndex (list[int]): exons indexes in current cluster
-def extractExons(clustID, sex2Clust, mask):
-    ##### ROW indexes in countsFPM => exons
-    # in case there are specific autosome and gonosome clusters.
-    # identification of the indexes of the exons associated with the gonosomes or autosomes.
-    if sex2Clust:
-        if clustID in sex2Clust["A"]:
-            exonsIndex = np.where(mask)[0]
-        else:
-            exonsIndex = np.where(~mask)[0]
-    else:
-        exonsIndex = range(len(mask))
-
-    return exonsIndex
-
-
-#############################################################
-# fitGammaDistribution
+# fitExponential
 # Given a counts array for a specific cluster identifier, coverage profile
 # smoothing deduced from FPM averages per exon.
-# Returns the parameters of a distribution that best fits the coverage profile
-# of poorly covered exons and a FPM threshold (lowThreshold).
-# Exons with FPM lower than this lowThreshold are both uncaptured, poorly
-# covered and potentially homodeleted.
+# Fit an exponential law to the data of intergenic regions associated with
+# the non-coverage profile.
+# f(x, scale) = (1/scale)*exp(-x/scale)
+# scale parameter is the inverse of the rate parameter (lambda) used in the
+# mathematical definition of the distribution.
+# It is the mean of the distribution and controls the location of the distribution on the x-axis.
+# location parameter is an optional parameter that controls the location of the distribution on the x-axis.
+# The exponential law is the best-fitting law to the windows created at the
+# best step, out of a set of 101 continuous laws tested simultaneously on both
+# the Ensembl and MANE bed.
+# A threshold is calculated as the point where 99% of the cumulative distribution
+# function of the fitted exponential law separates covered and uncovered regions.
+# This threshold will be used in the rest of the script to filter out uninterpretable
+# exons that are not covered.
 # Args:
-# - clusterCounts (np.ndarray[floats]): counts array
-# - clustID (str): cluster identifier
-# - pdf (matplotlib object): store plots in a single pdf
-# - minLow2high (float): a sample's fractional density increase from min to max must
-#     be >= minLow2high to pass QC - default should be OK
-# - testBW: if True each plot includes several different KDE bandwidth algorithms/values,
-#     for testing and comparing; otherwise use what seems best in our tests
-# Returns a tupple (gammaParams, lowThreshold), each variable is created here:
-# - gammaParams (tuple of floats): estimated parameters of the gamma distribution
-# - lowThreshold (float): value corresponding to 95% of the gamma cumulative distribution
-# function
-def fitGammaDistribution(clusterCounts, clustID, pdf, minLow2high=0.2, testBW=False):
-    #### To Fill:
-    gammaParams = []
-    lowThreshold = 0
+# - intergenicsFPMClust (np.ndarray[floats]): FPM array specific to a cluster
+# - clustID [str]: cluster identifier
+# - bandwidth [int]: KDE bandwidth value, default value should be fine
+# Returns a tupple (expParams, UncoverThreshold), each variable is created here:
+# - expParams [tuple of floats]: estimated parameters (x2) of the exponential distribution
+# - UncoverThreshold [float]: threshold for separating covered and uncovered regions,
+# which corresponds to the FPM value at 99% of the CDF
+def fitExponential(intergenicsFPMClust, bandWidth=0.5):
+    #### To Fill and returns:
+    expParams = []
+    # vertical dashed lines: coordinates (default to 0 ie no lines) and legends
+    UncoverThreshold = 0
 
-    # compute meanFPM by exons
+    # compute meanFPM by intergenic regions
     # save computation time instead of taking the raw data (especially for clusters
     # with many samples)
-    meanCountByExons = np.mean(clusterCounts, axis=1)
+    meanIntergenicFPM = np.mean(intergenicsFPMClust, axis=1)
 
-    # for smoothing and plotting we don't care about large counts (and they mess things up),
-    # we will only consider the bottom fracDataForSmoothing fraction of counts, default
+    # for smoothing and plotting we don't care about large FPM values (and they mess things up),
+    # we will only consider the bottom fracDataForSmoothing fraction of FPM values, default
     # value should be fine
     fracDataForSmoothing = 0.96
     # corresponding max counts value
-    maxData = np.quantile(meanCountByExons, fracDataForSmoothing)
+    maxData = np.quantile(meanIntergenicFPM, fracDataForSmoothing)
 
-    # produce smoothed representation(s) (one if testBW==False, several otherwise)
-    dataRanges = []
-    densities = []
-    legends = []
-
-    # vertical dashed lines: coordinates (default to 0 ie no lines) and legends
-    (xmin, xmax) = (0, 0)
-    (line1legend, line2legend) = ("", "")
-
-    if testBW:
-        allBWs = ('ISJ', 0.15, 0.20, 'scott', 'silverman')
-    else:
-        # our current favorite, gasp at the python-required trailing comma...
-        allBWs = ('ISJ',)
-
-    for bw in allBWs:
-        try:
-            (dr, dens, bwValue) = clusterSamps.smoothing.smoothData(meanCountByExons, maxData=maxData, bandwidth=bw)
-        except Exception as e:
-            logger.error('smoothing failed for %s : %s', str(bw), repr(e))
-            raise
-        dataRanges.append(dr)
-        densities.append(dens)
-        legend = str(bw)
-        if isinstance(bw, str):
-            legend += ' => bw={:.2f}'.format(bwValue)
-        legends.append(legend)
-
-    # find indexes of first local min density and first subsequent local max density,
-    # looking only at our first smoothed representation
+    # Smoothing the average coverage profile of intergenic regions allows fitting the exponential
+    # to sharper densities than the raw data
     try:
-        (minIndex, maxIndex) = clusterSamps.smoothing.findFirstLocalMinMax(densities[0])
+        (dr, dens, bwValue) = clusterSamps.smoothing.smoothData(meanIntergenicFPM, maxData=maxData, bandwidth=bandWidth)
     except Exception as e:
-        logger.info("coverage profil of cluster %s is bad: %s", clustID, str(e))
-    else:
-        (xmin, ymin) = (dataRanges[0][minIndex], densities[0][minIndex])
-        (xmax, ymax) = (dataRanges[0][maxIndex], densities[0][maxIndex])
-        line1legend = "min FPM = " + '{:0.2f}'.format(xmin)
+        logger.error('smoothing failed for %s : %s', str(bandWidth), repr(e))
+        raise
 
-        # require at least minLow2high fractional increase from ymin to ymax
-        if ((ymax - ymin) / ymin) < minLow2high:
-            logger.info("coverage profil of cluster %s is bad: min (%.2f,%.2f) and max (%.2f,%.2f) densities too close",
-                        clustID, xmin, ymin, xmax, ymax)
+    # Fitting the exponential distribution and retrieving associated parameters => tupple(scale,loc)
+    expParams = scipy.stats.expon.fit(dens)
 
-        countsExonsNotCovered = meanCountByExons[meanCountByExons <= dr[minIndex]]
+    # Calculating the threshold in FPM equivalent to 99% of the CDF (PPF = percent point function)
+    UncoverThreshold = scipy.stats.expon.ppf(0.99, *expParams)
 
-        countsExonsNotCovered.sort()  # sort data in-place
-
-        # The gamma distribution was chosen after testing 101 continuous distribution laws,
-        #  -it has few parameters (3 in total: shape, loc, scale=1/beta),
-        #  -is well-known, and had the best goodness of fit on the empirical data.
-        # estimate the parameters of the gamma distribution that best fits the data
-        gammaParams = scipy.stats.gamma.fit(countsExonsNotCovered)
-
-        # cumulative distribution
-        cdf = scipy.stats.gamma.cdf(countsExonsNotCovered, a=gammaParams[0], loc=gammaParams[1], scale=gammaParams[2])
-
-        # find the index of the last element where cdf < 0.95
-        thresholdIndex = np.where(cdf < 0.95)[0][-1]
-
-        lowThreshold = countsExonsNotCovered[thresholdIndex]
-        line2legend = "low threshold FPM = " + '{:0.2f}'.format(lowThreshold)
-
-    # plot all the densities for sampleIndex in a single plot
-    title = "density of exon mean FPMs from cluster n°"+ clustID + "\nSampsNB=" + str(clusterCounts.shape[1]) + "\nExonsNB=" + str(clusterCounts.shape[0]) 
-    # max range on Y axis for visualization, 3*ymax should be fine
-    ylim = 3 * ymax
-
-    clusterSamps.qualityControl.plotDensities(title, dataRanges, densities, legends, xmin, lowThreshold, line1legend, line2legend, ylim, pdf)
-
-    if len(gammaParams) == 0:
-        raise ValueError("no fit of gamma distribution")
-    elif lowThreshold == 0:
-        raise ValueError("low threshold cannot be calculated")
-
-    return (gammaParams, lowThreshold)
+    return (expParams, UncoverThreshold)
 
 
 #############################################################
