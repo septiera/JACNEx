@@ -13,7 +13,7 @@ import logging
 
 ####### MAGE-CNV modules
 import countFrags.countsFile
-import countFrags.countFragments
+import countFrags.clustFile
 import clusterSamps.clustering
 import CNCalls.CNCallsFile
 import CNCalls.copyNumbersCalls
@@ -41,7 +41,7 @@ def parseArgs(argv):
     outFile = ""
     # optionnal args with default values
     prevCNCallsFile = ""
-    prevClustFile = ""
+    prevClustsFile = ""
     priors = "0.001,0.01,0.979,0.01"
     plotDir = "./ResultPlots/"
 
@@ -97,7 +97,7 @@ ARGUMENTS:
         elif (opt in ("--prevcncalls")):
             prevCNCallsFile = value
         elif (opt in ("--prevclusts")):
-            prevClustFile = value
+            prevClustsFile = value
         elif (opt in ("--priors")):
             priors = value
         elif (opt in ("--plotDir")):
@@ -126,14 +126,14 @@ ARGUMENTS:
 
     #####################################################
     # Check other args
-    if (prevCNCallsFile != "" and prevClustFile == "") or (prevCNCallsFile == "" and prevClustFile != ""):
+    if (prevCNCallsFile != "" and prevClustsFile == "") or (prevCNCallsFile == "" and prevClustsFile != ""):
         raise Exception("you should not use --cncalls and --prevclusts alone but together. Try " + scriptName + " --help")
 
     if (prevCNCallsFile != "") and (not os.path.isfile(prevCNCallsFile)):
         raise Exception("CNCallsFile " + prevCNCallsFile + " doesn't exist")
 
-    if (prevClustFile != "") and (not os.path.isfile(prevClustFile)):
-        raise Exception("previous clustering File " + prevClustFile + " doesn't exist")
+    if (prevClustsFile != "") and (not os.path.isfile(prevClustsFile)):
+        raise Exception("previous clustering File " + prevClustsFile + " doesn't exist")
 
     try:
         priors = [float(x) for x in priors.split(",")]
@@ -150,7 +150,7 @@ ARGUMENTS:
             raise Exception("plotDir " + plotDir + " doesn't exist and can't be mkdir'd: " + str(e))
 
     # AOK, return everything that's needed
-    return(countsFile, newClustsFile, outFile, prevCNCallsFile, prevClustFile, priors, plotDir)
+    return(countsFile, newClustsFile, outFile, prevCNCallsFile, prevClustsFile, priors, plotDir)
 
 
 ###############################################################################
@@ -164,7 +164,7 @@ ARGUMENTS:
 # may be available in the log
 def main(argv):
     # parse, check and preprocess arguments
-    (countsFile, clustsFile, outFile, prevCNCallsFile, prevClustFile, priors, plotDir) = parseArgs(argv)
+    (countsFile, clustsFile, outFile, prevCNCallsFile, prevClustsFile, priors, plotDir) = parseArgs(argv)
 
     # should density plots compare several different KDE bandwidth algorithms and values?
     # hard-coded here rather than set via parseArgs because this should only be set
@@ -191,7 +191,7 @@ def main(argv):
     #####################################################
     # parse clusts
     try:
-        (clusts2Samps, clusts2Ctrls, sex2Clust) = clusterSamps.clustering.parseClustsFile(clustsFile)
+        (sampsInClusts, ctrlsInClusts, validClusts, specClusts) = clusterSamps.clustFile.parseClustsFile(clustsFile, samples)
     except Exception as e:
         raise Exception("parseClustsFile failed for %s : %s", clustsFile, repr(e))
 
@@ -204,7 +204,7 @@ def main(argv):
     # if CNCallsFile and prevClustFile are provided.
     # also returns a boolean np.array to identify the samples to be reanalysed if the clusters change
     try:
-        (CNcallsArray, callsFilled) = CNCalls.CNCallsFile.extractObservedProbsFromPrev(exons, samples, clusts2Samps, prevCNCallsFile, prevClustFile)
+        (CNcallsArray, callsFilled) = CNCalls.CNCallsFile.extractObservedProbsFromPrev(exons, samples, sampsInClusts, prevCNCallsFile, prevClustsFile)
     except Exception as e:
         raise Exception("extractObservedProbsFromPrev failed - " + str(e))
 
@@ -215,20 +215,44 @@ def main(argv):
     # total number of samples that still need to be processed
     nbOfSamplesToProcess = len(samples)
     for samplesIndex in range(len(samples)):
-        if callsFilled[samplesIndex] and samplesIndex not in clusts2Ctrls["Samps_QCFailed"]:
+        if callsFilled[samplesIndex]:
             nbOfSamplesToProcess -= 1
 
     if nbOfSamplesToProcess == 0:
         logger.info("all provided samples are in previous callsFile and clusters are the same, not producing a new one")
     else:
         ####################################################
-        # CN Calls
-        try:
-            futureRes = CNCalls.copyNumbersCalls.CNCalls(exonsFPM, CNcallsArray, samples, callsFilled,
-                                                         exons, sex2Clust, clusts2Samps, clusts2Ctrls, priors,
-                                                         testSmoothingBWs, plotDir)
-        except Exception:
-            raise Exception("CNCalls failed")
+        # CN Calls        
+        
+        # identifying autosomes and gonosomes "exons" index
+        # to make calls on associated reference groups.
+        maskGonoExonsInd = clusterSamps.getGonosomesExonsIndexes.getSexChrIndexes(exons)
+        maskGonoIntergenicsInd = clusterSamps.getGonosomesExonsIndexes.getSexChrIndexes(exons)
+        ##############################
+        # Browse clusters
+        ##############################
+        for clustID in range(len(sampsInClusts)):    
+            
+            ##### validity sanity check
+            if validClusts[clustID] == 0:
+                logger.warning("cluster %s is invalid, low sample number", clustID)
+                continue
+            
+            ##### previous data sanity filters
+            # test if the samples of the cluster have already been analysed
+            # and the filling of CNcallsArray has been done
+            sub_t = callsFilled[sampsInClusts[clustID]]
+            if all(sub_t):
+                logger.info("samples in cluster %s, already filled from prevCallsFile", clustID)
+                continue
+            
+            #
+            try:                
+                futureRes = CNCalls.copyNumbersCalls.CNCalls(CNcallsArray, clustID, sampsInClusts,
+                                                             ctrlsInClusts, specClusts, exonsFPM,
+                                                             intergenicsFPM, exons, priors, plotDir)
+            except Exception:
+                raise Exception("CNCalls failed")
 
         thisTime = time.time()
         logger.debug("Done Copy Number Calls, in %.2f s", thisTime - startTime)
