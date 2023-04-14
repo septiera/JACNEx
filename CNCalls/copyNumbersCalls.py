@@ -8,8 +8,9 @@ import matplotlib.backends.backend_pdf
 import time
 
 import clusterSamps.smoothing
-import clusterSamps.genderDiscrimination
+import clusterSamps.getGonosomesExonsIndexes
 import clusterSamps.qualityControl
+import figures.plots
 
 # prevent PIL flooding the logs when we are in DEBUG loglevel
 logging.getLogger('PIL').setLevel(logging.WARNING)
@@ -40,23 +41,26 @@ logger = logging.getLogger(__name__)
 # - plotDir (str): subdir (created if needed) where result plots files will be produced
 # Returns:
 # - CNcallsArray (np.ndarray[float]): contains probabilities. dim=NbExons * (NbSamples*[CN0,CN1,CN2,CN3+])
-def CNCalls(CNcallsArray, clustID, sampsInClusts, ctrlsInClusts, specClusts, exonsFPM, intergenicsFPM, exons, priors, plotDir):
+def CNCalls(CNcallsArray, samples, clustID, sampsInClusts, ctrlsInClusts, specClusts, exonsFPM, intergenicsFPM, exons, priors, plotDir):
 
-    # create a matplotlib object and open a pdf
-    pdfFile = os.path.join(plotDir, "ResCNCallsByCluster.pdf")
-    PDF = matplotlib.backends.backend_pdf.PdfPages(pdfFile)
+    # for DEV: creation of folder and matplotlib object for storing plots for monitoring.
+    if plotDir:
+        PDF_Files = []
+        PDFPaths = ["F1_median.pdf", "F2_RGnotFit.pdf", "F3_zscore.pdf",
+                    "F4_weight.pdf", "PASS_HOMODEL.pdf", "PASS_HETDEL.pdf",
+                    "PASS_DUP.pdf", "PASS.pdf", "filteringRes_PieChart.pdf"]
+        for path in PDFPaths:
+            PDF_Files.append(matplotlib.backends.backend_pdf.PdfPages(os.path.join(plotDir, path)))
 
     # identifying autosomes and gonosomes "exons" index
     # to make calls on associated reference groups.
-    maskGonoExonsInd = clusterSamps.getGonosomesExonsIndexes.getSexChrIndexes(exons)
-    maskGonoIntergenicsInd = clusterSamps.getGonosomesExonsIndexes.getSexChrIndexes(exons)
+    maskGExIndexes = clusterSamps.getGonosomesExonsIndexes.getSexChrIndexes(exons)
 
     # Retrieval of cluster-specific data, all samples in the case of a presence of a control cluster,
     # and indexes of the genomic regions that need to be analyzed
-    (allSampsInClust, exonsIndexToProcess, intergenicIndexToProcess) = CNCalls.copyNumbersCalls.extractClustCounts(clustID, sampsInClusts, ctrlsInClusts,
-                                                                                                                   specClusts, maskGonoExonsInd, maskGonoIntergenicsInd)
-    exonsFPMClust = exonsFPM[exonsIndexToProcess][:, allSampsInClust]
-    intergenicsFPMClust = intergenicsFPM[intergenicIndexToProcess][:, allSampsInClust]
+    (allSampsInClust, exIndToProcess) = CNCalls.copyNumbersCalls.extractClustDimCounts(clustID, sampsInClusts, ctrlsInClusts, specClusts, maskGExIndexes)
+    exonsFPMClust = exonsFPM[exIndToProcess][:, allSampsInClust]
+    intergenicsFPMClust = intergenicsFPM[:, allSampsInClust]
 
     ###########
     # Initialize a hash allowing to detail the filtering carried out
@@ -67,7 +71,7 @@ def CNCalls(CNcallsArray, clustID, sampsInClusts, ctrlsInClusts, specClusts, exo
     ##################################
     # smoothing coverage profil averaged by exons, fit gamma distribution.
     try:
-        (expParams, UncoverThreshold) = fitExponential(intergenicsFPMClust)
+        (expParams, UncoverThreshold) = CNCalls.copyNumbersCalls.fitExponential(intergenicsFPMClust)
     except Exception as e:
         logger.error("fitExponential failed for cluster %s : %s", clustID, repr(e))
         raise Exception("fitExponential failed")
@@ -76,12 +80,30 @@ def CNCalls(CNcallsArray, clustID, sampsInClusts, ctrlsInClusts, specClusts, exo
     # Browse cluster-specific exons
     ##############################
     for clustExon in range(exonsFPMClust.shape[0]):
+        xLists = []
+        yLists = []
+        plotLegs = []
+        verticalLines = []
+        vertLinesLegs = []
+        ylim = 2
+
+        plotTitle = "ClusterID n° {} exon:{}" .format(str(clustID), '_'.join([str(e) for e in exons[exIndToProcess[clustExon]]]))
+
         # Print progress every 10000 exons
         if clustExon % 10000 == 0:
-            logger.info("ClusterID %s: %s  %s ", clustID, clustExon, time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()))
+            print("ClusterID n°", clustID, clustExon, time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()))
 
         # Get count data for the exon
         exonFPM = exonsFPMClust[clustExon]
+        xi = np.linspace(0, max(exonFPM), 1000)
+
+        pdfExp = scipy.stats.expon.pdf(xi, *expParams)
+        xLists.append(xi)
+        yLists.append(pdfExp)
+        plotLegs.append("\nexpon={:.2f}, {:.2f}".format(expParams[0], expParams[1]))
+
+        verticalLines.append(UncoverThreshold)
+        vertLinesLegs.append("UncoverThreshold={:.3f}".format(UncoverThreshold))
 
         ###################
         # Filter n°1: exon not covered in most samples.
@@ -93,6 +115,12 @@ def CNCalls(CNcallsArray, clustID, sampsInClusts, ctrlsInClusts, specClusts, exo
         medianFPM = np.median(exonFPM)
         if medianFPM == 0:
             filterCounters["notCaptured"] += 1
+
+            # plot F1
+            if filterCounters["notCaptured"] % 100 == 0:
+                plotTitle += "\nmedian=" + '{:.2f}'.format(medianFPM)
+                figures.plots.plotExonProfil(exonFPM, xLists, yLists, plotLegs, verticalLines, vertLinesLegs, plotTitle, ylim, PDF_Files[0])
+
             continue
 
         ###################
@@ -101,40 +129,125 @@ def CNCalls(CNcallsArray, clustID, sampsInClusts, ctrlsInClusts, specClusts, exo
         # in an area without point data.
         # in this case exon is not kept for the rest of the filtering and calling step
         try:
-            RGParams = fitRobustGaussian(exonFPM)
+            RGParams = CNCalls.copyNumbersCalls.fitRobustGaussian(exonFPM)
         except Exception as e:
             if str(e) == "cannot fit":
                 filterCounters["cannotFitRG"] += 1
+
+                # plot F2
+                plotTitle += "\nmedian=" + '{:.2f}'.format(medianFPM)
+                figures.plots.plotExonProfil(exonFPM, xLists, yLists, plotLegs, verticalLines, vertLinesLegs, plotTitle, ylim, PDF_Files[1])
+
                 continue
             else:
                 raise
 
         ########################
         # apply Filters n°3 and n°4:
-        if failedFilters(exonFPM, RGParams, UncoverThreshold, filterCounters):
+        # if failedFilters(exonFPM, RGParams, UncoverThreshold, filterCounters):
+        #    continue
+        # setting a threshold associated with standard deviation tolerated around the lowThreshold
+
+        sdThreshold = 3
+        meanRG = RGParams[0]
+        stdevRG = RGParams[1]
+
+        pdfCN2 = scipy.stats.norm.pdf(xi, meanRG, stdevRG)
+        xLists.append(xi)
+        yLists.append(pdfCN2)
+        plotLegs.append("\nRG CN2={:.2f}, {:.2f}".format(meanRG, stdevRG))
+
+        ylim = 2 * max(pdfCN2)
+
+        ###################
+        # Filter n°3:
+        # the mean != 0 and all samples have the same coverage value.
+        # In this case a new arbitrary standard deviation is calculated
+        # (simulates 5% on each side of the mean)
+        if (stdevRG == 0):
+            stdevRG = meanRG / 20
+
+        # meanRG != 0 because of filter 1 => stdevRG != 0
+        z_score = (meanRG - UncoverThreshold) / stdevRG
+
+        # the exon is excluded if there are less than 3 standard deviations between
+        # the threshold and the mean.
+        if (z_score < sdThreshold):
+            filterCounters["RGClose2LowThreshold"] += 1
+
+            # plot F3
+            if filterCounters["RGClose2LowThreshold"] % 100 == 0:
+                plotTitle += "\nzscore={:.2f}".format(z_score)
+
+                figures.plots.plotExonProfil(exonFPM, xLists, yLists, plotLegs, verticalLines, vertLinesLegs, plotTitle, ylim, PDF_Files[2])
+
+            continue
+
+        ###################
+        # Filter n°4:
+        weight = CNCalls.copyNumbersCalls.computeWeight(exonFPM, meanRG, stdevRG)
+        if (weight < 0.5):
+            filterCounters["fewSampsInRG"] += 1
+
+            # plot F3
+            if filterCounters["fewSampsInRG"] % 100 == 0:
+                plotTitle += "\nzscore={:.2f}".format(z_score) + "\nweight={:.2f}".format(weight)
+                figures.plots.plotExonProfil(exonFPM, xLists, yLists, plotLegs, verticalLines, vertLinesLegs, plotTitle, ylim, PDF_Files[3])
+
             continue
 
         filterCounters["exonsCalls"] += 1
+        # CN2 mean shift to get CN1 mean
+        meanCN1 = meanRG / 2
+        pdfCN1 = scipy.stats.norm.pdf(xi, meanCN1, stdevRG)
+        xLists.append(xi)
+        yLists.append(pdfCN1)
+        plotLegs.append("\nRG CN1={:.2f}, {:.2f}".format(meanCN1, stdevRG))
+
+        pdfCN3 = scipy.stats.norm.pdf(xi, 3 * meanCN1, stdevRG)
+        xLists.append(xi)
+        yLists.append(pdfCN3)
+        plotLegs.append("\nRG CN3={:.2f}, {:.2f}".format(3 * meanCN1, stdevRG))
 
         ###################
         # compute probabilities for each sample and each CN type
         # fill CNCallsArray
-        for i in sampsInClusts[clustID]:
-            sampFPM = exonFPM[allSampsInClust.index(i)]
-            sampIndexInCallsArray = sampFPM.index(i) * 4
+        # for i in sampsInClusts[clustID]:
+        i = sampsInClusts[clustID][0]
+        sampFPM = exonFPM[allSampsInClust.index(i)]
+        sampIndexInCallsArray = i * 4
 
-            probNorm = computeProbabilites(sampFPM, expParams, RGParams, priors, UncoverThreshold)
+        probNorm = CNCalls.copyNumbersCalls.computeProbabilites(sampFPM, expParams, RGParams, priors, UncoverThreshold)
 
-            for val in range(4):
-                if CNcallsArray[exonsIndexToProcess[clustExon], (sampIndexInCallsArray + val)] == -1:
-                    CNcallsArray[exonsIndexToProcess[clustExon], (sampIndexInCallsArray + val)] = probNorm[val]
-                else:
-                    logger.error('erase previous probabilities values')
+        ### Plot
+        verticalLines.append(sampFPM)
+        vertLinesLegs.append("sample index=" + samples[i])
+        plotTitle += "\nprobs={:.2f},{:.2f},{:.2f},{:.2f}".format(probNorm[0], probNorm[1], probNorm[2], probNorm[3])
 
-    filtersPiePlot(clustID, filterCounters, PDF)
+        index_maxProb = np.argmax(probNorm)
 
-    # close the open pdf
-    PDF.close()
+        if index_maxProb == 0:
+            figures.plots.plotExonProfil(exonFPM, xLists, yLists, plotLegs, verticalLines, vertLinesLegs, plotTitle, ylim, PDF_Files[4])
+        elif index_maxProb == 1:
+            figures.plots.plotExonProfil(exonFPM, xLists, yLists, plotLegs, verticalLines, vertLinesLegs, plotTitle, ylim, PDF_Files[5])
+        elif index_maxProb == 3:
+            if filterCounters["exonsCalls"] % 100 == 0:
+                figures.plots.plotExonProfil(exonFPM, xLists, yLists, plotLegs, verticalLines, vertLinesLegs, plotTitle, ylim, PDF_Files[6])
+        else:
+            if filterCounters["exonsCalls"] % 5000 == 0:
+                figures.plots.plotExonProfil(exonFPM, xLists, yLists, plotLegs, verticalLines, vertLinesLegs, plotTitle, ylim, PDF_Files[7])
+
+        for val in range(4):
+            if CNcallsArray[exIndToProcess[clustExon], (sampIndexInCallsArray + val)] == -1:
+                CNcallsArray[exIndToProcess[clustExon], (sampIndexInCallsArray + val)] = probNorm[val]
+            else:
+                logger.error('erase previous probabilities values')
+
+    figures.plots.plotPieChart(clustID, filterCounters, PDF_Files[8])
+
+    # close the open pdfs
+    for pdf in PDF_Files:
+        pdf.close()
     return(CNcallsArray)
 
 
@@ -142,12 +255,11 @@ def CNCalls(CNcallsArray, clustID, sampsInClusts, ctrlsInClusts, specClusts, exo
 ############################ PRIVATE FUNCTIONS ################################
 ###############################################################################
 #############################################################
-# extractClustCounts
+# extractClustDimCounts
 # This function takes the index/ID of a cluster and various arrays containing information
-# about the clusters and FPM counts as input, and extracts the FPM counts for exons and
-# intergenic regions in the given cluster, accounting for the presence of control clusters
-# and gonosomal regions. The function returns the FPM counts for exons and intergenic
-# regions in the cluster, along with a list of all samples in the cluster.
+# about the clusters and FPM counts as input, and extracts the exons and
+# intergenic regions indexes from counts in the given cluster, accounting for the presence
+# of control clusters and gonosomal regions.
 # Args:
 # - clustID [int]: the index/ID of the cluster
 # - sampsInClusts (list of lists[str]): each sub-list contains the sample IDs for a given cluster
@@ -160,13 +272,10 @@ def CNCalls(CNcallsArray, clustID, sampsInClusts, ctrlsInClusts, specClusts, exo
 # - allSampsInClust (list[str]): a list of all sample IDs in the cluster
 # - exonsIndexToProcess (list[int]): indixes of exons to process
 # - intergenicIndexToProcess (list[int]): indixes of intergenic regions to process
-
-@numba.njit
-def extractClustCounts(clustID, sampsInClusts, ctrlsInClusts, specClusts, maskGonoExonsInd, maskGonoIntergenicsInd):
+def extractClustDimCounts(clustID, sampsInClusts, ctrlsInClusts, specClusts, maskGonoExonsInd):
     # To fill and returns
     allSampsInClust = []
     exonsIndexToProcess = []
-    intergenicIndexToProcess = []
 
     # Get specific cluster samples
     allSampsInClust.extend(sampsInClusts[clustID].copy())
@@ -179,12 +288,10 @@ def extractClustCounts(clustID, sampsInClusts, ctrlsInClusts, specClusts, maskGo
     # Check if the cluster comes from autosomes or gonosomes, and extract exons/intergenic regions indexes
     if specClusts[clustID] == 0:
         exonsIndexToProcess.extend(np.where(~maskGonoExonsInd)[0].tolist())
-        intergenicIndexToProcess.extend(np.where(~maskGonoIntergenicsInd)[0].tolist())
     else:
         exonsIndexToProcess.extend(np.nonzero(~maskGonoExonsInd)[0].tolist())
-        intergenicIndexToProcess.extend(np.nonzero(~maskGonoIntergenicsInd)[0].tolist())
 
-    return(allSampsInClust, exonsIndexToProcess, intergenicIndexToProcess)
+    return(allSampsInClust, exonsIndexToProcess)
 
 
 #############################################################
@@ -224,17 +331,10 @@ def fitExponential(intergenicsFPMClust, bandWidth=0.5):
     # with many samples)
     meanIntergenicFPM = np.mean(intergenicsFPMClust, axis=1)
 
-    # for smoothing and plotting we don't care about large FPM values (and they mess things up),
-    # we will only consider the bottom fracDataForSmoothing fraction of FPM values, default
-    # value should be fine
-    fracDataForSmoothing = 0.96
-    # corresponding max counts value
-    maxData = np.quantile(meanIntergenicFPM, fracDataForSmoothing)
-
     # Smoothing the average coverage profile of intergenic regions allows fitting the exponential
     # to sharper densities than the raw data
     try:
-        (dr, dens, bwValue) = clusterSamps.smoothing.smoothData(meanIntergenicFPM, maxData=maxData, bandwidth=bandWidth)
+        (dr, dens, bwValue) = clusterSamps.smoothing.smoothData(meanIntergenicFPM, maxData=max(meanIntergenicFPM), bandwidth=bandWidth)
     except Exception as e:
         logger.error('smoothing failed for %s : %s', str(bandWidth), repr(e))
         raise
@@ -402,7 +502,7 @@ def computeWeight(fpm_in_exon, mean, standard_deviation):
 # - lowThreshold (float):
 # Returns:
 # - probDensPriors (np.ndarray[float]): p(i|Ci)p(Ci) for each copy number (CN0,CN1,CN2,CN3+)
-def computeProbabilites(sampFPM, gammaParams, RGParams, priors, lowThreshold):
+def computeProbabilites(sampFPM, expParams, RGParams, priors, UncoverThreshold):
     mean = RGParams[0]
     standard_deviation = RGParams[1]
 
@@ -422,12 +522,9 @@ def computeProbabilites(sampFPM, gammaParams, RGParams, priors, lowThreshold):
     # is higher than the mean of the Gaussian associated to CN1.
     # Reversely, the value of the pdf is truncated from the threshold value discriminating
     # covered from uncovered exons.
-    cdf_cno_threshold = scipy.stats.gamma.cdf(lowThreshold, a=gammaParams[0], loc=gammaParams[1], scale=gammaParams[2])
+    cdf_cno_threshold = scipy.stats.gamma.cdf(UncoverThreshold, *expParams)
     if sampFPM <= meanCN1:
-        probDensities[0] = (1 / (1 - cdf_cno_threshold)) * scipy.stats.gamma.pdf(sampFPM,
-                                                                                 a=gammaParams[0],
-                                                                                 loc=gammaParams[1],
-                                                                                 scale=gammaParams[2])
+        probDensities[0] = (1 / (1 - cdf_cno_threshold)) * scipy.stats.gamma.pdf(sampFPM, *RGParams)
 
     ################
     # Calculate the probability densities for the remaining cases (CN1,CN2,CN3+) using the normal distribution
@@ -440,9 +537,9 @@ def computeProbabilites(sampFPM, gammaParams, RGParams, priors, lowThreshold):
     probDensPriors = np.multiply(probDensities, priors)
 
     # normalized probabilities
-    probNorm = probDensPriors / np.sum(probDensPriors)
+    # probNorm = probDensPriors / np.sum(probDensPriors)
 
-    return probNorm
+    return probDensPriors
 
     ######## EARLY RETURN, for dev step4
     ################
@@ -473,27 +570,3 @@ def computeProbabilites(sampFPM, gammaParams, RGParams, priors, lowThreshold):
 #     epsilon = min_prob / epsilon_factor
 #     probs = np.where(probs == 0, epsilon, probs)
 #     return probs
-
-
-#############################################################
-# filtersPiePlot:
-# generates a pie by cluster resuming the filtering of exons
-# Args:
-# - clustID [str]: cluster identifier
-# - filterCounters (dict[str:int]): dictionary of exon counters of different filtering
-# performed for the cluster
-# - pdf (matplotlib object): store plots in a single pdf
-#
-# save a plot in the output pdf
-def filtersPiePlot(clustID, filterCounters, pdf):
-
-    fig = matplotlib.pyplot.figure(figsize=(6, 6))
-    matplotlib.pyplot.pie(filterCounters.values(), labels=filterCounters.keys(),
-                          autopct=lambda x: str(round(x, 2)) + '%',
-                          startangle=-270,
-                          pctdistance=0.7,
-                          labeldistance=1.1)
-    matplotlib.pyplot.title("Filtered and called exons from cluster " + clustID)
-
-    pdf.savefig(fig)
-    matplotlib.pyplot.close()
