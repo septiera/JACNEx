@@ -222,37 +222,31 @@ def main(argv):
         logger.info("all provided samples are in previous callsFile and clusters are the same, not producing a new one")
     else:
         ####################################################
-        # CN Calls        
-        
-        # identifying autosomes and gonosomes "exons" index
-        # to make calls on associated reference groups.
-        maskGonoExonsInd = clusterSamps.getGonosomesExonsIndexes.getSexChrIndexes(exons)
-        maskGonoIntergenicsInd = clusterSamps.getGonosomesExonsIndexes.getSexChrIndexes(exons)
+        # CN Calls
         ##############################
         # Browse clusters
         ##############################
-        for clustID in range(len(sampsInClusts)):    
-            
-            ##### validity sanity check
-            if validClusts[clustID] == 0:
-                logger.warning("cluster %s is invalid, low sample number", clustID)
-                continue
-            
-            ##### previous data sanity filters
-            # test if the samples of the cluster have already been analysed
-            # and the filling of CNcallsArray has been done
-            sub_t = callsFilled[sampsInClusts[clustID]]
-            if all(sub_t):
-                logger.info("samples in cluster %s, already filled from prevCallsFile", clustID)
-                continue
-            
-            #
-            try:                
-                futureRes = CNCalls.copyNumbersCalls.CNCalls(CNcallsArray, clustID, sampsInClusts,
-                                                             ctrlsInClusts, specClusts, exonsFPM,
-                                                             intergenicsFPM, exons, priors, plotDir)
-            except Exception:
-                raise Exception("CNCalls failed")
+        # for clustID in range(len(sampsInClusts)):
+        clustID = 8  # 102 samples
+        ##### validity sanity check
+        if validClusts[clustID] == 0:
+            logger.warning("cluster %s is invalid, low sample number", clustID)
+            # continue
+
+        ##### previous data sanity filters
+        # test if the samples of the cluster have already been analysed
+        # and the filling of CNcallsArray has been done
+        sub_t = callsFilled[sampsInClusts[clustID]]
+        if all(sub_t):
+            logger.info("samples in cluster %s, already filled from prevCallsFile", clustID)
+            # continue
+
+        try:
+            futureRes = CNCalls.copyNumbersCalls.CNCalls(CNcallsArray, clustID, sampsInClusts,
+                                                         ctrlsInClusts, specClusts, exonsFPM,
+                                                         intergenicsFPM, exons, priors, plotDir)
+        except Exception:
+            raise Exception("CNCalls failed")
 
         thisTime = time.time()
         logger.debug("Done Copy Number Calls, in %.2f s", thisTime - startTime)
