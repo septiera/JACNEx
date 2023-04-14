@@ -48,7 +48,7 @@ def parseClustsFile(clustsFile, samples):
     # To fill not returns
     # boolean array to check that all samples in countsFile are in clustFile.
     # This is only done for autosomes since analysis on gonosomes may be missing
-    sampsAutoClusts = np.zeros(len(samples)), np.zeros(len(samples))
+    sampsAutoClusts = np.zeros(len(samples))
 
     for ind, line in enumerate(clustsFH):
         # finding information from the 5 columns
