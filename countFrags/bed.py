@@ -16,12 +16,12 @@ logger = logging.getLogger(__name__)
 #            formatted as CHR START END EXON_ID
 #        padding (int)
 #
-# Returns a list of [numberOfExons] lists of 4 scalars (types: str,int,int,str)
-# containing CHR,START,END,EXON_ID, and where:
-# - exons are padded, ie -padding for START (never negative) and +padding for END
-# - intergenic regions are introduced
-# - exons and intergenic regions are sorted by CHR, then START, then END, then EXON_ID
-
+# Returns a list of [numberOfExons + numberOfPseudoExons] lists of 4 scalars
+# (types: str,int,int,str) containing CHR,START,END,EXON_ID, and where:
+# - exons from bedFile are padded, ie -padding for START (never negative) and +padding for END
+# - pseudo-exons are inserted between consecutive exons when they are far apart, as specified
+#   by insertPseudoExons()
+# - exons and pseudo-exons are sorted by CHR, then START, then END, then EXON_ID
 def processBed(bedFile, padding):
     # list of exons to be returned
     exons = []
@@ -65,11 +65,9 @@ def processBed(bedFile, padding):
         exons.append(fields)
     bedFH.close()
 
-    # Done parsing bedFile, sort exons and return
+    # Done parsing bedFile -> sort exons, insert pseudo-exons, and return
     sortExonsOrBPs(exons)
-    # add intergenic windows
-    genomicWindows = addIntergenicWindows(exons)
-
+    genomicWindows = insertPseudoExons(exons)
     return(genomicWindows)
 
 
@@ -135,6 +133,52 @@ def sortExonsOrBPs(data):
     return()
 
 
+###############################################################################
+############################ PRIVATE FUNCTIONS ################################
+###############################################################################
+
+####################################################
+# Given a list of exons, return a similar list containing the original exons as
+# well as "pseudo-exons", which are inserted between each pair of consecutive
+# exons provided that the exons are far enough apart. The goal is to produce
+# pseudo-exons in intergenic (or very long intronic) regions.
+# Specifically:
+# - EXON_ID for pseudo-exons is 'intergenic_N' (N is an int)
+# - pseudo-exon length = median of exon lengths
+# - minimum distance between a pseudo-exon and an exon or pseudo-exon = the q-th quantile
+#   of inter-exon distances (q == interExonQuantile defined below)
+# - if several pseudo-exons can fit in an inter-exon gap, produce as many as possible
+# - pseudo-exons are evenly spaced in their inter-exon gap
+# - the longest inter-exon gap on each chromosome is not populated with pseudo-exons (goal:
+#    avoid centromeres)
+#
+# Arg:
+# - exons == list of lists [str, int, int, str] containing CHR,START,END,EXON_ID,
+#   sorted by sortExonsOrBPs()
+#
+# Returns a new sorted list of exon-like structures, comprising the exons + pseudo-exons
+def insertPseudoExons(exons):
+    # to fill and return
+    genomicWindows = []
+
+    # interExonQuantile: hard-coded between 0 and 1, a larger value increases the distance
+    # between pseudo-exons and exons (and therefore decreases the total number of pseudo-exons)
+    interExonQuantile = 0.8
+
+    ############################
+    # first pass, determine:
+    # - median exon length
+    # - longest inter-exon distance per chromosome
+    # - interExonQuantile-th quantile of inter-exon distances
+
+
+    ############################
+    # second pass: populate and return genomicWindows
+
+
+
+    
+    
 ####################################################
 # addIntergenicWindows
 # To generate a reliable non-coverage profile, intergenic regions can be added to canonical exons.
