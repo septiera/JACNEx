@@ -190,9 +190,10 @@ def insertPseudoExons(exons):
             prevEnd = exon[2]
             chom2longestIED[prevChrom] = 0
         else:
-            # same chrom: always store inter-exon dist, negative if overlapping
+            # same chrom: store inter-exon dist if exons don't overlap
             interExDist = exon[1] - prevEnd - 1
-            interExonDistances.append(interExDist)
+            if interExDist > 0:
+                interExonDistances.append(interExDist)
             if interExDist > chom2longestIED[prevChrom]:
                 chom2longestIED[prevChrom] = interExDist
             # update prevEnd unless exon is fully included in prev
