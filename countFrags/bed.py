@@ -215,7 +215,7 @@ def insertPseudoExons(exons):
             interExDist = exon[1] - prevEnd - 1
             # number of pseudo-exons to create between previous exon and this exon
             # (negative if they overlap or are very close)
-            pseudoExonCount = (interExDist - selectedIED) / (selectedIED + medianExonLength)
+            pseudoExonCount = (interExDist - selectedIED) // (selectedIED + medianExonLength)
             if (interExDist < chom2longestIED[prevChrom]) and (pseudoExonCount > 0):
                 # distance between (pseudo-)exons to use so they are evenly spaced
                 thisIED = (interExDist - (pseudoExonCount * medianExonLength)) // (pseudoExonCount + 1)
