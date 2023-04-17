@@ -200,6 +200,8 @@ def insertPseudoExons(exons):
 
     medianExonLength = int(np.median(exonLengths))
     selectedIED = int(np.quantile(interExonDistances, interExonQuantile))
+    logger.info("Creating intergenic pseudo-exons: length = %i , interExonDistance = %i",
+                medianExonLength, selectedIED)
 
     ############################
     # second pass: populate genomicWindows
@@ -219,11 +221,12 @@ def insertPseudoExons(exons):
             if (interExDist < chom2longestIED[prevChrom]) and (pseudoExonCount > 0):
                 # distance between (pseudo-)exons to use so they are evenly spaced
                 thisIED = (interExDist - (pseudoExonCount * medianExonLength)) // (pseudoExonCount + 1)
-                thisStart = prevEnd + thisIED
+                thisStart = prevEnd + thisIED + 1
                 for i in range(pseudoExonCount):
                     genomicWindows.append([prevChrom, thisStart, thisStart + medianExonLength - 1,
                                            "intergenic_" + str(pseudoExonNum)])
-                    thisStart += medianExonLength + selectedIED
+                    # += (medianExonLength -1) + (thisIED + 1) , simplified to:
+                    thisStart += medianExonLength + thisIED
                     pseudoExonNum += 1
             # whether pseudo-exons were created or not, update prevEnd and append exon
             prevEnd = max(prevEnd, exon[2])
