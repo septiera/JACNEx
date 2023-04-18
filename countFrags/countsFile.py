@@ -76,76 +76,63 @@ def extractCountsFromPrev(genomicWindows, SOIs, prevCountsFile):
 
 
 #############################################################
-# preprocessingCounts:
-# Parse the count data, normalize it to fragments per million, and separate the data
-# to extract the information specific to exonic and intergenic regions.
+# parseAndNormalizeCounts:
+# Parse the counts data in countsFile, normalize it as fragments per million (FPM),
+# and return the results separately for exons and intergenic pseudo-exons.
+# NOTE: FPM normalization is performed on exon and intergenic counts combined,
+# otherwise intergenic FPMs become huge and meaningless.
+#
 # Arg:
 #   - a countsFile produced by 1_countFrags.py, possibly gzipped
 #
-# Returns a tuple (exons, intergenics, samples, exonsCountsFPM, intergenicCountsFPM),
-# each is created here and populated
-# by parsing countsFile:
-# -> 'exons' is a list of exons same as returned by processBed, ie each
-#    exon is a lists of 4 scalars (types: str,int,int,str) containing CHR,START,END,EXON_ID
-#    copied from the first 4 columns of countsFile, in the same order
-# -> 'intergenics' is a list of intergenic windows, same format as 'exons'
-# -> 'samples' is the list of sampleIDs (ie strings) copied from countsFile's header
-# -> 'exonsFPM' is a floating numpy array of normalized FPM counts of exons, dim = len(exons) x len(samples)
-# -> 'intergenicsFPM' is a floating numpy array of normalized FPM counts of intergenic regions,
-# dim = len(intergenics) x len(samples)
-def preprocessingCounts(countsFile):
+# Returns a tuple (samples, exons, intergenics, exonCountsFPM, intergenicCountsFPM),
+# each is created here and populated by parsing countsFile:
+# -> 'samples' is the list of sampleIDs (strings) copied from countsFile's header
+# -> 'exons' and 'intergenics' are lists of (pseudo-)exons as produced by processBed,
+#    copied from the first 4 columns of countsFile; EXON_ID is used to decide whether
+#    each window is an exon or an intergenic pseudo-exon
+# -> 'exonCountsFPM' and 'intergenicCountsFPM' are numpy 2D-arrays of floats, of sizes
+#    len(exons) x len(samples) and len(intergenics) x len(samples), holding the
+#    FPM-normalized counts for exons and intergenic pseudo-exons
+def parseAndNormalizeCounts(countsFile):
     (genomicWindows, samples, countsList) = parseCountsFile(countsFile)
 
-    # countsArray[exonIndex,sampleIndex] will store the specified count
-    countsArray = allocateCountsArray(len(genomicWindows), len(samples))
-
-    # To fill and returns
+    # First pass: identify exons vs intergenic pseudo-exons, populate exons and intergenics,
+    # and calculate sum of counts for each sample
     exons = []
     intergenics = []
+    isExon = np.zeros(len(genomicWindows), dtype=bool)
+    sumOfCounts = np.zeros(len(samples), dtype=np.uint32)
 
-    # To fill not returns
-    # For each index of the genomic regions, it contains the status 'True' for exonic regions and
-    # 'False' for intergenic regions
-    boolIntergenics = np.zeros(len(genomicWindows), dtype=bool)
-
-    # Fill countsArray from countsList, distinguishing between intergenic regions and exons
-    # => construct two lists of lists from genomicWindows (exons, intergenics) and fills
-    # boolIntergenic with 'True' when the condition is satisfied
     for i in range(len(genomicWindows)):
-        countsVec2array(countsArray, i, countsList[i])
-        if genomicWindows[i][3].startswith("intergenic"):
+        if genomicWindows[i][3].startswith("intergenic_"):
             intergenics.append(genomicWindows[i])
-            boolIntergenics[i] = 1
         else:
             exons.append(genomicWindows[i])
+            isExon[i] = True
+        sumOfCounts += countsList[i]
 
-    # FPM normalization is performed on the entire counts array without distinction.
-    # The normalization is almost unaffected by the intergenic counts, which range from 0.1% to 0.4%
-    # of the total fragment counts
-    countsNorm = normalizeCounts(countsArray)
+    # Second pass: populate exonCountsFPM and intergenicCountsFPM, normalizing
+    # the counts on the fly
+    exonCountsFPM = np.zeros((len(exons), len(samples)), dtype=np.float32)
+    intergenicCountsFPM = np.zeros((len(intergenics), len(samples)), dtype=np.float32)
+    # indexes of next exon / intergenic window to populate
+    nextExonIndex = 0
+    nextIntergenicIndex = 0
 
-    # Separate the countsNorm array based on boolIntergenic
-    # Obtain specific normalised counts for intergenic regions and exons in two separate NumPy arrays
-    exonsFPM = countsNorm[~boolIntergenics, :]
-    intergenicsFPM = countsNorm[boolIntergenics, :]
+    for i in range(len(genomicWindows)):
+        if isExon[i]:
+            exonCountsFPM[nextExonIndex] = countsList[i] / sumOfCounts
+            nextExonIndex += 1
+        else:
+            intergenicCountsFPM[nextIntergenicIndex] = countsList[i] / sumOfCounts
+            nextIntergenicIndex += 1
 
-    return(exons, intergenics, samples, exonsFPM, intergenicsFPM)
+    # scale to FPMs
+    exonCountsFPM *= 1e6
+    intergenicCountsFPM *= 1e6
 
-
-#############################################################
-# normalizeCounts:
-# Normalize the fragment counts, as fragments per million (FPM).
-# This allows to compare samples with each other.
-# Arg: an np.ndarray[int] storing the fragment counts, Dim=NbgenomicWindows*NbSOIs
-# Returns an np.ndarray[float] with the normalized counts (FPM), same size as countsArray
-@numba.njit
-def normalizeCounts(countsArray):
-    # empty array to be filled with the normalized counts
-    countsNorm = np.zeros_like(countsArray, dtype=np.float32)
-    for sampleCol in range(countsArray.shape[1]):
-        SampleCountsSum = np.sum(countsArray[:, sampleCol])
-        countsNorm[:, sampleCol] = countsArray[:, sampleCol] * (1e6 / SampleCountsSum)
-    return countsNorm
+    return(samples, exons, intergenics, exonCountsFPM, intergenicCountsFPM)
 
 
 #############################################################

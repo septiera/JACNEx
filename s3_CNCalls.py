@@ -177,15 +177,15 @@ def main(argv):
     startTime = time.time()
 
     ###################
-    # parse counts, performs FPM normalization, distinguishes between intergenic regions and exons
+    # parse counts, perform FPM normalization, distinguish between intergenic regions and exons
     try:
-        (exons, intergenics, samples, exonsFPM, intergenicsFPM) = countFrags.countsFile.preprocessingCounts(countsFile)
+        (samples, exons, intergenics, exonsFPM, intergenicsFPM) = countFrags.countsFile.parseAndNormalizeCounts(countsFile)
     except Exception as e:
-        logger.error("preprocessingCounts failed for %s : %s", countsFile, repr(e))
-        raise Exception("preprocessingCounts failed")
+        logger.error("parseAndNormalizeCounts failed for %s : %s", countsFile, repr(e))
+        raise Exception("parseAndNormalizeCounts failed")
 
     thisTime = time.time()
-    logger.debug("Done preprocess countsFile, in %.2fs", thisTime - startTime)
+    logger.debug("Done parseAndNormalizeCounts, in %.2fs", thisTime - startTime)
     startTime = thisTime
 
     #####################################################

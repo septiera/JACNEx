@@ -224,6 +224,8 @@ def insertPseudoExons(exons):
                 thisIED = (interExDist - (pseudoExonCount * medianExonLength)) // (pseudoExonCount + 1)
                 thisStart = prevEnd + thisIED + 1
                 for i in range(pseudoExonCount):
+                    # if EXON_ID for the intergenic pseudo-exons changes here, it MUST ALSO
+                    # change in parseAndNormalizeCounts() in countsFile.py
                     genomicWindows.append([prevChrom, thisStart, thisStart + medianExonLength - 1,
                                            "intergenic_" + str(pseudoExonNum)])
                     # += (medianExonLength -1) + (thisIED + 1) , simplified to:
