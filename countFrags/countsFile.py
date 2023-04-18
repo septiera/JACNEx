@@ -18,25 +18,29 @@ logger = logging.getLogger(__name__)
 #############################################################
 # extractCountsFromPrev:
 # Args:
-#   - genomicWindows: exons and intergenic regions definitions as returned by processBed, padded and sorted
-#   - SOIs: a list of samples of interest (ie list of strings)
-#   - prevCountsFile: a countsFile (possibly gzipped) produced by printCountsFile
-#     for some samples (hopefully some of the SOIs), using the same genomic region definitions
-#     as in 'genomicWindows', if there is one; or '' otherwise
+#   - genomicWindows: exon and pseudo-exon definitions as returned by processBed
+#   - SOIs: list of samples of interest (ie list of strings)
+#   - prevCountsFile: a countsFile (possibly gzipped) produced by printCountsFile for some
+#     samples (hopefully some of the SOIs), using the same (pseudo-)exon definitions
+#     as in 'genomicWindows', if such a file is available; or '' otherwise
 #
 # Returns a tuple (countsArray, countsFilled), each is created here:
-#   - countsArray is an int numpy array, dim = NbgenomicWindows x NbSOIs, initially all-zeroes
+#   - countsArray is an int numpy array, dim = NbGenomicWindows x NbSOIs, initially all-zeroes
 #   - countsFilled is a 1D boolean numpy array, dim = NbSOIs, initially all-False
 #
-# If prevCountsFile=='' return the (all-zeroes/all(-False) arrays
+# If prevCountsFile=='' return the (all-zeroes/all-False) arrays
 # Otherwise:
-# -> make sure prevCountsFile was produced with the same BED+padding as genomicWindows, else raise exception;
+# -> make sure prevCountsFile was produced with the same BED+padding as genomicWindows,
+#    else raise exception;
 # -> for any sample present in both prevCounts and SOIs, fill the sample's column in
 #    countsArray by copying data from prevCounts, and set countsFilled[sample] to True
 def extractCountsFromPrev(genomicWindows, SOIs, prevCountsFile):
     # numpy arrays to be returned:
     # countsArray[exonIndex,sampleIndex] will store the specified count
-    countsArray = allocateCountsArray(len(genomicWindows), len(SOIs))
+    # order=F should improve performance, since we fill the array one column
+    # at a time when parsing BAMs
+    # dtype=np.uint32 should be fast and sufficient
+    countsArray = np.zeros((len(genomicWindows), len(SOIs)), dtype=np.uint32, order='F')
     # countsFilled: same size and order as sampleNames, value will be set
     # to True iff counts were filled from countsFile
     countsFilled = np.array([False] * len(SOIs))
@@ -44,11 +48,11 @@ def extractCountsFromPrev(genomicWindows, SOIs, prevCountsFile):
     if (prevCountsFile != ''):
         # we have a prevCounts file, parse it
         (prevGenomicWindows, prevSamples, prevCountsList) = parseCountsFile(prevCountsFile)
-        # compare genomic regions definitions
+        # compare genomicWindows definitions
         if (genomicWindows != prevGenomicWindows):
-            logger.error("genomic regions definitions disagree between prevCountsFile and BED, " +
+            logger.error("(pseudo-)exon definitions disagree between prevCountsFile and BED, " +
                          "countsFiles cannot be re-used if the BED file or padding changed")
-            raise Exception('mismatched genomic regions')
+            raise Exception('mismatched genomicWindows')
 
         # fill prev2new to identify SOIs that are in prevCountsFile:
         # prev2new is a 1D numpy array, size = len(prevSamples), prev2new[prev] is the
@@ -147,8 +151,8 @@ def normalizeCounts(countsArray):
 #############################################################
 # printCountsFile:
 # Args:
-#   - 'genomicWindows' is a list of exons and intergenic regions same as returned by processBed, ie each regions is a lists
-#     of 4 scalars (types: str,int,int,str) containing CHR,START,END,EXON_ID
+#   - 'genomicWindows' is a list of exons and pseudo-exons as returned by processBed, ie each
+#     (pseudo-)exon is a list of 4 scalars (types: str,int,int,str) containing CHR,START,END,EXON_ID
 #   - 'samples' is a list of sampleIDs
 #   - 'countsArray' is an int numpy array, dim = len(genomicWindows) x len(samples)
 #   - 'outFile' is a filename that doesn't exist, it can have a path component (which must exist),
@@ -181,14 +185,14 @@ def printCountsFile(genomicWindows, samples, countsArray, outFile):
 ###############################################################################
 
 #############################################################
-# parseCountsFilePrivate: [PRIVATE FUNCTION, DO NOT CALL FROM OUTSIDE]
+# parseCountsFile:
 # Arg:
 #   - a countsFile produced by 1_countFrags.py, possibly gzipped
 #
 # Returns a tuple (genomicWindows, samples, countsList), each is created here:
-# -> 'genomicWindows' is a list of exons and intergenic regions same as returned by processBed,
-#    ie each regions is a lists of 4 scalars (types: str,int,int,str) containing CHR,START,END,EXON_ID
-#    copied from the first 4 columns of countsFile, in the same order
+# -> 'genomicWindows' is a list of exons and pseudo-exons as returned by processBed,
+#    ie each (pseudo-)exon is a list of 4 scalars (types: str,int,int,str) containing
+#    CHR,START,END,EXON_ID copied from the first 4 columns of countsFile, in the same order
 # -> 'samples' is the list of sampleIDs (ie strings) copied from countsFile's header
 # -> 'countsList' is a list of len(genomicWindows) uint32 numpy arrays of size len(samples), filled
 #    with the counts from countsFile
@@ -202,9 +206,9 @@ def parseCountsFile(countsFile):
         logger.error("Opening provided countsFile %s: %s", countsFile, e)
         raise Exception('cannot open countsFile')
 
-    # list of genomic regions to be returned
+    # list of (pseudo-)exons to return
     genomicWindows = []
-    # list of counts to be returned
+    # list of counts to return
     countsList = []
 
     # grab samples from header
@@ -224,19 +228,6 @@ def parseCountsFile(countsFile):
         countsList.append(counts)
     countsFH.close()
     return(genomicWindows, samples, countsList)
-
-
-#############################################################
-# allocateCountsArray:
-# Args:
-#   - numGenomicWindows, numSamples
-# Returns an all-zeroes int numpy array, dim = numGenomicWindows x numSamples, adapted for
-# storing the counts
-def allocateCountsArray(numGenomicWindows, numSamples):
-    # order=F should improve performance, since we fill the array one column
-    # at a time when parsing BAMs
-    # dtype=np.uint32 should be fast and sufficient
-    return(np.zeros((numGenomicWindows, numSamples), dtype=np.uint32, order='F'))
 
 
 #################################################
