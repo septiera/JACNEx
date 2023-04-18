@@ -111,6 +111,8 @@ def parseAndNormalizeCounts(countsFile):
             exons.append(genomicWindows[i])
             isExon[i] = True
         sumOfCounts += countsList[i]
+    # if any sample has sumOfCounts==0, replace by 1 to avoid dividing by zero
+    sumOfCounts[sumOfCounts == 0] = 1
 
     # Second pass: populate exonCountsFPM and intergenicCountsFPM, normalizing
     # the counts on the fly
