@@ -104,15 +104,31 @@ def plotDendogram(linksMatrix, labelsGp, minDist, CM, pdf):
 #
 # save a plot in the output pdf
 def plotPieChart(clustID, filterCounters, pdf):
+    fig = matplotlib.pyplot.figure(figsize=(5, 5))
+    ax11 = fig.add_subplot(111)
+    w, l, p = ax11.pie(filterCounters.values(),
+                       labels=None,
+                       autopct=lambda x: str(round(x, 2)) + '%',
+                       textprops={'fontsize': 14},
+                       startangle=160,
+                       radius=0.5,
+                       pctdistance=1,
+                       labeldistance=None)
 
-    fig = matplotlib.pyplot.figure(figsize=(6, 6))
-    matplotlib.pyplot.pie(filterCounters.values(), labels=filterCounters.keys(),
-                          autopct=lambda x: str(round(x, 2)) + '%',
-                          startangle=-270,
-                          pctdistance=0.7,
-                          labeldistance=1.1)
+    step = (0.8 - 0.2) / (len(filterCounters.keys()) - 1)
+    pctdists = [0.2 - i * step for i in range(len(filterCounters.keys()))]
+
+    for t, d in zip(p, pctdists):
+        xi, yi = t.get_position()
+        ri = np.sqrt(xi**2 + yi**2)
+        phi = np.arctan2(yi, xi)
+        x = d * ri * np.cos(phi)
+        y = d * ri * np.sin(phi)
+        t.set_position((x, y))
+
+    matplotlib.pyplot.axis('equal')
     matplotlib.pyplot.title("Filtered and called exons from cluster " + str(clustID))
-
+    matplotlib.pyplot.legend(loc='upper right', fontsize='small', labels=filterCounters.keys())
     pdf.savefig(fig)
     matplotlib.pyplot.close()
 
@@ -124,35 +140,35 @@ def plotPieChart(clustID, filterCounters, pdf):
 # points of interest on the histogram. The graph is saved as a PDF file.
 # Args:
 # - rawData (np.ndarray[float]): exon FPM counts
-# - xLists (list of lists[float]): x-axis values for the density or distribution curves, ranges
+# - xi (list[float]): x-axis values for the density or distribution curves, ranges
 # - yLists (list of lists[float]): y-axis values, probability density function values
 # - plotLegs (list[str]): labels for the density or distribution curves
 # - verticalLines (list[float]): vertical lines to be plotted, FPM tresholds
 # - vertLinesLegs (list[str]): labels for the vertical lines to be plotted
 # - plotTitle [str]: title of the plot
 # - pdf (matplotlib.backends object): a file object representing the PDF file to save the plot to
-def plotExonProfil(rawData, xLists, yLists, plotLegs, verticalLines, vertLinesLegs, plotTitle, ylim, pdf):
+def plotExonProfil(rawData, xi, yLists, plotLegs, verticalLines, vertLinesLegs, plotTitle, ylim, pdf):
     # Sanity check to ensure consistency in the input data
-    if (len(xLists) != len(yLists)) or (len(xLists) != len(plotLegs)):
+    if (len(xi) != len(yLists)) or (len(xi) != len(plotLegs)):
         raise Exception('plotDensities bad args, length mismatch')
 
     # Define a list of colours based on the number of distributions to plot.
     # The 'plasma' colormap is specifically designed for people with color vision deficiencies.
-    distColor = matplotlib.pyplot.cm.get_cmap('plasma', len(xLists))
+    distColor = matplotlib.pyplot.cm.get_cmap('plasma', len(xi))
     vertColor = matplotlib.pyplot.cm.get_cmap('plasma', len(verticalLines))
 
     # Disable interactive mode to prevent display of the plot during execution
     matplotlib.pyplot.ioff()
-    fig = matplotlib.pyplot.figure(figsize=(6, 6))
+    fig = matplotlib.pyplot.figure(figsize=(8, 8))
     # Plot a density histogram of the raw data with a number of bins equal to half the number of data points
-    matplotlib.pyplot.hist(rawData, bins=int(len(rawData) / 3), density=True)
+    matplotlib.pyplot.hist(rawData, bins=int(len(rawData) / 2), density=True)
 
     # Plot the density/distribution curves for each set of x- and y-values
-    if len(xLists) > 1:
-        for i in range(len(xLists)):
+    if len(xi) > 1:
+        for i in range(len(xi)):
             # Choose a color based on the position of the curve in the list
-            color = distColor(i / len(xLists))
-            matplotlib.pyplot.plot(xLists[i], yLists[i], color=color, label=plotLegs[i])
+            color = distColor(i / len(xi))
+            matplotlib.pyplot.plot(xi[i], yLists[i], color=color, label=plotLegs[i])
 
     # Plot vertical lines to mark points of interest on the histogram
     if verticalLines:
