@@ -104,9 +104,15 @@ def plotDendogram(linksMatrix, labelsGp, minDist, CM, pdf):
 #
 # save a plot in the output pdf
 def plotPieChart(clustID, filterCounters, pdf):
+    # key counters exons
+    value_counts = []
+    for key in filterCounters:
+        count = len(filterCounters[key])
+        value_counts.append(count)
+    
     fig = matplotlib.pyplot.figure(figsize=(5, 5))
     ax11 = fig.add_subplot(111)
-    w, l, p = ax11.pie(filterCounters.values(),
+    w, l, p = ax11.pie(value_counts,
                        labels=None,
                        autopct=lambda x: str(round(x, 2)) + '%',
                        textprops={'fontsize': 14},
@@ -116,7 +122,7 @@ def plotPieChart(clustID, filterCounters, pdf):
                        labeldistance=None)
 
     step = (0.8 - 0.2) / (len(filterCounters.keys()) - 1)
-    pctdists = [0.2 - i * step for i in range(len(filterCounters.keys()))]
+    pctdists = [0.8 - i * step for i in range(len(filterCounters.keys()))]
 
     for t, d in zip(p, pctdists):
         xi, yi = t.get_position()
@@ -148,9 +154,6 @@ def plotPieChart(clustID, filterCounters, pdf):
 # - plotTitle [str]: title of the plot
 # - pdf (matplotlib.backends object): a file object representing the PDF file to save the plot to
 def plotExonProfil(rawData, xi, yLists, plotLegs, verticalLines, vertLinesLegs, plotTitle, ylim, pdf):
-    # Sanity check to ensure consistency in the input data
-    if (len(xi) != len(yLists)) or (len(xi) != len(plotLegs)):
-        raise Exception('plotDensities bad args, length mismatch')
 
     # Define a list of colours based on the number of distributions to plot.
     # The 'plasma' colormap is specifically designed for people with color vision deficiencies.
@@ -164,11 +167,11 @@ def plotExonProfil(rawData, xi, yLists, plotLegs, verticalLines, vertLinesLegs, 
     matplotlib.pyplot.hist(rawData, bins=int(len(rawData) / 2), density=True)
 
     # Plot the density/distribution curves for each set of x- and y-values
-    if len(xi) > 1:
-        for i in range(len(xi)):
+    if len(yLists) > 1:
+        for i in range(len(yLists)):
             # Choose a color based on the position of the curve in the list
-            color = distColor(i / len(xi))
-            matplotlib.pyplot.plot(xi[i], yLists[i], color=color, label=plotLegs[i])
+            color = distColor(i / len(yLists))
+            matplotlib.pyplot.plot(xi, yLists[i], color=color, label=plotLegs[i])
 
     # Plot vertical lines to mark points of interest on the histogram
     if verticalLines:
