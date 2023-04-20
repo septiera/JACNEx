@@ -227,20 +227,9 @@ def main(argv):
         # Browse clusters
         ##############################
         for clustID in range(len(sampsInClusts)):
-            # for DEBUG: creation of folder and matplotlib object for storing plots for monitoring.
-            pathDirPlotCN = []
+               # for DEBUG: creation of folder and matplotlib object for storing plots for monitoring.
             if plotDir:
-                CNcallsClustDir = os.path.join(plotDir, "cluster_"+str(clustID))
-                if not os.path.isdir(CNcallsClustDir):
-                    try:
-                        os.mkdir(CNcallsClustDir)
-                        PlotPaths = ["F1_median", "F3_zscore", "F4_weight", "PASS", "filteringRes_PieChart"]
-                        for i in range(len(PlotPaths)):
-                            pathDirPlotCN[i] = os.path.join(CNcallsClustDir, PlotPaths[i])
-                            os.mkdir(pathDirPlotCN[i])
-                            
-                    except Exception:
-                        raise Exception(" clustersDir " + CNcallsClustDir + "doesn't exist and can't be mkdir'd")
+                pathDirPlotCN = CNCalls.copyNumbersCalls.makePlotDir(plotDir, clustID)
 
             ##### validity sanity check
             if validClusts[clustID] == 0:
@@ -261,25 +250,35 @@ def main(argv):
 
             # get cluster-specific data, all samples in the case of a presence of a control cluster,
             # and exon indexes that need to be analyzed
-            (allSampsInClust, exIndToProcess) = CNCalls.copyNumbersCalls.extractClustDimCounts(clustID, sampsInClusts, ctrlsInClusts, specClusts, maskGExIndexes)
+            (allSampsInClust, exIndToProcess) = CNCalls.copyNumbersCalls.getSampsAndEx2Process(clustID, sampsInClusts, ctrlsInClusts, specClusts, maskGExIndexes)
             exonsFPMClust = exonsFPM[exIndToProcess][:, allSampsInClust]
             subExons = [exons[i] for i in exIndToProcess]
             intergenicsFPMClust = intergenicsFPM[:, allSampsInClust]
 
             try:
-                clustCNCalls = CNCalls.copyNumbersCalls.CNCalls(CNcallsArray, clustID, sampsInClusts,
-                                                            ctrlsInClusts, specClusts, exonsFPM,
-                                                            intergenicsFPM, exons, priors, plotDir)
+                (clustCalls, exonsCallsStatus) = CNCalls.copyNumbersCalls.CNCalls(clustID, exonsFPMClust, intergenicsFPMClust,
+                                                                                    samples, allSampsInClust, sampsInClusts[clustID],
+                                                                                    subExons, priors, pathDirPlotCN, sampsToPlots)
             except Exception:
                 raise Exception("CNCalls failed")
 
-        thisTime = time.time()
-        logger.debug("Done Copy Number Calls, in %.2f s", thisTime - startTime)
-        startTime = thisTime
+            thisTime = time.time()
+            logger.debug("Done Copy Number Calls, in %.2f s", thisTime - startTime)
+            startTime = thisTime
+            
+            # populate CNcallsArray
+            try:
+                CNCalls.copyNumbersCalls.populateResArray(clustCalls, exonsCallsStatus, sampsInClusts[clustID], exIndToProcess, CNcallsArray)
+            except Exception:
+                raise Exception("populateResArray failed")
 
+            thisTime = time.time()
+            logger.debug("Done populateResArray, in %.2f s", thisTime - startTime)
+            startTime = thisTime
+            
         #####################################################
         # Print exon defs + calls to outFile
-        CNCalls.CNCallsFile.printCNCallsFile(futureRes, exons, samples, outFile)
+        CNCalls.CNCallsFile.printCNCallsFile(CNcallsArray, exons, samples, outFile)
 
         thisTime = time.time()
         logger.debug("Done printing calls for all (non-failed) samples, in %.2fs", thisTime - startTime)
