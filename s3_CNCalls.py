@@ -42,8 +42,8 @@ def parseArgs(argv):
     # optionnal args with default values
     prevCNCallsFile = ""
     prevClustsFile = ""
-    priors = "0.001,0.01,0.979,0.01"
-    plotDir = "./ResultPlots/"
+    plotDir = ""
+    checkSamps = ""
 
     usage = "NAME:\n" + scriptName + """\n
 DESCRIPTION:
@@ -64,21 +64,20 @@ ARGUMENTS:
     --clusts [str]: TSV file, contains 5 columns hold the sample cluster definitions.
             [clusterID, sampsInCluster, controlledBy, validCluster, clusterStatus]
             File obtained from 2_clusterSamps.py.
-    --out [str] : file where results will be saved, must not pre-exist, will be gzipped if it ends
+    --out [str]: file where results will be saved, must not pre-exist, will be gzipped if it ends
             with '.gz', can have a path component but the subdir must exist
     --prevcncalls [str] optional: pre-existing copy number calls file produced by this program,
             possibly gzipped, the observation probabilities of copy number types are copied
             for samples contained in immutable clusters between old and new versions of the clustering files.
     --prevclusts [str] optional: pre-existing clustering file produced by s2_clusterSamps.py for the same
             timestamp as the pre-existing copy number call file.
-    --priors list[float]: prior probability for each copy number type in the order [CN0, CN1,CN2,CN3+].
-            Must be passed as a comma separated string, default : """ + str(priors) + """
-    --plotDir[str]: subdir (created if needed) where result plots files will be produced, default :  """ + str(plotDir) + """
-    -h , --help  : display this help and exit\n"""
+    --plotDir [str]: subdir (created if needed) where result plots files will be produced, wish to monitor the filters
+    --checkSamps [str]: comma-separated list of sample names, to plot calls, must be passed with --plotDir
+    -h , --help: display this help and exit\n"""
 
     try:
         opts, args = getopt.gnu_getopt(sys.argv[1:], 'h', ["help", "counts=", "clusts=", "out=", "prevcncalls=",
-                                                           "prevclusts=", "priors=", "plotDir="])
+                                                           "prevclusts=", "plotDir=", "checkSamps="])
     except getopt.GetoptError as e:
         raise Exception(e.msg + ". Try " + scriptName + " --help")
     if len(args) != 0:
@@ -98,10 +97,10 @@ ARGUMENTS:
             prevCNCallsFile = value
         elif (opt in ("--prevclusts")):
             prevClustsFile = value
-        elif (opt in ("--priors")):
-            priors = value
         elif (opt in ("--plotDir")):
             plotDir = value
+        elif (opt in ("--checkSamps")):
+            checkSamps = value
         else:
             raise Exception("unhandled option " + opt)
 
@@ -135,22 +134,23 @@ ARGUMENTS:
     if (prevClustsFile != "") and (not os.path.isfile(prevClustsFile)):
         raise Exception("previous clustering File " + prevClustsFile + " doesn't exist")
 
-    try:
-        priors = [float(x) for x in priors.split(",")]
-        if (sum(priors) != 1) or (len(priors) != 4):
-            raise Exception()
-    except Exception:
-        raise Exception("priors must be four float numbers whose sum is 1, not '" + priors + "'.")
+    if (plotDir == "" and checkSamps != ""):
+        raise Exception("you must use --checkSamps with --plotDir, not independently. Try " + scriptName + " --help")
 
-    # test plotdir last so we don't mkdir unless all other args are OK
-    if not os.path.isdir(plotDir):
-        try:
-            os.mkdir(plotDir)
-        except Exception as e:
-            raise Exception("plotDir " + plotDir + " doesn't exist and can't be mkdir'd: " + str(e))
+    # samps2Plot will store user-supplied sample names
+    samps2Plot = []
+    if plotDir != "":
+        # test plotdir last so we don't mkdir unless all other args are OK
+        if not os.path.isdir(plotDir):
+            try:
+                os.mkdir(plotDir)
+            except Exception as e:
+                raise Exception("plotDir " + plotDir + " doesn't exist and can't be mkdir'd: " + str(e))
+        if checkSamps != "":
+            samps2Plot = checkSamps.split(",")
 
     # AOK, return everything that's needed
-    return(countsFile, newClustsFile, outFile, prevCNCallsFile, prevClustsFile, priors, plotDir)
+    return(countsFile, newClustsFile, outFile, prevCNCallsFile, prevClustsFile, plotDir, samps2Plot)
 
 
 ###############################################################################
@@ -164,12 +164,7 @@ ARGUMENTS:
 # may be available in the log
 def main(argv):
     # parse, check and preprocess arguments
-    (countsFile, clustsFile, outFile, prevCNCallsFile, prevClustsFile, priors, plotDir) = parseArgs(argv)
-
-    # should density plots compare several different KDE bandwidth algorithms and values?
-    # hard-coded here rather than set via parseArgs because this should only be set
-    # to True for dev & testing
-    testSmoothingBWs = False
+    (countsFile, clustsFile, outFile, prevCNCallsFile, prevClustsFile, plotDir, samps2Plot) = parseArgs(argv)
 
     # args seem OK, start working
     logger.debug("called with: " + " ".join(argv[1:]))
@@ -224,17 +219,19 @@ def main(argv):
         ####################################################
         # CN Calls
         ##############################
-        # Browse clusters
-        ##############################
+        # identifying autosomes and gonosomes "exons" index
+        # recall clusters are derived from autosomal or gonosomal analyses
+        maskGExIndexes = clusterSamps.getGonosomesExonsIndexes.getSexChrIndexes(exons)
+        
         for clustID in range(len(sampsInClusts)):
-               # for DEBUG: creation of folder and matplotlib object for storing plots for monitoring.
+            # creation of folder for storing monitoring plots
             if plotDir:
                 pathDirPlotCN = CNCalls.copyNumbersCalls.makePlotDir(plotDir, clustID)
 
             ##### validity sanity check
             if validClusts[clustID] == 0:
                 logger.warning("cluster %s is invalid, low sample number", clustID)
-                # continue
+                continue
 
             ##### previous data sanity filters
             # test if the samples of the cluster have already been analysed
@@ -242,40 +239,22 @@ def main(argv):
             sub_t = callsFilled[sampsInClusts[clustID]]
             if all(sub_t):
                 logger.info("samples in cluster %s, already filled from prevCallsFile", clustID)
-                # continue
-
-            # identifying autosomes and gonosomes "exons" index
-            # to make calls on associated reference groups.
-            maskGExIndexes = clusterSamps.getGonosomesExonsIndexes.getSexChrIndexes(exons)
+                continue
 
             # get cluster-specific data, all samples in the case of a presence of a control cluster,
             # and exon indexes that need to be analyzed
             (allSampsInClust, exIndToProcess) = CNCalls.copyNumbersCalls.getSampsAndEx2Process(clustID, sampsInClusts, ctrlsInClusts, specClusts, maskGExIndexes)
-            exonsFPMClust = exonsFPM[exIndToProcess][:, allSampsInClust]
-            subExons = [exons[i] for i in exIndToProcess]
-            intergenicsFPMClust = intergenicsFPM[:, allSampsInClust]
 
             try:
-                (clustCalls, exonsCallsStatus) = CNCalls.copyNumbersCalls.CNCalls(clustID, exonsFPMClust, intergenicsFPMClust,
-                                                                                    samples, allSampsInClust, sampsInClusts[clustID],
-                                                                                    subExons, priors, pathDirPlotCN, sampsToPlots)
+                CNCalls.copyNumbersCalls.CNCalls(clustID, exonsFPM, intergenicsFPM, samples, allSampsInClust,
+                                                 sampsInClusts[clustID], exons, exIndToProcess, pathDirPlotCN, samps2Plot)
             except Exception:
                 raise Exception("CNCalls failed")
 
             thisTime = time.time()
             logger.debug("Done Copy Number Calls, in %.2f s", thisTime - startTime)
             startTime = thisTime
-            
-            # populate CNcallsArray
-            try:
-                CNCalls.copyNumbersCalls.populateResArray(clustCalls, exonsCallsStatus, sampsInClusts[clustID], exIndToProcess, CNcallsArray)
-            except Exception:
-                raise Exception("populateResArray failed")
 
-            thisTime = time.time()
-            logger.debug("Done populateResArray, in %.2f s", thisTime - startTime)
-            startTime = thisTime
-            
         #####################################################
         # Print exon defs + calls to outFile
         CNCalls.CNCallsFile.printCNCallsFile(CNcallsArray, exons, samples, outFile)
