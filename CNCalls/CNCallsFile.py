@@ -134,10 +134,10 @@ def printCNCallsFile(emissionArray, exons, samples, outFile):
     toPrint = "CHR\tSTART\tEND\tEXON_ID\t"
     for i in samples:
         for j in range(4):
-            toPrint += f"{i}_CN{j}_prob" + "\t"
+            toPrint += f"{i}_CN{j}" + "\t"
 
     outFH.write(toPrint.rstrip())
-    
+
     #### fill results
     for i in range(len(exons)):
         toPrint = exons[i][0] + "\t" + str(exons[i][1]) + "\t" + str(exons[i][2]) + "\t" + exons[i][3]
@@ -250,7 +250,6 @@ def callsVec2array(callsArray, exonIndex, callsVector):
 # calls2str:
 # return a string holding the calls from emissionArray[exonIndex],
 # tab-separated and starting with a tab
-@numba.njit
 def calls2str(emissionArray, exonIndex):
     toPrint = ""
     for i in range(emissionArray.shape[1]):
