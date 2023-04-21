@@ -241,8 +241,8 @@ def main(argv):
     logger.info("starting to work")
     startTime = time.time()
 
-    # parse exons from BED to obtain a list of lists (dim=NbExon x [CHR,START,END,EXONID]),
-    # the exons are sorted according to their genomic position and padded
+    # parse exons from BED to obtain a list of lists (dim=(NbExons+NbPseudoExons) x [CHR,START,END,EXONID]),
+    # the exons and pseudo-exons are sorted according to their genomic position and padded
     exons = countFrags.bed.processBed(bedFile, padding)
 
     thisTime = time.time()
@@ -275,7 +275,7 @@ def main(argv):
     if nbOfSamplesToProcess == 0:
         logger.info("all provided BAMs are in previous countsFile")
         # if samples exactly match those in countsFile, return immediately
-        prevSamples = countFrags.countsFile.parseCountsFile(countsFile)[1]
+        prevSamples = countFrags.countsFile.parseAndNormalizeCounts(countsFile)[0]
         if prevSamples == samples:
             logger.info("provided BAMs exactly match those in previous countsFile, not producing a new one")
             return()
