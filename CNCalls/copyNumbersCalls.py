@@ -1,5 +1,6 @@
 import logging
 import os
+import numba
 import numpy as np
 import scipy.stats
 import matplotlib.pyplot
@@ -88,52 +89,45 @@ def getSampsAndEx2Process(clustID, sampsInClusts, ctrlsInClusts, specClusts, mas
 # - exIndToProcess (list[int]): indexes of exons to process
 # - priors (list[float]): prior probability for each copy number type in the order [CN0, CN1,CN2,CN3+]
 # - plotFolder (str): subdir (created if needed) where result plots files will be produced
-def CNCalls(CNcallsArray, clustID, exonsFPM, intergenicsFPM, samples, allSamps, sampsSpe, exons, exIndToProcess, plotFolders, sampsToPlots):
+# - sampsToPlots (str): sample names for the graphic control of the number of copies called
+# Returns CNcallsArray completed for the samples in the cluster
+def CNCalls(CNCallsArray, clustID, exonFPM, intergenicsFPM, samples, allSamps, sampsSpe, exons, exIndToProcess, plotFolders, sampsToPlots):
     # cluster-specific data retrieval
-    exonsFPMClust = exonsFPM[exIndToProcess][:, allSamps]
-    ex2ProcInfos = [exons[i] for i in exIndToProcess]
+    exonsFPMClust = exonFPM[exIndToProcess][:, allSamps]
     intergenicsFPMClust = intergenicsFPM[:, allSamps]
 
     # counter dictionary for each filter, only used to plot the pie chart
-    # TODO add control that all exons have been processed
     exonsFiltersSummary = dict.fromkeys(["notCaptured", "cannotFitRG", "RGClose2LowThreshold", "fewSampsInRG", "exonsCalls"], 0)
-
-    # list that will contain all the information related to the cluster
-    # => [clustID[int], expParamsList[floats], UncaptThreshold[float]]
-    clustInfos = []
-    clustInfos.append(clustID)
 
     # fit an exponential distribution from all pseudo exons
     try:
-        clustInfos.extend(fitExponential(intergenicsFPMClust))
-        logger.info("clustID : %i, exponential params loc= %.4f scale=%.4f, uncaptured threshold = %.4fFPM", clustID, clustInfos[1][0], clustInfos[1][1], clustInfos[2])
+        (exponParams, unCaptThreshold) = fitExponential(intergenicsFPMClust)
+        logger.info("clustID : %i, exponential params loc= %.2e scale=%.2e, uncaptured threshold = %.2e FPM",
+                    clustID, exponParams[0], exponParams[1], unCaptThreshold)
     except Exception as e:
         logger.error("fitExponential failed for cluster %i : %s", clustID, repr(e))
         raise Exception("fitExponential failed")
 
     # Browse cluster-specific exons
     for exInd in range(len(exIndToProcess)):
-        # list which will contain all the information relating to the exon
-        # => [exonIndex[int], exonsDefList[CHR,START,END,EXONID], exonFPM[array[floats]]]
-        exonsInfos = []
-        exonsInfos.append(exInd)
-        exonsInfos.append(ex2ProcInfos[exInd])
+        exIndInFullTab = exIndToProcess[exInd]
+        exonInfos = exons[exIndInFullTab]
+        exonFPM = exonsFPMClust[exIndInFullTab]
 
         # Print progress every 10000 exons
         if exInd % 10000 == 0:
             print("ClusterID n°", clustID, exInd, time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()))
 
-        # Get count data for the exon
-        exonsInfos.append(exonsFPMClust[exInd])
-
         # Filter n°1: not captured => median coverage of the exon = 0
-        if FilterUncapturedExons(exonsInfos, clustInfos, plotFolders, exonsFiltersSummary):
+        if FilterUncapturedExons(exonFPM):
+            preprocessPlotData("notCaptured", exonsFiltersSummary, clustID, exponParams, unCaptThreshold,
+                               exIndInFullTab, exonInfos, exonFPM, plotFolders[0] if plotFolders else None)
             continue
 
         # robustly fit a gaussian
         # Filter n°2: fitting is impossible (median close to 0)
         try:
-            RGParams = fitRobustGaussian(exonsInfos[2])
+            RGParams = fitRobustGaussian(exonFPM)
         except Exception as e:
             if str(e) == "cannot fit":
                 continue
@@ -141,23 +135,50 @@ def CNCalls(CNcallsArray, clustID, exonsFPM, intergenicsFPM, samples, allSamps, 
                 raise e
 
         # Filter n°3: RG overlaps the threshold associated with the uncaptured exon profile
-        if FilterZscore(exonsInfos, clustInfos, RGParams, plotFolders, exonsFiltersSummary):
+        if FilterZscore(RGParams[0], RGParams[1], unCaptThreshold):
+            preprocessPlotData("RGClose2LowThreshold", exonsFiltersSummary, clustID, exponParams, unCaptThreshold,
+                               exIndInFullTab, exonInfos, exonFPM, plotFolders[1] if plotFolders else None, RGParams)
             continue
 
         # Filter n°4: the sample contribution rate to the robust Gaussian is too low (<50%)
-        if FilterSampsContribRG(exonsInfos, clustInfos, RGParams, plotFolders, exonsFiltersSummary):
+        if FilterSampsContribRG(exonFPM, RGParams[0], RGParams[1]):
+            preprocessPlotData("fewSampsInRG", exonsFiltersSummary, clustID, exponParams, unCaptThreshold,
+                               exIndInFullTab, exonInfos, exonFPM, plotFolders[2] if plotFolders else None, RGParams)
             continue
 
         exonsFiltersSummary["exonsCalls"] += 1
+        # Browse cluster-samples
+        for i in range(len(allSamps)):
+            sampInd = allSamps[i]
+            if sampInd not in sampsSpe:  # already processed
+                continue
 
-        # PDF calculation for each cluster-specific sample (i.e. not samples from cluster control)
-        # and fills the result array "CNcallsArray"
-        fillCallRes(samples, allSamps, sampsSpe, exonsInfos, clustInfos, RGParams, CNcallsArray, exIndToProcess[exInd], plotFolders, sampsToPlots)
+            # density probabilities for each copy number
+            sampFPM = exonFPM[i]
+            probs = sampFPM2Probs(RGParams[0], RGParams[1], exponParams, unCaptThreshold, sampFPM)
+
+            sampIndexInCallsArray = allSamps[i] * 4
+            # Check if the sample has not been called for this exon before
+            if sum(CNCallsArray[exIndInFullTab, sampIndexInCallsArray:sampIndexInCallsArray + 4]) < 0:
+                # Populate the CNcallsArray with the copy number call probabilities
+                CNCallsArray[exIndInFullTab, sampIndexInCallsArray:sampIndexInCallsArray + 4] = probs
+            else:
+                raise Exception('erase previous probabilities values')
+
+            # graphic representation of callable exons for a patient of interest
+            sampName = samples[sampInd]
+            if (not sampsToPlots) or (sampName not in sampsToPlots):
+                continue
+            preprocessPlotData("exonsCalls", exonsFiltersSummary, clustID, exponParams, unCaptThreshold,
+                               exIndInFullTab, exonInfos, exonFPM, plotFolders[3] if plotFolders else None, RGParams,
+                               [sampName, sampFPM, probs])
 
     if plotFolders:
         pieFile = matplotlib.backends.backend_pdf.PdfPages(os.path.join(plotFolders[4], "pieChart_Filtering_cluster" + str(clustID) + ".pdf"))
         figures.plots.plotPieChart(clustID, exonsFiltersSummary, pieFile)
         pieFile.close()
+
+    return CNCallsArray
 
 
 ############################################
@@ -233,7 +254,7 @@ def fitExponential(intergenicsFPMClust):
     except Exception as e:
         logger.error('smoothing failed for %s : %s', str(bandWidth), repr(e))
         raise
-    # Fitting the exponential distribution and retrieving associated parameters => tupple(scale,loc)
+    # Fitting the exponential distribution and retrieving associated parameters => tupple(loc, scale)
     # f(x, scale) = (1/scale)*exp(-x/scale)
     # scale parameter is the inverse of the rate parameter (lambda) used in the mathematical definition
     # of the distribution.
@@ -253,26 +274,13 @@ def fitExponential(intergenicsFPMClust):
 # - all samples in the cluster haven't capture for the current exon
 # - more than 2/3 of the samples have no capture.
 # Warning: Potential presence of homodeletions. We have chosen don't call them because they affect too many samples
-# if the user chooses to plot the results a pdf will be created by exon
-# in the folder associated with the filter
 # Args:
-# - exonsInfos (composite list): [clustID[int], expParamsList[floats], UncaptThreshold[float]]
-# - clustInfos (composite list): [exonIndex[int], exonsDefList[CHR,START,END,EXONID], exonFPM[array[floats]]]
-# - plotFolders (list [str]): path to the folders where to save the pdfs
-# - exonsFiltersSummary (dict of lists[int]): key: exon filter name [str], value: list of associated
-# exon indexes [int]
-# Returns "True" if exon doesn't pass the filter and fill in the appropriate counter in exonsFilterSummary
-# otherwise "False"
-def FilterUncapturedExons(exonsInfos, clustInfos, plotFolders, exonsFiltersSummary):
-    # Fixed parameter
-    nbExLimit2Plot = 100  # No. of threshold multiplier exons = one plot
-
-    medianFPM = np.median(exonsInfos[2])
+# - exonFPM (list[floats]): FPM counts from an exon
+# Returns "True" if exon doesn't pass the filter otherwise "False"
+@numba.njit
+def FilterUncapturedExons(exonFPM):
+    medianFPM = np.median(exonFPM)
     if medianFPM == 0:
-        exonsFiltersSummary["notCaptured"] += 1
-        if plotFolders:
-            if exonsFiltersSummary["notCaptured"] % nbExLimit2Plot == 0:
-                preprocessPlotData(exonsInfos, clustInfos, plotFolders[0])
         return True
     else:
         return False
@@ -371,38 +379,28 @@ def truncated_integral_and_sigma(x):
 # can be calculated, change it if necessary
 # - pseudo zscore calculation
 # - comparison pseudo zscore with the tolerated deviation threshold => filtering
-# if the user chooses to plot the results a pdf will be created by exon
-# in the folder associated with the filter
 # Args:
-# - exonsInfos (composite list): [clustID[int], expParamsList[floats], UncaptThreshold[float]]
-# - clustInfos (composite list): [exonIndex[int], exonsDefList[CHR,START,END,EXONID], exonFPM[array[floats]]]
-# - RGParams (list[float]): mean and stdev from robust fitting of Gaussian
-# - plotFolders (list [str]): path to the folders where to save the pdfs
-# - exonsFiltersSummary (dict of lists[int]): key: exon filter name [str], value: list of associated
-# exon indexes [int]
-# Returns "True" if exon doesn't pass the filter and fill in the appropriate counter in exonsFilterSummary
-# otherwise "False"
-def FilterZscore(exonsInfos, clustInfos, RGParams, plotFolders, exonsFiltersSummary):
-    # Fixed paramaters
+# - mean [floats]
+# - stdev [floats]
+# - unCapturedThreshold [floats]: FPM threshold separating captured and non-captured exons
+# Returns "True" if exon doesn't pass the filter otherwise "False"
+@numba.njit
+def FilterZscore(mean, stdev, unCapturedThreshold):
+    # Fixed paramater
     bdwthThreshold = 3  # tolerated deviation threshold
-    nbExLimit2Plot = 100  # No. of threshold multiplier exons = one plot
 
     # the mean != 0 and all samples have the same coverage value.
     # In this case a new arbitrary standard deviation is calculated
     # (simulates 5% on each side of the mean)
-    if (RGParams[1] == 0):
-        RGParams[1] = RGParams[0] / 20
+    if (stdev == 0):
+        stdev = mean / 20
 
     # meanRG != 0 because of filter 1 => stdevRG != 0
-    zscore = (RGParams[0] - clustInfos[2]) / RGParams[1]
+    zscore = (mean - unCapturedThreshold) / stdev
 
     # the exon is excluded if there are less than 3 standard deviations between
     # the threshold and the mean.
     if (zscore < bdwthThreshold):
-        exonsFiltersSummary["RGClose2LowThreshold"] += 1
-        if plotFolders:
-            if exonsFiltersSummary["RGClose2LowThreshold"] % nbExLimit2Plot == 0:
-                preprocessPlotData(exonsInfos, clustInfos, plotFolders[1], RGParams=RGParams, zscore=zscore)
         return True
     else:
         return False
@@ -421,68 +419,25 @@ def FilterZscore(exonsInfos, clustInfos, RGParams, plotFolders, exonsFiltersSumm
 # if the user chooses to plot the results a pdf will be created by exon
 # in the folder associated with the filter
 # Args:
-# - exonsInfos (composite list): [clustID[int], expParamsList[floats], UncaptThreshold[float]]
-# - clustInfos (composite list): [exonIndex[int], exonsDefList[CHR,START,END,EXONID], exonFPM[array[floats]]]
-# - RGParams (list[float]): mean and stdev from robust fitting of Gaussian
-# - plotFolders (list [str]): path to the folders where to save the pdfs
-# - exonsFiltersSummary (dict of lists[int]): key: exon filter name [str], value: list of associated
-# exon indexes [int]
-# Returns "True" if exon doesn't pass the filter and fill in the appropriate counter in exonsFilterSummary
-# otherwise "False"
-def FilterSampsContribRG(exonsInfos, clustInfos, RGParams, plotFolders, exonsFiltersSummary):
-    # Fixed parameter
+# - exonFPM (list[floats]): FPM counts from an exon
+# - mean [floats]
+# - stdev [floats]
+# Returns "True" if exon doesn't pass the filter otherwise "False"
+@numba.njit
+def FilterSampsContribRG(exonFPM, mean, stdev):
+    # Fixed parameters
     contributionThreshold = 0.5
-    nbExLimit2Plot = 100  # No. of threshold multiplier exons = one plot
+    stdevLim = 2
 
-    exonFPM = exonsInfos[2]
     # targetData length is the sample number contributing to the Gaussian
-    targetData = exonFPM[(exonFPM > (RGParams[0] - (2 * RGParams[1]))) & (exonFPM < (RGParams[0] + (2 * RGParams[1]))), ]
+    targetData = exonFPM[(exonFPM > (mean - (stdevLim * stdev))) & (exonFPM < (mean + (stdevLim * stdev))), ]
 
     weight = len(targetData) / len(exonFPM)
 
     if (weight < contributionThreshold):
-        if (plotFolders):
-            exonsFiltersSummary["fewSampsInRG"] += 1
-            if (exonsFiltersSummary["fewSampsInRG"] % nbExLimit2Plot == 0):
-                preprocessPlotData(exonsInfos, clustInfos, plotFolders[2], RGParams=RGParams, weight=weight)
         return True
     else:
         return False
-
-
-############################################
-# fillCallRes
-# given the complete list of samples composing the cluster (specific and control),
-# calculating the PDFs of the current exon only for the specific samples and
-# populates the CNcallsArray data array with exon copy number calls.
-# Args:
-# - samples (list[str]): sample names
-# - allSamps (list[int]): "samples" indexes to include in the analysis
-# - sampsSpe (list[int]): A list of sample IDs for which to perform a special analysis
-# - exonsInfos (list): A list of exon information, including start and end positions and cluster information
-# - clustInfos (list): A list of cluster information, including cluster names, exponential parameters,
-# and an uncaptured FPM threshold
-# - RGParams (list[floats]): gaussian parameters
-# - CNcallsArray (ndarray): exons copy number calls for each sample and exon
-# - exonIndex (int): The index of the exon to process in CNcallsArray
-# - plotFolders (list): folder paths for plotting results
-# - sampsToPlots (list): sample names for which to create plots
-# Returns: None
-def fillCallRes(samples, allSamps, sampsSpe, exonsInfos, clustInfos, RGParams, CNcallsArray, exonIndex, plotFolders, sampsToPlots):
-    for i in range(len(allSamps)):
-        # Check if the sample is in the list of samples to analyze
-        if allSamps[i] not in sampsSpe:
-            continue
-        # Get sample information and probabilities for copy number calls
-        sampInfos = [samples[allSamps[i]], exonsInfos[2][i]]
-        probs = sampFPM2Probs(sampInfos, exonsInfos, clustInfos, RGParams, plotFolders, sampsToPlots)
-        sampIndexInCallsArray = allSamps[i] * 4
-        # Check if the sample has not been called for this exon before
-        if sum(CNcallsArray[exonIndex, sampIndexInCallsArray:sampIndexInCallsArray + 4]) < 0:
-            # Populate the CNcallsArray with the copy number call probabilities
-            CNcallsArray[exonIndex, sampIndexInCallsArray:sampIndexInCallsArray + 4] = probs
-        else:
-            raise Exception('erase previous probabilities values')
 
 
 #############################################################
@@ -494,18 +449,14 @@ def fillCallRes(samples, allSamps, sampsSpe, exonsInfos, clustInfos, RGParams, C
 # if the user chooses to plot the results a pdf will be created by exon
 # in the folder associated to exon pass filters for a selected sample
 # Args:
-# - sampInfos (composite lis): [sample name[str], FPM value[float]]
-# - exonsInfos (composite list): [clustID[int], expParamsList[floats], UncaptThreshold[float]]
-# - clustInfos (composite list): [exonIndex[int], exonsDefList[CHR,START,END,EXONID], exonFPM[array[floats]]]
-# - RGParams (list[float]): mean and stdev from robust fitting of Gaussian
-# - plotFolders (list [str]): path to the folders where to save the pdfs
-# - sampsToPlots (list [str]): sample names list to be represented specified by the user
+# - mean [floats]
+# - stdev [floats]
+# - exponParams (list[floats]): exponential distribution paramaters (loc, scale)
+# - unCapturedThreshold [floats]: FPM threshold separating captured and non-captured exons
+# - exSampFPM [float]: FPM value for a sample and an exon
 # Returns:
 # - probDensities (list[float]): densities for each copy number (CN0,CN1,CN2,CN3+)
-def sampFPM2Probs(sampInfos, exonsInfos, clustInfos, RGParams, plotFolders, sampsToPlots):
-    mean = RGParams[0]
-    stdev = RGParams[1]
-
+def sampFPM2Probs(mean, stdev, exponParams, unCaptThreshold, exSampFPM):
     # CN2 mean shift to get CN1 mean
     meanCN1 = mean / 2
 
@@ -519,70 +470,75 @@ def sampFPM2Probs(sampInfos, exonsInfos, clustInfos, RGParams, plotFolders, samp
     # exponential distribution has a heavy tail, density calculated from it can override
     # the other Gaussian distributions.
     # associate a 0 pdf value if the sample FPM value is higher than the CN1 mean
-    cdf_cno_threshold = scipy.stats.expon.cdf(clustInfos[2], *clustInfos[1])
-    if sampInfos[1] <= meanCN1:
-        probDensities[0] = (1 / (1 - cdf_cno_threshold)) * scipy.stats.expon.pdf(sampInfos[1], *clustInfos[1])
+    cdf_cno_threshold = scipy.stats.expon.cdf(unCaptThreshold, *exponParams)
+    if exSampFPM <= meanCN1:
+        probDensities[0] = (1 / (1 - cdf_cno_threshold)) * scipy.stats.expon.pdf(exSampFPM, *exponParams)
 
     # Calculate the probability densities for the remaining cases (CN1,CN2,CN3+) using the normal distribution
-    probDensities[1] = scipy.stats.norm.pdf(sampInfos[1], meanCN1, stdev)
-    probDensities[2] = scipy.stats.norm.pdf(sampInfos[1], mean, stdev)
-    probDensities[3] = scipy.stats.norm.pdf(sampInfos[1], 3 * meanCN1, stdev)
+    probDensities[1] = scipy.stats.norm.pdf(exSampFPM, meanCN1, stdev)
+    probDensities[2] = scipy.stats.norm.pdf(exSampFPM, mean, stdev)
+    probDensities[3] = scipy.stats.norm.pdf(exSampFPM, 3 * meanCN1, stdev)
 
-    if plotFolders:
-        if sampInfos[0] in sampsToPlots:
-            preprocessPlotData(exonsInfos, clustInfos, plotFolders[3], RGParams=RGParams, sampInfos=sampInfos.extend(probDensities))
-
-    return (probDensities)
+    return probDensities
 
 
 #########################
 # preprocessPlotData
-# given the information on the exons and the different laws that can be adjusted to the coverage
-# profile, preparation of the data for the graphical representation
+# given the information on the current cluster, the current exon and the current sample
+# defines the variables for a graphical representation of the coverage profile with the
+# fitting of different laws (exponential and Gaussian).
 # Args:
-# - exonsInfos (composite list): [clustID[int], expParamsList[floats], UncaptThreshold[float]]
-# - clustInfos (composite list): [exonIndex[int], exonsDefList[CHR,START,END,EXONID], exonFPM[array[floats]]]
+# - status [str]: filter status
+# - exonsFiltersSummary (dict): keys = filter status[str], value= exons counter
+# - clustID [int]
+# - exponParams (list[floats]): exponential distribution paramaters (loc, scale)
+# - unCapturedThreshold [floats]: FPM threshold separating captured and non-captured exons
+# - exInd [int]: "exons" index
+# - exonInfos (list[str,int,int,str]): exon details [CHR,START,END,EXONID]
+# - exonFPM (list[floats]): FPM counts from an exon
 # - folder [str]: path to a folder where to save the pdfs
-# - median [float]: (optional) median value from exon FPM values
-# - RGParams (list[float]): (optional) mean and stdev from robust fitting of Gaussian
-# - zscore [float]: (optional)
-# - weight [float]: (optional)
+# - RGParams (list[floats]): (optional) mean and stdev from robust fitting of Gaussian
 # - sampInfos (composite lis): (optional) [sample name[str], FPM value[float], probsList[floats]]
-def preprocessPlotData(exonsInfos, clustInfos, folder, median=None, RGParams=None, zscore=None, weight=None, sampInfos=None):
+def preprocessPlotData(status, exonsFiltersSummary, clustID, exponParams, unCaptThreshold,
+                       exInd, exonInfos, exonFPM, folder, RGParams=None, sampInfos=None):
+
+    # Fixed parameter
+    nbExLimit2Plot = 100  # No. of threshold multiplier exons = one plot
+
+    if (status != "exonsCalls"):
+        exonsFiltersSummary[status] += 1
+        if exonsFiltersSummary[status] % nbExLimit2Plot != 0:
+            return
+
+    if folder is None:
+        return
+
     # initiate plots variables
-    figTitle = f"ClusterID_{clustInfos[0]}_{'_'.join(map(str, exonsInfos[1]))}"
-    plotTitle = f"ClusterID n° {clustInfos[0]} exon:{'_'.join(map(str, exonsInfos[1]))}"
+    figTitle = f"ClusterID_{clustID}_exonInd_{exInd}_{'_'.join(map(str, exonInfos))}"
+    plotTitle = f"ClusterID n° {clustID} exon:{'_'.join(map(str, exonInfos))}"
     yLists = []
-    plotLegs = ["\nexpon={:.2f}, {:.2f}".format(clustInfos[1][0], clustInfos[1][1])]
-    verticalLines = [clustInfos[2]]
-    vertLinesLegs = ["UncoverThreshold={:.3f}".format(clustInfos[2])]
+    plotLegs = ["\nexpon={:.2f}, {:.2f}".format(exponParams[0], exponParams[1])]
+    verticalLines = [unCaptThreshold]
+    vertLinesLegs = ["UncoverThreshold={:.3f}".format(unCaptThreshold)]
     # creates FPM ranges base
-    xi = np.linspace(0, max(exonsInfos[2]), 1000)
+    xi = np.linspace(0, max(exonFPM), 1000)
     # calculate the probability density function for the exponential distribution
-    makePDF(getattr(scipy.stats, 'expon'), clustInfos[1], xi, yLists)
+    makePDF(getattr(scipy.stats, 'expon'), exponParams, xi, yLists)
     ylim = max(yLists[0]) / 10
 
     ##############
     # populate the plot variables according to the presence of the arguments passed to the function
-    if median:
-        plotTitle += f"\nmedian={median:.2f}"
-        figTitle = f"{median:.2f}_" + figTitle
-
     if RGParams is not None:
         # calculate the probability density function for the gaussian distribution (CN2)
-        makePDF(getattr(scipy.stats, 'norm'), [RGParams[0], RGParams[1]], xi, yLists)
+        makePDF(getattr(scipy.stats, 'norm'), RGParams, xi, yLists)
         plotLegs.append(f"\nRG CN2={RGParams[0]:.2f}, {RGParams[1]:.2f}")
         ylim = 2 * max(yLists[1])
 
-        if zscore is not None:
-            plotTitle += f"\nzscore={zscore:.2f}"
-            figTitle = f"{zscore:.2f}_" + figTitle
-
-        if weight is not None:
-            plotTitle += f"\nweight={weight:.2f}"
-            figTitle = f"{weight:.2f}_" + figTitle
-
         if sampInfos is not None:
+            index_maxProb = np.argmax(sampInfos[2:5]) - 2
+            if index_maxProb == 2:
+                return
+
             meanCN1 = RGParams[0] / 2
             # calculate the probability density function for the gaussian distribution (CN1)
             makePDF(getattr(scipy.stats, 'norm'), [meanCN1, RGParams[1]], xi, yLists)
@@ -594,13 +550,12 @@ def preprocessPlotData(exonsInfos, clustInfos, folder, median=None, RGParams=Non
 
             verticalLines.append(sampInfos[1])
             vertLinesLegs.append(f"sample name={sampInfos[0]}")
-            probs = ', '.join(f"{sampInfos[i]:.2f}" for i in range(2, 6))
+            probs = ', '.join(f"{sampInfos[i]:.2e}" for i in range(2, 6))
             plotTitle += f"\nprobs={probs}"
-            index_maxProb = np.argmax(sampInfos[2:5])
-            figTitle = f"CN{index_maxProb - 2}_" + sampInfos[0] + "_" + figTitle
+            figTitle = f"CN{index_maxProb}_" + sampInfos[0] + "_" + figTitle
 
     PDF_File = matplotlib.backends.backend_pdf.PdfPages(os.path.join(folder, figTitle))
-    figures.plots.plotExonProfil(exonsInfos[2], xi, yLists, plotLegs, verticalLines, vertLinesLegs, plotTitle, ylim, PDF_File)
+    figures.plots.plotExonProfil(exonFPM, xi, yLists, plotLegs, verticalLines, vertLinesLegs, plotTitle, ylim, PDF_File)
     PDF_File.close()
 
 
