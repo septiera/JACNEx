@@ -88,7 +88,7 @@ def getSampsAndEx2Process(clustID, sampsInClusts, ctrlsInClusts, specClusts, mas
 # - exIndToProcess (list[int]): indexes of exons to process
 # - priors (list[float]): prior probability for each copy number type in the order [CN0, CN1,CN2,CN3+]
 # - plotFolder (str): subdir (created if needed) where result plots files will be produced
-def CNCalls(CNcallsArray, clustID, exonsFPM, intergenicsFPM, samples, allSamps, sampsSpe, exons, exIndToProcess, priors, plotFolders, sampsToPlots):
+def CNCalls(CNcallsArray, clustID, exonsFPM, intergenicsFPM, samples, allSamps, sampsSpe, exons, exIndToProcess, plotFolders, sampsToPlots):
     # cluster-specific data retrieval
     exonsFPMClust = exonsFPM[exIndToProcess][:, allSamps]
     ex2ProcInfos = [exons[i] for i in exIndToProcess]
@@ -100,7 +100,8 @@ def CNCalls(CNcallsArray, clustID, exonsFPM, intergenicsFPM, samples, allSamps, 
 
     # list that will contain all the information related to the cluster
     # => [clustID[int], expParamsList[floats], UncaptThreshold[float]]
-    clustInfos = [clustID]
+    clustInfos = []
+    clustInfos.append(clustID)
 
     # fit an exponential distribution from all pseudo exons
     try:
@@ -114,7 +115,8 @@ def CNCalls(CNcallsArray, clustID, exonsFPM, intergenicsFPM, samples, allSamps, 
     for exInd in range(len(exIndToProcess)):
         # list which will contain all the information relating to the exon
         # => [exonIndex[int], exonsDefList[CHR,START,END,EXONID], exonFPM[array[floats]]]
-        exonsInfos = [exInd]
+        exonsInfos = []
+        exonsInfos.append(exInd)
         exonsInfos.append(ex2ProcInfos[exInd])
 
         # Print progress every 10000 exons
@@ -146,11 +148,11 @@ def CNCalls(CNcallsArray, clustID, exonsFPM, intergenicsFPM, samples, allSamps, 
         if FilterSampsContribRG(exonsInfos, clustInfos, RGParams, plotFolders, exonsFiltersSummary):
             continue
 
-        exonsFiltersSummary["exonsCalls"].append(exInd)
+        exonsFiltersSummary["exonsCalls"] += 1
 
         # PDF calculation for each cluster-specific sample (i.e. not samples from cluster control)
         # and fills the result array "CNcallsArray"
-        fillCallRes(samples, allSamps, sampsSpe, exonsInfos, clustInfos, RGParams, priors, CNcallsArray, exIndToProcess[exInd], plotFolders, sampsToPlots)
+        fillCallRes(samples, allSamps, sampsSpe, exonsInfos, clustInfos, RGParams, CNcallsArray, exIndToProcess[exInd], plotFolders, sampsToPlots)
 
     if plotFolders:
         pieFile = matplotlib.backends.backend_pdf.PdfPages(os.path.join(plotFolders[4], "pieChart_Filtering_cluster" + str(clustID) + ".pdf"))
@@ -170,7 +172,7 @@ def makePlotDir(plotDir, clustID):
     # List of paths to the created subdirectories
     pathDirPlotCN = []
 
-    # Construct the path to the cluster directory
+    # Path to the cluster directory
     CNcallsClustDir = os.path.join(plotDir, "cluster_" + str(clustID))
 
     try:
