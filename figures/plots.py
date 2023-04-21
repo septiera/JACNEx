@@ -104,15 +104,9 @@ def plotDendogram(linksMatrix, labelsGp, minDist, CM, pdf):
 #
 # save a plot in the output pdf
 def plotPieChart(clustID, filterCounters, pdf):
-    # key counters exons
-    value_counts = []
-    for key in filterCounters:
-        count = len(filterCounters[key])
-        value_counts.append(count)
-    
     fig = matplotlib.pyplot.figure(figsize=(5, 5))
     ax11 = fig.add_subplot(111)
-    w, l, p = ax11.pie(value_counts,
+    w, l, p = ax11.pie(filterCounters.values(),
                        labels=None,
                        autopct=lambda x: str(round(x, 2)) + '%',
                        textprops={'fontsize': 14},
