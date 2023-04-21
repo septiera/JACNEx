@@ -13,7 +13,7 @@ import logging
 
 ####### MAGE-CNV modules
 import countFrags.countsFile
-import countFrags.clustFile
+import clusterSamps.clustFile
 import clusterSamps.clustering
 import CNCalls.CNCallsFile
 import CNCalls.copyNumbersCalls
@@ -227,6 +227,9 @@ def main(argv):
             # creation of folder for storing monitoring plots
             if plotDir:
                 pathDirPlotCN = CNCalls.copyNumbersCalls.makePlotDir(plotDir, clustID)
+            else:
+                pathDirPlotCN = ""
+                samps2Plot = ""
 
             ##### validity sanity check
             if validClusts[clustID] == 0:
@@ -246,10 +249,10 @@ def main(argv):
             (allSampsInClust, exIndToProcess) = CNCalls.copyNumbersCalls.getSampsAndEx2Process(clustID, sampsInClusts, ctrlsInClusts, specClusts, maskGExIndexes)
 
             try:
-                CNCalls.copyNumbersCalls.CNCalls(clustID, exonsFPM, intergenicsFPM, samples, allSampsInClust,
+                CNCalls.copyNumbersCalls.CNCalls(CNcallsArray, clustID, exonsFPM, intergenicsFPM, samples, allSampsInClust,
                                                  sampsInClusts[clustID], exons, exIndToProcess, pathDirPlotCN, samps2Plot)
-            except Exception:
-                raise Exception("CNCalls failed")
+            except Exception as e:
+                raise Exception("CNCalls failed %s", e)
 
             thisTime = time.time()
             logger.debug("Done Copy Number Calls, in %.2f s", thisTime - startTime)
