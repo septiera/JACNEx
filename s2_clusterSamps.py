@@ -214,7 +214,7 @@ def main(argv):
     # need to segment the analysis between gonosomes and autosomes to avoid getting
     # aberrant CNs in the calling step.
     # (e.g Human : Male versus female => heterozygous CNV on the X)
-    maskGonoExIndexes = clusterSamps.genderPrediction.getSexChrIndexes(exons)
+    maskGonoExIndexes = clusterSamps.genderPrediction.exonOnSexChr(exons)
 
     #####
     # Get Autosomes Clusters
