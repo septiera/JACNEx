@@ -13,7 +13,6 @@ import logging
 
 ####### MAGE-CNV modules
 import countFrags.countsFile
-import countFrags.countFragments
 import clusterSamps.getGonosomesExonsIndexes
 import clusterSamps.clustering
 import clusterSamps.clustFile
