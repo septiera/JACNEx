@@ -12,29 +12,26 @@ logger = logging.getLogger(__name__)
 ############################ PUBLIC FUNCTIONS #################################
 ###############################################################################
 
-# getSexChrIndexes:
-# - identifies the sex chromosomes (gonosomes) presents in the "countsFile"
-# input data and extracts the associated exon indexes.
-# Please note that in this script only X, Y, Z and W chromosomes can be found.
-# This is more than enough to cover a large part of the living world
-# => mammals, birds, fish, reptiles.
+###############################################################################
+# exonOnSexChr: identify exons located on a sex chromosome, ie currently one of
+# (X, Y, Z, W). This covers most species including mammals, birds, fish, reptiles.
 #
-# Args:
-#  - exons (list of lists[str,int,int,str]): information on exon, containing CHR,START,END,EXON_ID
-# Returns a boolean numpy.ndarray where the indices of the exons
-# corresponding to the gonosomes are True and False for the autosomes.
-def getSexChrIndexes(exons):
-    # sex chromosome list
-    gonoChromList = ["X", "Y", "W", "Z"]
+# Arg:
+#  - a list of exons, each exon is a list of 4 scalars (types: str,int,int,str)
+# containing CHR,START,END,EXON_ID
+#
+# Returns a boolean numpy.ndarray of the same size as exons, value is True for
+# exons whose CHR is a sex chromosome, False otherwise.
+def exonOnSexChr(exons):
+    # accepted sex chromosomes as keys, value==1
+    sexChroms = {"X": 1, "Y": 1, "W": 1, "Z": 1}
+    # also accept the same chroms prepended with 'chr'
+    for sc in sexChroms:
+        sexChroms["chr" + sc] = 1
 
-    # cases where the chromosome terminology does not match the sex chromosome list.
-    # adding chr in front of names
-    if exons[0][0].startswith("chr"):
-        gonoChromList = ["chr" + letter for letter in gonoChromList]
-
-    # creation of the boolean numpy.ndarray of exonsNb length
-    chrSexMask = np.array([exon[0] in gonoChromList for exon in exons])
-    return chrSexMask
+    # create the boolean numpy.ndarray of exonsNb length
+    exonOnSexChr = np.array([exon[0] in sexChroms for exon in exons])
+    return exonOnSexChr
 
 
 ###############################################################################
