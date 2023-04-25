@@ -71,7 +71,7 @@ def parseClustsFile(clustsFile, samples):
                 ctrlsInClusts.append([])
 
             # populate validClusts
-            validClusts.append(validCluster)
+            validClusts.append(int(validCluster))
 
             # populate specClusts and control boolean np.array
             if specifics == "Autosomes":
