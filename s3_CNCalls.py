@@ -222,7 +222,7 @@ def main(argv):
         # identifying autosomes and gonosomes "exons" index
         # recall clusters are derived from autosomal or gonosomal analyses
         maskGExIndexes = clusterSamps.getGonosomesExonsIndexes.getSexChrIndexes(exons)
-        
+
         for clustID in range(len(sampsInClusts)):
             # creation of folder for storing monitoring plots
             if plotDir:
@@ -249,8 +249,8 @@ def main(argv):
             (allSampsInClust, exIndToProcess) = CNCalls.copyNumbersCalls.getSampsAndEx2Process(clustID, sampsInClusts, ctrlsInClusts, specClusts, maskGExIndexes)
 
             try:
-                CNCalls.copyNumbersCalls.CNCalls(CNcallsArray, clustID, exonsFPM, intergenicsFPM, samples, allSampsInClust,
-                                                 sampsInClusts[clustID], exons, exIndToProcess, pathDirPlotCN, samps2Plot)
+                CNcallsArray = CNCalls.copyNumbersCalls.CNCalls(CNcallsArray, clustID, exonsFPM, intergenicsFPM, samples, allSampsInClust,
+                                                                sampsInClusts[clustID], exons, exIndToProcess, pathDirPlotCN, samps2Plot)
             except Exception as e:
                 raise Exception("CNCalls failed %s", e)
 
