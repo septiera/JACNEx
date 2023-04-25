@@ -180,12 +180,14 @@ def main(argv):
     startTime = thisTime
 
     # ##########################################
-    # # data quality control suspension
-    # # reason 1: Deleting too much patient sequencing data cannot be a safe option.
-    # # reason 2: With the addition of intergenic windows it's possible to identify
-    # # a profile of uncovered exons without a clean coverage densities per patient.
-    # # However, it will be necessary to study the calling results for patients with
-    # # dubious coverage profiles before deleting this part.
+    # # data quality control
+    # COMMENTED OUT FOR NOW - RE-ENABLE/ADAPT IF NEEDED, REMOVE CODE OTHERWISE
+    # reason 1: Ignoring too many samples is bad, we should be able to make some
+    # calls even for samples with lower-quality data
+    # reason 2: with the new intergenic pseudo-exons, it should be possible to fit
+    # a distribution for uncaptured exons, even for samples with an ugly FPM density plot.
+    # However, it will be necessary to study the calling results for patients with
+    # suspicious coverage density profiles before deleting this part.
     # ###################
     # # plot exon FPM densities for all samples; use this to identify QC-failing samples,
     # # and exons with decent coverage in at least one sample (other exons can be ignored)
@@ -193,7 +195,7 @@ def main(argv):
     # # hard-coded here rather than set via parseArgs because this should only be set
     # # to True for dev & testing
     # testSmoothingBWs = False
-
+    #
     # plotFilePass = plotDir + "/coverageProfile_PASS.pdf"
     # plotFileFail = plotDir + "/coverageProfile_FAIL.pdf"
     # try:
@@ -202,7 +204,7 @@ def main(argv):
     # except Exception as e:
     #     logger.error("SampsQC failed for %s : %s", countsFile, repr(e))
     #     raise Exception("SampsQC failed")
-
+    #
     # thisTime = time.time()
     # logger.debug("Done samples quality control, in %.2fs", thisTime - startTime)
     # startTime = thisTime
