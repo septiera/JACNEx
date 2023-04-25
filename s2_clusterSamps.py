@@ -42,7 +42,7 @@ def parseArgs(argv):
     minSamps = 20
     maxCorr = 0.95
     minCorr = 0.85
-    plotDir = "./ResultPlots/"
+    plotDir = "./plotDir/"
     sexPred = False
 
     usage = "NAME:\n" + scriptName + """\n
@@ -57,8 +57,7 @@ dendogram from clustering) are printed in pdf files created in plotDir.
 Optionally a prediction of the sexes per sample can be made empirically.
 
 ARGUMENTS:
-   --counts [str]: TSV file, first 4 columns hold the exon definitions, subsequent columns
-                   hold the fragment counts. File obtained from 1_countFrags.py
+   --counts [str]: TSV file of fragment counts, possibly gzipped, produced by s1_countFrags.py
    --out [str] : file where results will be saved, must not pre-exist, will be gzipped if it ends
                  with '.gz', can have a path component but the subdir must exist
    --minSamps [int]: minimum number of samples to validate the creation of a cluster,
@@ -73,9 +72,9 @@ ARGUMENTS:
                       into clusters even if they are significantly different from the rest of
                       the clusters. A too high threshold will lead to a massive elimination of
                       non-clustered samples. default: """ + str(minCorr) + """
-   --plotDir[str]: subdir (created if needed) where result plots files will be produced, default:  """ + plotDir + """
-   --sexPred (optional): no argument expected, performs a sexe prediction for each sample analysed,
-                         add the sex assignment lines to the end of output file.
+   --plotDir[str]: subdir (created if needed) where QC plot files will be produced, default:  """ + plotDir + """
+   --sexPred (optional): if set, predict the sex of each sample, and append the predictions to the
+                         outFile as two "clusters", one for each sex, listing the corresponding samples
    -h , --help  : display this help and exit\n"""
 
     try:
