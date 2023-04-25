@@ -53,7 +53,7 @@ def getSampsAndEx2Process(clustID, sampsInClusts, ctrlsInClusts, specClusts, mas
     if specClusts[clustID] == 0:
         exonsIndToProcess.extend(np.where(~maskGonoExonsInd)[0].tolist())
     else:
-        exonsIndToProcess.extend(np.nonzero(~maskGonoExonsInd)[0].tolist())
+        exonsIndToProcess.extend(np.nonzero(maskGonoExonsInd)[0].tolist())
     return(allSampsInClust, exonsIndToProcess)
 
 
@@ -116,7 +116,7 @@ def CNCalls(CNCallsArray, clustID, exonFPM, intergenicsFPM, samples, allSamps, s
 
         # Print progress every 10000 exons
         if exInd % 10000 == 0:
-            print("ClusterID n°", clustID, exInd, time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()))
+            logger.info("   - exonNb %i, %s", exInd, time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()))
 
         # Filter n°1: not captured => median coverage of the exon = 0
         if FilterUncapturedExons(exonFPM):
@@ -535,7 +535,7 @@ def preprocessPlotData(status, exonsFiltersSummary, clustID, exponParams, unCapt
         ylim = 2 * max(yLists[1])
 
         if sampInfos is not None:
-            index_maxProb = np.argmax(sampInfos[2:5]) - 2
+            index_maxProb = max(enumerate(sampInfos[2]), key=lambda x: x[1])[0]
             if index_maxProb == 2:
                 return
 
@@ -550,7 +550,7 @@ def preprocessPlotData(status, exonsFiltersSummary, clustID, exponParams, unCapt
 
             verticalLines.append(sampInfos[1])
             vertLinesLegs.append(f"sample name={sampInfos[0]}")
-            probs = ', '.join(f"{sampInfos[i]:.2e}" for i in range(2, 6))
+            probs = ', '.join([f"{inner:.2e}" for inner in sampInfos[2]])
             plotTitle += f"\nprobs={probs}"
             figTitle = f"CN{index_maxProb}_" + sampInfos[0] + "_" + figTitle
 
