@@ -13,7 +13,6 @@ import logging
 
 ####### MAGE-CNV modules
 import countFrags.countsFile
-import clusterSamps.getGonosomesExonsIndexes
 import clusterSamps.clustering
 import clusterSamps.clustFile
 import clusterSamps.genderPrediction
@@ -215,7 +214,7 @@ def main(argv):
     # need to segment the analysis between gonosomes and autosomes to avoid getting
     # aberrant CNs in the calling step.
     # (e.g Human : Male versus female => heterozygous CNV on the X)
-    maskGonoExIndexes = clusterSamps.getGonosomesExonsIndexes.getSexChrIndexes(exons)
+    maskGonoExIndexes = clusterSamps.genderPrediction.getSexChrIndexes(exons)
 
     #####
     # Get Autosomes Clusters
