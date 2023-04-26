@@ -43,7 +43,7 @@ def parseArgs(argv):
     prevCNCallsFile = ""
     prevClustsFile = ""
     plotDir = ""
-    checkSamps = ""
+    samps2Check = ""
 
     usage = "NAME:\n" + scriptName + """\n
 DESCRIPTION:
@@ -72,12 +72,12 @@ ARGUMENTS:
     --prevclusts [str] optional: pre-existing clustering file produced by s2_clusterSamps.py for the same
             timestamp as the pre-existing copy number call file.
     --plotDir [str]: subdir (created if needed) where result plots files will be produced, wish to monitor the filters
-    --checkSamps [str]: comma-separated list of sample names, to plot calls, must be passed with --plotDir
+    --samps2Check [str]: comma-separated list of sample names, to plot calls, must be passed with --plotDir
     -h , --help: display this help and exit\n"""
 
     try:
         opts, args = getopt.gnu_getopt(sys.argv[1:], 'h', ["help", "counts=", "clusts=", "out=", "prevcncalls=",
-                                                           "prevclusts=", "plotDir=", "checkSamps="])
+                                                           "prevclusts=", "plotDir=", "samps2Check="])
     except getopt.GetoptError as e:
         raise Exception(e.msg + ". Try " + scriptName + " --help")
     if len(args) != 0:
@@ -99,8 +99,8 @@ ARGUMENTS:
             prevClustsFile = value
         elif (opt in ("--plotDir")):
             plotDir = value
-        elif (opt in ("--checkSamps")):
-            checkSamps = value
+        elif (opt in ("--samps2Check")):
+            samps2Check = value
         else:
             raise Exception("unhandled option " + opt)
 
@@ -134,11 +134,9 @@ ARGUMENTS:
     if (prevClustsFile != "") and (not os.path.isfile(prevClustsFile)):
         raise Exception("previous clustering File " + prevClustsFile + " doesn't exist")
 
-    if (plotDir == "" and checkSamps != ""):
+    if (plotDir == "" and samps2Check != ""):
         raise Exception("you must use --checkSamps with --plotDir, not independently. Try " + scriptName + " --help")
 
-    # samps2Plot will store user-supplied sample names
-    samps2Plot = []
     if plotDir != "":
         # test plotdir last so we don't mkdir unless all other args are OK
         if not os.path.isdir(plotDir):
@@ -146,11 +144,11 @@ ARGUMENTS:
                 os.mkdir(plotDir)
             except Exception as e:
                 raise Exception("plotDir " + plotDir + " doesn't exist and can't be mkdir'd: " + str(e))
-        if checkSamps != "":
-            samps2Plot = checkSamps.split(",")
+        if samps2Check != "":
+            samps2Check = samps2Check.split(",")
 
     # AOK, return everything that's needed
-    return(countsFile, newClustsFile, outFile, prevCNCallsFile, prevClustsFile, plotDir, samps2Plot)
+    return(countsFile, newClustsFile, outFile, prevCNCallsFile, prevClustsFile, plotDir, samps2Check)
 
 
 ###############################################################################
@@ -164,7 +162,7 @@ ARGUMENTS:
 # may be available in the log
 def main(argv):
     # parse, check and preprocess arguments
-    (countsFile, clustsFile, outFile, prevCNCallsFile, prevClustsFile, plotDir, samps2Plot) = parseArgs(argv)
+    (countsFile, clustsFile, outFile, prevCNCallsFile, prevClustsFile, plotDir, samps2Check) = parseArgs(argv)
 
     # args seem OK, start working
     logger.debug("called with: " + " ".join(argv[1:]))
@@ -199,7 +197,7 @@ def main(argv):
     # if CNCallsFile and prevClustFile are provided.
     # also returns a boolean np.array to identify the samples to be reanalysed if the clusters change
     try:
-        (CNcallsArray, callsFilled) = CNCalls.CNCallsFile.extractObservedProbsFromPrev(exons, samples, sampsInClusts, prevCNCallsFile, prevClustsFile)
+        (CNCallsArray, callsFilled) = CNCalls.CNCallsFile.extractObservedProbsFromPrev(exons, samples, sampsInClusts, prevCNCallsFile, prevClustsFile)
     except Exception as e:
         raise Exception("extractObservedProbsFromPrev failed - " + str(e))
 
@@ -221,15 +219,23 @@ def main(argv):
         ##############################
         # identifying autosomes and gonosomes "exons" index
         # recall clusters are derived from autosomal or gonosomal analyses
-        maskGExIndexes = clusterSamps.getGonosomesExonsIndexes.getSexChrIndexes(exons)
-
+        try:
+            maskGExIndexes = clusterSamps.getGonosomesExonsIndexes.getSexChrIndexes(exons)
+        except Exception as e:
+            raise Exception("getSexChrIndexes failed %s", e)
+        
+        # To be parallelised => browse clusters
         for clustID in range(len(sampsInClusts)):
+            logger.info("#### Process cluster n°%i", clustID)
+            
+            
             # creation of folder for storing monitoring plots
+            pathDirPlotCN = ""
             if plotDir:
-                pathDirPlotCN = CNCalls.copyNumbersCalls.makePlotDir(plotDir, clustID)
-            else:
-                pathDirPlotCN = ""
-                samps2Plot = ""
+                try:
+                    pathDirPlotCN = CNCalls.copyNumbersCalls.makePlotDir(plotDir, clustID)
+                except Exception as e:
+                    raise Exception("makePlotDir failed %s", e)
 
             ##### validity sanity check
             if validClusts[clustID] == 0:
@@ -244,18 +250,14 @@ def main(argv):
                 logger.info("samples in cluster %s, already filled from prevCallsFile", clustID)
                 continue
 
-            # get cluster-specific data, all samples in the case of a presence of a control cluster,
-            # and exon indexes that need to be analyzed
-            (allSampsInClust, exIndToProcess) = CNCalls.copyNumbersCalls.getSampsAndEx2Process(clustID, sampsInClusts, ctrlsInClusts, specClusts, maskGExIndexes)
-
             try:
-                CNcallsArray = CNCalls.copyNumbersCalls.CNCalls(CNcallsArray, clustID, exonsFPM, intergenicsFPM, samples, allSampsInClust,
-                                                                sampsInClusts[clustID], exons, exIndToProcess, pathDirPlotCN, samps2Plot)
+                CNcallsArray = CNCalls.copyNumbersCalls.exCNCalls(CNCallsArray, clustID, exonsFPM, intergenicsFPM, samples, exons,
+                                                                sampsInClusts, ctrlsInClusts, specClusts, maskGExIndexes, pathDirPlotCN, samps2Check)
             except Exception as e:
                 raise Exception("CNCalls failed %s", e)
 
             thisTime = time.time()
-            logger.debug("Done Copy Number Calls, in %.2f s", thisTime - startTime)
+            logger.debug("Done Copy Number Exons Calls for cluster n°%s, in %.2f s", clustID, thisTime - startTime)
             startTime = thisTime
 
         #####################################################
