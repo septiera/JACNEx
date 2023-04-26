@@ -22,165 +22,6 @@ logger = logging.getLogger(__name__)
 ###############################################################################
 ############################ PUBLIC FUNCTIONS #################################
 ###############################################################################
-#####################################
-# getSampsAndEx2Process
-# Extracts samples and exon indexes to be processed from cluster information
-# Args:
-# - clustID [int]: the ID of the cluster
-# - sampsInClusts (list of lists[int]): "samples" indexes for each cluster
-# - ctrlsInClusts (list of lists[int]): IDs of control clusters for each cluster
-# - specClusts (list[int]): specifies if each cluster is from autosomes (0) or gonosomes (1)
-# - maskGonoExonsInd (np.ndarray[bool]): indicates if each exon is in a gonosomal region (True)
-# or not (False)
-# Returns:
-# - allSampsInClust (list[str]): all "samples" indexes in the cluster
-# - exonsIndToProcess (list[int]): indexes of exons to process
-def getSampsAndEx2Process(clustID, sampsInClusts, ctrlsInClusts, specClusts, maskGonoExonsInd):
-    # Initialize variables to be returned
-    allSampsInClust = []
-    exonsIndToProcess = []
-
-    # Get samples in the given cluster
-    allSampsInClust.extend(sampsInClusts[clustID].copy())
-
-    # If there are control clusters, add their samples to the list of all samples in the cluster
-    if ctrlsInClusts[clustID]:
-        for ctrlID in ctrlsInClusts[clustID]:
-            allSampsInClust.extend(sampsInClusts[ctrlID])
-
-    # Check if the cluster comes from autosomes or gonosomes, and extract exons/intergenic
-    # regions indexes
-    if specClusts[clustID] == 0:
-        exonsIndToProcess.extend(np.where(~maskGonoExonsInd)[0].tolist())
-    else:
-        exonsIndToProcess.extend(np.nonzero(maskGonoExonsInd)[0].tolist())
-    return(allSampsInClust, exonsIndToProcess)
-
-
-#####################################
-# CNCalls
-# Given a cluster identifier, two arrays containing FPM values for pseudo-exons and exons,
-# as well as lists of definitions for samples and clusters, this function calculates the
-# probabilities for each copy number type (CN0, CN1, CN2, CN3+) for each exon and each sample.
-# Specifically:
-# -Retrieves cluster-specific data such as exon and intergenic FPM (fragments per million)
-# count data, and creates a list of exon information to process.
-# -Fits an exponential distribution from all intergenic FPM data to obtain the law parameters
-# and a FPM threshold corresponding to 99% of the cumulative distribution function (CDF).
-# -Filters out exons that are not interpretable and fits a robust Gaussian:
-#   -F1: filters exons with median coverage of 0, i.e., not captured.
-#   -F2: filters exons where it is impossible to fit a robust Gaussian, i.e., median coverage is close to 0.
-#   -F3: filters exons where the fitted Gaussian overlaps the threshold associated with the uncaptured exon profile.
-#   -F4: filters exons where the sample contribution rate to the robust Gaussian is too low, i.e., less than 50%.
-# -Calculates probabilities for each sample/exon to determine CN0 (case where the sample FPM value is lower
-# than the CN1 mean, otherwise 0), CN1, CN2, and CN3 and fills CNcallsArray
-# -Produces filtered and unfiltered exon profiles and pie charts representations if a path for plotted
-# to was defined by the user, saved in different PDF files.
-# Args:
-# - CNcallsArray (np.ndarray): exons copy number calls for each sample and exon, unfilled value = -1
-# - clustID [int]
-# - exonsFPM (np.ndarray[float]): normalised counts from exons
-# - intergenicsFPM (np.ndarray[float]): normalised counts from intergenic windows
-# - samples (list [str]): samples names
-# - allSamps (list[int]): "samples" indexes list constituting the cluster, specific samples
-#   cluster and samples from reference cluster
-# - sampsSpe (list[int]): "samples" indexes list constituting the cluster, only specific samples cluster
-# - exons (list of lists[str, int, int, str]): exon definitions [CHR,START,END,EXONID]
-# - exIndToProcess (list[int]): indexes of exons to process
-# - priors (list[float]): prior probability for each copy number type in the order [CN0, CN1,CN2,CN3+]
-# - plotFolder (str): subdir (created if needed) where result plots files will be produced
-# - sampsToPlots (str): sample names for the graphic control of the number of copies called
-# Returns CNcallsArray completed for the samples in the cluster
-def CNCalls(CNCallsArray, clustID, exonFPM, intergenicsFPM, samples, allSamps, sampsSpe, exons, exIndToProcess, plotFolders, sampsToPlots):
-    # cluster-specific data retrieval
-    exonsFPMClust = exonFPM[exIndToProcess][:, allSamps]
-    intergenicsFPMClust = intergenicsFPM[:, allSamps]
-
-    # counter dictionary for each filter, only used to plot the pie chart
-    exonsFiltersSummary = dict.fromkeys(["notCaptured", "cannotFitRG", "RGClose2LowThreshold", "fewSampsInRG", "exonsCalls"], 0)
-
-    # fit an exponential distribution from all pseudo exons
-    try:
-        (exponParams, unCaptThreshold) = fitExponential(intergenicsFPMClust)
-        logger.info("clustID : %i, exponential params loc= %.2e scale=%.2e, uncaptured threshold = %.2e FPM",
-                    clustID, exponParams[0], exponParams[1], unCaptThreshold)
-    except Exception as e:
-        logger.error("fitExponential failed for cluster %i : %s", clustID, repr(e))
-        raise Exception("fitExponential failed")
-
-    # Browse cluster-specific exons
-    for exInd in range(len(exIndToProcess)):
-        exIndInFullTab = exIndToProcess[exInd]
-        exonInfos = exons[exIndInFullTab]
-        exonFPM = exonsFPMClust[exIndInFullTab]
-
-        # Print progress every 10000 exons
-        if exInd % 10000 == 0:
-            logger.info("   - exonNb %i, %s", exInd, time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()))
-
-        # Filter n°1: not captured => median coverage of the exon = 0
-        if FilterUncapturedExons(exonFPM):
-            preprocessPlotData("notCaptured", exonsFiltersSummary, clustID, exponParams, unCaptThreshold,
-                               exIndInFullTab, exonInfos, exonFPM, plotFolders[0] if plotFolders else None)
-            continue
-
-        # robustly fit a gaussian
-        # Filter n°2: fitting is impossible (median close to 0)
-        try:
-            RGParams = fitRobustGaussian(exonFPM)
-        except Exception as e:
-            if str(e) == "cannot fit":
-                continue
-            else:
-                raise e
-
-        # Filter n°3: RG overlaps the threshold associated with the uncaptured exon profile
-        if FilterZscore(RGParams[0], RGParams[1], unCaptThreshold):
-            preprocessPlotData("RGClose2LowThreshold", exonsFiltersSummary, clustID, exponParams, unCaptThreshold,
-                               exIndInFullTab, exonInfos, exonFPM, plotFolders[1] if plotFolders else None, RGParams)
-            continue
-
-        # Filter n°4: the sample contribution rate to the robust Gaussian is too low (<50%)
-        if FilterSampsContribRG(exonFPM, RGParams[0], RGParams[1]):
-            preprocessPlotData("fewSampsInRG", exonsFiltersSummary, clustID, exponParams, unCaptThreshold,
-                               exIndInFullTab, exonInfos, exonFPM, plotFolders[2] if plotFolders else None, RGParams)
-            continue
-
-        exonsFiltersSummary["exonsCalls"] += 1
-        # Browse cluster-samples
-        for i in range(len(allSamps)):
-            sampInd = allSamps[i]
-            if sampInd not in sampsSpe:  # already processed
-                continue
-
-            # density probabilities for each copy number
-            sampFPM = exonFPM[i]
-            probs = sampFPM2Probs(RGParams[0], RGParams[1], exponParams, unCaptThreshold, sampFPM)
-
-            sampIndexInCallsArray = allSamps[i] * 4
-            # Check if the sample has not been called for this exon before
-            if sum(CNCallsArray[exIndInFullTab, sampIndexInCallsArray:sampIndexInCallsArray + 4]) < 0:
-                # Populate the CNcallsArray with the copy number call probabilities
-                CNCallsArray[exIndInFullTab, sampIndexInCallsArray:sampIndexInCallsArray + 4] = probs
-            else:
-                raise Exception('erase previous probabilities values')
-
-            # graphic representation of callable exons for a patient of interest
-            sampName = samples[sampInd]
-            if (not sampsToPlots) or (sampName not in sampsToPlots):
-                continue
-            preprocessPlotData("exonsCalls", exonsFiltersSummary, clustID, exponParams, unCaptThreshold,
-                               exIndInFullTab, exonInfos, exonFPM, plotFolders[3] if plotFolders else None, RGParams,
-                               [sampName, sampFPM, probs])
-
-    if plotFolders:
-        pieFile = matplotlib.backends.backend_pdf.PdfPages(os.path.join(plotFolders[4], "pieChart_Filtering_cluster" + str(clustID) + ".pdf"))
-        figures.plots.plotPieChart(clustID, exonsFiltersSummary, pieFile)
-        pieFile.close()
-
-    return CNCallsArray
-
-
 ############################################
 # makePlotDir
 # Create directories for storing plots related to a given cluster.
@@ -219,9 +60,165 @@ def makePlotDir(plotDir, clustID):
     return pathDirPlotCN
 
 
+#####################################
+# exCNCalls
+# Given a cluster identifier, two arrays containing FPM values for pseudo-exons and exons,
+# as well as lists of definitions for samples and clusters, this function calculates the
+# probabilities for each copy number type (CN0, CN1, CN2, CN3+) for each exon and each sample.
+# Specifically:
+# -Retrieves cluster-specific data such as exon and intergenic FPM (fragments per million)
+# count data, and creates a list of exon information to process.
+# -Fits an exponential distribution from all intergenic FPM data to obtain the law parameters
+# and a FPM threshold corresponding to 99% of the cumulative distribution function (CDF).
+# -Filters out exons that are not interpretable and fits a robust Gaussian:
+#   -F1: filters exons with median coverage of 0, i.e., not captured.
+#   -F2: filters exons where it is impossible to fit a robust Gaussian, i.e., median coverage is close to 0.
+#   -F3: filters exons where the fitted Gaussian overlaps the threshold associated with the uncaptured exon profile.
+#   -F4: filters exons where the sample contribution rate to the robust Gaussian is too low, i.e., less than 50%.
+# -Calculates probabilities for each sample/exon to determine CN0 (case where the sample FPM value is lower
+# than the CN1 mean, otherwise 0), CN1, CN2, and CN3 and fills CNcallsArray
+# -Produces filtered and unfiltered exon profiles and pie charts representations if a path for plotted
+# to was defined by the user, saved in different PDF files.
+# Args:
+# - CNcallsArray (np.ndarray): exons copy number calls for each sample and exon, unfilled value = -1
+# - clustID [int]
+# - exonsFPM (np.ndarray[float]): normalised counts from exons
+# - intergenicsFPM (np.ndarray[float]): normalised counts from intergenic windows
+# - samples (list [str]): samples names
+# - exons (list of lists[str, int, int, str]): exon definitions [CHR,START,END,EXONID]
+# - sampsInClusts (list of lists[int]): "samples" indexes for each cluster
+# - ctrlsInClusts (list of lists[int]): IDs of control clusters for each cluster
+# - specClusts (list[int]): specifies if each cluster is from autosomes (0) or gonosomes (1)
+# - maskGExIndexes (np.ndarray[bool]): indicates if each exon is in a gonosomal region (True) or not (False)
+# - plotFolder (str): subdir (created if needed) where result plots files will be produced
+# - sampsToCheck (str): sample names for the graphic control of the number of copies called
+# Returns CNcallsArray updated
+def exCNCalls(CNCallsArray, clustID, exonsFPM, intergenicsFPM, samples, exons, sampsInClusts, ctrlsInClusts, specClusts, maskGExIndexes, plotFolders, samps2Check):
+    clustSpeSamps = sampsInClusts[clustID].copy()
+    # If there are control clusters, add their samples indexes in a new list, else new list = previous list
+    if ctrlsInClusts[clustID]:
+        samps2Compare = getSampsFromRefClusters(ctrlsInClusts[clustID], clustSpeSamps, sampsInClusts)
+    else:
+        samps2Compare = clustSpeSamps
+
+    exInd2Process = getExInd2Process(specClusts[clustID], maskGExIndexes)
+    logger.info("clustSamps= %i, RefSamps= %i, NBExons= %i", len(clustSpeSamps), len(samps2Compare)-len(clustSpeSamps), len(exInd2Process))
+    
+    # counter dictionary for each filter, only used to plot the pie chart
+    exonsFiltersSummary = dict.fromkeys(["notCaptured", "cannotFitRG", "RGClose2LowThreshold", "fewSampsInRG", "exonsCalls"], 0)
+
+    # fit an exponential distribution from all pseudo exons
+    try:
+        (exponParams, unCaptThreshold) = fitExponential(intergenicsFPM[:, samps2Compare])
+        logger.info("exponential params loc= %.2e scale=%.2e, uncaptured threshold = %.2e FPM",
+                    exponParams[0], exponParams[1], unCaptThreshold)
+    except Exception as e:
+        logger.error("fitExponential failed for cluster %i : %s", clustID, repr(e))
+        raise Exception("fitExponential failed")
+
+    # Browse cluster-specific exons
+    for exInd in range(len(exInd2Process)):
+        exIndInFullTab = exInd2Process[exInd]
+        exonInfos = exons[exIndInFullTab]
+        exonFPM = exonsFPM[exIndInFullTab]
+
+        # Print progress every 10000 exons
+        if exInd % 10000 == 0:
+            logger.info(" - exonNb %i, %s", exInd, time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()))
+
+        # Filter n°1: not captured => median coverage of the exon = 0
+        if FilterUncapturedExons(exonFPM):
+            preprocessPlotData("notCaptured", exonsFiltersSummary, clustID, exponParams, unCaptThreshold,
+                               exIndInFullTab, exonInfos, exonFPM, plotFolders[0] if plotFolders else None)
+            continue
+
+        # robustly fit a gaussian
+        # Filter n°2: fitting is impossible (median close to 0)
+        try:
+            RGParams = fitRobustGaussian(exonFPM)
+        except Exception as e:
+            if str(e) == "cannot fit":
+                continue
+            else:
+                raise e
+
+        # Filter n°3: RG overlaps the threshold associated with the uncaptured exon profile
+        if FilterZscore(RGParams[0], RGParams[1], unCaptThreshold):
+            preprocessPlotData("RGClose2LowThreshold", exonsFiltersSummary, clustID, exponParams, unCaptThreshold,
+                               exIndInFullTab, exonInfos, exonFPM, plotFolders[1] if plotFolders else None, RGParams)
+            continue
+
+        # Filter n°4: the sample contribution rate to the robust Gaussian is too low (<50%)
+        if FilterSampsContribRG(exonFPM, RGParams[0], RGParams[1]):
+            preprocessPlotData("fewSampsInRG", exonsFiltersSummary, clustID, exponParams, unCaptThreshold,
+                               exIndInFullTab, exonInfos, exonFPM, plotFolders[2] if plotFolders else None, RGParams)
+            continue
+
+        exonsFiltersSummary["exonsCalls"] += 1
+
+        # Browse cluster-samples
+        for i in range(len(samps2Compare)):
+            sampInd = samps2Compare[i]
+            if sampInd not in clustSpeSamps:  # already processed
+                continue
+
+            # density probabilities for each copy number
+            sampFPM = exonFPM[i]
+            probs = sampFPM2Probs(RGParams[0], RGParams[1], exponParams, unCaptThreshold, sampFPM)
+
+            fillCNCallsArray(CNCallsArray, samps2Compare[i], exIndInFullTab, probs)
+
+            # graphic representation of callable exons for a patient of interest
+            sampName = samples[sampInd]
+            if (not samps2Check) or (sampName not in samps2Check):
+                continue
+            preprocessPlotData("exonsCalls", exonsFiltersSummary, clustID, exponParams, unCaptThreshold,
+                               exIndInFullTab, exonInfos, exonFPM, plotFolders[3] if plotFolders else None, RGParams,
+                               [sampName, sampFPM, probs])
+
+    if plotFolders:
+        pieFile = matplotlib.backends.backend_pdf.PdfPages(os.path.join(plotFolders[4], "pieChart_Filtering_cluster" + str(clustID) + ".pdf"))
+        figures.plots.plotPieChart(clustID, exonsFiltersSummary, pieFile)
+        pieFile.close()
+
+    return CNCallsArray
+
+
 ###############################################################################
 ############################ PRIVATE FUNCTIONS ################################
 ###############################################################################
+#############################################################
+# getSampsFromRefClusters
+# Args:
+# - refClusterIDs (list[int]): reference cluster IDs
+# - sampsCluster (list[int]): "samples" indexes for a cluster IDs
+# - sampsInClusts (list of list[int]): each sub-list is composed of the samples for a given
+# cluster ID (list index)
+# Return:
+# - sampsCluster: the updated sample list for a cluster with the reference cluster(s) samples
+@numba.njit
+def getSampsFromRefClusters(refClusterIDs, sampsCluster, sampsInClusts):
+    for refID in refClusterIDs:
+        sampsCluster.extend(sampsInClusts[refID].copy())
+    return sampsCluster
+
+
+#############################################################
+# getExInd2Process
+# Args:
+# - clustSexStatus [bool]: cluster analyzed with 0 = autosomal exons, 1 = gonosomal exons
+# - maskGExIndexes [np.ndarray[bool]]: for each "exon" index sexual status indicated (0: autosomes, 1: gonosomes)
+# Return:
+# - exInd2Process (list[int]): "exons" indexes
+def getExInd2Process(clustSexStatus, maskGExIndexes):
+    exInd2Process = []
+    if clustSexStatus == 0:
+        exInd2Process.extend(np.where(~maskGExIndexes)[0].tolist())
+    else:
+        exInd2Process.extend(np.nonzero(maskGExIndexes)[0].tolist())
+    return exInd2Process
+
+
 #############################################################
 # fitExponential
 # Given a counts array for a specific cluster identifier, fits an exponential distribution
@@ -480,6 +477,23 @@ def sampFPM2Probs(mean, stdev, exponParams, unCaptThreshold, exSampFPM):
     probDensities[3] = scipy.stats.norm.pdf(exSampFPM, 3 * meanCN1, stdev)
 
     return probDensities
+
+
+#############################################################
+# fillCNCallsArray
+# Arguments:
+# - CNCallsArray (np.ndarray[floats]): copy number call probabilities
+# - sampIndex [int]: "samples" index
+# - exIndex [int]: exon index in CNCallsArray
+# - probs (list[floats]): copy number call probabilities [CN0,CN1,CN2,CN3]
+def fillCNCallsArray(CNCallsArray, sampIndex, exIndex, probs):
+    sampArrayInd = sampIndex * 4
+    # Check if the sample has not been called for this exon before
+    if np.sum(CNCallsArray[exIndex, sampArrayInd:sampArrayInd + 4]) < 0:
+        # Populate the CNcallsArray with the copy number call probabilities
+        CNCallsArray[exIndex, sampArrayInd:sampArrayInd + 4] = probs
+    else:
+        raise Exception('erase previous probabilities values')
 
 
 #########################
