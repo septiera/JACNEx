@@ -95,9 +95,11 @@ def makePlotDir(plotDir, clustID):
 # Returns CNcallsArray updated
 def exCNCalls(CNCallsArray, clustID, exonsFPM, intergenicsFPM, samples, exons, sampsInClusts, ctrlsInClusts, specClusts, maskGExIndexes, plotFolders, samps2Check):
     clustSpeSamps = sampsInClusts[clustID].copy()
+
     # If there are control clusters, add their samples indexes in a new list, else new list = previous list
-    if ctrlsInClusts[clustID]:
-        samps2Compare = getSampsFromRefClusters(ctrlsInClusts[clustID], clustSpeSamps, sampsInClusts)
+    if len(ctrlsInClusts[clustID]) != 0:
+        refSamps = getSampsFromRefClusters(ctrlsInClusts[clustID], sampsInClusts)
+        samps2Compare = clustSpeSamps + refSamps
     else:
         samps2Compare = clustSpeSamps
 
@@ -191,16 +193,15 @@ def exCNCalls(CNCallsArray, clustID, exonsFPM, intergenicsFPM, samples, exons, s
 # getSampsFromRefClusters
 # Args:
 # - refClusterIDs (list[int]): reference cluster IDs
-# - sampsCluster (list[int]): "samples" indexes for a cluster IDs
 # - sampsInClusts (list of list[int]): each sub-list is composed of the samples for a given
 # cluster ID (list index)
 # Return:
-# - sampsCluster: the updated sample list for a cluster with the reference cluster(s) samples
-@numba.njit
-def getSampsFromRefClusters(refClusterIDs, sampsCluster, sampsInClusts):
+# - refSamps: the ref sample list from reference cluster(s)
+def getSampsFromRefClusters(refClusterIDs, sampsInClusts):
+    refSamps = []
     for refID in refClusterIDs:
-        sampsCluster.extend(sampsInClusts[refID].copy())
-    return sampsCluster
+        refSamps.extend(sampsInClusts[refID].copy())
+    return refSamps
 
 
 #############################################################
