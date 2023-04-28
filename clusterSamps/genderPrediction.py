@@ -26,11 +26,13 @@ def exonOnSexChr(exons):
     # accepted sex chromosomes as keys, value==1
     sexChroms = {"X": 1, "Y": 1, "W": 1, "Z": 1}
     # also accept the same chroms prepended with 'chr'
-    for sc in sexChroms:
+    for sc in list(sexChroms.keys()):
         sexChroms["chr" + sc] = 1
 
-    # create the boolean numpy.ndarray of exonsNb length
-    exonOnSexChr = np.array([exon[0] in sexChroms for exon in exons])
+    exonOnSexChr = np.zeros(len(exons), dtype=np.bool_)
+    for ei in range(len(exons)):
+        if exons[ei][0] in sexChroms:
+            exonOnSexChr[ei] = True
     return exonOnSexChr
 
 
