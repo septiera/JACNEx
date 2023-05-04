@@ -1,6 +1,5 @@
-import logging
-import numpy as np
 import gzip
+import logging
 
 # set up logger, using inherited config
 logger = logging.getLogger(__name__)
@@ -9,6 +8,7 @@ logger = logging.getLogger(__name__)
 ###############################################################################
 ############################ PUBLIC FUNCTIONS #################################
 ###############################################################################
+
 #####################################
 # parseClustsFile
 # Perform multiple sanity checks on clustFile as it's subject to several rules
@@ -16,19 +16,14 @@ logger = logging.getLogger(__name__)
 # If clustFile contains sex predictions, they must be at the end of the file.
 # Samples must be the same as those in the countFile.
 # Arg:
-# - clustsFile [str]: a clusterFile produced by 2_clusterSamps.py, possibly gzipped
-# - samples (list[str]): samples names
-# Returns a tupple (sampsInClusts, ctrlsInClusts, validClusts, specClusts), each
-# variable is created here:
-# - sampsInClusts (list of lists[str]): each index in the list corresponds to a clusterID,
-# and each sublist is composed of the "samples" indexes in the cluster
-# - ctrlsInClusts (list of lists[str]): each index in the list corresponds to a clusterID,
-# and each sublist is composed of the control clusterIDs for the cluster.
-# It can be empty if not controlled.
-# - validClusts (list[int]): each index in the list corresponds to a cluster associated
-# with a validity value (0 invalid, 1 valid)
-# - specClusts (list[booleans]): each index in the list corresponds to a cluster associated
-# with an analysis status performed (False autosomes, True gonosomes)
+# - clustsFile (str): a clustersFile produced by printClustsFile(), possibly gzipped
+# - samples : ???
+#
+# Returns a tuple (clusts2Samps, clusts2Ctrls), each variable is created here:
+# - clusts2Samps (dict[str, List[int]]): key: clusterID , value: SOIs list
+# ??? what is "SOIs list"? what are we actually returning?
+# - clusts2Ctrls (dict[str, List[str]]): key: clusterID, value: controlsID list
+# ??? same, what is "controlsID list"?
 def parseClustsFile(clustsFile, samples):
     try:
         if clustsFile.endswith(".gz"):
@@ -42,8 +37,14 @@ def parseClustsFile(clustsFile, samples):
     # skip header
     clustsFH.readline()
 
-    # To Fill and returns
-    sampsInClusts, ctrlsInClusts, validClusts, specClusts = [[] for _ in range(4)]
+    # path of each clusterID
+    for line in clustsFH:
+        if line.startswith("M") or line.startswith("F"):
+            # isn't this dead code?
+            continue
+        else:
+            # finding information from the 5 columns
+            clusterID, sampsInCluster, controlledBy, validCluster, specifics = line.rstrip().split("\t", maxsplit=4)
 
     # To fill not returns
     # boolean array to check that all samples in countsFile are in clustFile.
