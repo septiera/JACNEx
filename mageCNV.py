@@ -200,9 +200,9 @@ def main(argv):
                  "STEP2 - CLUSTER SAMPLES -", "STEP3 - CALL EXON-LEVEL CNs -",
                  "STEP4 - CALL CNVs -")
 
-    logger.info("called with: " + " ".join(argv[1:]))
     # parse, check and preprocess arguments
     (workDir, step1Args, step2Args, step3Args, step4Args) = parseArgs(argv)
+    logger.info("called with: " + " ".join(argv[1:]))
 
     ##################
     # hard-coded subdir hierarchy of workDir, created if needed
