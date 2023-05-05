@@ -1,6 +1,5 @@
 import os
 import logging
-import numpy as np
 import matplotlib.pyplot
 import matplotlib.backends.backend_pdf
 import scipy.cluster.hierarchy
@@ -66,7 +65,7 @@ def plotDensities(title, dataRanges, densities, legends, line1, line2, line1lege
 
 
 #############################
-# visualisation of clustering results by a dendogram
+# visualisation of clustering results by a dendrogram
 # the labels below the figure correspond from bottom to top
 # to the clusters formation in decreasing order of correlation
 # label types:
@@ -83,7 +82,7 @@ def plotDensities(title, dataRanges, densities, legends, line1, line2, line1lege
 # - pdf: matplotlib PDF object where the plot will be saved
 #
 # Returns a pdf file in the output folder
-def plotDendogram(linksMatrix, labelsGp, minDist, CM, pdf):
+def plotDendrogram(linksMatrix, labelsGp, minDist, CM, pdf):
     # Disable interactive mode
     matplotlib.pyplot.ioff()
     fig = matplotlib.pyplot.figure(figsize=(15, 5), facecolor="white")

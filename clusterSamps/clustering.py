@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 # method on the distance data.
 # Parsing this links matrix and obtaining the clusters.
 # Formats the results by checking their validity
-# Produces a dendogram in plotDir
+# Produces a dendrogram in plotDir
 #
 # Args:
 #  - FPMarray (np.ndarray[float]): normalised fragment counts for samples,
@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 #  - minCorr (float): minimal Pearson correlation score tolerated by the user to end
 #   build clusters
 #  - minSamps (int): minimal sample number to validate a cluster
-#  - plotFile (str): full path (+ file name) for saving a dendogram
+#  - plotFile (str): full path (+ file name) for saving a dendrogram
 #
 # Returns (clusters, linksMatrix):
 #  - clusters (list of list[int, list[int], list[int], int]): cluster definitions
@@ -51,7 +51,7 @@ logger = logging.getLogger(__name__)
 # this output is only used for testing and debugging
 def clustersBuilds(FPMarray, maxCorr, minCorr, minSamps, plotFile):
     if os.path.isfile(plotFile):
-        logger.error('clustering dendogramm : plotFile %s already exist', plotFile)
+        logger.error('clustering dendrogram : plotFile %s already exist', plotFile)
         raise Exception("plotFile already exist")
 
     # create matplotlib PDF objects
@@ -59,7 +59,7 @@ def clustersBuilds(FPMarray, maxCorr, minCorr, minSamps, plotFile):
 
     # clustering method
     CM = "average"
-    
+
     # To Fill and returns
     clusters = []
 
@@ -78,10 +78,10 @@ def clustersBuilds(FPMarray, maxCorr, minCorr, minSamps, plotFile):
     # labelArray (np.ndarray[str]): labels for each sample within each cluster, dim=NbSOIs*NbClusters
     labelArray = np.empty([len(samps2Clusters), len(clustsList)], dtype="U1")
     labelArray.fill("")
-    # labelsGp (list[str]): labels for each sample list to be passed when plotting the dendogram
+    # labelsGp (list[str]): labels for each sample list to be passed when plotting the dendrogram
     labelsGp = []
 
-    # labels definitions for dendogram
+    # labels definitions for dendrogram
     label1 = "x"  # sample contributes to the cluster
     label2 = "-"  # sample controls the cluster
     label3 = "O"  # sample is not successfully clustered
@@ -118,13 +118,13 @@ def clustersBuilds(FPMarray, maxCorr, minCorr, minSamps, plotFile):
         listToFill = [i, sampsClustIndex, ctrlList, validityStatus]
         clusters.append(listToFill)
 
-    # browse the np array of labels to build the str list (need for plot dendogram)
+    # browse the np array of labels to build the str list (need for plot dendrogram)
     for i in labelArray:
         # separation of labels for readability
         strToBind = "  ".join(i)
         labelsGp.append(strToBind)
 
-    figures.plots.plotDendogram(linksMatrix, labelsGp, minDist, CM, pdf)
+    figures.plots.plotDendrogram(linksMatrix, labelsGp, minDist, CM, pdf)
     pdf.close()
 
     return (clusters, linksMatrix)

@@ -52,7 +52,7 @@ and gonosomes ('G') for clustering to prevent bias. The accepted sex chromosomes
 Results are printed to stdout in TSV format: 5 columns
 [CLUSTER_ID, SAMPLES, CONTROLLED_BY, VALIDITY, SPECIFICS]
 In addition, all graphical support (quality control histogram for each sample and
-dendogram from clustering) are printed in pdf files created in plotDir.
+dendrogram from clustering) are printed in pdf files created in plotDir.
 Optionally a prediction of the sexes per sample can be made empirically.
 
 ARGUMENTS:
@@ -222,9 +222,9 @@ def main(argv):
     try:
         # get autosomes exons counts
         autosomesFPM = exonsFPM[~maskGonoExIndexes]
-        plotAutoDendogramm = os.path.join(plotDir, "Dendogram_" + str(autosomesFPM.shape[1]) + "Samps_autosomes.pdf")
+        plotAutoDendrogram = os.path.join(plotDir, "Dendrogram_" + str(autosomesFPM.shape[1]) + "Samps_autosomes.pdf")
         # applying hierarchical clustering for autosomes exons
-        autosClusters = clusterSamps.clustering.clustersBuilds(autosomesFPM, maxCorr, minCorr, minSamps, plotAutoDendogramm)[0]
+        autosClusters = clusterSamps.clustering.clustersBuilds(autosomesFPM, maxCorr, minCorr, minSamps, plotAutoDendrogram)[0]
 
     except Exception as e:
         logger.error("clusterBuilds for autosomes failed : %s", repr(e))
@@ -243,8 +243,8 @@ def main(argv):
         # (e.g target sequencing may not be provided in some cases)
         # if not present, no clustering, returns a message in the log
         if gonosomesFPM.shape[0] != 0:
-            plotGonoDendogramm = os.path.join(plotDir, "Dendogram_" + str(gonosomesFPM.shape[1]) + "Samps_gonosomes.pdf")
-            gonosClusters = clusterSamps.clustering.clustersBuilds(gonosomesFPM, maxCorr, minCorr, minSamps, plotGonoDendogramm)[0]
+            plotGonoDendrogram = os.path.join(plotDir, "Dendrogram_" + str(gonosomesFPM.shape[1]) + "Samps_gonosomes.pdf")
+            gonosClusters = clusterSamps.clustering.clustersBuilds(gonosomesFPM, maxCorr, minCorr, minSamps, plotGonoDendrogram)[0]
         else:
             logger.info("no gonosomic exons, clustering can be done")
             gonosClusters = []
