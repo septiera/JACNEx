@@ -3,7 +3,7 @@ import gzip
 import numpy as np
 import numba
 
-import clusterSamps.clustering
+import clusterSamps.clustFile
 
 # prevent matplotlib flooding the logs when we are in DEBUG loglevel
 logging.getLogger('matplotlib').setLevel(logging.WARNING)
@@ -57,7 +57,8 @@ def extractObservedProbsFromPrev(exons, samples, clusts2Samps, prevCNCallsFile, 
 
         ###################################
         # we have a prevClusts file parse it
-        prevclusts2Samps = clusterSamps.clustering.parseClustsFile(prevClustsFile)[0]
+        prevclusts2Samps = clusterSamps.clustFile.parseClustsFile(prevClustsFile, prevSamples)[0]
+        logger.info(prevclusts2Samps)
 
         # fill prev2new to identify samples that are in prevCallsFile:
         # prev2new is a 1D numpy array, size = len(prevSamples), prev2new[prev] is the
@@ -248,11 +249,10 @@ def callsVec2array(callsArray, exonIndex, callsVector):
 
 #############################################################
 # calls2str:
-# return a string holding the calls from emissionArray[exonIndex],
+# return a string holding the calls from callsArray[exonIndex],
 # tab-separated and starting with a tab
-@numba.njit
-def calls2str(emissionArray, exonIndex):
-    toPrint = ""
-    for i in range(emissionArray.shape[1]):
-        toPrint += "\t" + format(emissionArray[exonIndex, i], "{:0.2e}")
-    return toPrint
+def calls2str(callsArray, exonIndex):
+    formatted_values = []
+    for i in range(callsArray.shape[1]):
+        formatted_values.append("{:0.2e}".format(callsArray[exonIndex, i]))
+    return "\t" + "\t".join(formatted_values)
