@@ -493,6 +493,8 @@ def fillCNCallsArray(CNCallsArray, sampIndex, exIndex, probs):
     if np.sum(CNCallsArray[exIndex, sampArrayInd:sampArrayInd + 4]) < 0:
         # Populate the CNcallsArray with the copy number call likelihood probabilities
         CNCallsArray[exIndex, sampArrayInd:sampArrayInd + 4] = probs
+    else:
+        raise Exception("overwrite calls in CNCallsArray")
 
 
 #########################
