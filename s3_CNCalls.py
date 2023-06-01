@@ -223,12 +223,11 @@ def main(argv):
             maskGExIndexes = clusterSamps.getGonosomesExonsIndexes.getSexChrIndexes(exons)
         except Exception as e:
             raise Exception("getSexChrIndexes failed %s", e)
-        
+
         # To be parallelised => browse clusters
         for clustID in range(len(sampsInClusts)):
             logger.info("#### Process cluster n°%i", clustID)
-            
-            
+
             # creation of folder for storing monitoring plots
             pathDirPlotCN = ""
             if plotDir:
@@ -250,11 +249,13 @@ def main(argv):
                 logger.info("samples in cluster %s, already filled from prevCallsFile", clustID)
                 continue
 
+            ##### run prediction for current cluster
             try:
-                CNcallsArray = CNCalls.copyNumbersCalls.exCNCalls(CNCallsArray, clustID, exonsFPM, intergenicsFPM, samples, exons,
-                                                                sampsInClusts, ctrlsInClusts, specClusts, maskGExIndexes, pathDirPlotCN, samps2Check)
+                CNcallsArray = CNCalls.copyNumbersCalls.CNCalls(CNCallsArray, clustID, exonsFPM, intergenicsFPM,
+                                                                samples, exons, sampsInClusts, ctrlsInClusts,
+                                                                specClusts, maskGExIndexes, pathDirPlotCN, samps2Check)
             except Exception as e:
-                raise Exception("CNCalls failed %s", e)
+                raise Exception("CNCalls failed: ", e)
 
             thisTime = time.time()
             logger.debug("Done Copy Number Exons Calls for cluster n°%s, in %.2f s", clustID, thisTime - startTime)
