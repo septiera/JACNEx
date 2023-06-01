@@ -61,10 +61,11 @@ def makePlotDir(plotDir, clustID):
 
 
 #####################################
-# exCNCalls
+# CNCalls
 # Given a cluster identifier, two arrays containing FPM values for pseudo-exons and exons,
 # as well as lists of definitions for samples and clusters, this function calculates the
-# probabilities for each copy number type (CN0, CN1, CN2, CN3+) for each exon and each sample.
+# probabilities (likelihood) for each copy number type (CN0, CN1, CN2, CN3+) for each exon
+# and each sample.
 # Specifically:
 # -Retrieves cluster-specific data such as exon and intergenic FPM (fragments per million)
 # count data, and creates a list of exon information to process.
@@ -93,7 +94,7 @@ def makePlotDir(plotDir, clustID):
 # - plotFolder (str): subdir (created if needed) where result plots files will be produced
 # - sampsToCheck (str): sample names for the graphic control of the number of copies called
 # Returns CNcallsArray updated
-def exCNCalls(CNCallsArray, clustID, exonsFPM, intergenicsFPM, samples, exons, sampsInClusts, ctrlsInClusts, specClusts, maskGExIndexes, plotFolders, samps2Check):
+def CNCalls(CNCallsArray, clustID, exonsFPM, intergenicsFPM, samples, exons, sampsInClusts, ctrlsInClusts, specClusts, maskGExIndexes, plotFolders, samps2Check):
     clustSpeSamps = sampsInClusts[clustID].copy()
 
     # If there are control clusters, add their samples indexes in a new list, else new list = previous list
@@ -104,15 +105,16 @@ def exCNCalls(CNCallsArray, clustID, exonsFPM, intergenicsFPM, samples, exons, s
         samps2Compare = clustSpeSamps
 
     exInd2Process = getExInd2Process(specClusts[clustID], maskGExIndexes)
-    logger.info("clustSamps= %i, RefSamps= %i, NBExons= %i", len(clustSpeSamps), len(samps2Compare)-len(clustSpeSamps), len(exInd2Process))
-    
+    logger.info("clustSamps= %i, controlSamps= %i, exonsNB= %i",
+                len(clustSpeSamps), len(samps2Compare) - len(clustSpeSamps), len(exInd2Process))
+
     # counter dictionary for each filter, only used to plot the pie chart
     exonsFiltersSummary = dict.fromkeys(["notCaptured", "cannotFitRG", "RGClose2LowThreshold", "fewSampsInRG", "exonsCalls"], 0)
 
     # fit an exponential distribution from all pseudo exons
     try:
         (exponParams, unCaptThreshold) = fitExponential(intergenicsFPM[:, samps2Compare])
-        logger.info("exponential params loc= %.2e scale=%.2e, uncaptured threshold = %.2e FPM",
+        logger.info("exponential params loc= %.2e scale=%.2e, uncaptured threshold=%.2e FPM",
                     exponParams[0], exponParams[1], unCaptThreshold)
     except Exception as e:
         logger.error("fitExponential failed for cluster %i : %s", clustID, repr(e))
@@ -129,7 +131,7 @@ def exCNCalls(CNCallsArray, clustID, exonsFPM, intergenicsFPM, samples, exons, s
             logger.info(" - exonNb %i, %s", exInd, time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()))
 
         # Filter n°1: not captured => median coverage of the exon = 0
-        if FilterUncapturedExons(exonFPM):
+        if filterUncapturedExons(exonFPM):
             preprocessPlotData("notCaptured", exonsFiltersSummary, clustID, exponParams, unCaptThreshold,
                                exIndInFullTab, exonInfos, exonFPM, plotFolders[0] if plotFolders else None)
             continue
@@ -145,13 +147,13 @@ def exCNCalls(CNCallsArray, clustID, exonsFPM, intergenicsFPM, samples, exons, s
                 raise e
 
         # Filter n°3: RG overlaps the threshold associated with the uncaptured exon profile
-        if FilterZscore(RGParams[0], RGParams[1], unCaptThreshold):
+        if filterZscore(RGParams[0], RGParams[1], unCaptThreshold):
             preprocessPlotData("RGClose2LowThreshold", exonsFiltersSummary, clustID, exponParams, unCaptThreshold,
                                exIndInFullTab, exonInfos, exonFPM, plotFolders[1] if plotFolders else None, RGParams)
             continue
 
         # Filter n°4: the sample contribution rate to the robust Gaussian is too low (<50%)
-        if FilterSampsContribRG(exonFPM, RGParams[0], RGParams[1]):
+        if filterSampsContribRG(exonFPM, RGParams[0], RGParams[1]):
             preprocessPlotData("fewSampsInRG", exonsFiltersSummary, clustID, exponParams, unCaptThreshold,
                                exIndInFullTab, exonInfos, exonFPM, plotFolders[2] if plotFolders else None, RGParams)
             continue
@@ -170,7 +172,7 @@ def exCNCalls(CNCallsArray, clustID, exonsFPM, intergenicsFPM, samples, exons, s
 
             fillCNCallsArray(CNCallsArray, samps2Compare[i], exIndInFullTab, probs)
 
-            # graphic representation of callable exons for a patient of interest
+            # graphic representation of callable exons for interest patients
             sampName = samples[sampInd]
             if (not samps2Check) or (sampName not in samps2Check):
                 continue
@@ -276,7 +278,7 @@ def fitExponential(intergenicsFPMClust):
 # - exonFPM (list[floats]): FPM counts from an exon
 # Returns "True" if exon doesn't pass the filter otherwise "False"
 @numba.njit
-def FilterUncapturedExons(exonFPM):
+def filterUncapturedExons(exonFPM):
     medianFPM = np.median(exonFPM)
     if medianFPM == 0:
         return True
@@ -366,7 +368,7 @@ def truncated_integral_and_sigma(x):
 
 
 ###################
-# FilterZscore
+# filterZscore
 # Filter n°3: Gaussian(for CN2) is too close to unCaptThreshold.
 # Given a robustly fitted gaussian paramaters and an FPM threshold separating
 # uncaptured exons from captured exons, exon filtering when the capture profile
@@ -383,7 +385,7 @@ def truncated_integral_and_sigma(x):
 # - unCapturedThreshold [floats]: FPM threshold separating captured and non-captured exons
 # Returns "True" if exon doesn't pass the filter otherwise "False"
 @numba.njit
-def FilterZscore(mean, stdev, unCapturedThreshold):
+def filterZscore(mean, stdev, unCapturedThreshold):
     # Fixed paramater
     bdwthThreshold = 3  # tolerated deviation threshold
 
@@ -396,7 +398,7 @@ def FilterZscore(mean, stdev, unCapturedThreshold):
     # meanRG != 0 because of filter 1 => stdevRG != 0
     zscore = (mean - unCapturedThreshold) / stdev
 
-    # the exon is excluded if there are less than 3 standard deviations between
+    # the exon is excluded if there are less than 3 standard deviations betweenprecision
     # the threshold and the mean.
     if (zscore < bdwthThreshold):
         return True
@@ -405,7 +407,7 @@ def FilterZscore(mean, stdev, unCapturedThreshold):
 
 
 ###################
-# FilterSampsContribRG
+# filterSampsContribRG
 # Filter n°4: samples contributing to Gaussian is less than 50%
 # Given a FPM counts from an exon and a robustly fitted gaussian paramaters,
 # filters the exons.
@@ -422,7 +424,7 @@ def FilterZscore(mean, stdev, unCapturedThreshold):
 # - stdev [floats]
 # Returns "True" if exon doesn't pass the filter otherwise "False"
 @numba.njit
-def FilterSampsContribRG(exonFPM, mean, stdev):
+def filterSampsContribRG(exonFPM, mean, stdev):
     # Fixed parameters
     contributionThreshold = 0.5
     stdevLim = 2
@@ -453,16 +455,14 @@ def FilterSampsContribRG(exonFPM, mean, stdev):
 # - unCapturedThreshold [floats]: FPM threshold separating captured and non-captured exons
 # - exSampFPM [float]: FPM value for a sample and an exon
 # Returns:
-# - probDensities (list[float]): densities for each copy number (CN0,CN1,CN2,CN3+)
+# - likelihoods (list[float]): densities for each copy number (CN0,CN1,CN2,CN3+)
 def sampFPM2Probs(mean, stdev, exponParams, unCaptThreshold, exSampFPM):
     # CN2 mean shift to get CN1 mean
     meanCN1 = mean / 2
 
     # To Fill
-    # empty list to store the densities for each copy number type
-    probDensities = [0] * 4
-    # empty list to store logOdds
-    # LogOdds = []
+    # empty list to store the densities for each copy number typeprecision
+    likelihoods = np.zeros(4, dtype=np.float32)
 
     # Calculate the density for the exponential distribution (CN0 profil)
     # exponential distribution has a heavy tail, density calculated from it can override
@@ -470,38 +470,36 @@ def sampFPM2Probs(mean, stdev, exponParams, unCaptThreshold, exSampFPM):
     # associate a 0 pdf value if the sample FPM value is higher than the CN1 mean
     cdf_cno_threshold = scipy.stats.expon.cdf(unCaptThreshold, *exponParams)
     if exSampFPM <= meanCN1:
-        probDensities[0] = (1 / (1 - cdf_cno_threshold)) * scipy.stats.expon.pdf(exSampFPM, *exponParams)
+        likelihoods[0] = (1 / (1 - cdf_cno_threshold)) * scipy.stats.expon.pdf(exSampFPM, *exponParams)
 
     # Calculate the probability densities for the remaining cases (CN1,CN2,CN3+) using the normal distribution
-    probDensities[1] = scipy.stats.norm.pdf(exSampFPM, meanCN1, stdev)
-    probDensities[2] = scipy.stats.norm.pdf(exSampFPM, mean, stdev)
-    probDensities[3] = scipy.stats.norm.pdf(exSampFPM, 3 * meanCN1, stdev)
+    likelihoods[1] = scipy.stats.norm.pdf(exSampFPM, meanCN1, stdev)
+    likelihoods[2] = scipy.stats.norm.pdf(exSampFPM, mean, stdev)
+    likelihoods[3] = scipy.stats.norm.pdf(exSampFPM, 3 * meanCN1, stdev)
 
-    return probDensities
+    return likelihoods
 
 
 #############################################################
 # fillCNCallsArray
 # Arguments:
-# - CNCallsArray (np.ndarray[floats]): copy number call probabilities
+# - CNCallsArray (np.ndarray[floats]): copy number call likelihood
 # - sampIndex [int]: "samples" index
 # - exIndex [int]: exon index in CNCallsArray
-# - probs (list[floats]): copy number call probabilities [CN0,CN1,CN2,CN3]
+# - probs (list[floats]): copy number call likelihood [CN0,CN1,CN2,CN3]
 def fillCNCallsArray(CNCallsArray, sampIndex, exIndex, probs):
     sampArrayInd = sampIndex * 4
-    # Check if the sample has not been called for this exon before
+    # sanity check : don't overwrite data
     if np.sum(CNCallsArray[exIndex, sampArrayInd:sampArrayInd + 4]) < 0:
-        # Populate the CNcallsArray with the copy number call probabilities
+        # Populate the CNcallsArray with the copy number call likelihood probabilities
         CNCallsArray[exIndex, sampArrayInd:sampArrayInd + 4] = probs
-    else:
-        raise Exception('erase previous probabilities values')
 
 
 #########################
 # preprocessPlotData
 # given the information on the current cluster, the current exon and the current sample
-# defines the variables for a graphical representation of the coverage profile with the
-# fitting of different laws (exponential and Gaussian).
+# defines the variables for a graphical representation of the coverage profile with
+# different laws fitting (exponential and Gaussian).
 # Args:
 # - status [str]: filter status
 # - exonsFiltersSummary (dict): keys = filter status[str], value= exons counter
@@ -513,7 +511,7 @@ def fillCNCallsArray(CNCallsArray, sampIndex, exIndex, probs):
 # - exonFPM (list[floats]): FPM counts from an exon
 # - folder [str]: path to a folder where to save the pdfs
 # - RGParams (list[floats]): (optional) mean and stdev from robust fitting of Gaussian
-# - sampInfos (composite lis): (optional) [sample name[str], FPM value[float], probsList[floats]]
+# - sampInfos (composite lis): (optional) [sample name[str], FPM value[float], likelihoods(np.ndarray[floats])]
 def preprocessPlotData(status, exonsFiltersSummary, clustID, exponParams, unCaptThreshold,
                        exInd, exonInfos, exonFPM, folder, RGParams=None, sampInfos=None):
 
@@ -551,7 +549,7 @@ def preprocessPlotData(status, exonsFiltersSummary, clustID, exponParams, unCapt
 
         if sampInfos is not None:
             index_maxProb = max(enumerate(sampInfos[2]), key=lambda x: x[1])[0]
-            if index_maxProb == 2:
+            if index_maxProb == 2:  # recurrent case
                 return
 
             meanCN1 = RGParams[0] / 2
@@ -565,7 +563,7 @@ def preprocessPlotData(status, exonsFiltersSummary, clustID, exponParams, unCapt
 
             verticalLines.append(sampInfos[1])
             vertLinesLegs.append(f"sample name={sampInfos[0]}")
-            probs = ', '.join([f"{inner:.2e}" for inner in sampInfos[2]])
+            probs = ', '.join([f"{inner:.2e}" for inner in sampInfos[2].astype(str)])
             plotTitle += f"\nprobs={probs}"
             figTitle = f"CN{index_maxProb}_" + sampInfos[0] + "_" + figTitle
 
