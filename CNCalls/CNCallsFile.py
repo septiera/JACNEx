@@ -135,8 +135,8 @@ def printCNCallsFile(emissionArray, exons, samples, outFile):
     for i in samples:
         for j in range(4):
             toPrint += f"{i}_CN{j}" + "\t"
-
-    outFH.write(toPrint.rstrip())
+    toPrint += "\n"
+    outFH.write(toPrint)
 
     #### fill results
     for i in range(len(exons)):
@@ -203,7 +203,7 @@ def parseCNCallsPrivate(CNCallsFile):
 
 
 ##############################################################
-# allocateProbsArray:
+# allocateCNCallsArray:
 # Args:
 # - numExons, numSamples
 # Returns an float array with -1, adapted for storing the probabilities for each
@@ -250,8 +250,9 @@ def callsVec2array(callsArray, exonIndex, callsVector):
 # calls2str:
 # return a string holding the calls from emissionArray[exonIndex],
 # tab-separated and starting with a tab
+@numba.njit
 def calls2str(emissionArray, exonIndex):
     toPrint = ""
     for i in range(emissionArray.shape[1]):
-        toPrint += "\t" + "{:0.2f}".format(emissionArray[exonIndex, i])
-    return(toPrint)
+        toPrint += "\t" + format(emissionArray[exonIndex, i], "{:0.2e}")
+    return toPrint
