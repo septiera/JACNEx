@@ -44,6 +44,39 @@ def exonOnSexChr(exons):
     return(exonOnSexChr)
 
 
+###############################################################################
+# Assign a gender for each sample (ie column of exonsFPM)
+#
+# Args:
+# - exonsFPM: np.ndarray of FPM-normalized counts (floats), size = nbOfExons x nbOfSamples
+# - exonOnSexChr: uint8 np.ndarray of size = nbOfExons, as returned by exonOnSexChr()
+#
+# Returns an uint8 np.ndarray, size = nbOfSamples, value at index i is:
+# - 1 if the sample/column index i is predicted to be Female
+# - 2 if it's predicted to be Male
+#
+# If we're unable to assign a gender to each sample, log a warning and return an
+# all-female assignment vector. This can happen legitimately if the cohort is single-gender,
+# but it could also result from noisy / heterogeneous data, or flaws in our methodology.
+def assignGender(exonsFPM, exonOnSexChr):
+    sample2gender = np.ones(exonsFPM.shape[1], dtype=np.uint8)
+
+    # TODO
+    # idea: ignore Y (too small), just calculate the sum of FPMs of exons on chrX for
+    # each sample (or Z but it doesn't change anything), ie exonOnSexChr == 1,
+    # and hopyfully the result wll be easily interpretable, with 2 separate gaussians.
+    # If needed this could be improved by only summing the FPMs for exons that are
+    # captured in every sample (ie exonsFPM must be >= a small cutoff in every sample).
+    # We could also do a K-means instead of looking for Gaussians.
+
+    if predictGenderFailed:
+        logger.warning("gender assignment failed. This is fine for single-gender cohorts,")
+        logger.warning("but otherwise expect low-confidence CNV calls on gonosomes.")
+        logger.warning("If your cohort is mixed-gender, please let us know so we can fix it.")
+        logger.warning("Proceeding anyways, assuming arbitrarily that all samples are Female")
+
+    return(sample2gender)
+
 
 ###############################################################################
 # sexAssignment
