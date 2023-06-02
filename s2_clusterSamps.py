@@ -167,7 +167,7 @@ def main(argv):
     startTime = time.time()
 
     ###################
-    # parse counts, performs FPM normalization, distinguishes between intergenic regions and exons
+    # parse and FPM-normalize the counts, distinguishing between exons and intergenic pseudo-exons
     try:
         (samples, exons, intergenics, exonsFPM, intergenicsFPM) = countFrags.countsFile.parseAndNormalizeCounts(countsFile)
     except Exception as e:
@@ -210,83 +210,77 @@ def main(argv):
 
     ###################
     # Clustering:
-    # goal: establish the most optimal clustering(s) from hierarchical clustering
-    # need to segment the analysis between gonosomes and autosomes to avoid getting
-    # aberrant CNs in the calling step.
-    # (e.g Human : Male versus female => heterozygous CNV on the X)
-    maskGonoExIndexes = clusterSamps.genderPrediction.exonOnSexChr(exons)
+    # build groups of samples with similar count profiles, independantly for:
+    # - autosomes (gender-agnostic)
+    # - sex chromosomes for Females
+    # - sex chromosomes for Males
+    # NOTE: clustering on gonosomes must be done separately for each gender, because we
+    # use the Pearson Correlation Coefficient to identify similar samples... A man and
+    # a woman can have PCC==1 on the X chromosome if the FPM counts are just doubled in
+    # the woman, so these samples will be clustered together, but later we will call CNVs
+    # everywhere on chrX
 
-    #####
-    # Get Autosomes Clusters
-    logger.info("### Autosomes, sample clustering:")
+    exonOnSexChr = clusterSamps.genderPrediction.exonOnSexChr(exons)
+    sample2gender = clusterSamps.genderPrediction.assignGender(exonsFPM, exonOnSexChr)
+
+    thisTime = time.time()
+    logger.debug("Done assigning genders to samples, in %.2fs", thisTime - startTime)
+    startTime = thisTime
+
+    # subarrays of counts
+    autosomesFPM = exonsFPM[exonOnSexChr == 0]
+    gonosomesFemalesFPM = exonsFPM[exonOnSexChr != 0][:, sample2gender == 1]
+    gonosomesMalesFPM = exonsFPM[exonOnSexChr != 0][:, sample2gender == 2]
+
+    # autosomes
     try:
-        # get autosomes exons counts
-        autosomesFPM = exonsFPM[~maskGonoExIndexes]
-        plotAutoDendrogram = os.path.join(plotDir, "Dendrogram_" + str(autosomesFPM.shape[1]) + "Samps_autosomes.pdf")
-        # applying hierarchical clustering for autosomes exons
-        autosClusters = clusterSamps.clustering.clustersBuilds(autosomesFPM, maxCorr, minCorr, minSamps, plotAutoDendrogram)[0]
-
+        plotFile = os.path.join(plotDir, "clusters_autosomes.pdf")
+        clusters = clusterSamps.clustering.buildClusters(autosomesFPM, samples, maxCorr, minCorr, minSamps, plotFile)
     except Exception as e:
-        logger.error("clusterBuilds for autosomes failed : %s", repr(e))
-        raise Exception("clusterBuilds for autosomes failed")
+        logger.error("buildClusters failed for autosomes: %s", repr(e))
+        raise Exception("buildClusters failed")
 
     thisTime = time.time()
     logger.debug("Done samples clustering for autosomes : in %.2fs", thisTime - startTime)
     startTime = thisTime
 
-    #####
-    # Get Gonosomes Clusters
-    logger.info("### Gonosomes, sample clustering:")
-    try:
-        gonosomesFPM = exonsFPM[maskGonoExIndexes]
-        # Test if there are gonosomal exons
-        # (e.g target sequencing may not be provided in some cases)
-        # if not present, no clustering, returns a message in the log
-        if gonosomesFPM.shape[0] != 0:
-            plotGonoDendrogram = os.path.join(plotDir, "Dendrogram_" + str(gonosomesFPM.shape[1]) + "Samps_gonosomes.pdf")
-            gonosClusters = clusterSamps.clustering.clustersBuilds(gonosomesFPM, maxCorr, minCorr, minSamps, plotGonoDendrogram)[0]
-        else:
-            logger.info("no gonosomic exons, clustering can be done")
-            gonosClusters = []
-    except Exception as e:
-        logger.error("clusterBuilds for gonosomes failed : %s", repr(e))
-        raise Exception("clusterBuilds for gonosomes failed")
+    # gonosomes, only if we have at least one gonosomal exon and one Female/Male sample
+    if gonosomesFemalesFPM.shape[0] != 0:
+        try:
+            plotFile = os.path.join(plotDir, "clusters_gonosomesFemale.pdf")
+            clusters.extend(clusterSamps.clustering.buildClusters(gonosomesFemalesFPM, samples[sample2gender == 1],
+                                                                  maxCorr, minCorr, minSamps, plotFile))
+        except Exception as e:
+            logger.error("buildClusters failed for gonosomes for Females: %s", repr(e))
+            raise Exception("buildClusters failed")
 
     thisTime = time.time()
-    logger.debug("Done samples clustering for gonosomes : in %.2fs", thisTime - startTime)
+    logger.debug("Done samples clustering for gonosomes - Females, in %.2fs", thisTime - startTime)
     startTime = thisTime
 
-    ################
-    # sex prediction
-    sexAssign = []
-    # case option is available, deduce the sex of the samples from the gonosomes coverage data.
-    if sexPred:
-        # checking for the presence of gonosomal exons
-        # no gonosomal exons return an exception otherwise the assignment can be performed
-        if gonosomesFPM.shape[0] != 0:
-            try:
-                gonosomesExons = [exons[i] for i in range(len(exons)) if maskGonoExIndexes[i]]
-                sexAssign = clusterSamps.genderPrediction.sexAssignment(exonsFPM, gonosomesExons, samples)
-            except Exception as e:
-                logger.error("gender prediction failed: %s", repr(e))
-                raise Exception("genderPrediction failed")
+    if gonosomesMalesFPM.shape[0] != 0:
+        try:
+            plotFile = os.path.join(plotDir, "clusters_gonosomesMale.pdf")
+            clusters.extend(clusterSamps.clustering.buildClusters(gonosomesMalesFPM, samples[sample2gender == 2],
+                                                                  maxCorr, minCorr, minSamps, plotFile))
+        except Exception as e:
+            logger.error("buildClusters failed for gonosomes for Males: %s", repr(e))
+            raise Exception("buildClusters failed")
 
-            thisTime = time.time()
-            logger.debug("Done gender prediction, in %.2fs", thisTime - startTime)
-            startTime = thisTime
-        else:
-            logger.error("no gonosomic exons, sex assignment can be done")
+    thisTime = time.time()
+    logger.debug("Done samples clustering for gonosomes - Males, in %.2fs", thisTime - startTime)
+    startTime = thisTime
 
     ###################
     # print clustering results
     try:
-        clusterSamps.clustFile.printClustsFile(autosClusters, gonosClusters, samples, sexAssign, outFile)
+        clusterSamps.clustFile.printClustsFile(clusters, outFile)
     except Exception as e:
-        logger.error("printing results failed : %s", repr(e))
+        logger.error("printing clusters failed : %s", repr(e))
         raise Exception("printClustsFile failed")
 
     thisTime = time.time()
-    logger.debug("Done printing results, in %.2fs", thisTime - startTime)
+    logger.debug("Done printing clusters, in %.2fs", thisTime - startTime)
     startTime = thisTime
 
     logger.info("ALL DONE")
