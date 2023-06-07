@@ -7,6 +7,7 @@ import matplotlib.pyplot
 import matplotlib.backends.backend_pdf
 import time
 
+import clusterSamps.smoothing
 import figures.plots
 
 # prevent PIL flooding the logs when we are in DEBUG loglevel
@@ -19,44 +20,6 @@ logger = logging.getLogger(__name__)
 ###############################################################################
 ############################ PUBLIC FUNCTIONS #################################
 ###############################################################################
-############################################
-# makePlotDir
-# Create directories for storing plots related to a given cluster.
-# Args:
-# - plotDir [str]: path to the directory where the cluster directories should be created
-# - clustID [int]
-# Returns a list of paths to the created subdirectories
-def makePlotDir(plotDir, clustID):
-    # To fill and returns
-    # List of paths to the created subdirectories
-    pathDirPlotCN = []
-
-    # Path to the cluster directory
-    CNcallsClustDir = os.path.join(plotDir, "cluster_" + str(clustID))
-
-    try:
-        # Create the cluster directory if it doesn't exist
-        os.makedirs(CNcallsClustDir, exist_ok=True)
-    except OSError:
-        # If there was an error creating the directory, raise an exception
-        raise Exception("Error creating directory " + CNcallsClustDir)
-
-    # List of subdirectories to create within the cluster directory
-    PlotPaths = ["F1_median", "F3_zscore", "F4_weight", "PASS", "filteringRes_PieChart"]
-
-    # Create each subdirectory
-    for plotPath in PlotPaths:
-        path = os.path.join(CNcallsClustDir, plotPath)
-        # Check if the subdirectory already exists
-        if os.path.isdir(path):
-            raise Exception("Directory " + path + " already exists")
-        os.makedirs(path)
-        pathDirPlotCN.append(path)
-
-    # Return the list of paths to the created subdirectories
-    return pathDirPlotCN
-
-
 #####################################
 # CNCalls
 # Given a cluster identifier, two arrays containing FPM values for intergenic regions and exons,
@@ -101,9 +64,17 @@ def makePlotDir(plotDir, clustID):
 # Returns CNcallsArray updated
 def CNCalls(CNCallsArray, clustID, exonsFPM, intergenicsFPM,
             samples, exons, clusters, ctrlsClusters,
-            sourceClusters, maskSourceExons, plotFolders, samps2Check):
+            sourceClusters, maskSourceExons, plotFolder, samps2Check):
 
     clusterSampsInd = clusters[clustID].copy()
+    clusterSampsNames = [samples[i] for i in clusterSampsInd]
+
+    # creation of folders for storing DEBUG plots
+    if plotFolder:
+        try:
+            plotFolders = makePlotFolders(plotFolder, clustID, clusterSampsNames, samps2Check)
+        except Exception as e:
+            raise Exception("makePlotFolders failed %s", e)
 
     # If there are control clusters, add their samples indexes in a new list, else new list = previous list
     if len(ctrlsClusters[clustID]) != 0:
@@ -122,10 +93,14 @@ def CNCalls(CNCallsArray, clustID, exonsFPM, intergenicsFPM,
 
     # fit an exponential distribution from all pseudo exons
     try:
-        (loc, scale) = fitExponential(intergenicsFPM[:, samps])
+        (meanIntergenicFPM, loc, scale) = fitExponential(intergenicsFPM[:, samps])
     except Exception as e:
         logger.error("fitExponential failed for cluster %i : %s", clustID, repr(e))
         raise Exception("fitExponential failed")
+
+    if plotFolder:
+        preprocessExponFitPlot(clustID, meanIntergenicFPM, loc, scale,
+                               os.path.join(plotFolders[0], "cluster" + str(clustID) + "_ExponentialFit_coverageProfile.pdf"))
 
     # Calculating the threshold in FPM equivalent to 99% of the CDF (PPF = percent point function)
     unCaptFPMLimit = scipy.stats.expon.ppf(0.99, loc=loc, scale=scale)
@@ -133,7 +108,7 @@ def CNCalls(CNCallsArray, clustID, exonsFPM, intergenicsFPM,
     # Browse cluster-specific exons
     for exInd in range(len(sourceExons)):
         exonInfos = exons[sourceExons[exInd]]
-        exonFPM = exonsFPM[sourceExons[exInd]]
+        exonFPM = exonsFPM[sourceExons[exInd], samps]
 
         # Print progress every 10000 exons
         if exInd % 10000 == 0:
@@ -141,8 +116,8 @@ def CNCalls(CNCallsArray, clustID, exonsFPM, intergenicsFPM,
 
         # Filter n°1: not captured => median coverage of the exon = 0
         if filterUncapturedExons(exonFPM):
-            preprocessPlotData("notCaptured", exonsFiltersSummary, clustID, [loc, scale], unCaptFPMLimit,
-                               sourceExons[exInd], exonInfos, exonFPM, plotFolders[0] if plotFolders else None)
+            preprocessExonProfilePlot("notCaptured", exonsFiltersSummary, clustID, [loc, scale], unCaptFPMLimit,
+                                      sourceExons[exInd], exonInfos, exonFPM, plotFolders[1] if plotFolder else None)
             continue
 
         # robustly fit a gaussian
@@ -157,14 +132,14 @@ def CNCalls(CNCallsArray, clustID, exonsFPM, intergenicsFPM,
 
         # Filter n°3: RG overlaps the threshold associated with the uncaptured exon profile
         if filterZscore(mean, stdev, unCaptFPMLimit):
-            preprocessPlotData("RGClose2LowThreshold", exonsFiltersSummary, clustID, [loc, scale], unCaptFPMLimit,
-                               sourceExons[exInd], exonInfos, exonFPM, plotFolders[1] if plotFolders else None, [mean, stdev])
+            preprocessExonProfilePlot("RGClose2LowThreshold", exonsFiltersSummary, clustID, [loc, scale], unCaptFPMLimit,
+                                      sourceExons[exInd], exonInfos, exonFPM, plotFolders[2] if plotFolder else None, [mean, stdev])
             continue
 
         # Filter n°4: the sample contribution rate to the robust Gaussian is too low (<50%)
         if filterSampsContrib2Gaussian(mean, stdev, exonFPM):
-            preprocessPlotData("fewSampsInRG", exonsFiltersSummary, clustID, [loc, scale], unCaptFPMLimit,
-                               sourceExons[exInd], exonInfos, exonFPM, plotFolders[2] if plotFolders else None, [mean, stdev])
+            preprocessExonProfilePlot("fewSampsInRG", exonsFiltersSummary, clustID, [loc, scale], unCaptFPMLimit,
+                                      sourceExons[exInd], exonInfos, exonFPM, plotFolders[3] if plotFolder else None, [mean, stdev])
             continue
 
         exonsFiltersSummary["exonsCalls"] += 1
@@ -182,17 +157,16 @@ def CNCalls(CNCallsArray, clustID, exonsFPM, intergenicsFPM,
             fillCNCallsArray(CNCallsArray, samps[i], sourceExons[exInd], probs)
 
             # graphic representation of callable exons for interest patients
-            sampName = samples[sampInd]
+            sampName = clusterSampsNames[i]
             if (not samps2Check) or (sampName not in samps2Check):
                 continue
-            preprocessPlotData("exonsCalls", exonsFiltersSummary, clustID, [loc, scale], unCaptFPMLimit,
-                               sourceExons[exInd], exonInfos, exonFPM, plotFolders[3] if plotFolders else None, [mean, stdev],
-                               [sampName, sampFPM, probs])
+            preprocessExonProfilePlot("exonsCalls", exonsFiltersSummary, clustID, [loc, scale], unCaptFPMLimit,
+                                      sourceExons[exInd], exonInfos, exonFPM,
+                                      plotFolders[4] if plotFolder and len(plotFolders) == 5 else None,
+                                      [mean, stdev], [sampName, sampFPM, probs])
 
-    if plotFolders:
-        pieFile = matplotlib.backends.backend_pdf.PdfPages(os.path.join(plotFolders[4], "pieChart_Filtering_cluster" + str(clustID) + ".pdf"))
-        figures.plots.plotPieChart(clustID, exonsFiltersSummary, pieFile)
-        pieFile.close()
+    if plotFolder:
+        figures.plots.plotPieChart(clustID, exonsFiltersSummary, os.path.join(plotFolders[0], "cluster" + str(clustID) + "_filtersSummary_pieChart.pdf"))
 
     return CNCallsArray
 
@@ -200,6 +174,56 @@ def CNCalls(CNCallsArray, clustID, exonsFPM, intergenicsFPM,
 ###############################################################################
 ############################ PRIVATE FUNCTIONS ################################
 ###############################################################################
+############################################
+# makePlotDir
+# Given the plot folder path, cluster ID, list of sample names associated with the cluster,
+# and a user-defined list of sample names to check, the function creates the necessary
+# directories for storing plots.
+# Creates:
+# - A cluster directory with the specified cluster ID in the provided plot folder.
+# - Subdirectories within the cluster directory if there is an intersection between the
+#   cluster sample names and the sample names to check. The subdirectories include
+#   "F1_median", "F3_zscore", "F4_weight", and "PASS".
+#
+# Args:
+# - plotDir [str]: path to the directory where the cluster directories should be created
+# - clustID [int]
+# - clusterSampsNames (list[str]): list of sample names associated with the cluster
+# - samps2Check (list[str]): user-defined list of sample names to check
+#
+# Returns a list of paths to the created subdirectories.
+def makePlotFolders(plotFolder, clustID, clusterSampsNames, samps2Check):
+    # To fill and returns
+    pathPlotFolders = []
+
+    ###############
+    # Path to the cluster directory
+    clustFolder = os.path.join(plotFolder, "cluster_" + str(clustID))
+    try:
+        os.makedirs(clustFolder, exist_ok=True)
+    except OSError:
+        raise Exception("Error creating directory " + clustFolder)
+
+    pathPlotFolders.append(clustFolder)
+
+    ##############
+    # Path to filters directories
+    plotPaths = ["F1_median", "F3_zscore", "F4_weight", "PASS"]
+    for folderNameInd in range(len(plotPaths)):
+        if folderNameInd == len(plotPaths):
+            if not bool(set(clusterSampsNames) & set(samps2Check)):
+                continue
+
+        path = os.path.join(clustFolder, plotPaths[folderNameInd])
+        try:
+            os.makedirs(path, exist_ok=True)
+        except OSError:
+            raise Exception("Error creating directory " + path)
+        pathPlotFolders.append(path)
+
+    return pathPlotFolders
+
+
 #############################################################
 # getCTRLSamps
 #
@@ -224,16 +248,16 @@ def getCTRLSamps(ctrlClusterIDs, clusters):
 # Args:
 # - intergenicsFPMClust (np.ndarray[floats]): count array (FPM normalized)
 #
-# Returns a tuple (loc, scale), parameters of the exponential
+# Returns a tuple (meanIntergenicFPM, loc, scale), raw data and parameters of the exponential
 def fitExponential(intergenicsFPMClust):
     # compute meanFPM for each intergenic region (speed up)
     meanIntergenicFPM = np.mean(intergenicsFPMClust, axis=1)
 
     # Fit an exponential distribution, imposing location = 0
     # f(x, scale) = (1/scale)*exp(-x/scale)
-    loc, scale = scipy.stats.expon.fit(meanIntergenicFPM, floc=0)
+    loc, scale = scipy.stats.expon.fit(meanIntergenicFPM)
 
-    return (loc, scale)
+    return (meanIntergenicFPM, loc, scale)
 
 
 ###################
@@ -456,8 +480,64 @@ def fillCNCallsArray(CNCallsArray, sampIndex, exIndex, probs):
         raise Exception("overwrite calls in CNCallsArray")
 
 
+###########################
+# preprocessExponFitPlot
+# Generates an exponential fit plot for a given cluster using the provided data and parameters.
+# It performs data smoothing, calculates the probability density function for the exponential
+# distribution, and plots the exponential fit.
+#
+# Args:
+# - clustID [int]: The ID of the cluster.
+# - meanIntergenicFPM (list[floats]): The list of mean intergenic FPM values.
+# - loc (float), scale (float): parameters of the exponential distribution.
+# - folder (str): The path to the folder where the plot should be saved.
+#
+# Return None
+def preprocessExponFitPlot(clustID, meanIntergenicFPM, loc, scale, file):
+    # initiate plots variables
+    plotTitle = f"ClusterID n° {clustID}"
+    yLists = []  # List to store the y-values for plotting
+    plotLegs = []  # List to store the plot legends
+
+    # smoothing raw data
+    # Smooth the average coverage profile of intergenic regions using the specified bandwidth
+    try:
+        (dr, dens, bwValue) = clusterSamps.smoothing.smoothData(meanIntergenicFPM, maxData=max(meanIntergenicFPM))
+    except Exception as e:
+        logger.error('smoothing failed for %s : %s', str(bwValue), repr(e))
+        raise
+
+    plotLegs.append("coverage data smoothed \nbwValue={:0.2e}".format(bwValue))
+    yLists.append(dens)
+
+    # calculate the probability density function for the exponential distribution
+    makePDF(getattr(scipy.stats, 'expon'), [loc, scale], dr, yLists)
+    plotLegs.append("expon={:.2f}, {:.2f}".format(loc, scale))
+
+    figures.plots.plotExponentialFit(plotTitle, dr, yLists, plotLegs, file)
+
+
+################################################
+# makePDF
+# Generate distributions's Probability Distribution Function and added it to yLists
+# Args:
+# - distribName (scipy object): probability distribution function from the SciPy library
+# - params (list[floats]): parameters used to build the probability distribution function.
+# - rangeData (list[floats]): range of FPM data
+# - yLists (list[floats]): computed PDF values are appended
+def makePDF(distribName, params, rangeData, yLists):
+    # Separate parts of parameters
+    loc = params[0]
+    scale = params[1]
+
+    # Build PDF
+    x = rangeData
+    y = distribName.pdf(x, loc=loc, scale=scale)
+    yLists.append(y)
+
+
 #########################
-# preprocessPlotData
+# preprocessExonProfilePlot
 # given the information on the current cluster, the current exon and the current sample
 # defines the variables for a graphical representation of the coverage profile with
 # different laws fitting (exponential and Gaussian).
@@ -474,8 +554,10 @@ def fillCNCallsArray(CNCallsArray, sampIndex, exIndex, probs):
 # - folder [str]: path to a pdf folder
 # - gaussianParams (list[floats]): (optional) mean and stdev from robust fitting of Gaussian
 # - sampInfos (composite lis): (optional) [sample name[str], FPM value[float], likelihoods(np.ndarray[floats])]
-def preprocessPlotData(status, exonsFiltersSummary, clustID, exponParams, unCaptThreshold,
-                       exInd, exonInfos, exonFPM, folder, gaussianParams=None, sampInfos=None):
+#
+# Return None
+def preprocessExonProfilePlot(status, exonsFiltersSummary, clustID, exponParams, unCaptThreshold,
+                              exInd, exonInfos, exonFPM, folder, gaussianParams=None, sampInfos=None):
 
     # Fixed parameter
     nbExLimit2Plot = 100  # No. of threshold multiplier exons = one plot
@@ -489,10 +571,10 @@ def preprocessPlotData(status, exonsFiltersSummary, clustID, exponParams, unCapt
         return
 
     # initiate plots variables
-    figTitle = f"ClusterID_{clustID}_exonInd_{exInd}_{'_'.join(map(str, exonInfos))}"
+    fileTitle = f"ClusterID_{clustID}_exonInd_{exInd}_{'_'.join(map(str, exonInfos))}"
     plotTitle = f"ClusterID n° {clustID} exon:{'_'.join(map(str, exonInfos))}"
     yLists = []
-    plotLegs = ["\nexpon={:.2f}, {:.2f}".format(exponParams[0], exponParams[1])]
+    plotLegs = ["expon={:.2f}, {:.2f}".format(exponParams[0], exponParams[1])]
     verticalLines = [unCaptThreshold]
     vertLinesLegs = ["UncoverThreshold={:.3f}".format(unCaptThreshold)]
     # creates FPM ranges base
@@ -506,7 +588,7 @@ def preprocessPlotData(status, exonsFiltersSummary, clustID, exponParams, unCapt
     if gaussianParams is not None:
         # calculate the probability density function for the gaussian distribution (CN2)
         makePDF(getattr(scipy.stats, 'norm'), gaussianParams, xi, yLists)
-        plotLegs.append(f"\nRG CN2={gaussianParams[0]:.2f}, {gaussianParams[1]:.2f}")
+        plotLegs.append(f"RG CN2={gaussianParams[0]:.2f}, {gaussianParams[1]:.2f}")
         ylim = 2 * max(yLists[1])
 
         if sampInfos is not None:
@@ -517,38 +599,18 @@ def preprocessPlotData(status, exonsFiltersSummary, clustID, exponParams, unCapt
             meanCN1 = gaussianParams[0] / 2
             # calculate the probability density function for the gaussian distribution (CN1)
             makePDF(getattr(scipy.stats, 'norm'), [meanCN1, gaussianParams[1]], xi, yLists)
-            plotLegs.append(f"\nRG CN1={meanCN1:.2f}, {gaussianParams[1]:.2f}")
+            plotLegs.append(f"RG CN1={meanCN1:.2f}, {gaussianParams[1]:.2f}")
 
             # calculate the probability density function for the gaussian distribution (CN3)
             makePDF(getattr(scipy.stats, 'norm'), [3 * meanCN1, gaussianParams[1]], xi, yLists)
-            plotLegs.append(f"\nRG CN3={3 * meanCN1:.2f}, {gaussianParams[1]:.2f}")
+            plotLegs.append(f"RG CN3={3 * meanCN1:.2f}, {gaussianParams[1]:.2f}")
 
             verticalLines.append(sampInfos[1])
             vertLinesLegs.append(f"sample name={sampInfos[0]}")
             probs = ', '.join([f"{inner:.2e}" for inner in sampInfos[2].astype(str)])
             plotTitle += f"\nprobs={probs}"
-            figTitle = f"CN{index_maxProb}_" + sampInfos[0] + "_" + figTitle
+            fileTitle = f"CN{index_maxProb}_" + sampInfos[0] + "_" + fileTitle
 
-    PDF_File = matplotlib.backends.backend_pdf.PdfPages(os.path.join(folder, figTitle))
-    figures.plots.plotExonProfil(exonFPM, xi, yLists, plotLegs, verticalLines, vertLinesLegs, plotTitle, ylim, PDF_File)
+    PDF_File = matplotlib.backends.backend_pdf.PdfPages(os.path.join(folder, fileTitle))
+    figures.plots.plotExonProfile(exonFPM, xi, yLists, plotLegs, verticalLines, vertLinesLegs, plotTitle, ylim, PDF_File)
     PDF_File.close()
-
-
-################################################
-# makePDF
-# Generate distributions's Probability Distribution Function and added it to yLists
-# Args:
-# - distribName (scipy object): probability distribution function from the SciPy library
-# - params (list[floats]): parameters used to build the probability distribution function.
-# - rangeData (list[floats]): range of FPM data
-# - yLists (list[floats]): computed PDF values are appended
-def makePDF(distribName, params, rangeData, yLists):
-    # Separate parts of parameters
-    arg = params[:-2]
-    loc = params[-2]
-    scale = params[-1]
-
-    # Build PDF
-    x = rangeData
-    y = distribName.pdf(x, loc=loc, scale=scale, *arg)
-    yLists.append(y)
