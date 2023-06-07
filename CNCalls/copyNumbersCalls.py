@@ -416,34 +416,28 @@ def filterSampsContribRG(exonFPM, mean, stdev):
 #############################################################
 # sampFPM2Probs
 # Given a sample FPM value for an exon and parameters of an exponential and a Gaussian distribution,
-# calculation of logOdds ratio for each type of copy number
-# Spec:
-# - calculating the likelihood probability (PDF) for the sample for each distribution (x4)
-# if the user chooses to plot the results a pdf will be created by exon
-# in the folder associated to exon pass filters for a selected sample
+# calculation of likelihood (value of the PDF) for each type of copy number
 # Args:
-# - mean [floats]
-# - stdev [floats]
-# - exponParams (list[floats]): exponential distribution paramaters (loc, scale)
-# - unCapturedThreshold [floats]: FPM threshold separating captured and non-captured exons
+# - mean [float]
+# - stdev [float]
+# - loc, scale [float]: exponential distribution paramaters
+# - unCapturedThreshold [float]: FPM threshold separating captured and non-captured exons
 # - exSampFPM [float]: FPM value for a sample and an exon
 # Returns:
-# - likelihoods (list[float]): densities for each copy number (CN0,CN1,CN2,CN3+)
-def sampFPM2Probs(mean, stdev, exponParams, unCaptThreshold, exSampFPM):
+# - likelihoods (list[float]): likelihoods for each copy number (CN0,CN1,CN2,CN3+)
+def sampFPM2Probs(mean, stdev, loc, scale, unCaptThreshold, exSampFPM):
     # CN2 mean shift to get CN1 mean
     meanCN1 = mean / 2
 
     # To Fill
-    # empty list to store the densities for each copy number typeprecision
+    # empty list to store the likelihoods for each copy number
     likelihoods = np.zeros(4, dtype=np.float32)
 
-    # Calculate the density for the exponential distribution (CN0 profil)
-    # exponential distribution has a heavy tail, density calculated from it can override
-    # the other Gaussian distributions.
-    # associate a 0 pdf value if the sample FPM value is higher than the CN1 mean
-    cdf_cno_threshold = scipy.stats.expon.cdf(unCaptThreshold, *exponParams)
+    # Calculate the likelihood for the exponential distribution (CN0)
+    # truncate at CN1 mean (exponential distribution  has a heavy tail)
+    cdf_cno_threshold = scipy.stats.expon.cdf(unCaptThreshold, loc=loc, scale=scale)
     if exSampFPM <= meanCN1:
-        likelihoods[0] = (1 / (1 - cdf_cno_threshold)) * scipy.stats.expon.pdf(exSampFPM, *exponParams)
+        likelihoods[0] = (1 / cdf_cno_threshold) * scipy.stats.expon.pdf(exSampFPM, loc=loc, scale=scale)
 
     # Calculate the probability densities for the remaining cases (CN1,CN2,CN3+) using the normal distribution
     likelihoods[1] = scipy.stats.norm.pdf(exSampFPM, meanCN1, stdev)
