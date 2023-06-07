@@ -129,7 +129,7 @@ def CNCalls(CNCallsArray, clustID, exonsFPM, intergenicsFPM,
         raise Exception("fitExponential failed")
 
     # Calculating the threshold in FPM equivalent to 99% of the CDF (PPF = percent point function)
-    unCaptThreshold = scipy.stats.expon.ppf(0.99, [loc, scale])
+    unCaptFPMLimit = scipy.stats.expon.ppf(0.99, loc=loc, scale=scale)
 
     # Browse cluster-specific exons
     for exInd in range(len(exInd2Process)):
@@ -143,14 +143,14 @@ def CNCalls(CNCallsArray, clustID, exonsFPM, intergenicsFPM,
 
         # Filter n°1: not captured => median coverage of the exon = 0
         if filterUncapturedExons(exonFPM):
-            preprocessPlotData("notCaptured", exonsFiltersSummary, clustID, loc, scale, unCaptThreshold,
+            preprocessPlotData("notCaptured", exonsFiltersSummary, clustID, loc, scale, unCaptFPMLimit,
                                exIndInFullTab, exonInfos, exonFPM, plotFolders[0] if plotFolders else None)
             continue
 
         # robustly fit a gaussian
         # Filter n°2: fitting is impossible (median close to 0)
         try:
-            (mu, sigma) = fitRobustGaussian(exonFPM)
+            (mean, stdev) = fitRobustGaussian(exonFPM)
         except Exception as e:
             if str(e) == "cannot fit":
                 continue
@@ -158,15 +158,15 @@ def CNCalls(CNCallsArray, clustID, exonsFPM, intergenicsFPM,
                 raise e
 
         # Filter n°3: RG overlaps the threshold associated with the uncaptured exon profile
-        if filterZscore(mu, sigma, unCaptThreshold):
-            preprocessPlotData("RGClose2LowThreshold", exonsFiltersSummary, clustID, loc, scale, unCaptThreshold,
-                               exIndInFullTab, exonInfos, exonFPM, plotFolders[1] if plotFolders else None, mu, sigma)  # !!!! to change
+        if filterZscore(mean, stdev, unCaptFPMLimit):
+            preprocessPlotData("RGClose2LowThreshold", exonsFiltersSummary, clustID, loc, scale, unCaptFPMLimit,
+                               exIndInFullTab, exonInfos, exonFPM, plotFolders[1] if plotFolders else None, mean, stdev)  # !!!! to change
             continue
 
         # Filter n°4: the sample contribution rate to the robust Gaussian is too low (<50%)
-        if filterSampsContribRG(exonFPM, mu, sigma):
-            preprocessPlotData("fewSampsInRG", exonsFiltersSummary, clustID, loc, scale, unCaptThreshold,
-                               exIndInFullTab, exonInfos, exonFPM, plotFolders[2] if plotFolders else None, mu, sigma)  # !!!! to change
+        if filterSampsContrib2Gaussian(mean, stdev, exonFPM):
+            preprocessPlotData("fewSampsInRG", exonsFiltersSummary, clustID, loc, scale, unCaptFPMLimit,
+                               exIndInFullTab, exonInfos, exonFPM, plotFolders[2] if plotFolders else None, mean, stdev)  # !!!! to change
             continue
 
         exonsFiltersSummary["exonsCalls"] += 1
@@ -179,7 +179,7 @@ def CNCalls(CNCallsArray, clustID, exonsFPM, intergenicsFPM,
 
             # density probabilities for each copy number
             sampFPM = exonFPM[i]
-            probs = sampFPM2Probs(mu, sigma, loc, scale, unCaptThreshold, sampFPM)
+            probs = sampFPM2Probs(mean, stdev, loc, scale, unCaptFPMLimit, sampFPM)
 
             fillCNCallsArray(CNCallsArray, samps[i], exIndInFullTab, probs)
 
@@ -187,8 +187,8 @@ def CNCalls(CNCallsArray, clustID, exonsFPM, intergenicsFPM,
             sampName = samples[sampInd]
             if (not samps2Check) or (sampName not in samps2Check):
                 continue
-            preprocessPlotData("exonsCalls", exonsFiltersSummary, clustID, loc, scale, unCaptThreshold,
-                               exIndInFullTab, exonInfos, exonFPM, plotFolders[3] if plotFolders else None, mu, sigma,
+            preprocessPlotData("exonsCalls", exonsFiltersSummary, clustID, loc, scale, unCaptFPMLimit,
+                               exIndInFullTab, exonInfos, exonFPM, plotFolders[3] if plotFolders else None, mean, stdev,
                                [sampName, sampFPM, probs])  # !!!! to change
 
     if plotFolders:
@@ -268,18 +268,18 @@ def filterUncapturedExons(exonFPM):
 #
 # Args:
 # - X (np.array): A sample of 1-dimensional mixture of gaussian random variables
-# - mu (float, optional): Expectation. Defaults to None.
+# - mean (float, optional): Expectation. Defaults to None.
 # - stdev (float, optional): Standard deviation. Defaults to None.
 # - bandwidth (float, optional): Hyperparameter of truncation. Defaults to 2.
 # - eps (float, optional): Convergence tolerance. Defaults to 1.0e-5.
 #
 # Returns a tuple (mu, stdev), parameters of the normal fitted,
 # may return an exception if the fit cannot be achieved.
-def fitRobustGaussian(X, mu=None, stdev=None, bandwidth=2.0, eps=1.0e-5):
-    if mu is None:
+def fitRobustGaussian(X, mean=None, stdev=None, bandwidth=2.0, eps=1.0e-5):
+    if mean is None:
         # median is an approach as robust and naïve as possible to Expectation
-        mu = np.median(X)
-    mu_0 = mu + 1
+        mean = np.median(X)
+    mu_0 = mean + 1
 
     if stdev is None:
         # rule of thumb
@@ -288,7 +288,7 @@ def fitRobustGaussian(X, mu=None, stdev=None, bandwidth=2.0, eps=1.0e-5):
 
     bandwidth_truncated_normal_sigma = truncated_integral_and_sigma(bandwidth)
 
-    while abs(mu - mu_0) + abs(stdev - sigma_0) > eps:
+    while abs(mean - mu_0) + abs(stdev - sigma_0) > eps:
         # loop until tolerence is reached
         """
         create a uniform window on X around mu of width 2*bandwidth*sigma
@@ -296,29 +296,29 @@ def fitRobustGaussian(X, mu=None, stdev=None, bandwidth=2.0, eps=1.0e-5):
         measure the standard deviation of the window and divide by the standard deviation of a truncated gaussian distribution
         measure the proportion of points inside the window, divide by the weight of a truncated gaussian distribution
         """
-        Window = np.logical_and(X - mu - bandwidth * stdev < 0, X - mu + bandwidth * stdev > 0)
+        Window = np.logical_and(X - mean - bandwidth * stdev < 0, X - mean + bandwidth * stdev > 0)
 
         # condition to identify exons with points arround at the median
         if Window.any():
-            mu_0, mu = mu, np.average(X[Window])
-            var = np.average(np.square(X[Window])) - mu**2
+            mu_0, mean = mean, np.average(X[Window])
+            var = np.average(np.square(X[Window])) - mean**2
             sigma_0, stdev = stdev, np.sqrt(var) / bandwidth_truncated_normal_sigma
         # no points arround the median
         # e.g. exon where more than 1/2 of the samples have an FPM = 0.
         # A Gaussian fit is impossible => raise exception
         else:
             raise Exception("cannot fit")
-    return (mu, stdev)
+    return (mean, stdev)
 
 
 #############################################################
 # normal_erf
 # Computes Gauss error function (erf)
 # used by fitRobustGaussian function
-def normal_erf(x, mu=0, sigma=1, depth=50):
+def normal_erf(x, mean=0, sigma=1, depth=50):
     ele = 1.0
     normal = 1.0
-    x = (x - mu) / sigma
+    x = (x - mean) / sigma
     erf = x
     for i in range(1, depth):
         ele = - ele * x * x / 2.0 / i
@@ -338,37 +338,34 @@ def truncated_integral_and_sigma(x):
 
 ###################
 # filterZscore
-# Filter n°3: Gaussian(for CN2) is too close to unCaptThreshold.
-# Given a robustly fitted gaussian paramaters and an FPM threshold separating
-# uncaptured exons from captured exons, exon filtering when the capture profile
+# Given a robustly fitted gaussian parameters and an FPM threshold separating
+# uncaptured exons from captured exons, exon are filtered when the capture profile
 # is indistinguishable from the non-capture profile.
+#
 # Spec:
 # - setting a tolerated deviation threshold, bdwthThreshold
 # - check that the standard deviation is not == 0 otherwise no pseudo zscore
 # can be calculated, change it if necessary
 # - pseudo zscore calculation
 # - comparison pseudo zscore with the tolerated deviation threshold => filtering
+#
 # Args:
-# - mean [floats]
-# - stdev [floats]
-# - unCapturedThreshold [floats]: FPM threshold separating captured and non-captured exons
+# - mean [float], stdev [float]: parameters of the normal
+# - unCaptFPMLimit [float]: FPM threshold separating captured and non-captured exons
+#
 # Returns "True" if exon doesn't pass the filter otherwise "False"
 @numba.njit
-def filterZscore(mean, stdev, unCapturedThreshold):
+def filterZscore(mean, stdev, unCaptFPMLimit):
     # Fixed paramater
     bdwthThreshold = 3  # tolerated deviation threshold
 
-    # the mean != 0 and all samples have the same coverage value.
-    # In this case a new arbitrary standard deviation is calculated
-    # (simulates 5% on each side of the mean)
+    # mean != 0 and all samples have the same coverage value.
     if (stdev == 0):
-        stdev = mean / 20
+        stdev = mean / 20  # simulates 5% on each side of the mean
 
-    # meanRG != 0 because of filter 1 => stdevRG != 0
-    zscore = (mean - unCapturedThreshold) / stdev
+    # meanRG != 0 because of filter n°1 => stdevRG != 0
+    zscore = (mean - unCaptFPMLimit) / stdev
 
-    # the exon is excluded if there are less than 3 standard deviations betweenprecision
-    # the threshold and the mean.
     if (zscore < bdwthThreshold):
         return True
     else:
@@ -376,34 +373,32 @@ def filterZscore(mean, stdev, unCapturedThreshold):
 
 
 ###################
-# filterSampsContribRG
-# Filter n°4: samples contributing to Gaussian is less than 50%
+# filterSampsContrib2Gaussian
 # Given a FPM counts from an exon and a robustly fitted gaussian paramaters,
 # filters the exons.
+#
 # Spec:
 # - set a contribution threshold
 # - obtain FPM values within +- 2 standard deviations of the mean of the Gaussian
 # - calculate the contribution
 # - compare the contribution to the threshold => filtering
-# if the user chooses to plot the results a pdf will be created by exon
-# in the folder associated with the filter
+
 # Args:
+# - mean [float], stdev [float]: parameters of the normal
 # - exonFPM (list[floats]): FPM counts from an exon
-# - mean [floats]
-# - stdev [floats]
+#
 # Returns "True" if exon doesn't pass the filter otherwise "False"
 @numba.njit
-def filterSampsContribRG(exonFPM, mean, stdev):
+def filterSampsContrib2Gaussian(mean, stdev, exonFPM):
     # Fixed parameters
-    contributionThreshold = 0.5
+    contribThreshold = 0.5
     stdevLim = 2
 
-    # targetData length is the sample number contributing to the Gaussian
-    targetData = exonFPM[(exonFPM > (mean - (stdevLim * stdev))) & (exonFPM < (mean + (stdevLim * stdev))), ]
+    FPMValuesUnderGaussian = exonFPM[(exonFPM > (mean - (stdevLim * stdev))) & (exonFPM < (mean + (stdevLim * stdev))), ]
 
-    weight = len(targetData) / len(exonFPM)
+    sampsContribution = len(FPMValuesUnderGaussian) / len(exonFPM)
 
-    if (weight < contributionThreshold):
+    if (sampsContribution < contribThreshold):
         return True
     else:
         return False
