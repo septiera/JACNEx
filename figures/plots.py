@@ -96,14 +96,18 @@ def plotDendogram(linksMatrix, labelsGp, minDist, CM, pdf):
 #############################################################
 # plotPieChart:
 # generates a pie by cluster resuming the filtering of exons
+#
 # Args:
 # - clustID [str]: cluster identifier
 # - filterCounters (dict[str:int]): dictionary of exon counters of different filtering
 # performed for the cluster
-# - pdf (matplotlib object): store plots in a single pdf
+# - file [str]: file path to save plot
 #
 # save a plot in the output pdf
-def plotPieChart(clustID, filterCounters, pdf):
+def plotPieChart(clustID, filterCounters, file):
+    
+    pdf = matplotlib.backends.backend_pdf.PdfPages(file)
+    
     fig = matplotlib.pyplot.figure(figsize=(5, 5))
     ax11 = fig.add_subplot(111)
     w, l, p = ax11.pie(filterCounters.values(),
@@ -131,7 +135,8 @@ def plotPieChart(clustID, filterCounters, pdf):
     matplotlib.pyplot.legend(loc='upper right', fontsize='small', labels=filterCounters.keys())
     pdf.savefig(fig)
     matplotlib.pyplot.close()
-
+    
+    pdf.close()
 
 #########################
 # plotExonProfil
