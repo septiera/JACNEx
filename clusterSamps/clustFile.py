@@ -27,8 +27,8 @@ logger = logging.getLogger(__name__)
 # It can be empty if not controlled.
 # - validClusts (list[int]): each index in the list corresponds to a cluster associated
 # with a validity value (0 invalid, 1 valid)
-# - specClusts (list[int]): each index in the list corresponds to a cluster associated
-# with an analysis status performed (0 autosomes, 1 gonosomes)
+# - specClusts (list[booleans]): each index in the list corresponds to a cluster associated
+# with an analysis status performed (False autosomes, True gonosomes)
 def parseClustsFile(clustsFile, samples):
     try:
         if clustsFile.endswith(".gz"):
@@ -75,10 +75,10 @@ def parseClustsFile(clustsFile, samples):
 
             # populate specClusts and control boolean np.array
             if specifics == "Autosomes":
-                specClusts.append(0)
+                specClusts.append(False)
                 sampsAutoClusts[sampsIndexes] = 1
             else:
-                specClusts.append(1)
+                specClusts.append(True)
 
         # a gender prediction may have been made that is not useful for calling
         # normally placed in the last lines of the clustering file in case it's
