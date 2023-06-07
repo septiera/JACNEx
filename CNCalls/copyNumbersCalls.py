@@ -7,9 +7,6 @@ import matplotlib.pyplot
 import matplotlib.backends.backend_pdf
 import time
 
-import clusterSamps.smoothing
-import clusterSamps.getGonosomesExonsIndexes
-import clusterSamps.qualityControl
 import figures.plots
 
 # prevent PIL flooding the logs when we are in DEBUG loglevel
@@ -113,12 +110,14 @@ def CNCalls(CNCallsArray, clustID, exonsFPM, intergenicsFPM, samples, exons, sam
 
     # fit an exponential distribution from all pseudo exons
     try:
-        (exponParams, unCaptThreshold) = fitExponential(intergenicsFPM[:, samps2Compare])
-        logger.info("exponential params loc= %.2e scale=%.2e, uncaptured threshold=%.2e FPM",
-                    exponParams[0], exponParams[1], unCaptThreshold)
+        (loc, scale) = fitExponential(intergenicsFPM[:, samps2Compare])
+        logger.info("exponential params loc= %.2e scale=%.2e", loc, scale)
     except Exception as e:
         logger.error("fitExponential failed for cluster %i : %s", clustID, repr(e))
         raise Exception("fitExponential failed")
+
+    # Calculating the threshold in FPM equivalent to 99% of the CDF (PPF = percent point function)
+    unCaptThreshold = scipy.stats.expon.ppf(0.99, [loc, scale])
 
     # Browse cluster-specific exons
     for exInd in range(len(exInd2Process)):
@@ -132,14 +131,14 @@ def CNCalls(CNCallsArray, clustID, exonsFPM, intergenicsFPM, samples, exons, sam
 
         # Filter n°1: not captured => median coverage of the exon = 0
         if filterUncapturedExons(exonFPM):
-            preprocessPlotData("notCaptured", exonsFiltersSummary, clustID, exponParams, unCaptThreshold,
+            preprocessPlotData("notCaptured", exonsFiltersSummary, clustID, loc, scale, unCaptThreshold,
                                exIndInFullTab, exonInfos, exonFPM, plotFolders[0] if plotFolders else None)
             continue
 
         # robustly fit a gaussian
         # Filter n°2: fitting is impossible (median close to 0)
         try:
-            RGParams = fitRobustGaussian(exonFPM)
+            (mu, sigma) = fitRobustGaussian(exonFPM)
         except Exception as e:
             if str(e) == "cannot fit":
                 continue
@@ -147,15 +146,15 @@ def CNCalls(CNCallsArray, clustID, exonsFPM, intergenicsFPM, samples, exons, sam
                 raise e
 
         # Filter n°3: RG overlaps the threshold associated with the uncaptured exon profile
-        if filterZscore(RGParams[0], RGParams[1], unCaptThreshold):
-            preprocessPlotData("RGClose2LowThreshold", exonsFiltersSummary, clustID, exponParams, unCaptThreshold,
-                               exIndInFullTab, exonInfos, exonFPM, plotFolders[1] if plotFolders else None, RGParams)
+        if filterZscore(mu, sigma, unCaptThreshold):
+            preprocessPlotData("RGClose2LowThreshold", exonsFiltersSummary, clustID, loc, scale, unCaptThreshold,
+                               exIndInFullTab, exonInfos, exonFPM, plotFolders[1] if plotFolders else None, mu, sigma)  # !!!! to change
             continue
 
         # Filter n°4: the sample contribution rate to the robust Gaussian is too low (<50%)
-        if filterSampsContribRG(exonFPM, RGParams[0], RGParams[1]):
-            preprocessPlotData("fewSampsInRG", exonsFiltersSummary, clustID, exponParams, unCaptThreshold,
-                               exIndInFullTab, exonInfos, exonFPM, plotFolders[2] if plotFolders else None, RGParams)
+        if filterSampsContribRG(exonFPM, mu, sigma):
+            preprocessPlotData("fewSampsInRG", exonsFiltersSummary, clustID, loc, scale, unCaptThreshold,
+                               exIndInFullTab, exonInfos, exonFPM, plotFolders[2] if plotFolders else None, mu, sigma)  # !!!! to change
             continue
 
         exonsFiltersSummary["exonsCalls"] += 1
@@ -168,7 +167,7 @@ def CNCalls(CNCallsArray, clustID, exonsFPM, intergenicsFPM, samples, exons, sam
 
             # density probabilities for each copy number
             sampFPM = exonFPM[i]
-            probs = sampFPM2Probs(RGParams[0], RGParams[1], exponParams, unCaptThreshold, sampFPM)
+            probs = sampFPM2Probs(mu, sigma, loc, scale, unCaptThreshold, sampFPM)
 
             fillCNCallsArray(CNCallsArray, samps2Compare[i], exIndInFullTab, probs)
 
@@ -176,9 +175,9 @@ def CNCalls(CNCallsArray, clustID, exonsFPM, intergenicsFPM, samples, exons, sam
             sampName = samples[sampInd]
             if (not samps2Check) or (sampName not in samps2Check):
                 continue
-            preprocessPlotData("exonsCalls", exonsFiltersSummary, clustID, exponParams, unCaptThreshold,
-                               exIndInFullTab, exonInfos, exonFPM, plotFolders[3] if plotFolders else None, RGParams,
-                               [sampName, sampFPM, probs])
+            preprocessPlotData("exonsCalls", exonsFiltersSummary, clustID, loc, scale, unCaptThreshold,
+                               exIndInFullTab, exonInfos, exonFPM, plotFolders[3] if plotFolders else None, mu, sigma,
+                               [sampName, sampFPM, probs])  # !!!! to change
 
     if plotFolders:
         pieFile = matplotlib.backends.backend_pdf.PdfPages(os.path.join(plotFolders[4], "pieChart_Filtering_cluster" + str(clustID) + ".pdf"))
@@ -224,47 +223,21 @@ def getExInd2Process(clustSexStatus, maskGExIndexes):
 
 #############################################################
 # fitExponential
-# Given a counts array for a specific cluster identifier, fits an exponential distribution
-# and deduces an FPM threshold separating the FPM values associated with non-capture from those captured.
-# Spec:
-# - coverage profile smoothing deduced from FPM averages per pseudo-exons = non-captured profile
-# - exponential fitting
-# - FPM threshold calculation from 99% of the cumulative distribution function
+# Given a count array (dim = exonNB*samplesNB), fits an exponential distribution, setting location = 0.
+#
 # Args:
-# - intergenicsFPMClust (np.ndarray[floats]): FPM array specific to a cluster
-# Returns a tupple (expParams, UncoverThreshold), each variable is created here:
-# - expParams [tuple of floats]: estimated parameters (x2) of the exponential distribution
-# - UncoverThreshold [float]: threshold for separating covered and uncovered regions,
-# which corresponds to the FPM value at 99% of the CDF
+# - intergenicsFPMClust (np.ndarray[floats]): count array (FPM normalized)
+#
+# Returns a tuple (loc, scale), parameters of the exponential
 def fitExponential(intergenicsFPMClust):
-    # Fixed parameter seems suitable for smoothing
-    bandWidth = 0.5
-    #### To Fill and returns:
-    expParams = []
-    # vertical dashed lines: coordinates (default to 0 ie no lines) and legends
-    UncoverThreshold = 0
-    # compute meanFPM by intergenic regions
-    # save computation time instead of taking the raw data (especially for clusters
-    # with many samples)
+    # compute meanFPM for each intergenic region (speed up)
     meanIntergenicFPM = np.mean(intergenicsFPMClust, axis=1)
-    # Smoothing the average coverage profile of intergenic regions allows fitting the exponential
-    # to sharper densities than the raw data
-    try:
-        (dr, dens, bwValue) = clusterSamps.smoothing.smoothData(meanIntergenicFPM, maxData=max(meanIntergenicFPM), bandwidth=bandWidth)
-    except Exception as e:
-        logger.error('smoothing failed for %s : %s', str(bandWidth), repr(e))
-        raise
-    # Fitting the exponential distribution and retrieving associated parameters => tupple(loc, scale)
-    # f(x, scale) = (1/scale)*exp(-x/scale)
-    # scale parameter is the inverse of the rate parameter (lambda) used in the mathematical definition
-    # of the distribution.
-    # Location parameter is an optional parameter that controls the location of the distribution
-    # on the x-axis (fixed to 0 = floc).
-    expParams = scipy.stats.expon.fit(dens, floc=0)
-    # Calculating the threshold in FPM equivalent to 99% of the CDF (PPF = percent point function)
-    UncoverThreshold = scipy.stats.expon.ppf(0.99, *expParams)
 
-    return (expParams, UncoverThreshold)
+    # Fit an exponential distribution, imposing location = 0
+    # f(x, scale) = (1/scale)*exp(-x/scale)
+    loc, scale = scipy.stats.expon.fit(meanIntergenicFPM, floc=0)
+
+    return (loc, scale)
 
 
 ###################
