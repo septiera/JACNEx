@@ -1,6 +1,8 @@
+import os
 import logging
 import numpy as np
 import matplotlib.pyplot
+import matplotlib.backends.backend_pdf
 import scipy.cluster.hierarchy
 
 # prevent PIL flooding the logs when we are in DEBUG loglevel
@@ -101,12 +103,12 @@ def plotDendogram(linksMatrix, labelsGp, minDist, CM, pdf):
 # - clustID [str]: cluster identifier
 # - filterCounters (dict[str:int]): dictionary of exon counters of different filtering
 # performed for the cluster
-# - file [str]: file path to save plot
+# - pdf [str]: file path to save plot
 #
 # save a plot in the output pdf
-def plotPieChart(clustID, filterCounters, file):
+def plotPieChart(clustID, filterCounters, pdf):
     
-    pdf = matplotlib.backends.backend_pdf.PdfPages(file)
+    matplotOpenFile = matplotlib.backends.backend_pdf.PdfPages(pdf)
     
     fig = matplotlib.pyplot.figure(figsize=(5, 5))
     ax11 = fig.add_subplot(111)
@@ -133,16 +135,52 @@ def plotPieChart(clustID, filterCounters, file):
     matplotlib.pyplot.axis('equal')
     matplotlib.pyplot.title("Filtered and called exons from cluster " + str(clustID))
     matplotlib.pyplot.legend(loc='upper right', fontsize='small', labels=filterCounters.keys())
-    pdf.savefig(fig)
+    matplotOpenFile.savefig(fig)
     matplotlib.pyplot.close()
     
-    pdf.close()
+    matplotOpenFile.close()
+
 
 #########################
-# plotExonProfil
+# plotExponentialFit
+# generates a plot to visualize the exponential fit for a given dataset.
+# It takes the plot title, x-axis data, y-axis data, plot legends, and the
+# output file path for saving the plot as input.
+#
+# Args:     
+# - plotTitle [str]: The title of the plot.
+# - xi (np.ndarray[floats]): The x-axis data (FPM values).
+# - yLists (np.ndarray[floats]): A list of y-axis data for plotting.
+# - plotLegs (list[str]): A list of legends for each dataset.
+# - pdf [str]: The output file path for saving the plot as a PDF.
+#
+# save a plot in the output pdf
+def plotExponentialFit(plotTitle, dr, yLists, plotLegs, pdf):
+    # sanity
+    if (len(yLists[0]) != len(yLists[1])) or (len(yLists) != len(plotLegs)):
+        raise Exception('plotDensities bad args, length mismatch')
+    
+    matplotOpenFile = matplotlib.backends.backend_pdf.PdfPages(pdf)
+    fig = matplotlib.pyplot.figure(figsize=(5, 5))
+    
+    matplotlib.pyplot.plot(dr, yLists[0], label=plotLegs[0])
+    matplotlib.pyplot.plot(dr, yLists[1], label=plotLegs[1])
+    matplotlib.pyplot.legend()
+    matplotlib.pyplot.title(plotTitle)
+    matplotlib.pyplot.xlabel('FPM')
+    matplotlib.pyplot.ylabel('densities')
+    matplotlib.pyplot.ylim(0, max(yLists[0])/100)
+    matplotlib.pyplot.xlim(0, max(dr)/3)
+    matplotOpenFile.savefig(fig)
+    matplotlib.pyplot.close()
+    matplotOpenFile.close()
+    
+#########################
+# plotExonProfile
 # plots a density histogram for a raw data list, along with density or distribution
 # curves for a specified number of data lists. It can also plot vertical lines to mark
 # points of interest on the histogram. The graph is saved as a PDF file.
+#
 # Args:
 # - rawData (np.ndarray[float]): exon FPM counts
 # - xi (list[float]): x-axis values for the density or distribution curves, ranges
@@ -151,8 +189,8 @@ def plotPieChart(clustID, filterCounters, file):
 # - verticalLines (list[float]): vertical lines to be plotted, FPM tresholds
 # - vertLinesLegs (list[str]): labels for the vertical lines to be plotted
 # - plotTitle [str]: title of the plot
-# - pdf (matplotlib.backends object): a file object representing the PDF file to save the plot to
-def plotExonProfil(rawData, xi, yLists, plotLegs, verticalLines, vertLinesLegs, plotTitle, ylim, pdf):
+# - pdf (matplotlib.backends object): a file object for save the plot
+def plotExonProfile(rawData, xi, yLists, plotLegs, verticalLines, vertLinesLegs, plotTitle, ylim, pdf):
 
     # Define a list of colours based on the number of distributions to plot.
     # The 'plasma' colormap is specifically designed for people with color vision deficiencies.
