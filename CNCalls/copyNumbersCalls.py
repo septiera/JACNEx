@@ -239,14 +239,17 @@ def fitExponential(intergenicsFPMClust):
 
 
 ###################
-# FilterUncapturedExons
-# Filter n°1: exon not covered in most samples.
-# Given a FPM counts from an exon, calculating the median coverage and filter several possible cases:
-# - all samples in the cluster haven't capture for the current exon
-# - more than 2/3 of the samples have no capture.
-# Warning: Potential presence of homodeletions. We have chosen don't call them because they affect too many samples
+# filterUncapturedExons
+# Given a FPM counts from an exon, calculating the median coverage and filter
+# several possible cases:
+#   - all samples in the cluster haven't read capture for the current exon
+#   - more than 2/3 of the samples have no capture.
+# Warning: Potential presence of homodeletions. We have chosen don't call
+# them because they affect too many samples
+#
 # Args:
 # - exonFPM (list[floats]): FPM counts from an exon
+#
 # Returns "True" if exon doesn't pass the filter otherwise "False"
 @numba.njit
 def filterUncapturedExons(exonFPM):
@@ -262,28 +265,30 @@ def filterUncapturedExons(exonFPM):
 # Fits a single principal gaussian component around a starting guess point
 # in a 1-dimensional gaussian mixture of unknown components with EM algorithm
 # script found to :https://github.com/hmiemad/robust_Gaussian_fit (v01_2023)
+#
 # Args:
 # - X (np.array): A sample of 1-dimensional mixture of gaussian random variables
 # - mu (float, optional): Expectation. Defaults to None.
-# - sigma (float, optional): Standard deviation. Defaults to None.
+# - stdev (float, optional): Standard deviation. Defaults to None.
 # - bandwidth (float, optional): Hyperparameter of truncation. Defaults to 2.
 # - eps (float, optional): Convergence tolerance. Defaults to 1.0e-5.
-# Returns:
-# - mu [float],sigma [float]: mean and stdev of the gaussian component
-def fitRobustGaussian(X, mu=None, sigma=None, bandwidth=2.0, eps=1.0e-5):
+#
+# Returns a tuple (mu, stdev), parameters of the normal fitted,
+# may return an exception if the fit cannot be achieved.
+def fitRobustGaussian(X, mu=None, stdev=None, bandwidth=2.0, eps=1.0e-5):
     if mu is None:
         # median is an approach as robust and naïve as possible to Expectation
         mu = np.median(X)
     mu_0 = mu + 1
 
-    if sigma is None:
+    if stdev is None:
         # rule of thumb
-        sigma = np.std(X) / 3
-    sigma_0 = sigma + 1
+        stdev = np.std(X) / 3
+    sigma_0 = stdev + 1
 
     bandwidth_truncated_normal_sigma = truncated_integral_and_sigma(bandwidth)
 
-    while abs(mu - mu_0) + abs(sigma - sigma_0) > eps:
+    while abs(mu - mu_0) + abs(stdev - sigma_0) > eps:
         # loop until tolerence is reached
         """
         create a uniform window on X around mu of width 2*bandwidth*sigma
@@ -291,30 +296,25 @@ def fitRobustGaussian(X, mu=None, sigma=None, bandwidth=2.0, eps=1.0e-5):
         measure the standard deviation of the window and divide by the standard deviation of a truncated gaussian distribution
         measure the proportion of points inside the window, divide by the weight of a truncated gaussian distribution
         """
-        Window = np.logical_and(X - mu - bandwidth * sigma < 0, X - mu + bandwidth * sigma > 0)
+        Window = np.logical_and(X - mu - bandwidth * stdev < 0, X - mu + bandwidth * stdev > 0)
 
         # condition to identify exons with points arround at the median
         if Window.any():
             mu_0, mu = mu, np.average(X[Window])
             var = np.average(np.square(X[Window])) - mu**2
-            sigma_0, sigma = sigma, np.sqrt(var) / bandwidth_truncated_normal_sigma
+            sigma_0, stdev = stdev, np.sqrt(var) / bandwidth_truncated_normal_sigma
         # no points arround the median
         # e.g. exon where more than 1/2 of the samples have an FPM = 0.
         # A Gaussian fit is impossible => raise exception
         else:
             raise Exception("cannot fit")
-    return ([mu, sigma])
+    return (mu, stdev)
 
 
 #############################################################
 # normal_erf
-# ancillary function of the robustGaussianFitPrivate function computes Gauss error function
-# The error function (erf) is used to describe the Gaussian distribution.
-# It gives the probability that a random variable follows a given Gaussian distribution,
-# indicating the probability that it is less than or equal to a given value.
-# In other words, the error function quantifies the probability distribution for a
-# random variable following a Gaussian distribution.
-# this function replaces the use of the scipy.stats.erf module
+# Computes Gauss error function (erf)
+# used by fitRobustGaussian function
 def normal_erf(x, mu=0, sigma=1, depth=50):
     ele = 1.0
     normal = 1.0
@@ -330,9 +330,7 @@ def normal_erf(x, mu=0, sigma=1, depth=50):
 
 #############################################################
 # truncated_integral_and_sigma
-# ancillary function of the robustGaussianFitPrivate function
-# allows for a more precise and focused analysis of a function
-# by limiting the study to particular parts of its defining set.
+# used by fitRobustGaussian function
 def truncated_integral_and_sigma(x):
     n, e = normal_erf(x)
     return np.sqrt(1 - n * x / e)
