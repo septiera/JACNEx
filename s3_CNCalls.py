@@ -219,12 +219,8 @@ def main(argv):
     thisTime = time.time()
     logger.debug("Done parsing previous CNCallsFile and prevClustFile, in %.2fs", thisTime - startTime)
     startTime = thisTime
-    
-    # if CNCalls fails for any clusters, we have to remember their indexes
-    # and only expunge them at the end -> save their indexes in failedClusters
-    failedClusters = []
 
-    # total number of samples that still need to be processed
+    # total number of clusters that still need to be processed
     nbOfClustersToProcess = len(clusters)
     for clustIndex in range(len(clusters)):
         if callsFilled[clustIndex]:
@@ -238,14 +234,12 @@ def main(argv):
         ##############################
         # decide how the work will be parallelized
         # we are allowed to use jobs cores in total: we will process paraClusters clusters in
-        # parallel, each sample will be processed using coresPerSample.
-        # -> we target targetCoresPerSample coresPerSample, this is increased if we
-        #    have few samples to process (and we use ceil() so we may slighty overconsume)
-        targetCoresPerCluster = 3
+        # parallel
+        # -> we target targetCoresPerCluster, this is increased if we
+        #    have few clusters to process (and we use ceil() so we may slighty overconsume)
+        targetCoresPerCluster = 15
         paraClusters = min(math.ceil(jobs / targetCoresPerCluster), len(clusters))
-        coresPerCluster = math.ceil(jobs / paraClusters)
-        logger.info("%i new cluster => will process %i in parallel, using up to %i cores/cluster",
-                    len(clusters), paraClusters, coresPerCluster)
+        logger.info("%i new clusters => will process %i in parallel", len(clusters), paraClusters)
 
         # identifying autosomes and gonosomes "exons" index
         # recall clusters are derived from autosomal or gonosomal analyses
@@ -267,22 +261,19 @@ def main(argv):
         def mergeCalls(futurecounts2callsRes):
             e = futurecounts2callsRes.exception()
             if e is not None:
-                #  exceptions raised by CNCalls are always Exception(str(sampleIndex))
+                # exceptions raised by CNCalls are always Exception(str(clusterIndex))
                 si = int(str(e))
-                logger.warning("Failed to CNCalls for cluster n° %s, skipping it", clusters[si])
-                failedClusters.append(si)
+                logger.warning("Failed to CNCalls for cluster n° %i, skipping it", si)
             else:
                 counts2callsRes = futurecounts2callsRes.result()
-                si = counts2callsRes[0]
                 for exonIndex in range(len(counts2callsRes[1])):
                     CNCallsArray[counts2callsRes[2][exonIndex], counts2callsRes[1]] = counts2callsRes[3][exonIndex]
 
-                logger.info("Done copy number calls for cluster n°%s", counts2callsRes[0])
+                logger.info("Done copy number calls for cluster n°%i", counts2callsRes[0])
 
         # To be parallelised => browse clusters
         with ProcessPoolExecutor(paraClusters) as pool:
             for clustID in range(len(clusters)):
-                logger.info("#### Process cluster n°%i", clustID)
 
                 ##### validity sanity check
                 if validity[clustID] == 0:
@@ -297,22 +288,18 @@ def main(argv):
                     continue
 
                 ##### run prediction for current cluster
-                futureRes  = pool.submit(CNCalls.copyNumbersCalls.CNCalls(clustID, exonsFPM, intergenicsFPM, samples,
-                                                                          exons, clusters, ctrlsClusters, sourceClusters,
-                                                                          maskSourceExons, plotFolder, samps2Check))
-                
-                futureRes.add_done_callback(mergeCalls)
+                futureRes = pool.submit(CNCalls.copyNumbersCalls.CNCalls, clustID, exonsFPM, intergenicsFPM, samples,
+                                        exons, clusters, ctrlsClusters, sourceClusters, maskSourceExons, plotFolder,
+                                        samps2Check)
 
-                thisTime = time.time()
-                logger.debug("Done Copy Number Exons Calls for cluster n°%s, in %.2f s", clustID, thisTime - startTime)
-                startTime = thisTime
+                futureRes.add_done_callback(mergeCalls)
 
         #####################################################
         # Print exon defs + calls to outFile
         CNCalls.CNCallsFile.printCNCallsFile(CNCallsArray, exons, clusters, outFile)
 
         thisTime = time.time()
-        logger.debug("Done printing calls for all (non-failed) samples, in %.2fs", thisTime - startTime)
+        logger.debug("Done printing calls for all (non-failed) clusters, in %.2fs", thisTime - startTime)
         logger.info("ALL DONE")
 
 
