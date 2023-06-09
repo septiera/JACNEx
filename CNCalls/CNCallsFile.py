@@ -41,7 +41,7 @@ def extractCNCallsFromPrev(exons, samples, clusters, prevCNCallsFile, prevClusts
     # for each copy number type (CN0,CN1,CN2,CN3+)
     callsArray = allocateCNCallsArray(len(exons), len(samples))
     # callsFilled: same size and order as "clusters", value will be set
-    # to True if the cluster remains identical 
+    # to True if the cluster remains identical
     callsFilled = np.zeros(len(clusters), dtype=bool)
 
     if (prevClustsFile != ''):
@@ -64,7 +64,7 @@ def extractCNCallsFromPrev(exons, samples, clusters, prevCNCallsFile, prevClusts
         # prev2new is a 1D numpy array, size = len(prevSamples), prev2new[prev] is the
         # index in SOIs of sample prevSamples[prev] if it's present, -1 otherwise
         prev2new = np.full(len(prevSamples), -1, dtype=int)
-        
+
         for i, cluster in enumerate(clusters):
             if cluster in prevClusters:
                 callsFilled[i] = True
