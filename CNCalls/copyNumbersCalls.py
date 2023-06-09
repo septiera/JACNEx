@@ -29,9 +29,9 @@ logger = logging.getLogger(__name__)
 #
 # Specifically:
 # -Retrieves cluster-specific data such as exon and intergenic FPM (fragments per million)
-# count data, and creates a list of exon information to process.
-# -Fits an exponential distribution from all intergenic FPM data to obtain the law parameters
-# and a FPM threshold corresponding to 99% of the cumulative distribution function (CDF).
+# count data
+# -Fits an exponential distribution from all intergenic FPM data to obtain the distribution parameters
+# and an FPM threshold to identify captured and uncaptured profiles (unCaptFPMLimit).
 # -Filters out exons that are not interpretable and fits a robust Gaussian:
 #   -F1: filters exons with median coverage of 0, i.e., not captured.
 #   -F2: filters exons where it is impossible to fit a robust Gaussian, i.e., median coverage
@@ -40,13 +40,12 @@ logger = logging.getLogger(__name__)
 #        uncaptured exon profile.
 #   -F4: filters exons where the sample contribution rate to the robust Gaussian is too low,
 #        i.e., less than 50%.
-# -Calculates probabilities for each sample/exon to determine CN0 (case where the sample FPM
-# value is lower than the CN1 mean, otherwise 0), CN1, CN2, and CN3 and fills CNcallsArray
-# -Produces filtered and unfiltered exon profiles and pie charts representations if a path
-# for plotted to was defined by the user, saved in different PDF files.
+# -Calculates likelihoods for each sample/exon to determine CN0 (case where the sample FPM
+# value is lower than the CN1 mean, otherwise 0), CN1, CN2, and CN3 and fills clusterCalls
+# -Produces filtered and unfiltered exon profiles representation (fit plot, pie chart) if a path
+# for plotted is defined by the user, saved in different folders and PDF files.
 #
 # Args:
-# - CNcallsArray (np.ndarray): exons copy number calls for each sample and exon, unfilled value = -1
 # - clustID [int]
 # - exonsFPM (np.ndarray[float]): normalised counts from exons
 # - intergenicsFPM (np.ndarray[float]): normalised counts from intergenic windows
@@ -61,44 +60,59 @@ logger = logging.getLogger(__name__)
 # - plotFolder (str): subdir (created if needed) where result plots files will be produced
 # - samps2Check (str): sample names for the graphic control of the number of copies called
 #
-# Returns CNcallsArray updated
-def CNCalls(CNCallsArray, clustID, exonsFPM, intergenicsFPM,
-            samples, exons, clusters, ctrlsClusters,
+# Returns a tuple (colIndInCNCallsArray, sourceExons, clusterCalls):
+# - clustID [int]
+# - colIndInCNCallsArray (list[int]): Column "samples" indexes in CNcallsArray for the current cluster.
+# - sourceExons (list[int]): source exons indexes (gonosomes or autosomes exons) for the current cluster.
+# - clusterCalls (np.ndarray): samples likelihoods array for the current cluster.
+def CNCalls(clustID, exonsFPM, intergenicsFPM, samples, exons, clusters, ctrlsClusters,
             sourceClusters, maskSourceExons, plotFolder, samps2Check):
 
-    clusterSampsInd = clusters[clustID].copy()
-    clusterSampsNames = [samples[i] for i in clusterSampsInd]
+    #############
+    ### initialising variables and extracting information from the cluster
+    ### Fixed parameters
+    probsStates = ["CNO", "CN1", "CN2", "CN3"]
+    # counter dictionary for each filter, only used to plot the pie chart
+    exonsFiltersSummary = dict.fromkeys(["notCaptured", "cannotFitRG", "RGClose2LowThreshold", "fewSampsInRG", "exonsCalls"], 0)
 
-    # creation of folders for storing DEBUG plots
+    ### extracting cluster-specific informations
+    clusterSampsIndexes = clusters[clustID].copy()
+    clusterSampsNames = [samples[i] for i in clusterSampsIndexes]
+    # cluster source 'exons' list (gonosomes or autosomes exons), output
+    sourceExons = np.where(maskSourceExons == sourceClusters[clustID])[0]
+    colIndInCNCallsArray = [idx * len(probsStates) + i for idx in clusterSampsIndexes for i in range(len(probsStates))]
+
+    ### To Fill and return
+    clusterCalls = np.full((len(sourceExons), (len(clusterSampsIndexes) * len(probsStates))), -1, dtype=np.float32, order='F')
+
+    #### creation of folders for storing DEBUG plots
     if plotFolder:
         try:
             plotFolders = makePlotFolders(plotFolder, clustID, clusterSampsNames, samps2Check)
         except Exception as e:
             raise Exception("makePlotFolders failed %s", e)
 
-    # If there are control clusters, add their samples indexes in a new list, else new list = previous list
+    # add sample indexes if there are control clusters
     if len(ctrlsClusters[clustID]) != 0:
         ctrlClusterSampsInd = getCTRLSamps(ctrlsClusters[clustID], clusters)
-        samps = clusterSampsInd + ctrlClusterSampsInd
+        sampsInd = clusterSampsIndexes + ctrlClusterSampsInd
     else:
-        samps = clusterSampsInd
+        sampsInd = clusterSampsIndexes
 
-    sourceExons = np.where(maskSourceExons == sourceClusters[clustID])[0]  # obtain the indexes of the cluster's source exons
-
+    # DEBUG tracking
     logger.info("cluster n°%i, clustSamps= %i, controlSamps= %i, exonsNB= %i",
-                clustID, len(clusterSampsInd), len(samps) - len(clusterSampsInd), len(sourceExons))
+                clustID, len(clusterSampsIndexes), len(sampsInd) - len(clusterSampsIndexes), len(sourceExons))
 
-    # counter dictionary for each filter, only used to plot the pie chart
-    exonsFiltersSummary = dict.fromkeys(["notCaptured", "cannotFitRG", "RGClose2LowThreshold", "fewSampsInRG", "exonsCalls"], 0)
-
-    # fit an exponential distribution from all pseudo exons
+    ################
+    ### Call process
+    # fit an exponential distribution from all intergenic regions (CN0)
     try:
-        (meanIntergenicFPM, loc, scale) = fitExponential(intergenicsFPM[:, samps])
+        (meanIntergenicFPM, loc, scale) = fitExponential(intergenicsFPM[:, sampsInd])
     except Exception as e:
         logger.error("fitExponential failed for cluster %i : %s", clustID, repr(e))
         raise Exception("fitExponential failed")
 
-    if plotFolder:
+    if plotFolder:  # DEBUG tracking plot
         preprocessExponFitPlot(clustID, meanIntergenicFPM, loc, scale,
                                os.path.join(plotFolders[0], "cluster" + str(clustID) + "_ExponentialFit_coverageProfile.pdf"))
 
@@ -107,68 +121,69 @@ def CNCalls(CNCallsArray, clustID, exonsFPM, intergenicsFPM,
 
     # Browse cluster-specific exons
     for exInd in range(len(sourceExons)):
-        exonInfos = exons[sourceExons[exInd]]
-        exonFPM = exonsFPM[sourceExons[exInd], samps]
+        exonDefinition = exons[sourceExons[exInd]]
+        exonFPM = exonsFPM[sourceExons[exInd], sampsInd]
 
-        # Print progress every 10000 exons
+        # DEBUG tracking, print progress every 10000 exons
         if exInd % 10000 == 0:
             logger.info("cluster n°%i - exonNb %i, %s", clustID, exInd, time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()))
 
-        # Filter n°1: not captured => median coverage of the exon = 0
+        ################
+        ### exons filters
+        ### Filter n°1: not captured => median coverage of the exon = 0
         if filterUncapturedExons(exonFPM):
             preprocessExonProfilePlot("notCaptured", exonsFiltersSummary, clustID, [loc, scale], unCaptFPMLimit,
-                                      sourceExons[exInd], exonInfos, exonFPM, plotFolders[1] if plotFolder else None)
+                                      sourceExons[exInd], exonDefinition, exonFPM, plotFolders[1] if plotFolder else None)
             continue
 
-        # robustly fit a gaussian
-        # Filter n°2: fitting is impossible (median close to 0)
+        ### robustly fit a gaussian (CN2)
+        ### Filter n°2: fitting is impossible (median close to 0)
         try:
             (mean, stdev) = fitRobustGaussian(exonFPM)
         except Exception as e:
             if str(e) == "cannot fit":
+                exonsFiltersSummary["cannotFitRG"] += 1
                 continue
             else:
                 raise e
 
-        # Filter n°3: RG overlaps the threshold associated with the uncaptured exon profile
+        ### Filter n°3: fitted gaussian overlaps the threshold associated with the uncaptured exon profile
         if filterZscore(mean, stdev, unCaptFPMLimit):
             preprocessExonProfilePlot("RGClose2LowThreshold", exonsFiltersSummary, clustID, [loc, scale], unCaptFPMLimit,
-                                      sourceExons[exInd], exonInfos, exonFPM, plotFolders[2] if plotFolder else None, [mean, stdev])
+                                      sourceExons[exInd], exonDefinition, exonFPM, plotFolders[2] if plotFolder else None, [mean, stdev])
             continue
 
-        # Filter n°4: the sample contribution rate to the robust Gaussian is too low (<50%)
+        ### Filter n°4: the samples contribution rate to the gaussian is too low (<50%)
         if filterSampsContrib2Gaussian(mean, stdev, exonFPM):
             preprocessExonProfilePlot("fewSampsInRG", exonsFiltersSummary, clustID, [loc, scale], unCaptFPMLimit,
-                                      sourceExons[exInd], exonInfos, exonFPM, plotFolders[3] if plotFolder else None, [mean, stdev])
+                                      sourceExons[exInd], exonDefinition, exonFPM, plotFolders[3] if plotFolder else None, [mean, stdev])
             continue
 
         exonsFiltersSummary["exonsCalls"] += 1
 
-        # Browse cluster-samples
-        for i in range(len(samps)):
-            sampInd = samps[i]
-            if sampInd not in clusterSampsInd:  # already processed
-                continue
+        ################
+        ### exon pass filters : compute likelihood for each sample
+        # Browse only cluster-samples
+        for i in range(len(clusterSampsIndexes)):
 
-            # density probabilities for each copy number
-            sampFPM = exonFPM[i]
-            probs = sampFPM2Probs(mean, stdev, loc, scale, unCaptFPMLimit, sampFPM)
+            sampFPM = exonFPM[sampsInd.index(clusterSampsIndexes[i])]
+            likelihoods = sampFPM2Probs(mean, stdev, loc, scale, unCaptFPMLimit, sampFPM)
 
-            fillCNCallsArray(CNCallsArray, samps[i], sourceExons[exInd], probs)
+            fillClusterCallsArray(clusterCalls, i, exInd, likelihoods)
 
-            # graphic representation of callable exons for interest patients
+            # graphic representation of callable exons for interest samples
             sampName = clusterSampsNames[i]
             if (not samps2Check) or (sampName not in samps2Check):
                 continue
             preprocessExonProfilePlot("exonsCalls", exonsFiltersSummary, clustID, [loc, scale], unCaptFPMLimit,
-                                      sourceExons[exInd], exonInfos, exonFPM,
+                                      sourceExons[exInd], exonDefinition, exonFPM,
                                       plotFolders[4] if plotFolder and len(plotFolders) == 5 else None,
-                                      [mean, stdev], [sampName, sampFPM, probs])
+                                      [mean, stdev], [sampName, sampFPM, likelihoods])
 
     if plotFolder:
         figures.plots.plotPieChart(clustID, exonsFiltersSummary, os.path.join(plotFolders[0], "cluster" + str(clustID) + "_filtersSummary_pieChart.pdf"))
 
-    return CNCallsArray
+    return (clustID, colIndInCNCallsArray, sourceExons, clusterCalls)
 
 
 ###############################################################################
@@ -248,7 +263,10 @@ def getCTRLSamps(ctrlClusterIDs, clusters):
 # Args:
 # - intergenicsFPMClust (np.ndarray[floats]): count array (FPM normalized)
 #
-# Returns a tuple (meanIntergenicFPM, loc, scale), raw data and parameters of the exponential
+# Returns a tuple (meanIntergenicFPM, loc, scale):
+# - meanIntergenicFPM (np.ndarray[floats]): average count per exon, array needed for
+#                                           the debug plot (preprocessExponFitPlot)
+# - loc [float], scale[float]: parameters of the exponential
 def fitExponential(intergenicsFPMClust):
     # compute meanFPM for each intergenic region (speed up)
     meanIntergenicFPM = np.mean(intergenicsFPMClust, axis=1)
@@ -258,6 +276,62 @@ def fitExponential(intergenicsFPMClust):
     loc, scale = scipy.stats.expon.fit(meanIntergenicFPM)
 
     return (meanIntergenicFPM, loc, scale)
+
+
+###########################
+# preprocessExponFitPlot
+# Generates an exponential fit plot for a given cluster using the provided data and parameters.
+# It performs data smoothing, calculates the probability density function for the exponential
+# distribution, and plots the exponential fit.
+#
+# Args:
+# - clustID [int]: The ID of the cluster.
+# - meanIntergenicFPM (list[floats]): The list of mean intergenic FPM values.
+# - loc (float), scale (float): parameters of the exponential distribution.
+# - folder (str): The path to the folder where the plot should be saved.
+#
+# Return None
+def preprocessExponFitPlot(clustID, meanIntergenicFPM, loc, scale, file):
+    # initiate plots variables
+    plotTitle = f"ClusterID n° {clustID}"
+    yLists = []  # List to store the y-values for plotting
+    plotLegs = []  # List to store the plot legends
+
+    # smoothing raw data
+    # Smooth the average coverage profile of intergenic regions using the specified bandwidth
+    try:
+        (dr, dens, bwValue) = clusterSamps.smoothing.smoothData(meanIntergenicFPM, maxData=max(meanIntergenicFPM))
+    except Exception as e:
+        logger.error('smoothing failed for %s : %s', str(bwValue), repr(e))
+        raise
+
+    plotLegs.append("coverage data smoothed \nbwValue={:0.2e}".format(bwValue))
+    yLists.append(dens)
+
+    # calculate the probability density function for the exponential distribution
+    makePDF(getattr(scipy.stats, 'expon'), [loc, scale], dr, yLists)
+    plotLegs.append("expon={:.2f}, {:.2f}".format(loc, scale))
+
+    figures.plots.plotExponentialFit(plotTitle, dr, yLists, plotLegs, file)
+
+
+################################################
+# makePDF
+# Generate distributions's Probability Distribution Function (likelihood) and added it to yLists
+# Args:
+# - distribName (scipy object): probability distribution function from the SciPy library
+# - params (list[floats]): parameters used to build the probability distribution function.
+# - rangeData (list[floats]): range of FPM data
+# - yLists (list[floats]): computed PDF values are appended
+def makePDF(distribName, params, rangeData, yLists):
+    # Separate parts of parameters
+    loc = params[0]
+    scale = params[1]
+
+    # Build PDF
+    x = rangeData
+    y = distribName.pdf(x, loc=loc, scale=scale)
+    yLists.append(y)
 
 
 ###################
@@ -360,9 +434,10 @@ def truncated_integral_and_sigma(x):
 
 ###################
 # filterZscore
-# Given a robustly fitted gaussian parameters and an FPM threshold separating
-# uncaptured exons from captured exons, exon are filtered when the capture profile
-# is indistinguishable from the non-capture profile.
+# Given a robustly fitted gaussian parameters and an FPM threshold separating coverage
+# associated with exon non-capture or capture during sequencing, exon are filtered when
+# the majority pattern of sample distribution for the exon is indistinguishable from
+# the non-capture threshold.
 #
 # Spec:
 # - setting a tolerated deviation threshold, bdwthThreshold
@@ -463,77 +538,21 @@ def sampFPM2Probs(mean, stdev, loc, scale, unCaptThreshold, exSampFPM):
 
 
 #############################################################
-# fillCNCallsArray
+# fillClusterCallsArray
 #
 # Args:
-# - CNCallsArray (np.ndarray[floats]): copy number call likelihood
+# - clusterCalls (np.ndarray[floats]): copy number call likelihood
 # - sampIndex [int]: "samples" index
-# - exIndex [int]: exon index in CNCallsArray
-# - probs (list[floats]): copy number call likelihood [CN0,CN1,CN2,CN3]
-def fillCNCallsArray(CNCallsArray, sampIndex, exIndex, probs):
-    sampArrayInd = sampIndex * 4
+# - exIndex [int]: exon index in clusterCalls array
+# - likelihoods (list[floats]): likelihood for a sample and an exon
+def fillClusterCallsArray(clusterCalls, sampIndex, exIndex, likelihoods):
+    sampIndInArray = sampIndex * len(likelihoods)
     # sanity check : don't overwrite data
-    if np.sum(CNCallsArray[exIndex, sampArrayInd:sampArrayInd + 4]) < 0:
-        # Populate the CNcallsArray with the copy number call likelihood probabilities
-        CNCallsArray[exIndex, sampArrayInd:sampArrayInd + 4] = probs
+    if np.sum(clusterCalls[exIndex, sampIndInArray:(sampIndInArray + len(likelihoods))]) <= 0:
+        # Populate the clusterCalls with the copy number call likelihood probabilities
+        clusterCalls[exIndex, sampIndInArray:(sampIndInArray + len(likelihoods))] = likelihoods
     else:
-        raise Exception("overwrite calls in CNCallsArray")
-
-
-###########################
-# preprocessExponFitPlot
-# Generates an exponential fit plot for a given cluster using the provided data and parameters.
-# It performs data smoothing, calculates the probability density function for the exponential
-# distribution, and plots the exponential fit.
-#
-# Args:
-# - clustID [int]: The ID of the cluster.
-# - meanIntergenicFPM (list[floats]): The list of mean intergenic FPM values.
-# - loc (float), scale (float): parameters of the exponential distribution.
-# - folder (str): The path to the folder where the plot should be saved.
-#
-# Return None
-def preprocessExponFitPlot(clustID, meanIntergenicFPM, loc, scale, file):
-    # initiate plots variables
-    plotTitle = f"ClusterID n° {clustID}"
-    yLists = []  # List to store the y-values for plotting
-    plotLegs = []  # List to store the plot legends
-
-    # smoothing raw data
-    # Smooth the average coverage profile of intergenic regions using the specified bandwidth
-    try:
-        (dr, dens, bwValue) = clusterSamps.smoothing.smoothData(meanIntergenicFPM, maxData=max(meanIntergenicFPM))
-    except Exception as e:
-        logger.error('smoothing failed for %s : %s', str(bwValue), repr(e))
-        raise
-
-    plotLegs.append("coverage data smoothed \nbwValue={:0.2e}".format(bwValue))
-    yLists.append(dens)
-
-    # calculate the probability density function for the exponential distribution
-    makePDF(getattr(scipy.stats, 'expon'), [loc, scale], dr, yLists)
-    plotLegs.append("expon={:.2f}, {:.2f}".format(loc, scale))
-
-    figures.plots.plotExponentialFit(plotTitle, dr, yLists, plotLegs, file)
-
-
-################################################
-# makePDF
-# Generate distributions's Probability Distribution Function and added it to yLists
-# Args:
-# - distribName (scipy object): probability distribution function from the SciPy library
-# - params (list[floats]): parameters used to build the probability distribution function.
-# - rangeData (list[floats]): range of FPM data
-# - yLists (list[floats]): computed PDF values are appended
-def makePDF(distribName, params, rangeData, yLists):
-    # Separate parts of parameters
-    loc = params[0]
-    scale = params[1]
-
-    # Build PDF
-    x = rangeData
-    y = distribName.pdf(x, loc=loc, scale=scale)
-    yLists.append(y)
+        raise Exception("overwrite calls in clusterCalls array")
 
 
 #########################
