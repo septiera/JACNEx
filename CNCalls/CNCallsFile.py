@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 ###############################################################################
 ############################ PUBLIC FUNCTIONS #################################
 ###############################################################################
-# extractObservedProbsFromPrev
+# extractCNCallsFromPrev
 # Args:
 #   - exons (list of list[str,int,int,str]): exon definitions, padded and sorted
 #   - samples (list[str]): sample of interest names
@@ -26,25 +26,25 @@ logger = logging.getLogger(__name__)
 #   - prevClustsFile [str]: a cluster definition file (possibly gzipped) produced by
 #   s2_clusterSamps same timestamp as prevCNCallsFile
 #
-# Returns a tuple (CNcallsArray, callsFilled), each is created here:
-#   - CNcallsArray is an float numpy array, dim = NbExons x (NbSamples*4), initially -1
-#   - callsFilled is a 1D boolean numpy array, dim = NbSamples, initially all-False
+# Returns a tuple (callsArray, callsFilled), each is created here:
+#   - callsArray (np.ndarray[floats]): dim = NbExons x (NbSamples*4), initially -1
+#   - callsFilled (np.ndarray[bool]): dim = NbClusters, initially all-False
 #
-# If prevCNCallsFile=='' return the (-1/all(-False) arrays
+# If prevCNCallsFile=='' return the callsArray all-1 and callsFilled all-False arrays
 # Otherwise:
 # -> for any sample present in both prevCNCallsFile, prevClustFile and samples, and the
 # cluster definition not changes fill the sample's columns in CNcallsArray by
 # copying data from prevCNCallsFile, and set callsFilled[sample] to True
-def extractObservedProbsFromPrev(exons, samples, clusts2Samps, prevCNCallsFile, prevClustsFile):
+def extractCNCallsFromPrev(exons, samples, clusters, prevCNCallsFile, prevClustsFile):
     # numpy arrays to be returned:
-    # observedProbsArray[exonIndex,sampleIndex] will store the specified probabilities
+    # callsArray[exonIndex,sampleIndex] will store the specified probabilities
     # for each copy number type (CN0,CN1,CN2,CN3+)
-    CNcallsArray = allocateCNCallsArray(len(exons), len(samples))
-    # callsFilled: same size and order as sampleNames, value will be set
-    # to True if probabilities were filled from callsFile
-    callsFilled = np.zeros(len(samples), dtype=bool)
+    callsArray = allocateCNCallsArray(len(exons), len(samples))
+    # callsFilled: same size and order as "clusters", value will be set
+    # to True if the cluster remains identical 
+    callsFilled = np.zeros(len(clusters), dtype=bool)
 
-    if (prevCNCallsFile != ''):  # identical to prevClustFile != ''
+    if (prevClustsFile != ''):
         ###################################
         # we have a prevCalls file, parse it
         (prevExons, prevSamples, prevCallsList) = parseCNCallsPrivate(prevCNCallsFile)
@@ -57,35 +57,27 @@ def extractObservedProbsFromPrev(exons, samples, clusts2Samps, prevCNCallsFile, 
 
         ###################################
         # we have a prevClusts file parse it
-        prevclusts2Samps = clusterSamps.clustFile.parseClustsFile(prevClustsFile, prevSamples)[0]
-        logger.info(prevclusts2Samps)
+        prevClusters = clusterSamps.clustFile.parseClustsFile(prevClustsFile, prevSamples)[0]
+        logger.info(prevClusters)
 
-        # fill prev2new to identify samples that are in prevCallsFile:
+        # fill prev2new to identify SOIs that are in prevClusters:
         # prev2new is a 1D numpy array, size = len(prevSamples), prev2new[prev] is the
-        # samples indexes
+        # index in SOIs of sample prevSamples[prev] if it's present, -1 otherwise
         prev2new = np.full(len(prevSamples), -1, dtype=int)
-        # prevIndexes: temp dict, key = sample identifier, value = index in prevSamples
-        prevIndexes = {}
-
-        for prevIndex in range(len(prevSamples)):
-            prevIndexes[prevSamples[prevIndex]] = prevIndex
-
-        # compare clusters definitions
-        # warning : the clusters obtained between one version and another can have a different
-        # cluster identifier (key) but the composition of the group remains unchanged
-        for valueCurrent in clusts2Samps.values():
-            for valuePrev in prevclusts2Samps.values():
-                if valueCurrent == valuePrev:
-                    for i in valueCurrent:
-                        prev2new[prevIndexes[samples.index[i]]] = prevIndexes[i]
-                        callsFilled[samples.index[i]] = 1
+        
+        for i, cluster in enumerate(clusters):
+            if cluster in prevClusters:
+                callsFilled[i] = True
+                for j, samp in enumerate(samples):
+                    if samp in cluster and samp in prevSamples:
+                        prev2new[prevSamples.index(samp)] = j
 
         # Fill CNcallsArray with prev probabilities data
         for i in range(len(exons)):
-            prevCallsVec2CallsArray(CNcallsArray, i, prevCallsList[i], prev2new)
+            prevCallsVec2CallsArray(callsArray, i, prevCallsList[i], prev2new)
 
     # return the arrays, whether we had a prevCNCallsFile or not
-    return(CNcallsArray, callsFilled)
+    return(callsArray, callsFilled)
 
 
 #############################################################
@@ -229,8 +221,8 @@ def allocateCNCallsArray(numExons, numSamples):
 def prevCallsVec2CallsArray(CNcallsArray, exonIndex, prevCalls, prev2new):
     for i in numba.prange(len(prev2new)):
         if prev2new[i] != -1:
-            currentColIndex = [x + i * 4 for x in range(4)]
-            prevColIndex = [x + prev2new[i] * 4 for x in range(4)]
+            currentColIndex = [x + prev2new[i] * 4 for x in numba.prange(4)]
+            prevColIndex = [x + i * 4 for x in numba.prange(4)]
             CNcallsArray[exonIndex, currentColIndex] = prevCalls[prevColIndex]
 
 
