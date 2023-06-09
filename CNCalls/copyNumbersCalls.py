@@ -67,123 +67,127 @@ logger = logging.getLogger(__name__)
 # - clusterCalls (np.ndarray): samples likelihoods array for the current cluster.
 def CNCalls(clustID, exonsFPM, intergenicsFPM, samples, exons, clusters, ctrlsClusters,
             sourceClusters, maskSourceExons, plotFolder, samps2Check):
-
-    #############
-    ### initialising variables and extracting information from the cluster
-    ### Fixed parameters
-    probsStates = ["CNO", "CN1", "CN2", "CN3"]
-    # counter dictionary for each filter, only used to plot the pie chart
-    exonsFiltersSummary = dict.fromkeys(["notCaptured", "cannotFitRG", "RGClose2LowThreshold", "fewSampsInRG", "exonsCalls"], 0)
-
-    ### extracting cluster-specific informations
-    clusterSampsIndexes = clusters[clustID].copy()
-    clusterSampsNames = [samples[i] for i in clusterSampsIndexes]
-    # cluster source 'exons' list (gonosomes or autosomes exons), output
-    sourceExons = np.where(maskSourceExons == sourceClusters[clustID])[0]
-    colIndInCNCallsArray = [idx * len(probsStates) + i for idx in clusterSampsIndexes for i in range(len(probsStates))]
-
-    ### To Fill and return
-    clusterCalls = np.full((len(sourceExons), (len(clusterSampsIndexes) * len(probsStates))), -1, dtype=np.float32, order='F')
-
-    #### creation of folders for storing DEBUG plots
-    if plotFolder:
-        try:
-            plotFolders = makePlotFolders(plotFolder, clustID, clusterSampsNames, samps2Check)
-        except Exception as e:
-            raise Exception("makePlotFolders failed %s", e)
-
-    # add sample indexes if there are control clusters
-    if len(ctrlsClusters[clustID]) != 0:
-        ctrlClusterSampsInd = getCTRLSamps(ctrlsClusters[clustID], clusters)
-        sampsInd = clusterSampsIndexes + ctrlClusterSampsInd
-    else:
-        sampsInd = clusterSampsIndexes
-
-    # DEBUG tracking
-    logger.info("cluster n°%i, clustSamps= %i, controlSamps= %i, exonsNB= %i",
-                clustID, len(clusterSampsIndexes), len(sampsInd) - len(clusterSampsIndexes), len(sourceExons))
-
-    ################
-    ### Call process
-    # fit an exponential distribution from all intergenic regions (CN0)
     try:
-        (meanIntergenicFPM, loc, scale) = fitExponential(intergenicsFPM[:, sampsInd])
-    except Exception as e:
-        logger.error("fitExponential failed for cluster %i : %s", clustID, repr(e))
-        raise Exception("fitExponential failed")
+        #############
+        ### initialising variables and extracting information from the cluster
+        ### Fixed parameters
+        probsStates = ["CNO", "CN1", "CN2", "CN3"]
+        # counter dictionary for each filter, only used to plot the pie chart
+        exonsFiltersSummary = dict.fromkeys(["notCaptured", "cannotFitRG", "RGClose2LowThreshold", "fewSampsInRG", "exonsCalls"], 0)
 
-    if plotFolder:  # DEBUG tracking plot
-        preprocessExponFitPlot(clustID, meanIntergenicFPM, loc, scale,
-                               os.path.join(plotFolders[0], "cluster" + str(clustID) + "_ExponentialFit_coverageProfile.pdf"))
+        ### extracting cluster-specific informations
+        clusterSampsIndexes = clusters[clustID].copy()
+        clusterSampsNames = [samples[i] for i in clusterSampsIndexes]
+        # cluster source 'exons' list (gonosomes or autosomes exons), output
+        sourceExons = np.where(maskSourceExons == sourceClusters[clustID])[0]
+        colIndInCNCallsArray = [idx * len(probsStates) + i for idx in clusterSampsIndexes for i in range(len(probsStates))]
 
-    # Calculating the threshold in FPM equivalent to 99% of the CDF (PPF = percent point function)
-    unCaptFPMLimit = scipy.stats.expon.ppf(0.99, loc=loc, scale=scale)
+        ### To Fill and return
+        clusterCalls = np.full((len(sourceExons), (len(clusterSampsIndexes) * len(probsStates))), -1, dtype=np.float32, order='F')
 
-    # Browse cluster-specific exons
-    for exInd in range(len(sourceExons)):
-        exonDefinition = exons[sourceExons[exInd]]
-        exonFPM = exonsFPM[sourceExons[exInd], sampsInd]
+        #### creation of folders for storing DEBUG plots
+        if plotFolder:
+            try:
+                plotFolders = makePlotFolders(plotFolder, clustID, clusterSampsNames, samps2Check)
+            except Exception as e:
+                raise Exception("makePlotFolders failed %s", e)
 
-        # DEBUG tracking, print progress every 10000 exons
-        if exInd % 10000 == 0:
-            logger.info("cluster n°%i - exonNb %i, %s", clustID, exInd, time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()))
+        # add sample indexes if there are control clusters
+        if len(ctrlsClusters[clustID]) != 0:
+            ctrlClusterSampsInd = getCTRLSamps(ctrlsClusters[clustID], clusters)
+            sampsInd = clusterSampsIndexes + ctrlClusterSampsInd
+        else:
+            sampsInd = clusterSampsIndexes
+
+        # DEBUG tracking
+        logger.info("cluster n°%i, clustSamps= %i, controlSamps= %i, exonsNB= %i",
+                    clustID, len(clusterSampsIndexes), len(sampsInd) - len(clusterSampsIndexes), len(sourceExons))
 
         ################
-        ### exons filters
-        ### Filter n°1: not captured => median coverage of the exon = 0
-        if filterUncapturedExons(exonFPM):
-            preprocessExonProfilePlot("notCaptured", exonsFiltersSummary, clustID, [loc, scale], unCaptFPMLimit,
-                                      sourceExons[exInd], exonDefinition, exonFPM, plotFolders[1] if plotFolder else None)
-            continue
-
-        ### robustly fit a gaussian (CN2)
-        ### Filter n°2: fitting is impossible (median close to 0)
+        ### Call process
+        # fit an exponential distribution from all intergenic regions (CN0)
         try:
-            (mean, stdev) = fitRobustGaussian(exonFPM)
+            (meanIntergenicFPM, loc, scale) = fitExponential(intergenicsFPM[:, sampsInd])
         except Exception as e:
-            if str(e) == "cannot fit":
-                exonsFiltersSummary["cannotFitRG"] += 1
+            logger.error("fitExponential failed for cluster %i : %s", clustID, repr(e))
+            raise Exception("fitExponential failed")
+
+        if plotFolder:  # DEBUG tracking plot
+            preprocessExponFitPlot(clustID, meanIntergenicFPM, loc, scale,
+                                   os.path.join(plotFolders[0], "cluster" + str(clustID) + "_ExponentialFit_coverageProfile.pdf"))
+
+        # Calculating the threshold in FPM equivalent to 99% of the CDF (PPF = percent point function)
+        unCaptFPMLimit = scipy.stats.expon.ppf(0.99, loc=loc, scale=scale)
+
+        # Browse cluster-specific exons
+        for exInd in range(len(sourceExons)):
+            exonDefinition = exons[sourceExons[exInd]]
+            exonFPM = exonsFPM[sourceExons[exInd], sampsInd]
+
+            # DEBUG tracking, print progress every 10000 exons
+            if exInd % 10000 == 0:
+                logger.info("cluster n°%i - exonNb %i, %s", clustID, exInd, time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()))
+
+            ################
+            ### exons filters
+            ### Filter n°1: not captured => median coverage of the exon = 0
+            if filterUncapturedExons(exonFPM):
+                preprocessExonProfilePlot("notCaptured", exonsFiltersSummary, clustID, [loc, scale], unCaptFPMLimit,
+                                          sourceExons[exInd], exonDefinition, exonFPM, plotFolders[1] if plotFolder else None)
                 continue
-            else:
-                raise e
 
-        ### Filter n°3: fitted gaussian overlaps the threshold associated with the uncaptured exon profile
-        if filterZscore(mean, stdev, unCaptFPMLimit):
-            preprocessExonProfilePlot("RGClose2LowThreshold", exonsFiltersSummary, clustID, [loc, scale], unCaptFPMLimit,
-                                      sourceExons[exInd], exonDefinition, exonFPM, plotFolders[2] if plotFolder else None, [mean, stdev])
-            continue
+            ### robustly fit a gaussian (CN2)
+            ### Filter n°2: fitting is impossible (median close to 0)
+            try:
+                (mean, stdev) = fitRobustGaussian(exonFPM)
+            except Exception as e:
+                if str(e) == "cannot fit":
+                    exonsFiltersSummary["cannotFitRG"] += 1
+                    continue
+                else:
+                    raise e
 
-        ### Filter n°4: the samples contribution rate to the gaussian is too low (<50%)
-        if filterSampsContrib2Gaussian(mean, stdev, exonFPM):
-            preprocessExonProfilePlot("fewSampsInRG", exonsFiltersSummary, clustID, [loc, scale], unCaptFPMLimit,
-                                      sourceExons[exInd], exonDefinition, exonFPM, plotFolders[3] if plotFolder else None, [mean, stdev])
-            continue
-
-        exonsFiltersSummary["exonsCalls"] += 1
-
-        ################
-        ### exon pass filters : compute likelihood for each sample
-        # Browse only cluster-samples
-        for i in range(len(clusterSampsIndexes)):
-
-            sampFPM = exonFPM[sampsInd.index(clusterSampsIndexes[i])]
-            likelihoods = sampFPM2Probs(mean, stdev, loc, scale, unCaptFPMLimit, sampFPM)
-
-            fillClusterCallsArray(clusterCalls, i, exInd, likelihoods)
-
-            # graphic representation of callable exons for interest samples
-            sampName = clusterSampsNames[i]
-            if (not samps2Check) or (sampName not in samps2Check):
+            ### Filter n°3: fitted gaussian overlaps the threshold associated with the uncaptured exon profile
+            if filterZscore(mean, stdev, unCaptFPMLimit):
+                preprocessExonProfilePlot("RGClose2LowThreshold", exonsFiltersSummary, clustID, [loc, scale], unCaptFPMLimit,
+                                          sourceExons[exInd], exonDefinition, exonFPM, plotFolders[2] if plotFolder else None, [mean, stdev])
                 continue
-            preprocessExonProfilePlot("exonsCalls", exonsFiltersSummary, clustID, [loc, scale], unCaptFPMLimit,
-                                      sourceExons[exInd], exonDefinition, exonFPM,
-                                      plotFolders[4] if plotFolder and len(plotFolders) == 5 else None,
-                                      [mean, stdev], [sampName, sampFPM, likelihoods])
 
-    if plotFolder:
-        figures.plots.plotPieChart(clustID, exonsFiltersSummary, os.path.join(plotFolders[0], "cluster" + str(clustID) + "_filtersSummary_pieChart.pdf"))
+            ### Filter n°4: the samples contribution rate to the gaussian is too low (<50%)
+            if filterSampsContrib2Gaussian(mean, stdev, exonFPM):
+                preprocessExonProfilePlot("fewSampsInRG", exonsFiltersSummary, clustID, [loc, scale], unCaptFPMLimit,
+                                          sourceExons[exInd], exonDefinition, exonFPM, plotFolders[3] if plotFolder else None, [mean, stdev])
+                continue
 
-    return (clustID, colIndInCNCallsArray, sourceExons, clusterCalls)
+            exonsFiltersSummary["exonsCalls"] += 1
+
+            ################
+            ### exon pass filters : compute likelihood for each sample
+            # Browse only cluster-samples
+            for i in range(len(clusterSampsIndexes)):
+
+                sampFPM = exonFPM[sampsInd.index(clusterSampsIndexes[i])]
+                likelihoods = sampFPM2Probs(mean, stdev, loc, scale, unCaptFPMLimit, sampFPM)
+
+                fillClusterCallsArray(clusterCalls, i, exInd, likelihoods)
+
+                # graphic representation of callable exons for interest samples
+                sampName = clusterSampsNames[i]
+                if (not samps2Check) or (sampName not in samps2Check):
+                    continue
+                preprocessExonProfilePlot("exonsCalls", exonsFiltersSummary, clustID, [loc, scale], unCaptFPMLimit,
+                                          sourceExons[exInd], exonDefinition, exonFPM,
+                                          plotFolders[4] if plotFolder and len(plotFolders) == 5 else None,
+                                          [mean, stdev], [sampName, sampFPM, likelihoods])
+
+        if plotFolder:
+            figures.plots.plotPieChart(clustID, exonsFiltersSummary, os.path.join(plotFolders[0], "cluster" + str(clustID) + "_filtersSummary_pieChart.pdf"))
+
+        return (clustID, colIndInCNCallsArray, sourceExons, clusterCalls)
+
+    except Exception as e:
+        logger.error("CNCalls failed for %s - %s", clustID, repr(e))
+        raise Exception(str(clustID))
 
 
 ###############################################################################
