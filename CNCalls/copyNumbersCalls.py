@@ -90,7 +90,8 @@ def CNCalls(clustID, exonsFPM, intergenicsFPM, samples, exons, clusters, ctrlsCl
             try:
                 plotFolders = makePlotFolders(plotFolder, clustID, clusterSampsNames, samps2Check)
             except Exception as e:
-                raise Exception("makePlotFolders failed %s", e)
+                logger.error("makePlotFolders failed for cluster %i : %s", clustID, repr(e))
+                raise
 
         # add sample indexes if there are control clusters
         if len(ctrlsClusters[clustID]) != 0:
@@ -100,7 +101,7 @@ def CNCalls(clustID, exonsFPM, intergenicsFPM, samples, exons, clusters, ctrlsCl
             sampsInd = clusterSampsIndexes
 
         # DEBUG tracking
-        logger.info("cluster n°%i, clustSamps= %i, controlSamps= %i, exonsNB= %i",
+        logger.info("cluster n°%i, clustSamps=%i, controlSamps=%i, exonsNB=%i",
                     clustID, len(clusterSampsIndexes), len(sampsInd) - len(clusterSampsIndexes), len(sourceExons))
 
         ################
@@ -110,11 +111,15 @@ def CNCalls(clustID, exonsFPM, intergenicsFPM, samples, exons, clusters, ctrlsCl
             (meanIntergenicFPM, loc, scale) = fitExponential(intergenicsFPM[:, sampsInd])
         except Exception as e:
             logger.error("fitExponential failed for cluster %i : %s", clustID, repr(e))
-            raise Exception("fitExponential failed")
+            raise
 
         if plotFolder:  # DEBUG tracking plot
-            preprocessExponFitPlot(clustID, meanIntergenicFPM, loc, scale,
+            try:
+                preprocessExponFitPlot(clustID, meanIntergenicFPM, loc, scale,
                                    os.path.join(plotFolders[0], "cluster" + str(clustID) + "_ExponentialFit_coverageProfile.pdf"))
+            except Exception as e:
+                logger.error("preprocessExponFitPlot failed for cluster %i : %s", clustID, repr(e))
+                raise
 
         # Calculating the threshold in FPM equivalent to 99% of the CDF (PPF = percent point function)
         unCaptFPMLimit = scipy.stats.expon.ppf(0.99, loc=loc, scale=scale)
@@ -132,8 +137,11 @@ def CNCalls(clustID, exonsFPM, intergenicsFPM, samples, exons, clusters, ctrlsCl
             ### exons filters
             ### Filter n°1: not captured => median coverage of the exon = 0
             if filterUncapturedExons(exonFPM):
-                preprocessExonProfilePlot("notCaptured", exonsFiltersSummary, clustID, [loc, scale], unCaptFPMLimit,
+                try:
+                    preprocessExonProfilePlot("notCaptured", exonsFiltersSummary, clustID, [loc, scale], unCaptFPMLimit,
                                           sourceExons[exInd], exonDefinition, exonFPM, plotFolders[1] if plotFolder else None)
+                except Exception as e:
+                    raise
                 continue
 
             ### robustly fit a gaussian (CN2)
@@ -145,18 +153,24 @@ def CNCalls(clustID, exonsFPM, intergenicsFPM, samples, exons, clusters, ctrlsCl
                     exonsFiltersSummary["cannotFitRG"] += 1
                     continue
                 else:
-                    raise e
+                    raise Exception("fitRobustGaussian %s", repr(e))
 
             ### Filter n°3: fitted gaussian overlaps the threshold associated with the uncaptured exon profile
             if filterZscore(mean, stdev, unCaptFPMLimit):
-                preprocessExonProfilePlot("RGClose2LowThreshold", exonsFiltersSummary, clustID, [loc, scale], unCaptFPMLimit,
+                try:
+                    preprocessExonProfilePlot("RGClose2LowThreshold", exonsFiltersSummary, clustID, [loc, scale], unCaptFPMLimit,
                                           sourceExons[exInd], exonDefinition, exonFPM, plotFolders[2] if plotFolder else None, [mean, stdev])
+                except Exception as e:
+                    raise
                 continue
 
             ### Filter n°4: the samples contribution rate to the gaussian is too low (<50%)
             if filterSampsContrib2Gaussian(mean, stdev, exonFPM):
-                preprocessExonProfilePlot("fewSampsInRG", exonsFiltersSummary, clustID, [loc, scale], unCaptFPMLimit,
+                try:
+                    preprocessExonProfilePlot("fewSampsInRG", exonsFiltersSummary, clustID, [loc, scale], unCaptFPMLimit,
                                           sourceExons[exInd], exonDefinition, exonFPM, plotFolders[3] if plotFolder else None, [mean, stdev])
+                except Exception as e:
+                    raise
                 continue
 
             exonsFiltersSummary["exonsCalls"] += 1
@@ -168,17 +182,23 @@ def CNCalls(clustID, exonsFPM, intergenicsFPM, samples, exons, clusters, ctrlsCl
 
                 sampFPM = exonFPM[sampsInd.index(clusterSampsIndexes[i])]
                 likelihoods = sampFPM2Probs(mean, stdev, loc, scale, unCaptFPMLimit, sampFPM)
-
-                fillClusterCallsArray(clusterCalls, i, exInd, likelihoods)
+                try:
+                    fillClusterCallsArray(clusterCalls, i, exInd, likelihoods)
+                except Exception as e:
+                    logger.error("fillClusterCallsArray failed for cluster %i : %s", clustID, repr(e))
+                    raise
 
                 # graphic representation of callable exons for interest samples
                 sampName = clusterSampsNames[i]
                 if (not samps2Check) or (sampName not in samps2Check):
                     continue
-                preprocessExonProfilePlot("exonsCalls", exonsFiltersSummary, clustID, [loc, scale], unCaptFPMLimit,
-                                          sourceExons[exInd], exonDefinition, exonFPM,
-                                          plotFolders[4] if plotFolder and len(plotFolders) == 5 else None,
-                                          [mean, stdev], [sampName, sampFPM, likelihoods])
+                try:
+                    preprocessExonProfilePlot("exonsCalls", exonsFiltersSummary, clustID, [loc, scale], unCaptFPMLimit,
+                                            sourceExons[exInd], exonDefinition, exonFPM,
+                                            plotFolders[4] if plotFolder else None,
+                                            [mean, stdev], [sampName, sampFPM, likelihoods])
+                except Exception as e:
+                    raise
 
         if plotFolder:
             figures.plots.plotPieChart(clustID, exonsFiltersSummary, os.path.join(plotFolders[0], "cluster" + str(clustID) + "_filtersSummary_pieChart.pdf"))
@@ -186,7 +206,7 @@ def CNCalls(clustID, exonsFPM, intergenicsFPM, samples, exons, clusters, ctrlsCl
         return (clustID, colIndInCNCallsArray, sourceExons, clusterCalls)
 
     except Exception as e:
-        logger.error("CNCalls failed for %s - %s", clustID, repr(e))
+        logger.error("CNCalls failed for cluster n°%i - %s", clustID, repr(e))
         raise Exception(str(clustID))
 
 
@@ -611,7 +631,7 @@ def preprocessExonProfilePlot(status, exonsFiltersSummary, clustID, exponParams,
     if gaussianParams is not None:
         # calculate the probability density function for the gaussian distribution (CN2)
         makePDF(getattr(scipy.stats, 'norm'), gaussianParams, xi, yLists)
-        plotLegs.append(f"RG CN2={gaussianParams[0]:.2f}, {gaussianParams[1]:.2f}")
+        plotLegs.append("RG CN2={:.2f}, {:.2f}".format(gaussianParams[0],gaussianParams[1]))
         ylim = 2 * max(yLists[1])
 
         if sampInfos is not None:
@@ -622,15 +642,15 @@ def preprocessExonProfilePlot(status, exonsFiltersSummary, clustID, exponParams,
             meanCN1 = gaussianParams[0] / 2
             # calculate the probability density function for the gaussian distribution (CN1)
             makePDF(getattr(scipy.stats, 'norm'), [meanCN1, gaussianParams[1]], xi, yLists)
-            plotLegs.append(f"RG CN1={meanCN1:.2f}, {gaussianParams[1]:.2f}")
+            plotLegs.append("RG CN1={:.2f}, {:.2f}".format(meanCN1,gaussianParams[1]))
 
             # calculate the probability density function for the gaussian distribution (CN3)
             makePDF(getattr(scipy.stats, 'norm'), [3 * meanCN1, gaussianParams[1]], xi, yLists)
-            plotLegs.append(f"RG CN3={3 * meanCN1:.2f}, {gaussianParams[1]:.2f}")
-
+            plotLegs.append("RG CN3={:.2f}, {:.2f}".format(3 * meanCN1, gaussianParams[1]))
+            
             verticalLines.append(sampInfos[1])
             vertLinesLegs.append(f"sample name={sampInfos[0]}")
-            probs = ', '.join([f"{inner:.2e}" for inner in sampInfos[2].astype(str)])
+            probs = ', '.join('{:.2e}'.format(x) for x in sampInfos[2])
             plotTitle += f"\nprobs={probs}"
             fileTitle = f"CN{index_maxProb}_" + sampInfos[0] + "_" + fileTitle
 
