@@ -116,7 +116,7 @@ def CNCalls(clustID, exonsFPM, intergenicsFPM, samples, exons, clusters, ctrlsCl
         if plotFolder:  # DEBUG tracking plot
             try:
                 preprocessExponFitPlot(clustID, meanIntergenicFPM, loc, scale,
-                                   os.path.join(plotFolders[0], "cluster" + str(clustID) + "_ExponentialFit_coverageProfile.pdf"))
+                                       os.path.join(plotFolders[0], "cluster" + str(clustID) + "_ExponentialFit_coverageProfile.pdf"))
             except Exception as e:
                 logger.error("preprocessExponFitPlot failed for cluster %i : %s", clustID, repr(e))
                 raise
@@ -138,8 +138,9 @@ def CNCalls(clustID, exonsFPM, intergenicsFPM, samples, exons, clusters, ctrlsCl
             ### Filter n°1: not captured => median coverage of the exon = 0
             if filterUncapturedExons(exonFPM):
                 try:
-                    preprocessExonProfilePlot("notCaptured", exonsFiltersSummary, clustID, [loc, scale], unCaptFPMLimit,
-                                          sourceExons[exInd], exonDefinition, exonFPM, plotFolders[1] if plotFolder else None)
+                    preprocessExonProfilePlot("notCaptured", exonsFiltersSummary, clustID, [loc, scale],
+                                              unCaptFPMLimit, sourceExons[exInd], exonDefinition, exonFPM,
+                                              plotFolders[1] if plotFolder else None)
                 except Exception as e:
                     raise
                 continue
@@ -158,8 +159,9 @@ def CNCalls(clustID, exonsFPM, intergenicsFPM, samples, exons, clusters, ctrlsCl
             ### Filter n°3: fitted gaussian overlaps the threshold associated with the uncaptured exon profile
             if filterZscore(mean, stdev, unCaptFPMLimit):
                 try:
-                    preprocessExonProfilePlot("RGClose2LowThreshold", exonsFiltersSummary, clustID, [loc, scale], unCaptFPMLimit,
-                                          sourceExons[exInd], exonDefinition, exonFPM, plotFolders[2] if plotFolder else None, [mean, stdev])
+                    preprocessExonProfilePlot("RGClose2LowThreshold", exonsFiltersSummary, clustID, [loc, scale],
+                                              unCaptFPMLimit, sourceExons[exInd], exonDefinition, exonFPM,
+                                              plotFolders[2] if plotFolder else None, [mean, stdev])
                 except Exception as e:
                     raise
                 continue
@@ -167,8 +169,9 @@ def CNCalls(clustID, exonsFPM, intergenicsFPM, samples, exons, clusters, ctrlsCl
             ### Filter n°4: the samples contribution rate to the gaussian is too low (<50%)
             if filterSampsContrib2Gaussian(mean, stdev, exonFPM):
                 try:
-                    preprocessExonProfilePlot("fewSampsInRG", exonsFiltersSummary, clustID, [loc, scale], unCaptFPMLimit,
-                                          sourceExons[exInd], exonDefinition, exonFPM, plotFolders[3] if plotFolder else None, [mean, stdev])
+                    preprocessExonProfilePlot("fewSampsInRG", exonsFiltersSummary, clustID, [loc, scale],
+                                              unCaptFPMLimit, sourceExons[exInd], exonDefinition, exonFPM,
+                                              plotFolders[3] if plotFolder else None, [mean, stdev])
                 except Exception as e:
                     raise
                 continue
@@ -193,10 +196,10 @@ def CNCalls(clustID, exonsFPM, intergenicsFPM, samples, exons, clusters, ctrlsCl
                 if (not samps2Check) or (sampName not in samps2Check):
                     continue
                 try:
-                    preprocessExonProfilePlot("exonsCalls", exonsFiltersSummary, clustID, [loc, scale], unCaptFPMLimit,
-                                            sourceExons[exInd], exonDefinition, exonFPM,
-                                            plotFolders[4] if plotFolder else None,
-                                            [mean, stdev], [sampName, sampFPM, likelihoods])
+                    preprocessExonProfilePlot("exonsCalls", exonsFiltersSummary, clustID, [loc, scale],
+                                              unCaptFPMLimit, sourceExons[exInd], exonDefinition, exonFPM,
+                                              plotFolders[4] if plotFolder else None, [mean, stdev],
+                                              [sampName, sampFPM, likelihoods])
                 except Exception as e:
                     raise
 
@@ -631,7 +634,7 @@ def preprocessExonProfilePlot(status, exonsFiltersSummary, clustID, exponParams,
     if gaussianParams is not None:
         # calculate the probability density function for the gaussian distribution (CN2)
         makePDF(getattr(scipy.stats, 'norm'), gaussianParams, xi, yLists)
-        plotLegs.append("RG CN2={:.2f}, {:.2f}".format(gaussianParams[0],gaussianParams[1]))
+        plotLegs.append("RG CN2={:.2f}, {:.2f}".format(gaussianParams[0], gaussianParams[1]))
         ylim = 2 * max(yLists[1])
 
         if sampInfos is not None:
@@ -642,12 +645,12 @@ def preprocessExonProfilePlot(status, exonsFiltersSummary, clustID, exponParams,
             meanCN1 = gaussianParams[0] / 2
             # calculate the probability density function for the gaussian distribution (CN1)
             makePDF(getattr(scipy.stats, 'norm'), [meanCN1, gaussianParams[1]], xi, yLists)
-            plotLegs.append("RG CN1={:.2f}, {:.2f}".format(meanCN1,gaussianParams[1]))
+            plotLegs.append("RG CN1={:.2f}, {:.2f}".format(meanCN1, gaussianParams[1]))
 
             # calculate the probability density function for the gaussian distribution (CN3)
             makePDF(getattr(scipy.stats, 'norm'), [3 * meanCN1, gaussianParams[1]], xi, yLists)
             plotLegs.append("RG CN3={:.2f}, {:.2f}".format(3 * meanCN1, gaussianParams[1]))
-            
+
             verticalLines.append(sampInfos[1])
             vertLinesLegs.append(f"sample name={sampInfos[0]}")
             probs = ', '.join('{:.2e}'.format(x) for x in sampInfos[2])
