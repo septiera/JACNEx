@@ -132,7 +132,7 @@ ARGUMENTS:
         raise Exception("the directory where outFile " + outFile + " should be created doesn't exist")
 
     #####################################################
-    # Check other args
+    # Check other argsjobs = round(0.8 * len(os.sched_getaffinity(0)))
     if (prevCNCallsFile != "" and prevClustsFile == "") or (prevCNCallsFile == "" and prevClustsFile != ""):
         raise Exception("you should not use --cncalls and --prevclusts alone but together. Try " + scriptName + " --help")
 
@@ -237,8 +237,7 @@ def main(argv):
         # parallel
         # -> we target targetCoresPerCluster, this is increased if we
         #    have few clusters to process (and we use ceil() so we may slighty overconsume)
-        targetCoresPerCluster = 15
-        paraClusters = min(math.ceil(jobs / targetCoresPerCluster), len(clusters))
+        paraClusters = min(math.ceil(jobs), len(clusters))
         logger.info("%i new clusters => will process %i in parallel", len(clusters), paraClusters)
 
         # identifying autosomes and gonosomes "exons" index
@@ -296,7 +295,7 @@ def main(argv):
 
         #####################################################
         # Print exon defs + calls to outFile
-        CNCalls.CNCallsFile.printCNCallsFile(CNCallsArray, exons, clusters, outFile)
+        CNCalls.CNCallsFile.printCNCallsFile(CNCallsArray, exons, samples, outFile)
 
         thisTime = time.time()
         logger.debug("Done printing calls for all (non-failed) clusters, in %.2fs", thisTime - startTime)
