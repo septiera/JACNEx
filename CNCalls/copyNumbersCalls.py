@@ -67,6 +67,10 @@ logger = logging.getLogger(__name__)
 # - clusterCalls (np.ndarray): samples likelihoods array for the current cluster.
 def CNCalls(clustID, exonsFPM, intergenicsFPM, samples, exons, clusters, ctrlsClusters,
             sourceClusters, maskSourceExons, plotFolder, samps2Check):
+    # fixed parameter
+    # fraction of the CDF of CNO exponential beyond which we truncate this distribution 
+    fracCDFExp = 0.99
+
     try:
         #############
         ### initialising variables and extracting information from the cluster
@@ -122,7 +126,7 @@ def CNCalls(clustID, exonsFPM, intergenicsFPM, samples, exons, clusters, ctrlsCl
                 raise
 
         # Calculating the threshold in FPM equivalent to 99% of the CDF (PPF = percent point function)
-        unCaptFPMLimit = scipy.stats.expon.ppf(0.99, loc=loc, scale=scale)
+        unCaptFPMLimit = scipy.stats.expon.ppf(fracCDFExp, loc=loc, scale=scale)
 
         # Browse cluster-specific exons
         for exInd in range(len(sourceExons)):
@@ -184,7 +188,7 @@ def CNCalls(clustID, exonsFPM, intergenicsFPM, samples, exons, clusters, ctrlsCl
             for i in range(len(clusterSampsIndexes)):
 
                 sampFPM = exonFPM[sampsInd.index(clusterSampsIndexes[i])]
-                likelihoods = sampFPM2Probs(mean, stdev, loc, scale, unCaptFPMLimit, sampFPM)
+                likelihoods = sampFPM2Probs(mean, stdev, loc, scale, sampFPM)
                 try:
                     fillClusterCallsArray(clusterCalls, i, exInd, likelihoods)
                 except Exception as e:
@@ -463,7 +467,7 @@ def truncated_integral_and_sigma(x):
 # filterZscore
 # Given a robustly fitted gaussian parameters and an FPM threshold separating coverage
 # associated with exon non-capture or capture during sequencing, exon are filtered when
-# the majority pattern of sample distribution for the exon is indistinguishable from
+# the gaussian  for the exon is indistinguishable from
 # the non-capture threshold.
 #
 # Spec:
@@ -474,7 +478,7 @@ def truncated_integral_and_sigma(x):
 # - comparison pseudo zscore with the tolerated deviation threshold => filtering
 #
 # Args:
-# - mean [float], stdev [float]: parameters of the normal
+# - mean [float], stdev [float]: parameters of the normal, requirement : mean > 0
 # - unCaptFPMLimit [float]: FPM threshold separating captured and non-captured exons
 #
 # Returns "True" if exon doesn't pass the filter otherwise "False"
@@ -483,11 +487,12 @@ def filterZscore(mean, stdev, unCaptFPMLimit):
     # Fixed paramater
     bdwthThreshold = 3  # tolerated deviation threshold
 
-    # mean != 0 and all samples have the same coverage value.
+    if mean == 0:
+        raise ("filterZscore called with mean = 0.")
+
     if (stdev == 0):
         stdev = mean / 20  # simulates 5% on each side of the mean
 
-    # meanRG != 0 because of filter n°1 => stdevRG != 0
     zscore = (mean - unCaptFPMLimit) / stdev
 
     if (zscore < bdwthThreshold):
@@ -537,12 +542,11 @@ def filterSampsContrib2Gaussian(mean, stdev, exonFPM):
 # - mean [float]
 # - stdev [float]
 # - loc, scale [float]: exponential distribution paramaters
-# - unCapturedThreshold [float]: FPM threshold separating captured and non-captured exons
 # - exSampFPM [float]: FPM value for a sample and an exon
 #
 # Returns:
 # - likelihoods (list[float]): likelihoods for each copy number (CN0,CN1,CN2,CN3+)
-def sampFPM2Probs(mean, stdev, loc, scale, unCaptThreshold, exSampFPM):
+def sampFPM2Probs(mean, stdev, loc, scale, exSampFPM):
     # CN2 mean shift to get CN1 mean
     meanCN1 = mean / 2
 
@@ -552,9 +556,9 @@ def sampFPM2Probs(mean, stdev, loc, scale, unCaptThreshold, exSampFPM):
 
     # Calculate the likelihood for the exponential distribution (CN0)
     # truncate at CN1 mean (exponential distribution  has a heavy tail)
-    cdf_cno_threshold = scipy.stats.expon.cdf(unCaptThreshold, loc=loc, scale=scale)
+    cdfCN0Threshold = scipy.stats.expon.cdf(meanCN1, loc=loc, scale=scale)
     if exSampFPM <= meanCN1:
-        likelihoods[0] = (1 / cdf_cno_threshold) * scipy.stats.expon.pdf(exSampFPM, loc=loc, scale=scale)
+        likelihoods[0] = (1 / cdfCN0Threshold) * scipy.stats.expon.pdf(exSampFPM, loc=loc, scale=scale)
 
     # Calculate the probability densities for the remaining cases (CN1,CN2,CN3+) using the normal distribution
     likelihoods[1] = scipy.stats.norm.pdf(exSampFPM, meanCN1, stdev)
