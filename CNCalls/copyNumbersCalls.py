@@ -16,7 +16,25 @@ logging.getLogger('PIL').setLevel(logging.WARNING)
 # set up logger, using inherited config
 logger = logging.getLogger(__name__)
 
+class Timer:
+    def __init__(self):
+        self.timer_dict = {}  # Initialize an empty dictionary
 
+    def measure_time(self, func):  # Decorator function that measures the execution time of a function
+        def wrapper(*args, **kwargs):
+            start_time = time.time()  # Record the start time
+            result = func(*args, **kwargs)  # Execute the function
+            end_time = time.time()  # Record the end time
+            execution_time = end_time - start_time
+
+            # Add the execution time to the dictionary
+            if func.__name__ not in self.timer_dict:
+                self.timer_dict[func.__name__] = 0
+            self.timer_dict[func.__name__] += execution_time
+
+            return result  # Return the result of the function
+        return wrapper  # Return the wrapped function
+timer = Timer()
 ###############################################################################
 ############################ PUBLIC FUNCTIONS #################################
 ###############################################################################
@@ -141,12 +159,13 @@ def CNCalls(clustID, exonsFPM, intergenicsFPM, samples, exons, clusters, ctrlsCl
             ### exons filters
             ### Filter n°1: not captured => median coverage of the exon = 0
             if filterUncapturedExons(exonFPM):
-                try:
-                    preprocessExonProfilePlot("notCaptured", exonsFiltersSummary, clustID, [loc, scale],
-                                              unCaptFPMLimit, sourceExons[exInd], exonDefinition, exonFPM,
-                                              plotFolders[1] if plotFolder else None)
-                except Exception as e:
-                    raise
+                if plotFolder:
+                    try:
+                        preprocessExonProfilePlot("notCaptured", exonsFiltersSummary, clustID, [loc, scale],
+                                                unCaptFPMLimit, sourceExons[exInd], exonDefinition, exonFPM,
+                                                plotFolders[1])
+                    except Exception as e:
+                        raise
                 continue
 
             ### robustly fit a gaussian (CN2)
@@ -162,29 +181,31 @@ def CNCalls(clustID, exonsFPM, intergenicsFPM, samples, exons, clusters, ctrlsCl
 
             ### Filter n°3: fitted gaussian overlaps the threshold associated with the uncaptured exon profile
             if filterZscore(mean, stdev, unCaptFPMLimit):
-                try:
-                    preprocessExonProfilePlot("RGClose2LowThreshold", exonsFiltersSummary, clustID, [loc, scale],
-                                              unCaptFPMLimit, sourceExons[exInd], exonDefinition, exonFPM,
-                                              plotFolders[2] if plotFolder else None, [mean, stdev])
-                except Exception as e:
-                    raise
+                if plotFolder:
+                    try:
+                        preprocessExonProfilePlot("RGClose2LowThreshold", exonsFiltersSummary, clustID, [loc, scale],
+                                                unCaptFPMLimit, sourceExons[exInd], exonDefinition, exonFPM,
+                                                plotFolders[2], [mean, stdev])
+                    except Exception as e:
+                        raise
                 continue
 
             ### Filter n°4: the samples contribution rate to the gaussian is too low (<50%)
             if filterSampsContrib2Gaussian(mean, stdev, exonFPM):
-                try:
-                    preprocessExonProfilePlot("fewSampsInRG", exonsFiltersSummary, clustID, [loc, scale],
-                                              unCaptFPMLimit, sourceExons[exInd], exonDefinition, exonFPM,
-                                              plotFolders[3] if plotFolder else None, [mean, stdev])
-                except Exception as e:
-                    raise
+                if plotFolder:
+                    try:
+                        preprocessExonProfilePlot("fewSampsInRG", exonsFiltersSummary, clustID, [loc, scale],
+                                                unCaptFPMLimit, sourceExons[exInd], exonDefinition, exonFPM,
+                                                plotFolders[3], [mean, stdev])
+                    except Exception as e:
+                        raise
                 continue
 
             exonsFiltersSummary["exonsCalls"] += 1
 
             ################
             ### exon pass filters : compute likelihood for each sample
-            # Browse only cluster-samples
+            # Browse only cluster-samples            
             for i in range(len(clusterSampsIndexes)):
 
                 sampFPM = exonFPM[sampsInd.index(clusterSampsIndexes[i])]
@@ -199,27 +220,33 @@ def CNCalls(clustID, exonsFPM, intergenicsFPM, samples, exons, clusters, ctrlsCl
                 sampName = clusterSampsNames[i]
                 if (not samps2Check) or (sampName not in samps2Check):
                     continue
-                try:
-                    preprocessExonProfilePlot("exonsCalls", exonsFiltersSummary, clustID, [loc, scale],
-                                              unCaptFPMLimit, sourceExons[exInd], exonDefinition, exonFPM,
-                                              plotFolders[4] if plotFolder else None, [mean, stdev],
-                                              [sampName, sampFPM, likelihoods])
-                except Exception as e:
-                    raise
+                
+                if plotFolder:
+                    try:
+                        preprocessExonProfilePlot("exonsCalls", exonsFiltersSummary, clustID, [loc, scale],
+                                                unCaptFPMLimit, sourceExons[exInd], exonDefinition, exonFPM,
+                                                plotFolders[4], [mean, stdev], [sampName, sampFPM, likelihoods])
+                    except Exception as e:
+                        raise
 
         if plotFolder:
             figures.plots.plotPieChart(clustID, exonsFiltersSummary, os.path.join(plotFolders[0], "cluster" + str(clustID) + "_filtersSummary_pieChart.pdf"))
+
+        print(timer.timer_dict)
 
         return (clustID, colIndInCNCallsArray, sourceExons, clusterCalls)
 
     except Exception as e:
         logger.error("CNCalls failed for cluster n°%i - %s", clustID, repr(e))
         raise Exception(str(clustID))
-
-
+    
+    
 ###############################################################################
 ############################ PRIVATE FUNCTIONS ################################
 ###############################################################################
+
+
+
 ############################################
 # makePlotDir
 # Given the plot folder path, cluster ID, list of sample names associated with the cluster,
@@ -238,6 +265,7 @@ def CNCalls(clustID, exonsFPM, intergenicsFPM, samples, exons, clusters, ctrlsCl
 # - samps2Check (list[str]): user-defined list of sample names to check
 #
 # Returns a list of paths to the created subdirectories.
+@timer.measure_time
 def makePlotFolders(plotFolder, clustID, clusterSampsNames, samps2Check):
     # To fill and returns
     pathPlotFolders = []
@@ -279,6 +307,7 @@ def makePlotFolders(plotFolder, clustID, clusterSampsNames, samps2Check):
 #                                   associated "samples" indexes.
 #
 # Return an int list of control "samples" indexes.
+@timer.measure_time
 def getCTRLSamps(ctrlClusterIDs, clusters):
     ctrlSamps = []
     for ctrlClusterID in ctrlClusterIDs:
@@ -298,6 +327,7 @@ def getCTRLSamps(ctrlClusterIDs, clusters):
 # - meanIntergenicFPM (np.ndarray[floats]): average count per exon, array needed for
 #                                           the debug plot (preprocessExponFitPlot)
 # - loc [float], scale[float]: parameters of the exponential
+@timer.measure_time
 def fitExponential(intergenicsFPMClust):
     # compute meanFPM for each intergenic region (speed up)
     meanIntergenicFPM = np.mean(intergenicsFPMClust, axis=1)
@@ -322,6 +352,7 @@ def fitExponential(intergenicsFPMClust):
 # - folder (str): The path to the folder where the plot should be saved.
 #
 # Return None
+@timer.measure_time
 def preprocessExponFitPlot(clustID, meanIntergenicFPM, loc, scale, file):
     # initiate plots variables
     plotTitle = f"ClusterID n° {clustID}"
@@ -354,6 +385,7 @@ def preprocessExponFitPlot(clustID, meanIntergenicFPM, loc, scale, file):
 # - params (list[floats]): parameters used to build the probability distribution function.
 # - rangeData (list[floats]): range of FPM data
 # - yLists (list[floats]): computed PDF values are appended
+@timer.measure_time
 def makePDF(distribName, params, rangeData, yLists):
     # Separate parts of parameters
     loc = params[0]
@@ -378,6 +410,7 @@ def makePDF(distribName, params, rangeData, yLists):
 # - exonFPM (list[floats]): FPM counts from an exon
 #
 # Returns "True" if exon doesn't pass the filter otherwise "False"
+@timer.measure_time
 @numba.njit
 def filterUncapturedExons(exonFPM):
     medianFPM = np.median(exonFPM)
@@ -402,6 +435,7 @@ def filterUncapturedExons(exonFPM):
 #
 # Returns a tuple (mu, stdev), parameters of the normal fitted,
 # may return an exception if the fit cannot be achieved.
+@timer.measure_time
 def fitRobustGaussian(X, mean=None, stdev=None, bandwidth=2.0, eps=1.0e-5):
     if mean is None:
         # median is an approach as robust and naïve as possible to Expectation
@@ -482,23 +516,22 @@ def truncated_integral_and_sigma(x):
 # - unCaptFPMLimit [float]: FPM threshold separating captured and non-captured exons
 #
 # Returns "True" if exon doesn't pass the filter otherwise "False"
+@timer.measure_time
 @numba.njit
 def filterZscore(mean, stdev, unCaptFPMLimit):
     # Fixed paramater
     bdwthThreshold = 3  # tolerated deviation threshold
+    meanDenom = 20
 
-    if mean == 0:
-        raise ("filterZscore called with mean = 0.")
+    if (mean == 0):
+        raise Exception("filterZscore called with mean = 0.\n")
 
     if (stdev == 0):
-        stdev = mean / 20  # simulates 5% on each side of the mean
+        stdev = mean / meanDenom  # simulates 5% on each side of the mean
 
     zscore = (mean - unCaptFPMLimit) / stdev
 
-    if (zscore < bdwthThreshold):
-        return True
-    else:
-        return False
+    return zscore < bdwthThreshold
 
 
 ###################
@@ -517,6 +550,7 @@ def filterZscore(mean, stdev, unCaptFPMLimit):
 # - exonFPM (list[floats]): FPM counts from an exon
 #
 # Returns "True" if exon doesn't pass the filter otherwise "False"
+@timer.measure_time
 @numba.njit
 def filterSampsContrib2Gaussian(mean, stdev, exonFPM):
     # Fixed parameters
@@ -546,6 +580,7 @@ def filterSampsContrib2Gaussian(mean, stdev, exonFPM):
 #
 # Returns:
 # - likelihoods (list[float]): likelihoods for each copy number (CN0,CN1,CN2,CN3+)
+@timer.measure_time
 def sampFPM2Probs(mean, stdev, loc, scale, exSampFPM):
     # CN2 mean shift to get CN1 mean
     meanCN1 = mean / 2
@@ -576,6 +611,7 @@ def sampFPM2Probs(mean, stdev, loc, scale, exSampFPM):
 # - sampIndex [int]: "samples" index
 # - exIndex [int]: exon index in clusterCalls array
 # - likelihoods (list[floats]): likelihood for a sample and an exon
+@timer.measure_time
 def fillClusterCallsArray(clusterCalls, sampIndex, exIndex, likelihoods):
     sampIndInArray = sampIndex * len(likelihoods)
     # sanity check : don't overwrite data
@@ -606,6 +642,7 @@ def fillClusterCallsArray(clusterCalls, sampIndex, exIndex, likelihoods):
 # - sampInfos (composite lis): (optional) [sample name[str], FPM value[float], likelihoods(np.ndarray[floats])]
 #
 # Return None
+@timer.measure_time
 def preprocessExonProfilePlot(status, exonsFiltersSummary, clustID, exponParams, unCaptThreshold,
                               exInd, exonInfos, exonFPM, folder, gaussianParams=None, sampInfos=None):
 
@@ -616,9 +653,6 @@ def preprocessExonProfilePlot(status, exonsFiltersSummary, clustID, exponParams,
         exonsFiltersSummary[status] += 1
         if exonsFiltersSummary[status] % nbExLimit2Plot != 0:
             return
-
-    if folder is None:
-        return
 
     # initiate plots variables
     fileTitle = f"ClusterID_{clustID}_exonInd_{exInd}_{'_'.join(map(str, exonInfos))}"
