@@ -35,6 +35,8 @@ class Timer:
             return result  # Return the result of the function
         return wrapper  # Return the wrapped function
 timer = Timer()
+
+
 ###############################################################################
 ############################ PUBLIC FUNCTIONS #################################
 ###############################################################################
@@ -148,6 +150,8 @@ def CNCalls(clustID, exonsFPM, intergenicsFPM, samples, exons, clusters, ctrlsCl
 
         # Browse cluster-specific exons
         for exInd in range(len(sourceExons)):
+            params = []
+            params.append({'distribution': scipy.stats.expon, 'loc': loc, 'scale': scale})
             exonDefinition = exons[sourceExons[exInd]]
             exonFPM = exonsFPM[sourceExons[exInd], sampsInd]
 
@@ -172,6 +176,7 @@ def CNCalls(clustID, exonsFPM, intergenicsFPM, samples, exons, clusters, ctrlsCl
             ### Filter n°2: fitting is impossible (median close to 0)
             try:
                 (mean, stdev) = fitRobustGaussian(exonFPM)
+                params.append({'distribution': scipy.stats.norm, 'loc': mean, 'scale': stdev})
             except Exception as e:
                 if str(e) == "cannot fit":
                     exonsFiltersSummary["cannotFitRG"] += 1
@@ -203,31 +208,26 @@ def CNCalls(clustID, exonsFPM, intergenicsFPM, samples, exons, clusters, ctrlsCl
 
             exonsFiltersSummary["exonsCalls"] += 1
 
+            params.append({'distribution': scipy.stats.norm, 'loc': mean / 2, 'scale': stdev})
+            params.append({'distribution': scipy.stats.norm, 'loc': 3 * (mean / 2), 'scale': stdev})
+
             ################
             ### exon pass filters : compute likelihood for each sample
-            # Browse only cluster-samples            
-            for i in range(len(clusterSampsIndexes)):
+            # only cluster-samples  
+            likelihoods = sampFPM2Probs(exonFPM, clusterSampsIndexes, sampsInd, params)
+            clusterCalls[exInd] = likelihoods
 
-                sampFPM = exonFPM[sampsInd.index(clusterSampsIndexes[i])]
-                likelihoods = sampFPM2Probs(mean, stdev, loc, scale, sampFPM)
-                try:
-                    fillClusterCallsArray(clusterCalls, i, exInd, likelihoods)
-                except Exception as e:
-                    logger.error("fillClusterCallsArray failed for cluster %i : %s", clustID, repr(e))
-                    raise
-
-                # graphic representation of callable exons for interest samples
-                sampName = clusterSampsNames[i]
-                if (not samps2Check) or (sampName not in samps2Check):
-                    continue
-                
-                if plotFolder:
-                    try:
-                        preprocessExonProfilePlot("exonsCalls", exonsFiltersSummary, clustID, [loc, scale],
-                                                unCaptFPMLimit, sourceExons[exInd], exonDefinition, exonFPM,
-                                                plotFolders[4], [mean, stdev], [sampName, sampFPM, likelihoods])
-                    except Exception as e:
-                        raise
+            #     # graphic representation of callable exons for interest samples
+            #     sampName = clusterSampsNames[i]
+            #     if (not samps2Check) or (sampName not in samps2Check):
+            #         continue      
+            #     if plotFolder:
+            #         try:
+            #             preprocessExonProfilePlot("exonsCalls", exonsFiltersSummary, clustID, [loc, scale],
+            #                                     unCaptFPMLimit, sourceExons[exInd], exonDefinition, exonFPM,
+            #                                     plotFolders[4], [mean, stdev], [sampName, sampFPM, likelihoods])
+            #         except Exception as e:
+            #             raise
 
         if plotFolder:
             figures.plots.plotPieChart(clustID, exonsFiltersSummary, os.path.join(plotFolders[0], "cluster" + str(clustID) + "_filtersSummary_pieChart.pdf"))
@@ -239,8 +239,8 @@ def CNCalls(clustID, exonsFPM, intergenicsFPM, samples, exons, clusters, ctrlsCl
     except Exception as e:
         logger.error("CNCalls failed for cluster n°%i - %s", clustID, repr(e))
         raise Exception(str(clustID))
-    
-    
+
+
 ###############################################################################
 ############################ PRIVATE FUNCTIONS ################################
 ###############################################################################
@@ -386,14 +386,15 @@ def preprocessExponFitPlot(clustID, meanIntergenicFPM, loc, scale, file):
 # - rangeData (list[floats]): range of FPM data
 # - yLists (list[floats]): computed PDF values are appended
 @timer.measure_time
-def makePDF(distribName, params, rangeData, yLists):
+def makePDF(param, rangeData, yLists):
     # Separate parts of parameters
-    loc = params[0]
-    scale = params[1]
+    distribution = param['distribution']
+    loc = param['loc']
+    scale = param['scale']
 
     # Build PDF
     x = rangeData
-    y = distribName.pdf(x, loc=loc, scale=scale)
+    y = distribution.pdf(x, loc=loc, scale=scale)
     yLists.append(y)
 
 
@@ -581,26 +582,38 @@ def filterSampsContrib2Gaussian(mean, stdev, exonFPM):
 # Returns:
 # - likelihoods (list[float]): likelihoods for each copy number (CN0,CN1,CN2,CN3+)
 @timer.measure_time
-def sampFPM2Probs(mean, stdev, loc, scale, exSampFPM):
-    # CN2 mean shift to get CN1 mean
-    meanCN1 = mean / 2
+def sampFPM2Probs(exonFPM, clusterSampsIndexes, sampsInd, params):
+    clusterSampInd = [i for i, val in enumerate(sampsInd) if val in clusterSampsIndexes]
+    exonFPM4Clust = exonFPM[clusterSampInd]
+    # Liste pour stocker les PDF par groupe
+    pdf_groups = []
 
-    # To Fill
-    # empty list to store the likelihoods for each copy number
-    likelihoods = np.zeros(4, dtype=np.float32)
+    # Calcul des PDF pour chaque jeu de paramètres et chaque valeur de x
+    for param in params:
+        makePDF(param, exonFPM4Clust, pdf_groups)
+    pdf_array = np.array(pdf_groups)
+    concatenated_list = pdf_array.flatten(order='F')
+    return concatenated_list
 
-    # Calculate the likelihood for the exponential distribution (CN0)
-    # truncate at CN1 mean (exponential distribution  has a heavy tail)
-    cdfCN0Threshold = scipy.stats.expon.cdf(meanCN1, loc=loc, scale=scale)
-    if exSampFPM <= meanCN1:
-        likelihoods[0] = (1 / cdfCN0Threshold) * scipy.stats.expon.pdf(exSampFPM, loc=loc, scale=scale)
+    # # CN2 mean shift to get CN1 mean
+    # meanCN1 = mean / 2
 
-    # Calculate the probability densities for the remaining cases (CN1,CN2,CN3+) using the normal distribution
-    likelihoods[1] = scipy.stats.norm.pdf(exSampFPM, meanCN1, stdev)
-    likelihoods[2] = scipy.stats.norm.pdf(exSampFPM, mean, stdev)
-    likelihoods[3] = scipy.stats.norm.pdf(exSampFPM, 3 * meanCN1, stdev)
+    # # To Fill
+    # # empty list to store the likelihoods for each copy number
+    # likelihoods = np.zeros(4, dtype=np.float32)
 
-    return likelihoods
+    # # Calculate the likelihood for the exponential distribution (CN0)
+    # # truncate at CN1 mean (exponential distribution  has a heavy tail)
+    # cdfCN0Threshold = scipy.stats.expon.cdf(meanCN1, loc=loc, scale=scale)
+    # if exSampFPM <= meanCN1:
+    #     likelihoods[0] = (1 / cdfCN0Threshold) * scipy.stats.expon.pdf(exSampFPM, loc=loc, scale=scale)
+
+    # # Calculate the probability densities for the remaining cases (CN1,CN2,CN3+) using the normal distribution
+    # likelihoods[1] = scipy.stats.norm.pdf(exSampFPM, meanCN1, stdev)
+    # likelihoods[2] = scipy.stats.norm.pdf(exSampFPM, mean, stdev)
+    # likelihoods[3] = scipy.stats.norm.pdf(exSampFPM, 3 * meanCN1, stdev)
+
+    # return likelihoods
 
 
 #############################################################
