@@ -45,7 +45,7 @@ def parseArgs(argv):
     # optionnal args with default values
     prevCNCallsFile = ""
     prevClustsFile = ""
-    plotFolder = ""
+    outFolder = ""
     samps2Check = ""
     # jobs default: 80% of available cores
     jobs = round(0.8 * len(os.sched_getaffinity(0)))
@@ -61,7 +61,7 @@ If a pre-existing copy number calls file (with --cncalls) produced by this progr
 a previous clustering file are provided (with --prevclusts), extraction of the likelihoods
 for the samples in homogeneous clusters between the two versions, otherwise the copy number calls is performed.
 In addition, all graphical support (pie chart of exon filtering per cluster) are
-printed in pdf files created in plotDir.
+printed in pdf files created in outDir.
 
 ARGUMENTS:
     --counts [str]: TSV file, first 4 columns hold the exon definitions, subsequent columns
@@ -69,7 +69,7 @@ ARGUMENTS:
     --clusts [str]: TSV file, contains 5 columns hold the sample cluster definitions.
             [clusterID, sampsInCluster, controlledBy, validCluster, clusterStatus]
             File obtained from 2_clusterSamps.py.
-    --out [str]: file where results will be saved, must not pre-exist, will be gzipped if it ends
+    --outDir [str]: file where results will be saved, must not pre-exist, will be gzipped if it ends
             with '.gz', can have a path component but the subdir must exist
     --prevcncalls [str] optional: pre-existing copy number calls file produced by this program,
             possibly gzipped, the likelihoods of copy number are copied
@@ -77,13 +77,12 @@ ARGUMENTS:
     --prevclusts [str] optional: pre-existing clustering file produced by s2_clusterSamps.py for the same
             timestamp as the pre-existing copy number call file.
     --jobs [int] : cores that we can use, defaults to 80% of available cores ie """ + str(jobs) + "\n" + """
-    --plotFolder [str]: subdir (created if needed) where result plots files will be produced, wish to monitor the filters
-    --samps2Check [str]: comma-separated list of sample names, to plot calls, must be passed with --plotDir
+    --samps2Check [str]: comma-separated list of sample names, to plot calls, must be passed with --outDir
     -h , --help: display this help and exit\n"""
 
     try:
-        opts, args = getopt.gnu_getopt(sys.argv[1:], 'h', ["help", "counts=", "clusts=", "out=", "prevcncalls=",
-                                                           "prevclusts=", "jobs=", "plotDir=", "samps2Check="])
+        opts, args = getopt.gnu_getopt(sys.argv[1:], 'h', ["help", "counts=", "clusts=", "outDir=", "prevcncalls=",
+                                                           "prevclusts=", "jobs=", "samps2Check="])
     except getopt.GetoptError as e:
         raise Exception(e.msg + ". Try " + scriptName + " --help")
     if len(args) != 0:
@@ -97,16 +96,14 @@ ARGUMENTS:
             countsFile = value
         elif (opt in ("--clusts")):
             newClustsFile = value
-        elif opt in ("--out"):
-            outFile = value
+        elif opt in ("--outDir"):
+            outFolder = value
         elif (opt in ("--prevcncalls")):
             prevCNCallsFile = value
         elif (opt in ("--prevclusts")):
             prevClustsFile = value
         elif opt in ("--jobs"):
             jobs = value
-        elif (opt in ("--plotDir")):
-            plotFolder = value
         elif (opt in ("--samps2Check")):
             samps2Check = value
         else:
@@ -124,12 +121,12 @@ ARGUMENTS:
     elif (not os.path.isfile(newClustsFile)):
         raise Exception("clustsFile " + newClustsFile + " doesn't exist.")
 
-    if outFile == "":
-        raise Exception("you must provide an outFile with --out. Try " + scriptName + " --help")
-    elif os.path.exists(outFile):
-        raise Exception("outFile " + outFile + " already exists")
-    elif (os.path.dirname(outFile) != '') and (not os.path.isdir(os.path.dirname(outFile))):
-        raise Exception("the directory where outFile " + outFile + " should be created doesn't exist")
+    if outFolder != "":
+        if not os.path.isdir(outFolder):
+            try:
+                os.mkdir(outFolder)
+            except Exception as e:
+                raise Exception("outDir " + outFolder + " doesn't exist and can't be mkdir'd: " + str(e))
 
     #####################################################
     # Check other argsjobs = round(0.8 * len(os.sched_getaffinity(0)))
@@ -149,21 +146,15 @@ ARGUMENTS:
     except Exception:
         raise Exception("jobs must be a positive integer, not " + str(jobs))
 
-    if (plotFolder == "" and samps2Check != ""):
-        raise Exception("you must use --checkSamps with --plotDir, not independently. Try " + scriptName + " --help")
-
-    if plotFolder != "":
-        # test plotdir last so we don't mkdir unless all other args are OK
-        if not os.path.isdir(plotFolder):
-            try:
-                os.mkdir(plotFolder)
-            except Exception as e:
-                raise Exception("plotDir " + plotFolder + " doesn't exist and can't be mkdir'd: " + str(e))
+    if logging.getLogger().isEnabledFor(logging.DEBUG):
         if samps2Check != "":
             samps2Check = samps2Check.split(",")
+    else:
+        if samps2Check != "":
+            raise Exception("samps2Check should not be provided when the logger level is not set to DEBUG.")
 
     # AOK, return everything that's needed
-    return(countsFile, newClustsFile, outFile, prevCNCallsFile, prevClustsFile, jobs, plotFolder, samps2Check)
+    return(countsFile, newClustsFile, outFolder, prevCNCallsFile, prevClustsFile, jobs, samps2Check)
 
 
 ###############################################################################
@@ -177,7 +168,7 @@ ARGUMENTS:
 # may be available in the log
 def main(argv):
     # parse, check and preprocess arguments
-    (countsFile, clustsFile, outFile, prevCNCallsFile, prevClustsFile, jobs, plotFolder, samps2Check) = parseArgs(argv)
+    (countsFile, clustsFile, outFolder, prevCNCallsFile, prevClustsFile, jobs, samps2Check) = parseArgs(argv)
 
     # args seem OK, start working
     logger.debug("called with: " + " ".join(argv[1:]))
@@ -286,16 +277,24 @@ def main(argv):
                     logger.info("samples in cluster %s, already filled from prevCallsFile", clustID)
                     continue
 
+                # extracts and appends indices of samples to plot
+                clusterSamps2Plot = []
+                if samps2Check:
+                    for i in range(len(samples)):
+                        if ((samples[i] in samps2Check) and (i in clusters[clustID])):
+                            clusterSamps2Plot.extend(i)
+
                 ##### run prediction for current cluster
-                futureRes = pool.submit(CNCalls.copyNumbersCalls.CNCalls, clustID, exonsFPM, intergenicsFPM, samples,
-                                        exons, clusters, ctrlsClusters, sourceClusters, maskSourceExons, plotFolder,
-                                        samps2Check)
+                futureRes = pool.submit(CNCalls.copyNumbersCalls.CNCalls, clustID, exonsFPM,
+                                        intergenicsFPM, samples, exons, clusters, ctrlsClusters,
+                                        sourceClusters, maskSourceExons, outFolder, clusterSamps2Plot)
 
                 futureRes.add_done_callback(mergeCalls)
 
         #####################################################
         # Print exon defs + calls to outFile
-        CNCalls.CNCallsFile.printCNCallsFile(CNCallsArray, exons, samples, outFile)
+        callsFile = os.path.join(outFolder, "exonCNCalls_" + str(len(samples)) + "samps_" + str(len(clusters)) + "clusters.tsv")
+        CNCalls.CNCallsFile.printCNCallsFile(CNCallsArray, exons, samples, callsFile)
 
         thisTime = time.time()
         logger.debug("Done printing calls for all (non-failed) clusters, in %.2fs", thisTime - startTime)
