@@ -230,7 +230,7 @@ def CNCalls(clustID, exonsFPM, intergenicsFPM, samples, exons, clusters, ctrlsCl
                     logger.error("sampFPM2Probs failed for cluster %i : %s", clustID, repr(e))
                     raise
                 # likelihoods array dim = distribsNB * samplesNB
-                # not same as clusterCalls dim 
+                # not same as clusterCalls dim
                 # flatten(order='F') specifies the Fortran-style (column-major) order of flattening the array.
                 # It means that the array will be traversed column by column
                 clusterCalls[exInd] = likelihoods.flatten(order='F')
@@ -269,7 +269,7 @@ def CNCalls(clustID, exonsFPM, intergenicsFPM, samples, exons, clusters, ctrlsCl
 # creates directories for storing plots associated with a cluster.
 # It takes as input the cluster ID, the path to the main plot folder, a list of folder
 # names to create, and a list of sample names associated with the cluster.
-# 
+#
 # Args:
 # - clustID [int]: ID of the cluster.
 # - resFolder [str]: path to the plot folder where the cluster directories should be created.
@@ -647,7 +647,7 @@ def fillClusterCallsArray(clusterCalls, sampIndex, exIndex, likelihoods):
 # preprocesses and generates exon profile plots based on the provided parameters and data.
 #   - checks the status of the exon filters and the summary to determine if the number of
 # exons exceeds the limits for plotting. If the limits are exceeded, the function returns
-# without generating the plots. 
+# without generating the plots.
 #   - retrieves the appropriate folder based on the provided status.
 #   - initializes variables for file and plot titles, lists to store PDF values, plot legends,
 # vertical lines, and their respective legends. It also creates a range of FPM values.
