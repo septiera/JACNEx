@@ -20,6 +20,7 @@ import clusterSamps.clustFile
 import clusterSamps.clustering
 import CNCalls.CNCallsFile
 import CNCalls.copyNumbersCalls
+import CNCalls.userTSVFile
 
 # set up logger, using inherited config, in case we get called as a module
 logger = logging.getLogger(__name__)
@@ -45,23 +46,25 @@ def parseArgs(argv):
     # optionnal args with default values
     prevCNCallsFile = ""
     prevClustsFile = ""
-    outFolder = ""
-    samps2Check = ""
+    samps2CheckFile = ""
     # jobs default: 80% of available cores
     jobs = round(0.8 * len(os.sched_getaffinity(0)))
 
     usage = "NAME:\n" + scriptName + """\n
+
 DESCRIPTION:
-Given a TSV of exon fragment counts and a TSV with clustering information,
-deduces the copy numbers (CN) observation probabilities (likelihoods), per exon and for each sample.
-Results are printed to stdout in TSV format (possibly gzipped): first 4 columns hold the exon
-definitions padded and sorted, subsequent columns (four per sample, in order CN0,CN2,CN2,CN3+)
-hold the likelihoods.
-If a pre-existing copy number calls file (with --cncalls) produced by this program associated with
-a previous clustering file are provided (with --prevclusts), extraction of the likelihoods
-for the samples in homogeneous clusters between the two versions, otherwise the copy number calls is performed.
-In addition, all graphical support (pie chart of exon filtering per cluster) are
-printed in pdf files created in outDir.
+Given a TSV file containing exon fragment counts and a TSV file containing clustering information.
+It deduces the observation probabilities of copy numbers (CN) for each exon and each sample.
+Results are displayed in TSV format on stdout, with exon definitions in the first four columns
+and probabilities in the subsequent columns (four columns per sample, in the order CN0, CN1, CN2, CN3+).
+If a pre-existing copy number calls file (--prevcncalls) associated with a previous clustering file
+(--prevclusts) is provided, the observation probabilities are extracted for samples in unchanged
+clusters between the two versions. Otherwise, copy number calls are performed.
+Graphical support, such as coverage plots and pie charts, is printed in PDF files.
+These files are saved in analyzed cluster folders created in the output call TSV folder.
+Additional coverage plots can be generated in debug mode.
+If a TSV file containing sample IDs with targeted exons (--samps2check) is provided,
+coverage profile plots will be generated.
 
 ARGUMENTS:
     --counts [str]: TSV file, first 4 columns hold the exon definitions, subsequent columns
@@ -69,7 +72,7 @@ ARGUMENTS:
     --clusts [str]: TSV file, contains 5 columns hold the sample cluster definitions.
             [clusterID, sampsInCluster, controlledBy, validCluster, clusterStatus]
             File obtained from 2_clusterSamps.py.
-    --outDir [str]: file where results will be saved, must not pre-exist, will be gzipped if it ends
+    --out [str]: file where results will be saved, must not pre-exist, will be gzipped if it ends
             with '.gz', can have a path component but the subdir must exist
     --prevcncalls [str] optional: pre-existing copy number calls file produced by this program,
             possibly gzipped, the likelihoods of copy number are copied
@@ -77,12 +80,13 @@ ARGUMENTS:
     --prevclusts [str] optional: pre-existing clustering file produced by s2_clusterSamps.py for the same
             timestamp as the pre-existing copy number call file.
     --jobs [int] : cores that we can use, defaults to 80% of available cores ie """ + str(jobs) + "\n" + """
-    --samps2Check [str]: comma-separated list of sample names, to plot calls, must be passed with --outDir
+    --samps2check [str]: TSV file, contains 2 columns the sample name and exon identifier according to the bed
+                         file supplied in step 1. File created by the user.
     -h , --help: display this help and exit\n"""
 
     try:
-        opts, args = getopt.gnu_getopt(sys.argv[1:], 'h', ["help", "counts=", "clusts=", "outDir=", "prevcncalls=",
-                                                           "prevclusts=", "jobs=", "samps2Check="])
+        opts, args = getopt.gnu_getopt(sys.argv[1:], 'h', ["help", "counts=", "clusts=", "out=", "prevcncalls=",
+                                                           "prevclusts=", "jobs=", "samps2check="])
     except getopt.GetoptError as e:
         raise Exception(e.msg + ". Try " + scriptName + " --help")
     if len(args) != 0:
@@ -96,16 +100,16 @@ ARGUMENTS:
             countsFile = value
         elif (opt in ("--clusts")):
             newClustsFile = value
-        elif opt in ("--outDir"):
-            outFolder = value
+        elif opt in ("--out"):
+            outFile = value
         elif (opt in ("--prevcncalls")):
             prevCNCallsFile = value
         elif (opt in ("--prevclusts")):
             prevClustsFile = value
         elif opt in ("--jobs"):
             jobs = value
-        elif (opt in ("--samps2Check")):
-            samps2Check = value
+        elif (opt in ("--samps2check")):
+            samps2CheckFile = value
         else:
             raise Exception("unhandled option " + opt)
 
@@ -121,20 +125,20 @@ ARGUMENTS:
     elif (not os.path.isfile(newClustsFile)):
         raise Exception("clustsFile " + newClustsFile + " doesn't exist.")
 
-    if outFolder != "":
-        if not os.path.isdir(outFolder):
-            try:
-                os.mkdir(outFolder)
-            except Exception as e:
-                raise Exception("outDir " + outFolder + " doesn't exist and can't be mkdir'd: " + str(e))
-
     #####################################################
     # Check other argsjobs = round(0.8 * len(os.sched_getaffinity(0)))
+    if outFile == "":
+        raise Exception("you must provide an outFile with --out. Try " + scriptName + " --help")
+    elif os.path.exists(outFile):
+        raise Exception("outFile " + outFile + " already exists")
+    elif (os.path.dirname(outFile) != '') and (not os.path.isdir(os.path.dirname(outFile))):
+        raise Exception("the directory where outFile " + outFile + " should be created doesn't exist")
+
     if (prevCNCallsFile != "" and prevClustsFile == "") or (prevCNCallsFile == "" and prevClustsFile != ""):
         raise Exception("you should not use --cncalls and --prevclusts alone but together. Try " + scriptName + " --help")
 
     if (prevCNCallsFile != "") and (not os.path.isfile(prevCNCallsFile)):
-        raise Exception("CNCallsFile " + prevCNCallsFile + " doesn't exist")
+        raise Exception("previous CN calls File " + prevCNCallsFile + " doesn't exist")
 
     if (prevClustsFile != "") and (not os.path.isfile(prevClustsFile)):
         raise Exception("previous clustering File " + prevClustsFile + " doesn't exist")
@@ -146,15 +150,12 @@ ARGUMENTS:
     except Exception:
         raise Exception("jobs must be a positive integer, not " + str(jobs))
 
-    if logging.getLogger().isEnabledFor(logging.DEBUG):
-        if samps2Check != "":
-            samps2Check = samps2Check.split(",")
-    else:
-        if samps2Check != "":
-            raise Exception("samps2Check should not be provided when the logger level is not set to DEBUG.")
+    if not logging.getLogger().isEnabledFor(logging.DEBUG):
+        if samps2CheckFile != "":
+            raise Exception("samps2Check should not be provided when the logger level is not set to DEBUG.")      
 
     # AOK, return everything that's needed
-    return(countsFile, newClustsFile, outFolder, prevCNCallsFile, prevClustsFile, jobs, samps2Check)
+    return(countsFile, newClustsFile, outFile, prevCNCallsFile, prevClustsFile, jobs, samps2CheckFile)
 
 
 ###############################################################################
@@ -168,7 +169,7 @@ ARGUMENTS:
 # may be available in the log
 def main(argv):
     # parse, check and preprocess arguments
-    (countsFile, clustsFile, outFolder, prevCNCallsFile, prevClustsFile, jobs, samps2Check) = parseArgs(argv)
+    (countsFile, clustsFile, outFolder, prevCNCallsFile, prevClustsFile, jobs, samps2CheckFile) = parseArgs(argv)
 
     # args seem OK, start working
     logger.debug("called with: " + " ".join(argv[1:]))
@@ -190,7 +191,7 @@ def main(argv):
     #####################################################
     # parse clusts
     try:
-        (clusters, ctrlsClusters, validity, sourceClusters) = clusterSamps.clustFile.parseClustsFile(clustsFile, samples)
+        (clusters, ctrlsClusters, validity, specClusters) = clusterSamps.clustFile.parseClustsFile(clustsFile, samples)
     except Exception as e:
         raise Exception("parseClustsFile failed for %s : %s", clustsFile, repr(e))
 
@@ -198,13 +199,22 @@ def main(argv):
     logger.debug("Done parsing clustsFile, in %.2f s", thisTime - startTime)
     startTime = thisTime
 
+    ####################################################
+    # parse user-defined tsv file of target samples and exons
+    samps2Check = []
+    if samps2CheckFile != "":
+        try:
+            samps2Check = CNCalls.userTSVFile.parseUserTSV(samps2CheckFile, samples, exons)
+        except Exception as e:
+            raise Exception("parseClustsFile failed for %s : %s", clustsFile, repr(e))
+
     ######################################################
     # init calling process
     # we have chosen to call copy numbers by exon, defining 4 copy number types:
     # CN0: total loss of copies, CN1: single copy, CN2: two copies (normal),
     # and CN3: three or more copies.
-    CNTypes = ["CNO", "CN1", "CN2", "CN3"]
-    
+    CNTypes = ["CN0", "CN1", "CN2", "CN3"]
+
     # allocate CNcallsArray, and populate it with pre-calculated observed probabilities
     # if CNCallsFile and prevClustFile are provided.
     # also returns a boolean np.array to identify the clusters to be reanalysed if the clusters change
@@ -286,15 +296,15 @@ def main(argv):
 
                 # extracts and appends indices of samples to plot
                 clusterSamps2Plot = []
-                if samps2Check:
+                if samps2CheckFile:
                     for i in range(len(samples)):
-                        if ((samples[i] in samps2Check) and (i in clusters[clustID])):
+                        if ((samples[i] in samps2CheckFile) and (i in clusters[clustID])):
                             clusterSamps2Plot.extend(i)
 
                 ##### run prediction for current cluster
                 futureRes = pool.submit(CNCalls.copyNumbersCalls.CNCalls, clustID, exonsFPM,
                                         intergenicsFPM, samples, exons, clusters, ctrlsClusters, CNTypes,
-                                        sourceClusters, maskSourceExons, outFolder, clusterSamps2Plot)
+                                        specClusters, maskSourceExons, outFolder, clusterSamps2Plot)
 
                 futureRes.add_done_callback(mergeCalls)
 
