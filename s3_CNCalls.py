@@ -199,11 +199,18 @@ def main(argv):
     startTime = thisTime
 
     ######################################################
+    # init calling process
+    # we have chosen to call copy numbers by exon, defining 4 copy number types:
+    # CN0: total loss of copies, CN1: single copy, CN2: two copies (normal),
+    # and CN3: three or more copies.
+    CNTypes = ["CNO", "CN1", "CN2", "CN3"]
+    
     # allocate CNcallsArray, and populate it with pre-calculated observed probabilities
     # if CNCallsFile and prevClustFile are provided.
     # also returns a boolean np.array to identify the clusters to be reanalysed if the clusters change
     try:
-        (CNCallsArray, callsFilled) = CNCalls.CNCallsFile.extractCNCallsFromPrev(exons, samples, clusters, prevCNCallsFile, prevClustsFile)
+        (CNCallsArray, callsFilled) = CNCalls.CNCallsFile.extractCNCallsFromPrev(exons, samples, clusters, CNTypes,
+                                                                                 prevCNCallsFile, prevClustsFile)
     except Exception as e:
         raise Exception("extractCNCallsFromPrev failed - " + str(e))
 
@@ -256,7 +263,7 @@ def main(argv):
                 logger.warning("Failed to CNCalls for cluster n° %i, skipping it", si)
             else:
                 counts2callsRes = futurecounts2callsRes.result()
-                for exonIndex in range(len(counts2callsRes[1])):
+                for exonIndex in range(len(counts2callsRes[2])):
                     CNCallsArray[counts2callsRes[2][exonIndex], counts2callsRes[1]] = counts2callsRes[3][exonIndex]
 
                 logger.info("Done copy number calls for cluster n°%i", counts2callsRes[0])
@@ -286,14 +293,14 @@ def main(argv):
 
                 ##### run prediction for current cluster
                 futureRes = pool.submit(CNCalls.copyNumbersCalls.CNCalls, clustID, exonsFPM,
-                                        intergenicsFPM, samples, exons, clusters, ctrlsClusters,
+                                        intergenicsFPM, samples, exons, clusters, ctrlsClusters, CNTypes,
                                         sourceClusters, maskSourceExons, outFolder, clusterSamps2Plot)
 
                 futureRes.add_done_callback(mergeCalls)
 
         #####################################################
         # Print exon defs + calls to outFile
-        callsFile = os.path.join(outFolder, "exonCNCalls_" + str(len(samples)) + "samps_" + str(len(clusters)) + "clusters.tsv")
+        callsFile = os.path.join(outFolder, "exonCNCalls_" + str(len(samples)) + "samps_" + str(len(clusters)) + "clusters.tsv.gz")
         CNCalls.CNCallsFile.printCNCallsFile(CNCallsArray, exons, samples, callsFile)
 
         thisTime = time.time()

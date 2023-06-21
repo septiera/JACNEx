@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 #   - exons (list of list[str,int,int,str]): exon definitions, padded and sorted
 #   - samples (list[str]): sample of interest names
 #   - clusts2Samps (dict[str, List[int]]): key: clusterID , value: samples index list
+#   - CNTypes (list[str]): copy number names
 #   - prevCNCallsFile [str]: a CNCalls file (possibly gzipped) produced by printCNCallsFile
 #     for some samples (hopefully some of the samples), using the same exon definitions
 #     as in 'exons', if there is one; or '' otherwise
@@ -35,11 +36,9 @@ logger = logging.getLogger(__name__)
 # -> for any sample present in both prevCNCallsFile, prevClustFile and samples, and the
 # cluster definition not changes fill the sample's columns in CNcallsArray by
 # copying data from prevCNCallsFile, and set callsFilled[sample] to True
-def extractCNCallsFromPrev(exons, samples, clusters, prevCNCallsFile, prevClustsFile):
-    # numpy arrays to be returned:
-    # callsArray[exonIndex,sampleIndex] will store the specified probabilities
-    # for each copy number type (CN0,CN1,CN2,CN3+)
-    callsArray = allocateCNCallsArray(len(exons), len(samples))
+def extractCNCallsFromPrev(exons, samples, clusters, CNTypes, prevCNCallsFile, prevClustsFile):
+    # numpy ndarray of probabilities to return
+    callsArray = allocateCNCallsArray(len(exons), len(samples), len(CNTypes))
     # callsFilled: same size and order as "clusters", value will be set
     # to True if the cluster remains identical
     callsFilled = np.zeros(len(clusters), dtype=bool)
@@ -51,8 +50,7 @@ def extractCNCallsFromPrev(exons, samples, clusters, prevCNCallsFile, prevClusts
 
         # compare exon definitions
         if (exons != prevExons):
-            logger.error("exon definitions disagree between prevCallsFile and countsFile, " +
-                         "prevCallsFile cannot be re-used if the BED used for countsFile or padding changed")
+            logger.error("exon definitions disagree between prevCallsFile and countsFile")
             raise Exception('mismatched exons')
 
         ###################################
@@ -198,12 +196,12 @@ def parseCNCallsPrivate(CNCallsFile):
 ##############################################################
 # allocateCNCallsArray:
 # Args:
-# - numExons, numSamples
+# - numExons, numSamples, numCNTypes
 # Returns an float array with -1, adapted for storing the probabilities for each
-# type of copy number. dim= NbExons x (NbSamples x [CN0, CN1, CN2,CN3+])
-def allocateCNCallsArray(numExons, numSamples):
+# type of copy number. dim= NbExons x (NbSamples x NbCNTypes)
+def allocateCNCallsArray(numExons, numSamples, numCNTypes):
     # order=F should improve performance
-    return np.full((numExons, (numSamples * 4)), -1, dtype=np.float32, order='F')
+    return np.full((numExons, (numSamples * numCNTypes)), -1, dtype=np.float32, order='F')
 
 
 #################################################
