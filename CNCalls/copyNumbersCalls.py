@@ -292,7 +292,51 @@ def makePDF(params, rangeData, yLists):
 # - cnTypes [list]: Types of copy number states.
 # - nbTargetSamps [int]: Number of target samples.
 # - clusterCallsArray (numpy.ndarray[floats]): store the cluster calls (likelihoods).
+@timer.measure_time
+def exonCalls(exIndToProcess, exonFPM4Clust, params, unCaptFPMLimit, cnTypes, nbTargetSamps, clusterCallsArray):
+    #################
+    ### init exon variable
+    # a str which takes the name of the filter excluding the exon
+    # (same name as the exFiltersReport keys). Remains "None" if exon is callable
+    filterStatus = None
 
+    ### Filter n°1: not captured => median coverage of the exon = 0
+    if filterUncapturedExons(exonFPM4Clust):
+        return "notCaptured"
+
+    ### robustly fit a gaussian (CN2)
+    ### Filter n°2: fitting is impossible (median close to 0)
+    try:
+        (mean, stdev) = fitRobustGaussian(exonFPM4Clust)
+        # retain parameters of law associated with normal case (CN2)
+        params["CN2"] = {'distribution': scipy.stats.norm, 'loc': mean, 'scale': stdev}
+    except Exception as e:
+        if str(e) == "cannot fit":
+            return "cannotFitRG"
+        else:
+            raise Exception("fitRobustGaussian %s", repr(e))
+
+    ### Filter n°3: fitted gaussian overlaps the threshold associated with the uncaptured exon profile
+    if ((filterStatus is None) and (filterZscore(mean, stdev, unCaptFPMLimit))):
+        return "RGClose2LowThreshold"
+
+    ### Filter n°4: the samples contribution rate to the gaussian is too low (<50%)
+    if ((filterStatus is None) and (filterSampsContrib2Gaussian(mean, stdev, exonFPM4Clust))):
+        return "fewSampsInRG"
+
+    # exon passed filters
+    # retain parameters of law associated with heterodeletion and duplication
+    params["CN1"] = {'distribution': scipy.stats.norm, 'loc': mean / 2, 'scale': stdev}
+    params["CN3"] = {'distribution': scipy.stats.norm, 'loc': 3 * (mean / 2), 'scale': stdev}
+    try:
+        likelihoods = sampFPM2Probs(exonFPM4Clust, nbTargetSamps, params, cnTypes)
+    except Exception as e:
+        logger.error("sampFPM2Probs failed : %s", repr(e))
+        raise
+    # likelihoods array dim = distribsNB * samplesNB
+    # flatten(order='F') specifies the Fortran-style (column-major)
+    # order of flattening the array.
+    clusterCallsArray[exIndToProcess] = likelihoods.flatten(order='F')
 
 ###################
 # filterUncapturedExons
