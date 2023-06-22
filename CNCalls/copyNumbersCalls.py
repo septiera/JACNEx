@@ -9,6 +9,7 @@ import time
 import traceback
 
 import clusterSamps.smoothing
+import CNcalls.CNCallsFile
 import figures.plots
 
 # prevent PIL flooding the logs when we are in DEBUG loglevel
@@ -110,11 +111,186 @@ timer = Timer()
 # - colInd4CNCallsArray (list[ints]): column indexes for the CNcallsArray.
 # - exonInd2Process (list[ints]): exons indexes (rows indexes) for the CNcallsArray.
 # - clusterCallsArray (np.ndarray[floats]): The cluster calls array.
+def clusterCalls(clustID, exonsFPM, intergenicsFPM, samples, exons, clusters, ctrlsClusters,
+                 specClusters, CNTypes, exonsBool, outFile, sampsExons2Check):
+    #############
+    ### fixed parameters
+    # fraction of the CDF of CNO exponential beyond which we truncate this distribution
+    fracCDFExp = 0.99
+    exonStatus = ["notCaptured", "cannotFitRG", "RGClose2LowThreshold", "fewSampsInRG", "exonsCalls"]
+    # counter dictionary for each filter, only used to plot the pie chart
+    exonStatusCountsDict = {status: 0 for status in exonStatus}
+    # get output folder name
+    outFolder = os.path.basename(outFile)
+    # defined file plot paths
+    expFitPlotFile = "exponentialFit_coverageProfileSmoothed.pdf"
+    clusterPieChartFile = "exonsFiltersSummary_pieChart.pdf"
+
+    try:
+        #############
+        ### get cluster-specific informations
+        try:
+            (targetSampsInd, ctrlSampsInd) = getClusterSamps(clustID, ctrlsClusters, clusters)
+        except Exception as e:
+            logger.error("getClusterSamps failed for cluster %i : %s", clustID, repr(e))
+            raise
+
+        # To Fill and return
+        exonInd2Process = np.where(exonsBool == specClusters[clustID])[0]
+        clusterCallsArray = CNcalls.CNCallsFile.allocateCNCallsArray(len(exonInd2Process), len(targetSampsInd), len(CNTypes))
+        colInd4CNCallsArray = [idx * len(CNTypes) + i for idx in targetSampsInd for i in range(len(CNTypes))]
+
+        try:  # list of samples (from current cluster) to be checked for the "exonInd2Process" indexes concerned
+            (sampsToCheck, exonsToCheck) = getClustInfo2Check(targetSampsInd + ctrlSampsInd,
+                                                              sampsExons2Check, exonInd2Process)
+        except Exception as e:
+            logger.error("getClustInfo2Check failed for cluster %i : %s", clustID, repr(e))
+            raise
+
+        try:   # name of the output cluster folder and the list of subdirectories
+            (clustFolder, pathPlotFolders) = makeResFolders(clustID, outFolder, exonStatus, sampsToCheck)
+        except Exception as e:
+            logger.error("makeResFolders failed for cluster %i : %s", clustID, repr(e))
+            raise
+
+        # DEBUG tracking
+        logger.debug("cluster n°%i, clustSamps=%i, controlSamps=%i, exonsNB=%i",
+                     clustID, len(targetSampsInd), len(ctrlSampsInd), len(exonInd2Process))
+
+        ################
+        ### Call process
+        # fit an exponential distribution from all intergenic regions (CN0)
+        try:
+            (meanIntergenicFPM, loc, invLambda) = fitExponential(intergenicsFPM[:, targetSampsInd + ctrlSampsInd])
+            expParams = {'distribution': scipy.stats.expon, 'loc': loc, 'scale': invLambda}
+            preprocessExponFitPlot(clustID, meanIntergenicFPM, expParams, os.path.join(clustFolder, expFitPlotFile))
+        except Exception as e:
+            logger.error("fitExponential failed for cluster %i : %s", clustID, repr(e))
+            raise
+
+        # Calculating the threshold in FPM equivalent to 99% of the CDF (PPF = percent point function)
+        unCaptFPMLimit = scipy.stats.expon.ppf(fracCDFExp, loc=loc, scale=invLambda)
+
+        # Browse cluster-specific exons
+        for ex in range(len(exonInd2Process)):
+            ### exon-specific data
+            exonInd4Exons = exonInd2Process[ex]
+            exonInfos = exons[exonInd4Exons]  # list [CHR, START, END, EXONID]
+            exonFPM4Clust = exonsFPM[exonInd4Exons, targetSampsInd + ctrlSampsInd]
+
+            # dictionary list containing information about the fitted laws
+            # {distribution:str, loc:float, scale:float}, list CNtype ordered, i.e. CN0, CN1, CN2, CN3.
+            params = {}
+            # retain parameters of law associated with homodeletions
+            params["CN0"] = expParams
+
+            filterStatus = exonCalls(ex, exonFPM4Clust, exonStatusCountsDict, params,
+                                     unCaptFPMLimit, CNTypes, len(targetSampsInd), clusterCallsArray)
+
+            if filterStatus is not None:  # Exon filtered
+                exonStatusCountsDict[filterStatus] += 1
+                if pathPlotFolders:
+                    try:
+                        preprocessExonProfilePlot(filterStatus, exonStatusCountsDict, params,
+                                                  unCaptFPMLimit, exonInfos, exonFPM4Clust, pathPlotFolders)
+                    except Exception as e:
+                        logger.error("preprocessExonProfilePlot failed : %s", repr(e))
+                        print(traceback.format_exc())
+                        raise
+                continue
+
+            else:  # Exon passed filters
+                exonStatusCountsDict["exonsCalls"] += 1
+
+                # plot exonCalls only in DEBUG mode
+                if pathPlotFolders and sampsToCheck:
+                    try:
+                        preprocessExonProfilePlot("exonsCalls", exonStatusCountsDict, params,
+                                                  unCaptFPMLimit, exonInfos, exonFPM4Clust, pathPlotFolders,
+                                                  samples, sampsToCheck, targetSampsInd + ctrlSampsInd)
+                    except Exception as e:
+                        logger.error("preprocessExonProfilePlot2 failed : %s", repr(e))
+                        raise
+
+        try:
+            figures.plots.plotPieChart(clustID, exonStatusCountsDict, os.path.join(clustFolder, clusterPieChartFile))
+        except Exception as e:
+            logger.error("plotPieChart failed for cluster %i : %s", clustID, repr(e))
+            raise
+
+        for key, value in timer.timer_dict.items():
+            logger.debug("ClustID: %s,  %s : %s", clustID, key, value)
+
+        return (clustID, colInd4CNCallsArray, exonInd2Process, clusterCallsArray)
+
+    except Exception as e:
+        logger.error("CNCalls failed for cluster n°%i - %s", clustID, repr(e))
+        raise Exception(str(clustID))
 
 
 ###############################################################################
 ############################ PRIVATE FUNCTIONS ################################
 ###############################################################################
+#############################################################
+# getClusterSamps
+# Given a cluster ID, a list of control clusters for each cluster,
+# and a list of sample indexes for each cluster.
+# It returns a tuple containing the target sample indexes (specific to the cluster)
+# and the combined sample indexes (including both target and control samples).
+#
+# Args:
+# - clustID [int]: cluster identifier
+# - ctrlsClustList (list of lists[int]]): control clusters for each cluster.
+# - clusters (list of lists[int]]): sample indexes for each cluster.
+#
+# Returns a tuple (targetSampsInd, allSampsInd) containing:
+#  - targetSampsInd [list[int]]: sample indexes specific to the target cluster.
+#  - allSampsInd [list[int]]: combined sample indexes (target + control).
+@timer.measure_time
+def getClusterSamps(clustID, ctrlsClustList, clusters):
+    targetSampsInd = clusters[clustID]
+    ctrlSampsInd = []
+
+    if len(ctrlsClustList[clustID]) != 0:
+        # Extract cluster control sample indexes
+        for ctrl_index in ctrlsClustList[clustID]:
+            ctrlSampsInd.extend(clusters[ctrl_index])
+
+    return (targetSampsInd, ctrlSampsInd)
+
+
+#################################
+# getClustInfo2Check
+# Given a list of sample indexes (allSampsInd) representing the samples
+# in the cluster, and a list of lists of exon indexes (sampsExons2Check) indicating
+# the exons to be analyzed for each sample index.
+# Identifies the samples in a cluster that need to be checked and the unique exons to be analyzed.
+# Note that all the samples to be checked, even if they do not have the same exons to be checked,
+# will be represented for all the exons. These samples are used as controls.
+#
+# Args:
+# - allSampsInd (list[int]): Indexes of "samples" in the cluster.
+# - sampsExons2Check (list of lists[int]): exon indices for each "sample" index to be graphically
+# validated.
+#
+# Returns:
+# A tuple containing:
+# - sampsToCheck (list[int]): Indexes of samples in the cluster that need to be checked.
+# - exonsToCheck (list[int]): Indices of exons to analyze within the cluster.
+@timer.measure_time
+def getClustInfo2Check(allSampsInd, sampsExons2Check):
+    sampsToCheck = []
+    exonsToCheck = set()
+
+    for sampInd in allSampsInd:
+        if len(sampsExons2Check[sampInd]) > 0:  # sample has exons to be checked
+            sampsToCheck.append(sampInd)
+            # Update the set of exon indexes with the unique indexes from the sample
+            exonsToCheck.update(sampsExons2Check[sampInd])
+
+    return (sampsToCheck, list(exonsToCheck))
+
+
 ############################################
 # makeResFolders
 # creates directories for storing plots associated with a cluster.
@@ -337,6 +513,7 @@ def exonCalls(exIndToProcess, exonFPM4Clust, params, unCaptFPMLimit, cnTypes, nb
     # flatten(order='F') specifies the Fortran-style (column-major)
     # order of flattening the array.
     clusterCallsArray[exIndToProcess] = likelihoods.flatten(order='F')
+
 
 ###################
 # filterUncapturedExons
