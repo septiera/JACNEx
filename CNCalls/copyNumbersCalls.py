@@ -18,7 +18,6 @@ logging.getLogger('PIL').setLevel(logging.WARNING)
 # set up logger, using inherited config
 logger = logging.getLogger(__name__)
 
-
 class Timer:
     # Initializes a Timer object.
     # Args:
@@ -293,73 +292,56 @@ def getClustInfo2Check(allSampsInd, sampsExons2Check):
 
 ############################################
 # makeResFolders
-# creates directories for storing plots associated with a cluster.
-# It takes as input the cluster ID, the path to the main plot folder, a list of folder
-# names to create, and a list of sample names associated with the cluster.
+# creates the cluster directory within the main plot folder.
+# It then checks if the logging level is set to DEBUG.
+# If it is, the function proceeds to create the specified subdirectories
+# within the cluster directory based on the provided folderNames.
+# The paths to these subdirectories are added to the pathPlotFolders list.
+# Note: The function handles exceptions if directory creation fails and raises
+# an exception with an appropriate error message.
 #
 # Args:
-# - clustID [int]: ID of the cluster.
-# - resFolder [str]: path to the plot folder where the cluster directories should be created.
-# - folderNames (list[str]): folder names to be created within each cluster directory only in DEBUG mode.
-# - clusterSamps2Plot (list[str]): sample names targeted by the user and associated with the cluster
+# - clusterID[int]: cluster identifier for which directories will be created.
+# - outputFolder [str]: path to the main plot folder where the cluster directories should be created.
+# - folderNames (list[str]): folder names to be created within each cluster directory.
+#                            These folders are created only in DEBUG mode.
+# - samplesToCheck (list[str]): sample names associated with the cluster
 #
 # Returns a tuple (clustFolder, pathPlotFolders):
 # - clustFolder [str]: Path to the created cluster directory.
-# - pathPlotFolders (list[str]): paths to the created subdirectories.
+# - pathPlotFolders (list[str]): paths to the subdirectories created within the cluster directory.
 @timer.measure_time
-def makeResFolders(clustID, resFolder, folderNames, clusterSamps2Plot):
-    # To fill and returns
+def makeResFolders(clusterID, outputFolder, folderNames, samplesToCheck):
+    # To fill and return
     pathPlotFolders = []
 
-    clustFolder = os.path.join(resFolder, "cluster_" + str(clustID))
+    clusterFolder = os.path.join(outputFolder, "cluster_" + str(clusterID))
     try:
-        os.makedirs(clustFolder, exist_ok=True)
+        os.makedirs(clusterFolder, exist_ok=True)
     except OSError:
-        raise Exception("Error creating directory " + clustFolder)
+        raise Exception("Error creating directory " + clusterFolder)
 
     if (logging.getLogger().getEffectiveLevel() <= logging.DEBUG):
-        for folderNameInd in range(len(folderNames)):
-            path = os.path.join(clustFolder, folderNames[folderNameInd])
-
-            if folderNameInd == len(folderNames) - 1:
-                # Check if the last folder should be created
-                if not clusterSamps2Plot:
-                    continue  # Skip creating the last folder if pathPlotFolders is empty
-
+        numFolders = len(folderNames)  # Store the length of folderNames
+        for folderIndex in range(numFolders - 1):  # Exclude the last folder
+            folderPath = os.path.join(clusterFolder, folderNames[folderIndex])
             try:
-                os.makedirs(path, exist_ok=True)
+                os.makedirs(folderPath, exist_ok=True)
             except OSError:
-                raise Exception("Error creating directory " + path)
+                raise Exception("Error creating directory " + folderPath)
+            pathPlotFolders.append(folderPath)
 
-            pathPlotFolders.append(path)
+        # Check if the last folder should be created
+        lastFolderIndex = numFolders - 1
+        if samplesToCheck or (lastFolderIndex >= 0 and len(samplesToCheck) > 0):
+            lastFolderPath = os.path.join(clusterFolder, folderNames[lastFolderIndex])
+            try:
+                os.makedirs(lastFolderPath, exist_ok=True)
+            except OSError:
+                raise Exception("Error creating directory " + lastFolderPath)
+            pathPlotFolders.append(lastFolderPath)
 
-    return (clustFolder, pathPlotFolders)
-
-
-#############################################################
-# getAllSampsIndex
-# retrieve the sample indexes associated with a given cluster ID, including the
-# sample indexes associated with its control cluster IDs.
-#
-# Args:
-# - clustID [int]: The cluster ID for which to retrieve control sample indexes.
-# - ctrlsClusters (list of lists[ints]): Each list corresponds to a cluster index and
-#                                        contains the associated control sample indexes.
-# - clusters (list of lists[ints]): Each list corresponds to a cluster index and contains
-#                                   the associated sample indexes.
-#
-# Returns an integer list of control "samples" indexes
-@timer.measure_time
-def getAllSampsIndex(clustID, ctrlsClusters, clusters):
-    ctrlClusterIndex = ctrlsClusters[clustID]
-    sampsInd = clusters[clustID].copy()
-    if (len(ctrlClusterIndex) != 0):
-        ctrlSamps = []
-        for ctrlIndex in ctrlClusterIndex:
-            ctrlSamps.extend(clusters[ctrlIndex].copy())
-        sampsInd = sampsInd + ctrlSamps
-
-    return sampsInd
+    return (clusterFolder, pathPlotFolders)
 
 
 #############################################################
@@ -687,34 +669,26 @@ def filterSampsContrib2Gaussian(mean, stdev, exonFPM):
 
 #############################################################
 # sampFPM2Probs
-# Given exon FPM values, cluster sample indexes, sample indexes, and a list of parameter
-# dictionaries as input.
-#  - filters the exon FPM array to include only the samples associated with the cluster.
-#  - initializes an empty list, `pdf_groups`, to store the PDF values for each parameter set.
-#  - iterates over each parameter dictionary in the `params` list and calls the `makePDF`
-#    function to calculate the PDF values for the filtered exon FPM data.
-#  - appends PDF values to the `pdf_groups` list.
-#  - `pdf_groups` list is converted to a numpy array, `pdf_array`, and returned.
+# Converts exon FPM values into PDF probabilities (likelihoods)
+# for a given set of parameters and sample indexes.
 #
 # Args:
-# - exonFPM (np.ndarray[floats]): Array of FPM values for one exon.
-# - clusterSampsIndexes (list[int]): List of sample indexes associated with the cluster.
-# - sampsInd (list[int]): sample indexes
-# - params (list[dict]): parameter dictionaries for generating PDFs.
+# - exonFPM (np.ndarray[float]): Array of FPM values for one exon.
+# - NbTargetSamps (int): Number of target samples associated with the cluster.
+# - params (List[Dict]): List of parameter dictionaries for generating PDFs.
+# - CNTypes (List[str]): List of CN types.
 #
 # Returns:
-# - likelihoods (np.ndarray[floats]): PDF values for each set of parameters,
-#                                     dim = (CN0,CN1,CN2,CN3+)*sampsNB
+# -likelihoods (np.ndarray[float]): PDF values for each set of parameters and sample indexes.
+#                                   Dimensions: (CN0, CN1, CN2, CN3+) * NbTargetSamps
 @timer.measure_time
-def sampFPM2Probs(exonFPM, clusterSampsIndexes, sampsInd, params):
-    clusterSampInd = [i for i, val in enumerate(sampsInd) if val in clusterSampsIndexes]
-    exonFPM4Clust = exonFPM[clusterSampInd]
-    # Liste pour stocker les PDF par groupe
+def sampFPM2Probs(exonFPM, NbTargetSamps, params, CNTypes):
+    exonFPM4Clust = exonFPM[:NbTargetSamps]
     pdf_groups = []
 
-    # Calcul des PDF pour chaque jeu de paramètres et chaque valeur de x
-    for param in params:
-        makePDF(param, exonFPM4Clust, pdf_groups)
+    # Calculate the PDF for each set of parameters and each value of x
+    for cn in CNTypes:
+        makePDF(params[cn], exonFPM4Clust, pdf_groups)
     likelihoods = np.array(pdf_groups)
 
     return likelihoods
@@ -741,25 +715,10 @@ def fillClusterCallsArray(clusterCalls, sampIndex, exIndex, likelihoods):
 
 #########################
 # preprocessExonProfilePlot
-# preprocesses and generates exon profile plots based on the provided parameters and data.
-#   - checks the status of the exon filters and the summary to determine if the number of
-# exons exceeds the limits for plotting. If the limits are exceeded, the function returns
-# without generating the plots.
-#   - retrieves the appropriate folder based on the provided status.
-#   - initializes variables for file and plot titles, lists to store PDF values, plot legends,
-# vertical lines, and their respective legends. It also creates a range of FPM values.
-#   - populates the plot variables based on the presence of multiple parameters. If there
-# are multiple parameters, PDFs are calculated for each parameter using the `makePDF` function.
-# Plot legends and ylim values are updated accordingly.
-#   - optionnal : clusterSamps2Plot is provided, iterates over the cluster sample indexes and performs
-# additional calculations and plot updates.
-#       - calculates PDFs for additional parameters, adds them to the plot legends,
-# and adds sample-specific vertical lines and their legends. The function also updates
-# the plot title and file title accordingly.
-#   - generates the exon profile plot using the provided data and plot variables.
-# The plot is saved in a PDF file, given the information on the current cluster, the current exon
-# and the current sample, defines the variables for a graphical representation of the coverage profile with
-# different laws fitting (exponential and Gaussian).
+# generates exon profile plots using given data, including probability density functions
+# for different distributions.
+# It checks conditions, prepares titles and variables, calculates distributions,
+# creates plots, and saves them in a PDF file.
 #
 # Args:
 # - status [str]: Status of the exon filters.
@@ -773,82 +732,54 @@ def fillClusterCallsArray(clusterCalls, sampIndex, exIndex, likelihoods):
 # - samples (list[str], optional): sample names. Defaults to None.
 # - clusterSamps2Plot (list[int], optional): sample indexes to plot. Defaults to None.
 # - sampsInd (list[int], optional): all sample indexes. Defaults to None.
-# - likelihoods (np.ndarray[floats], optional): likelihood values. Defaults to None.
-#
-# Return None
 @timer.measure_time
 def preprocessExonProfilePlot(status, exonsFiltersSummary, clustID, params,
                               unCaptThreshold, exonInfos, exonFPM, folders,
-                              samples=None, clusterSamps2Plot=None, sampsInd=None, likelihoods=None):
-
-    if not hasattr(preprocessExonProfilePlot, 'dictionnaire'):
-        preprocessExonProfilePlot.dictionnaire = {}  # dictionnary init
-
+                              samples=None, clusterSamps2Plot=None, sampsInd=None):
     # Fixed parameter
-    nbExLimit2PlotF2F4 = 10  # No. of threshold multiplier exons = one plot
-    nbExLimit2PlotF1F3 = 10000
+    nbExToPlot = 500  # No. of threshold multiplier exons = one plot
 
-    if status in ["cannotFitRG", "fewSampsInRG"]:
-        if exonsFiltersSummary[status] % nbExLimit2PlotF2F4 != 0:
-            return
-    elif status in ["notCaptured", "RGClose2LowThreshold"]:
-        if exonsFiltersSummary[status] % nbExLimit2PlotF1F3 != 0:
-            return
+    if exonsFiltersSummary[status] % nbExToPlot != 0:
+        return
+    # Find the appropriate folder based on the 'status' value
+    folder = next((f for f in folders if status in f), None)
 
-    for f in folders:
-        if status in f:
-            folder = f
-
-    # initiate plots variables
+    # Prepare the file and plot titles
     fileTitle = f"ClusterID_{clustID}_{'_'.join(map(str, exonInfos))}"
     plotTitle = f"ClusterID n° {clustID} exon:{'_'.join(map(str, exonInfos))}"
+    # Lists to store plot data
     yLists = []
-    plotLegs = ["expon={:.2f}, {:.2f}".format(params[0]['loc'], params[0]['scale'])]
+    plotLegs = [f"expon={params['CN0']['loc']:.2f}, {params['CN0']['scale']:.2f}"]
     verticalLines = [unCaptThreshold]
-    vertLinesLegs = ["UncoverThreshold={:.3f}".format(unCaptThreshold)]
+    vertLinesLegs = [f"UncoverThreshold={unCaptThreshold:.3f}"]
     # creates FPM ranges base
-    xi = np.linspace(0, max(exonFPM), 1000)
+    xi = np.linspace(0, np.max(exonFPM), 1000)
     # calculate the probability density function for the exponential distribution
-    makePDF(params[0], xi, yLists)
-    ylim = max(yLists[0]) / 10
+    makePDF(params["CN0"], xi, yLists)
+    ylim = np.max(yLists[0]) / 10
 
-    ##############
-    # populate the plot variables according to the presence of the arguments passed to the function
     if len(params) > 1:
         # calculate the probability density function for the gaussian distribution (CN2)
-        makePDF(params[1], xi, yLists)
-        plotLegs.append("RG CN2={:.2f}, {:.2f}".format(params[1]['loc'], params[1]['scale']))
-        ylim = 2 * max(yLists[1])
+        makePDF(params["CN2"], xi, yLists)
+        plotLegs.append(f"RG CN2={params['CN2']['loc']:.2f}, {params['CN2']['scale']:.2f}")
+        ylim = 2 * np.max(yLists[1])
 
-        if clusterSamps2Plot is not None:
-            for samp in clusterSamps2Plot:
-                sampName = samples[samp]
-                sampFPM = exonFPM[sampsInd.index(samp)]
-                samplikelihood = likelihoods[:, sampsInd.index(samp)]
-                index_maxProb = np.argmax(samplikelihood)
+    if clusterSamps2Plot is not None:
+        for samp in clusterSamps2Plot:
+            sampName = samples[samp]
+            sampFPM = exonFPM[sampsInd.index(samp)]
 
-                if index_maxProb != 0:
-                    if index_maxProb in preprocessExonProfilePlot.dictionnaire:
-                        preprocessExonProfilePlot.dictionnaire[index_maxProb] += 1
-                    else:
-                        preprocessExonProfilePlot.dictionnaire[index_maxProb] = 1
+            # calculate the probability density function for the gaussian distribution (CN1)
+            makePDF(params["CN1"], xi, yLists)
+            plotLegs.append(f"RG CN1={params['CN1']['loc']:.2f}, {params['CN1']['scale']:.2f}")
 
-                    if preprocessExonProfilePlot.dictionnaire[index_maxProb] % nbExLimit2PlotF1F3 != 0:
-                        return
+            # calculate the probability density function for the gaussian distribution (CN3)
+            makePDF(params["CN3"], xi, yLists)
+            plotLegs.append(f"RG CN3={params['CN3']['loc']:.2f}, {params['CN3']['scale']:.2f}")
 
-                # calculate the probability density function for the gaussian distribution (CN1)
-                makePDF(params[2], xi, yLists)
-                plotLegs.append("RG CN1={:.2f}, {:.2f}".format(params[2]['loc'], params[2]['scale']))
-
-                # calculate the probability density function for the gaussian distribution (CN3)
-                makePDF(params[3], xi, yLists)
-                plotLegs.append("RG CN3={:.2f}, {:.2f}".format(params[3]['loc'], params[3]['scale']))
-
-                verticalLines.append(sampFPM)
-                vertLinesLegs.append(f"sample name={sampName}")
-                probs = ', '.join('{:.2e}'.format(x) for x in samplikelihood)
-                plotTitle += f"\nprobs={probs}"
-                fileTitle = f"CN{index_maxProb}_" + sampName + "_" + fileTitle
+            verticalLines.append(sampFPM)
+            vertLinesLegs.append(f"sample name={sampName}")
+            fileTitle = f"{sampName}_{fileTitle}"
 
     PDF_File = matplotlib.backends.backend_pdf.PdfPages(os.path.join(folder, fileTitle))
     figures.plots.plotExonProfile(exonFPM, xi, yLists, plotLegs, verticalLines, vertLinesLegs, plotTitle, ylim, PDF_File)
