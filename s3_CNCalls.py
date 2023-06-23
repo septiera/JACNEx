@@ -185,6 +185,10 @@ def main(argv):
         except Exception as e:
             raise Exception("parseClustsFile failed for %s : %s", clustsFile, repr(e))
 
+        thisTime = time.time()
+        logger.debug("Done parsing userTSVFile, in %.2f s", thisTime - startTime)
+        startTime = thisTime
+
     ######################################################
     # init calling process
     # we have chosen to call copy numbers by exon, defining 4 copy number types:
@@ -241,8 +245,8 @@ def main(argv):
             #### validity sanity check
             if validity[clustID] == 0:
                 logger.warning("cluster %s is invalid, low sample number", clustID)
-                return
-            
+                continue
+
             ##### run prediction for current cluster
             futureRes = pool.submit(CNCalls.copyNumbersCalls.clusterCalls, clustID, exonsFPM,
                                     intergenicsFPM, samples, exons, clusters, ctrlsClusters,
@@ -252,8 +256,7 @@ def main(argv):
 
     #####################################################
     # Print exon defs + calls to outFile
-    callsFile = os.path.join(outFile, "exonCNCalls_" + str(len(samples)) + "samps_" + str(len(clusters)) + "clusters.tsv.gz")
-    CNCalls.CNCallsFile.printCNCallsFile(CNCallsArray, exons, samples, callsFile)
+    CNCalls.CNCallsFile.printCNCallsFile(CNCallsArray, exons, samples, outFile)
 
     thisTime = time.time()
     logger.debug("Done printing calls for all (non-failed) clusters, in %.2fs", thisTime - startTime)
