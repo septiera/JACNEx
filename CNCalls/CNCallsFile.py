@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 # parseCNcallsFile:
 # Arg:
 #   - CNcallsFile [str]: produced by s3_CNCalls.py, possibly gzipped
+#   - nbState [int]: number of copy number states
 #
 # Returns a tuple (exons, samples, CNCallsArray), each is created here and populated
 # by parsing CNCallsFile:
@@ -25,10 +26,10 @@ logger = logging.getLogger(__name__)
 #     in the same order
 #   - samples (list[str]): sampleIDs copied from CNcallsFile's header
 #   - CNCallsArray (np.ndarray[float]): dim = len(exons) x (len(samples)*4(CN0,CN1,CN2,CN3+))
-def parseCNcallsFile(CNcallsFile):
+def parseCNcallsFile(CNcallsFile, nbState):
     (exons, samples, CNCallsList) = parseCNCallsPrivate(CNcallsFile)
     # callsArray[exonIndex,sampleIndex] will store the specified probabilities
-    CNCallsArray = allocateCNCallsArray(len(exons), len(samples))
+    CNCallsArray = allocateCNCallsArray(len(exons), len(samples), nbState)
     # Fill callsArray from callsList
     for i in range(len(exons)):
         callsVec2array(CNCallsArray, i, CNCallsList[i])
