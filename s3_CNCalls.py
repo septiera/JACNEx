@@ -208,7 +208,7 @@ def main(argv):
     # identifying autosomes and gonosomes "exons" index
     # recall clusters are derived from autosomal or gonosomal analyses
     try:
-        maskSourceExons = clusterSamps.getGonosomesExonsIndexes.getSexChrIndexes(exons)
+        exonsBool = clusterSamps.getGonosomesExonsIndexes.getSexChrIndexes(exons)
     except Exception as e:
         raise Exception("getSexChrIndexes failed %s", e)
 
@@ -238,17 +238,15 @@ def main(argv):
     # To be parallelised => browse clusters
     with ProcessPoolExecutor(paraClusters) as pool:
         for clustID in range(len(clusters)):
-
-            ##### validity sanity check
+            #### validity sanity check
             if validity[clustID] == 0:
                 logger.warning("cluster %s is invalid, low sample number", clustID)
-                continue
-
+                return
+            
             ##### run prediction for current cluster
-            futureRes = pool.submit(CNCalls.copyNumbersCalls.CNCalls, clustID, exonsFPM,
+            futureRes = pool.submit(CNCalls.copyNumbersCalls.clusterCalls, clustID, exonsFPM,
                                     intergenicsFPM, samples, exons, clusters, ctrlsClusters,
-                                    validity, specClusters, CNTypes, maskSourceExons, outFile,
-                                    samps2Check)
+                                    specClusters, CNTypes, exonsBool, outFile, samps2Check)
 
             futureRes.add_done_callback(mergeCalls)
 
