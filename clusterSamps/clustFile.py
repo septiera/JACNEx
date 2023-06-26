@@ -11,12 +11,24 @@ logger = logging.getLogger(__name__)
 ###############################################################################
 #####################################
 # parseClustsFile
+# Perform multiple sanity checks on clustFile as it's subject to several rules
+# The cluster IDs (first column) must be in ascending order from 0 to nbClusters.
+# If clustFile contains sex predictions, they must be at the end of the file.
+# Samples must be the same as those in the countFile.
 # Arg:
-# - clustsFile (str): a clusterFile produced by 2_clusterSamps.py, possibly gzipped
-#
-# Returns a tupple (clusts2Samps, clusts2Ctrls), each variable is created here:
-# - clusts2Samps (dict[str, List[int]]): key: clusterID , value: SOIs list
-# - clusts2Ctrls (dict[str, List[str]]): key: clusterID, value: controlsID list
+# - clustsFile [str]: a clusterFile produced by 2_clusterSamps.py, possibly gzipped
+# - samples (list[str]): samples names
+# Returns a tupple (sampsInClusts, ctrlsInClusts, validClusts, specClusts), each
+# variable is created here:
+# - sampsInClusts (list of lists[str]): each index in the list corresponds to a clusterID,
+# and each sublist is composed of the "samples" indexes in the cluster
+# - ctrlsInClusts (list of lists[str]): each index in the list corresponds to a clusterID,
+# and each sublist is composed of the control clusterIDs for the cluster.
+# It can be empty if not controlled.
+# - validClusts (list[int]): each index in the list corresponds to a cluster associated
+# with a validity value (0 invalid, 1 valid)
+# - specClusts (list[booleans]): each index in the list corresponds to a cluster associated
+# with an analysis status performed (False autosomes, True gonosomes)
 def parseClustsFile(clustsFile, samples):
     try:
         if clustsFile.endswith(".gz"):
@@ -27,37 +39,66 @@ def parseClustsFile(clustsFile, samples):
         logger.error("Opening provided clustsFile %s: %s", clustsFile, e)
         raise Exception('cannot open clustsFile')
 
-    # To Fill and returns
-    samps2Clusters = {}
-    clusts2Ctrls = {}
-
     # skip header
     clustsFH.readline()
 
-    # path of each clusterID
-    for line in clustsFH:
-        if line.startswith("M") or line.startswith("F"):
-            continue
-        else:
-            # finding information from the 5 columns
-            clusterID, sampsInCluster, controlledBy, validCluster, specifics = line.rstrip().split("\t", maxsplit=4)
+    # To Fill and returns
+    sampsInClusts, ctrlsInClusts, validClusts, specClusts = [[] for _ in range(4)]
 
-            # For DEV evaluate small clusters
-            # if validCluster == 0:
-            #     continue
+    # To fill not returns
+    # boolean array to check that all samples in countsFile are in clustFile.
+    # This is only done for autosomes since analysis on gonosomes may be missing
+    sampsAutoClusts = np.zeros(len(samples))
 
-            sampsInCluster = sampsInCluster.split(",")
-            sampsIndInCluster = [i for i in range(len(samples)) if samples[i] in sampsInCluster]
+    for ind, line in enumerate(clustsFH):
+        # finding information from the 5 columns
+        clusterID, sampsInCluster, controlledBy, validCluster, specifics = line.rstrip().split("\t", maxsplit=4)
 
-            # populate samps2Clusters
-            samps2Clusters[clusterID] = sampsIndInCluster
+        # sanity check
+        # the clusterIDs are integers the first = 0 the following ones are
+        # incremented by 1, so they must follow the order of the line indexes,
+        # if not the case return an exception
+        if ind == np.int(clusterID):
+            # populate sampsInClusts with sample indexes
+            samps = sampsInCluster.split(",")
+            sampsIndexes = [i for i in range(len(samples)) if samples[i] in samps]
+            sampsInClusts.append(sampsIndexes)
+
+            # populate ctrlsInClusts
             if controlledBy != "":
-                # populate clusts2Ctrls
-                clusts2Ctrls[clusterID] = controlledBy.split(",")
+                ctrlsInClusts.append([int(x) for x in controlledBy.split(",")])
+            else:
+                ctrlsInClusts.append([])
+
+            # populate validClusts
+            validClusts.append(int(validCluster))
+
+            # populate specClusts and control boolean np.array
+            if specifics == "Autosomes":
+                specClusts.append(False)
+                sampsAutoClusts[sampsIndexes] = 1
+            else:
+                specClusts.append(True)
+
+        # a gender prediction may have been made that is not useful for calling
+        # normally placed in the last lines of the clustering file in case it's
+        # not the case the following loop will returns an exception
+        elif line.startswith("M") or line.startswith("F"):
+            logger.info()
+            continue
+
+        else:
+            raise Exception("Cluster IDs in clustFile are not ordered from 0 to nClusters, please correct this")
+
+    # sanity check
+    if not sampsAutoClusts.all():
+        notSampsClusts = np.where(sampsAutoClusts == 0)[0]
+        logger.error("The samples: %s are not contained in the clustFile for autosomal analyses", ",".join([samples[i] for i in notSampsClusts]))
+        raise Exception("Some samples are not in clustFile for autosomal analyses")
 
     clustsFH.close()
 
-    return(samps2Clusters, clusts2Ctrls)
+    return(sampsInClusts, ctrlsInClusts, validClusts, specClusts)
 
 
 #############################

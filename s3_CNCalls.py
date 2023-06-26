@@ -8,15 +8,19 @@
 import sys
 import getopt
 import os
+import math
 import time
 import logging
+from concurrent.futures import ProcessPoolExecutor
 
 ####### MAGE-CNV modules
 import countFrags.countsFile
-import countFrags.countFragments
+import clusterSamps.getGonosomesExonsIndexes
+import clusterSamps.clustFile
 import clusterSamps.clustering
 import CNCalls.CNCallsFile
 import CNCalls.copyNumbersCalls
+import CNCalls.userTSVFile
 
 # set up logger, using inherited config, in case we get called as a module
 logger = logging.getLogger(__name__)
@@ -37,26 +41,25 @@ def parseArgs(argv):
 
     # mandatory args
     countsFile = ""
-    newClustsFile = ""
+    clustFile = ""
     outFile = ""
     # optionnal args with default values
-    prevCNCallsFile = ""
-    prevClustFile = ""
-    priors = "0.001,0.01,0.979,0.01"
-    plotDir = "./ResultPlots/"
+    samps2CheckFile = ""
+    # jobs default: 80% of available cores
+    jobs = round(0.8 * len(os.sched_getaffinity(0)))
 
     usage = "NAME:\n" + scriptName + """\n
+
 DESCRIPTION:
-Given a TSV of exon fragment counts and a TSV with clustering information,
-deduces the copy numbers (CN) observation probabilities, per exon and for each sample.
-Results are printed to stdout in TSV format (possibly gzipped): first 4 columns hold the exon
-definitions padded and sorted, subsequent columns (four per sample, in order CN0,CN2,CN2,CN3+)
-hold the observation probabilities.
-If a pre-existing copy number calls file (with --cncalls) produced by this program associated with
-a previous clustering file are provided (with --prevclusts), extraction of the observation probabilities
-for the samples in homogeneous clusters between the two versions, otherwise the copy number calls is performed.
-In addition, all graphical support (pie chart of exon filtering per cluster) are
-printed in pdf files created in plotDir.
+Given a TSV file containing exon fragment counts and a TSV file containing clustering information.
+It deduces the observation probabilities of copy numbers (CN) for each exon and each sample.
+Results are displayed in TSV format on stdout, with exon definitions in the first four columns
+and probabilities in the subsequent columns (four columns per sample, in the order CN0, CN1, CN2, CN3+).
+Graphical support, such as coverage plots and pie charts, is printed in PDF files.
+These files are saved in analyzed cluster folders created in the output call TSV folder.
+Additional coverage plots can be generated in debug mode.
+If a TSV file containing sample IDs with targeted exons (--samps2check) is provided,
+coverage profile plots will be generated.
 
 ARGUMENTS:
     --counts [str]: TSV file, first 4 columns hold the exon definitions, subsequent columns
@@ -64,21 +67,16 @@ ARGUMENTS:
     --clusts [str]: TSV file, contains 5 columns hold the sample cluster definitions.
             [clusterID, sampsInCluster, controlledBy, validCluster, clusterStatus]
             File obtained from 2_clusterSamps.py.
-    --out [str] : file where results will be saved, must not pre-exist, will be gzipped if it ends
+    --out [str]: file where results will be saved, must not pre-exist, will be gzipped if it ends
             with '.gz', can have a path component but the subdir must exist
-    --prevcncalls [str] optional: pre-existing copy number calls file produced by this program,
-            possibly gzipped, the observation probabilities of copy number types are copied
-            for samples contained in immutable clusters between old and new versions of the clustering files.
-    --prevclusts [str] optional: pre-existing clustering file produced by s2_clusterSamps.py for the same
-            timestamp as the pre-existing copy number call file.
-    --priors list[float]: prior probability for each copy number type in the order [CN0, CN1,CN2,CN3+].
-            Must be passed as a comma separated string, default : """ + str(priors) + """
-    --plotDir[str]: subdir (created if needed) where result plots files will be produced, default :  """ + str(plotDir) + """
-    -h , --help  : display this help and exit\n"""
+    --jobs [int] : cores that we can use, defaults to 80% of available cores ie """ + str(jobs) + "\n" + """
+    --samps2check [str]: TSV file, contains 2 columns the sample name and exon identifier according to the bed
+                         file supplied in step 1. File created by the user.
+    -h , --help: display this help and exit\n"""
 
     try:
-        opts, args = getopt.gnu_getopt(sys.argv[1:], 'h', ["help", "counts=", "clusts=", "out=", "prevcncalls=",
-                                                           "prevclusts=", "priors=", "plotDir="])
+        opts, args = getopt.gnu_getopt(sys.argv[1:], 'h', ["help", "counts=", "clusts=", "out=",
+                                                           "jobs=", "samps2check="])
     except getopt.GetoptError as e:
         raise Exception(e.msg + ". Try " + scriptName + " --help")
     if len(args) != 0:
@@ -91,17 +89,13 @@ ARGUMENTS:
         elif (opt in ("--counts")):
             countsFile = value
         elif (opt in ("--clusts")):
-            newClustsFile = value
+            clustFile = value
         elif opt in ("--out"):
             outFile = value
-        elif (opt in ("--prevcncalls")):
-            prevCNCallsFile = value
-        elif (opt in ("--prevclusts")):
-            prevClustFile = value
-        elif (opt in ("--priors")):
-            priors = value
-        elif (opt in ("--plotDir")):
-            plotDir = value
+        elif opt in ("--jobs"):
+            jobs = value
+        elif (opt in ("--samps2check")):
+            samps2CheckFile = value
         else:
             raise Exception("unhandled option " + opt)
 
@@ -112,11 +106,13 @@ ARGUMENTS:
     elif (not os.path.isfile(countsFile)):
         raise Exception("countsFile " + countsFile + " doesn't exist.")
 
-    if newClustsFile == "":
+    if clustFile == "":
         raise Exception("you must provide a clustering results file use --clusts. Try " + scriptName + " --help.")
-    elif (not os.path.isfile(newClustsFile)):
-        raise Exception("clustsFile " + newClustsFile + " doesn't exist.")
+    elif (not os.path.isfile(clustFile)):
+        raise Exception("clustsFile " + clustFile + " doesn't exist.")
 
+    #####################################################
+    # Check other argsjobs = round(0.8 * len(os.sched_getaffinity(0)))
     if outFile == "":
         raise Exception("you must provide an outFile with --out. Try " + scriptName + " --help")
     elif os.path.exists(outFile):
@@ -124,33 +120,19 @@ ARGUMENTS:
     elif (os.path.dirname(outFile) != '') and (not os.path.isdir(os.path.dirname(outFile))):
         raise Exception("the directory where outFile " + outFile + " should be created doesn't exist")
 
-    #####################################################
-    # Check other args
-    if (prevCNCallsFile != "" and prevClustFile == "") or (prevCNCallsFile == "" and prevClustFile != ""):
-        raise Exception("you should not use --cncalls and --prevclusts alone but together. Try " + scriptName + " --help")
-
-    if (prevCNCallsFile != "") and (not os.path.isfile(prevCNCallsFile)):
-        raise Exception("CNCallsFile " + prevCNCallsFile + " doesn't exist")
-
-    if (prevClustFile != "") and (not os.path.isfile(prevClustFile)):
-        raise Exception("previous clustering File " + prevClustFile + " doesn't exist")
-
     try:
-        priors = [float(x) for x in priors.split(",")]
-        if (sum(priors) != 1) or (len(priors) != 4):
+        jobs = int(jobs)
+        if (jobs <= 0):
             raise Exception()
     except Exception:
-        raise Exception("priors must be four float numbers whose sum is 1, not '" + priors + "'.")
+        raise Exception("jobs must be a positive integer, not " + str(jobs))
 
-    # test plotdir last so we don't mkdir unless all other args are OK
-    if not os.path.isdir(plotDir):
-        try:
-            os.mkdir(plotDir)
-        except Exception as e:
-            raise Exception("plotDir " + plotDir + " doesn't exist and can't be mkdir'd: " + str(e))
+    if not logging.getLogger().isEnabledFor(logging.DEBUG):
+        if samps2CheckFile != "":
+            raise Exception("samps2Check should not be provided when the logger level is not set to DEBUG.")
 
     # AOK, return everything that's needed
-    return(countsFile, newClustsFile, outFile, prevCNCallsFile, prevClustFile, priors, plotDir)
+    return(countsFile, clustFile, outFile, jobs, samps2CheckFile)
 
 
 ###############################################################################
@@ -164,12 +146,7 @@ ARGUMENTS:
 # may be available in the log
 def main(argv):
     # parse, check and preprocess arguments
-    (countsFile, clustsFile, outFile, prevCNCallsFile, prevClustFile, priors, plotDir) = parseArgs(argv)
-
-    # should density plots compare several different KDE bandwidth algorithms and values?
-    # hard-coded here rather than set via parseArgs because this should only be set
-    # to True for dev & testing
-    testSmoothingBWs = False
+    (countsFile, clustsFile, outFile, jobs, samps2CheckFile) = parseArgs(argv)
 
     # args seem OK, start working
     logger.debug("called with: " + " ".join(argv[1:]))
@@ -191,7 +168,7 @@ def main(argv):
     #####################################################
     # parse clusts
     try:
-        (clusts2Samps, clusts2Ctrls, sex2Clust) = clusterSamps.clustering.parseClustsFile(clustsFile)
+        (clusters, ctrlsClusters, validity, specClusters) = clusterSamps.clustFile.parseClustsFile(clustsFile, samples)
     except Exception as e:
         raise Exception("parseClustsFile failed for %s : %s", clustsFile, repr(e))
 
@@ -199,64 +176,108 @@ def main(argv):
     logger.debug("Done parsing clustsFile, in %.2f s", thisTime - startTime)
     startTime = thisTime
 
-    ######################################################
-    # allocate CNcallsArray, and populate it with pre-calculated observed probabilities
-    # if CNCallsFile and prevClustFile are provided.
-    # also returns a boolean np.array to identify the samples to be reanalysed if the clusters change
-    try:
-        (CNcallsArray, callsFilled) = CNCalls.CNCallsFile.extractObservedProbsFromPrev(exons, samples, clusts2Samps, prevCNCallsFile, prevClustFile)
-    except Exception as e:
-        raise Exception("extractObservedProbsFromPrev failed - " + str(e))
-
-    thisTime = time.time()
-    logger.debug("Done parsing previous CNCallsFile and prevClustFile, in %.2fs", thisTime - startTime)
-    startTime = thisTime
-
-    # total number of samples that still need to be processed
-    nbOfSamplesToProcess = len(samples)
-    for samplesIndex in range(len(samples)):
-        if callsFilled[samplesIndex] and samplesIndex not in clusts2Ctrls["Samps_QCFailed"]:
-            nbOfSamplesToProcess -= 1
-
-    if nbOfSamplesToProcess == 0:
-        logger.info("all provided samples are in previous callsFile and clusters are the same, not producing a new one")
-    else:
-        ####################################################
-        # CN Calls
+    ####################################################
+    # parse user-defined tsv file of target samples and exons
+    samps2Check = []
+    if samps2CheckFile != "":
         try:
-            futureRes = CNCalls.copyNumbersCalls.CNCalls(exonsFPM, CNcallsArray, samples, callsFilled,
-                                                         exons, sex2Clust, clusts2Samps, clusts2Ctrls, priors,
-                                                         testSmoothingBWs, plotDir)
-        except Exception:
-            raise Exception("CNCalls failed")
+            samps2Check = CNCalls.userTSVFile.parseUserTSV(samps2CheckFile, samples, exons)
+        except Exception as e:
+            raise Exception("parseClustsFile failed for %s : %s", clustsFile, repr(e))
 
         thisTime = time.time()
-        logger.debug("Done Copy Number Calls, in %.2f s", thisTime - startTime)
+        logger.debug("Done parsing userTSVFile, in %.2f s", thisTime - startTime)
         startTime = thisTime
 
-        #####################################################
-        # Print exon defs + calls to outFile
-        CNCalls.CNCallsFile.printCNCallsFile(futureRes, exons, samples, outFile)
+    ######################################################
+    # init calling process
+    # we have chosen to call copy numbers by exon, defining 4 copy number types:
+    # CN0: total loss of copies, CN1: single copy, CN2: two copies (normal),
+    # and CN3: three or more copies.
+    CNTypes = ["CN0", "CN1", "CN2", "CN3"]
 
-        thisTime = time.time()
-        logger.debug("Done printing calls for all (non-failed) samples, in %.2fs", thisTime - startTime)
-        logger.info("ALL DONE")
+    CNCallsArray = CNCalls.CNCallsFile.allocateCNCallsArray(len(exons), len(samples), len(CNTypes))
+
+    ####################################################
+    # CN Calls
+    ##############################
+    # decide how the work will be parallelized
+    # we are allowed to use jobs cores in total: we will process paraClusters clusters in
+    # parallel
+    # -> we target targetCoresPerCluster, this is increased if we
+    #    have few clusters to process (and we use ceil() so we may slighty overconsume)
+    paraClusters = min(math.ceil(jobs), len(clusters))
+    logger.info("%i new clusters => will process %i in parallel", len(clusters), paraClusters)
+
+    # identifying autosomes and gonosomes "exons" index
+    # recall clusters are derived from autosomal or gonosomal analyses
+    try:
+        exonsBool = clusterSamps.getGonosomesExonsIndexes.getSexChrIndexes(exons)
+    except Exception as e:
+        raise Exception("getSexChrIndexes failed %s", e)
+
+    #####################################################
+    # Define nested callback for processing CNCalls() result (so CNCallsArray et al
+    # are in its scope)
+
+    # mergeCalls:
+    # arg: a Future object returned by ProcessPoolExecutor.submit(CNCalls.copyNumbersCalls.CNCalls).
+    # CNCalls() returns a 4-element tuple (clustID, colIndInCNCallsArray, sourceExons, clusterCalls).
+    # If something went wrong, log and populate failedClusters;
+    # otherwise fill column at index colIndInCNCallsArray and row at index sourceExons in CNCallsArray
+    # with calls stored in clusterCalls
+    def mergeCalls(futurecounts2callsRes):
+        e = futurecounts2callsRes.exception()
+        if e is not None:
+            # exceptions raised by CNCalls are always Exception(str(clusterIndex))
+            si = int(str(e))
+            logger.warning("Failed to CNCalls for cluster n° %i, skipping it", si)
+        else:
+            counts2callsRes = futurecounts2callsRes.result()
+            for exonIndex in range(len(counts2callsRes[2])):
+                CNCallsArray[counts2callsRes[2][exonIndex], counts2callsRes[1]] = counts2callsRes[3][exonIndex]
+
+            logger.info("Done copy number calls for cluster n°%i", counts2callsRes[0])
+
+    # To be parallelised => browse clusters
+    with ProcessPoolExecutor(paraClusters) as pool:
+        for clustID in range(len(clusters)):
+            #### validity sanity check
+            if validity[clustID] == 0:
+                logger.warning("cluster %s is invalid, low sample number", clustID)
+                continue
+
+            ##### run prediction for current cluster
+            futureRes = pool.submit(CNCalls.copyNumbersCalls.clusterCalls, clustID, exonsFPM,
+                                    intergenicsFPM, samples, exons, clusters, ctrlsClusters,
+                                    specClusters, CNTypes, exonsBool, outFile, samps2Check)
+
+            futureRes.add_done_callback(mergeCalls)
+
+    #####################################################
+    # Print exon defs + calls to outFile
+    CNCalls.CNCallsFile.printCNCallsFile(CNCallsArray, exons, samples, outFile)
+
+    thisTime = time.time()
+    logger.debug("Done printing calls for all (non-failed) clusters, in %.2fs", thisTime - startTime)
+    logger.info("ALL DONE")
 
 
 ####################################################################################
 ######################################## Main ######################################
 ####################################################################################
 if __name__ == '__main__':
+    scriptName = os.path.basename(sys.argv[0])
     # configure logging, sub-modules will inherit this config
     logging.basicConfig(format='%(asctime)s %(levelname)s %(name)s: %(message)s',
                         datefmt='%Y-%m-%d %H:%M:%S',
                         level=logging.DEBUG)
     # set up logger: we want script name rather than 'root'
-    logger = logging.getLogger(os.path.basename(sys.argv[0]))
+    logger = logging.getLogger(scriptName)
 
     try:
         main(sys.argv)
     except Exception as e:
         # details on the issue should be in the exception name, print it to stderr and die
-        sys.stderr.write("ERROR in " + sys.argv[0] + " : " + str(e) + "\n")
+        sys.stderr.write("ERROR in " + scriptName + " : " + str(e) + "\n")
         sys.exit(1)
