@@ -10,12 +10,15 @@ import getopt
 import os
 import time
 import logging
+import numpy as np
 
 ####### MAGE-CNV modules
 import CNCalls.CNCallsFile
+import HMM.transitions
 
 # set up logger, using inherited config, in case we get called as a module
 logger = logging.getLogger(__name__)
+
 
 ###############################################################################
 ############################ PUBLIC FUNCTIONS ################################
@@ -44,7 +47,7 @@ Accurately identifies the CNs for each exon via the hidden markov chain (HMM)
 algorithm by weighting the transitions with the lengths separating the exons
 and by weighting the data-based transition matrix with the priors found in the literature.
 Group exons to form CNVs, taking into account no-call exons.
-Adjustment of precise delimitations if breakpoints have already been observed. 
+Adjustment of precise delimitations if breakpoints have already been observed.
 Produces a VCF file of copy number variations for all samples.
 
 ARGUMENTS:
@@ -99,7 +102,12 @@ ARGUMENTS:
         raise Exception("the directory where outFile " + outFile + " should be created doesn't exist")
 
     # AOK, return everything that's needed
-    return(callsFile , BPFolder, outFile)
+    return(callsFile, BPFolder, outFile)
+
+
+###############################################################################
+############################ PUBLIC FUNCTIONS #################################
+###############################################################################
 
 ####################################################
 # main function
@@ -108,13 +116,13 @@ ARGUMENTS:
 # may be available in the log
 def main(argv):
     # parse, check and preprocess arguments
-    (callsFile , BPFolder, outFile) = parseArgs(argv)
+    (callsFile, BPFolder, outFile) = parseArgs(argv)
 
     # args seem OK, start working
     logger.debug("called with: " + " ".join(argv[1:]))
     logger.info("starting to work")
     startTime = time.time()
-    
+
     #############
     # parse calls
     try:
@@ -123,16 +131,26 @@ def main(argv):
     except Exception as e:
         logger.error("parseCNcallsFile failed for %s : %s", callsFile, repr(e))
         raise Exception("parseCNcallsFile failed")
-    
+
     thisTime = time.time()
     logger.debug("Done parse callsFile, in %.2fs", thisTime - startTime)
     startTime = thisTime
-    
+
     ############
-    # 
-    
-    
-    
+    # obtaining a list of observations and a transition matrix based on the data.
+    priors = np.array([6.34e-4, 2.11e-3, 9.96e-1, 1.25e-3])  # TO ADD ARG USER
+
+    (obsDataBased, transtionMatrix) = HMM.transitions.getTransitionMatrix(CNCallsArray, priors, samples, CNStatus, os.path.dirname(outFile))
+
+    ### FOR DEBUG
+    # Iterate over the rows of the array
+    for row in transtionMatrix:
+        # Convert the row to a string representation
+        row_str = ' '.join(map(str, row))
+
+        # Log the row using the logger
+        logger.info(row_str)
+
 
 ####################################################################################
 ######################################## Main ######################################
