@@ -788,7 +788,7 @@ def preprocessExonProfilePlot(status, exonsFiltersSummary, params, unCaptThresho
 
         for samp in clusterSamps2Plot:
             sampName = samples[samp]
-            sampFPM = exonFPM[sampsInd.index(samp)]        
+            sampFPM = exonFPM[sampsInd.index(samp)]
 
             # Create individual data for the current sample
             individualVerticalLines = [sampFPM]
