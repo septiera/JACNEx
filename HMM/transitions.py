@@ -17,13 +17,14 @@ logger = logging.getLogger(__name__)
 # getTransitionMatrix
 # Given a matrix that contains likelihood values for each copy number status
 # per exon per sample, along with prior information on the copy numbers,
-# this function performs the following steps:
-# 1. Generates an observation matrix for copy numbers by combining the likelihood values and priors.
-# 2. Calculates the observation lists for each sample by counting the transitions between copy number states.
-#    It disregards "no-call" exons and the distances between exons during the counting process.
-# 3. Creates a transition matrix based on the median values of the transition matrices from all evaluated samples.
-# 4. Counts the number of copy number states obtained for each sample.
-# 5. This count is used in debug mode to plot a bar plot, visualizing the frequency of each copy number.
+# calculates the observed data based on copy number (CN) values and generates
+# a transition matrix.
+# It performs the following steps: 
+# - converting input arrays into observed CN values,
+# - counting occurrences of each CN type,
+# - merging transition matrices,
+# - and optionally generating a bar plot.
+# It provides insights into the observed CN data and the transitions between CN types.
 #
 # Args :
 # - callsArrays (np.ndarray[floats]): likelihoods for each CN, each exon, each sample
@@ -35,16 +36,42 @@ logger = logging.getLogger(__name__)
 #
 # Returns a tuple (obsDataBased, transtionMatrix):
 # - obsDataBased (np.ndarray[int]) : observation lists for each sample (conserved no call as -1).
-# - transtionMatrix (np.ndarray[floats]): median transition matrix.
+# - transtionMatrix (np.ndarray[floats])
 def getTransitionMatrix(callsArrays, priors, samples, CNStatus, outFolder):
-
-    obsDataBased = probs2CN(callsArrays, samples, priors, len(CNStatus))
-
-    (countArray, transitionMatrices) = countCNObservations(obsDataBased, len(CNStatus))
-
-    transtionMatrix = mergeTransMatrices(transitionMatrices)
-
-    figures.plots.barPlot(countArray, CNStatus, outFolder)
+    try: 
+        # Convert the callsArrays into observed CN values based on priors and samples.
+        # Returns an np.ndarray of observation lists (columns) in CN (integers).
+        # The dimensions are NBexons x NBsamples.
+        obsDataBased = probs2CN(callsArrays, samples, priors, len(CNStatus))
+    except Exception as e:
+        logger.error("probs2CN failed: %s", repr(e))
+        raise
+    
+    try: 
+        # Count the occurrences of each CN type for each sample.
+        # Returns an np.ndarray of integers representing the count of each CN type for each sample.
+        # The dimensions are NBsamples x NBCNStates.
+        # Also returns a list of np.ndarray representing the transitions between CN types for each sample.
+        (countArray, transitionMatrices) = countCNObservations(obsDataBased, len(CNStatus))
+    except Exception as e:
+        logger.error("countCNObservations failed: %s", repr(e))
+        raise
+    
+    try:
+        # Merge the individual transition matrices into a single transition matrix.
+        # Returns a np.ndarray representing the merged transition matrix.
+        transtionMatrix = mergeTransMatrices(transitionMatrices)
+    except Exception as e:
+        logger.error("mergeTransMatrices failed: %s", repr(e))
+        raise
+    
+    if (logging.getLogger().getEffectiveLevel() <= logging.DEBUG):
+        try:
+            # Generate a bar plot of the countArray.
+            figures.plots.barPlot(countArray, CNStatus, outFolder)
+        except Exception as e:
+            logger.error("barPlot failed: %s", repr(e))
+            raise
 
     return (obsDataBased, transtionMatrix)
 
@@ -58,16 +85,17 @@ def getTransitionMatrix(callsArrays, priors, samples, CNStatus, outFolder):
 # considering both forward and backward directions of exon reading.
 #
 # Args:
-# - CNcalls (ndarray[floats]): Array of shape (nbExons, nbSamples * nbStates) containing the
-#                              probabilities of CN states for each exon and sample.
-# - samples (list): List of sample names or indices.
-# - priors (ndarray): Array of shape (nbStates,) containing the weights for calculating
-#                     pseudoLogOdds.
-# - nbStates (int): Number of CN states.
+# - CNcalls (ndarray[floats]): containing the probabilities (likelihoods) of CN states for
+#                              each exon and sample. dim = [NBExons, NBSamples * NBStates]
+# - samples (list[str]): sample names
+# - priors (np.ndarray[floats]): shape (nbStates,) containing the weights for calculating
+#                                odds.
+# - nbStates [int]: Number of CN states.
 #
 # Returns:
-# - ndarray: Array of shape (nbExons, nbSamples) containing the observed CN states for
-#     each exon and sample. The observed CN state is represented as an index.
+# - observations (np.ndarray[ints]): observed CN states for each exon and sample.
+#                                    The observed CN state is represented as an index.
+#                                    dim = [NBExons, NBSamples]
 def probs2CN(CNcalls, samples, priors, nbStates):
     nbSamples = len(samples)
 
@@ -122,11 +150,10 @@ def probs2CN(CNcalls, samples, priors, nbStates):
 #     for each exon and sample.
 # - nbStates [int]: Number of CN states.
 #
-# Returns:
-# tuple: A tuple containing:
-# - ndarray: Array of shape (nbSamples, nbStates) containing the count of each CN type for each sample.
-# - list: List of transition matrices, each of shape (nbStates, nbStates), representing the transitions
-#     between CN types for each sample.
+# Returns a tuple (countArray, transitionMatrices):
+# - countArray (np.ndarray[ints]): the count of each CN type for each sample, dim = NBsamps x NBCNStates
+# - transitionMatrices (list of np.ndarray[ints]): transition matrices, each of shape (nbStates, nbStates),
+#                                                  representing the transitions between CN types for each sample.
 def countCNObservations(observations, nbStates):
     nbExons, nbSamples = observations.shape
 
@@ -163,7 +190,7 @@ def countCNObservations(observations, nbStates):
 
 ######################################################
 # mergeTransMatrices
-# Merges a list of transition matrices by taking the median of each element in the list.
+# Merges a list of transition matrices by taking the sum of each element in the list.
 # The resulting matrix is then normalized, ensuring that the sum of each row equals 1.
 #
 # Args:
