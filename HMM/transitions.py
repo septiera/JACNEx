@@ -1,8 +1,10 @@
 import logging
 import numpy as np
-import os
-import matplotlib.pyplot
-import matplotlib.backends.backend_pdf
+
+import figures.plots
+
+# prevent numba flooding the logs when we are in DEBUG loglevel
+logging.getLogger('numba').setLevel(logging.WARNING)
 
 # set up logger, using inherited config
 logger = logging.getLogger(__name__)
@@ -36,16 +38,13 @@ logger = logging.getLogger(__name__)
 # - transtionMatrix (np.ndarray[floats]): median transition matrix.
 def getTransitionMatrix(callsArrays, priors, samples, CNStatus, outFolder):
 
-    obsDataBased = probs2CN(callsArrays, samples, priors, len(CNStatus), reverse_order=False)
+    obsDataBased = probs2CN(callsArrays, samples, priors, len(CNStatus))
 
     (countArray, transitionMatrices) = countCNObservations(obsDataBased, len(CNStatus))
 
     transtionMatrix = mergeTransMatrices(transitionMatrices)
 
-    # Exclude the "filtered" category from the countArray
-    countArray_no_filter = countArray[:, :-1]
-
-    barPlot(countArray_no_filter, CNStatus, outFolder)
+    figures.plots.barPlot(countArray, CNStatus, outFolder)
 
     return (obsDataBased, transtionMatrix)
 
@@ -173,53 +172,10 @@ def countCNObservations(observations, nbStates):
 # Returns:
 # - normalized_arr (np.ndarray[floats]): Merged and normalized transition matrix.
 def mergeTransMatrices(transMatricesList):
-    merged_array = np.median(transMatricesList, axis=0)
+    merged_array = np.sum(transMatricesList, axis=0)
 
     # Normalize each row to ensure sum equals 1
     row_sums = np.sum(merged_array, axis=1, keepdims=True)
     normalized_arr = merged_array / row_sums
 
     return (normalized_arr)
-
-
-#############################################################
-# barPlot
-# Creates a bar plot of copy number frequencies based on the count array.
-# The plot includes error bars representing the standard deviation.
-#
-# Args:
-# - countArray (np.ndarray[ints]): Count array representing copy number frequencies.
-# - CNStatus (list[str]): Names of copy number states.
-# - outFolder (str): Path to the output folder for saving the bar plot.
-def barPlot(countArray, CNStatus, outFolder):
-    pdf = os.path.join(outFolder, "CNFreqBarplot.pdf")
-    matplotOpenFile = matplotlib.backends.backend_pdf.PdfPages(pdf)
-    fig = matplotlib.pyplot.figure(figsize=(8, 8))
-
-    # Calculate the mean and standard deviation for each category
-    means = np.mean(countArray, axis=0)
-    stds = np.std(countArray, axis=0)
-
-    # Normalize the means to get frequencies
-    total_mean = np.sum(means)
-    frequencies = means / total_mean
-
-    # Plot the bar plot with error bars
-    matplotlib.pyplot.bar(CNStatus, frequencies, yerr=stds / total_mean, capsize=3)
-
-    # Define the vertical offsets for the annotations dynamically based on standard deviation
-    mean_offset = np.max(frequencies) * 0.1
-    std_offset = np.max(frequencies) * 0.05
-
-    # Add labels for mean and standard deviation above each bar
-    for i in range(len(CNStatus)):
-        matplotlib.pyplot.text(i, frequencies[i] + mean_offset, f'mean={frequencies[i]:.2e}', ha='center')
-        matplotlib.pyplot.text(i, frequencies[i] + std_offset, f'stdev={stds[i]/total_mean:.2e}', ha='center')
-
-    # Set the labels and title
-    matplotlib.pyplot.xlabel('Copy number States')
-    matplotlib.pyplot.ylabel('Frequencies')
-    matplotlib.pyplot.title(f'CN frequencies Bar Plot for {len(countArray)} samps (Excluding Filtered)')
-    matplotOpenFile.savefig(fig)
-    matplotlib.pyplot.close()
-    matplotOpenFile.close()
