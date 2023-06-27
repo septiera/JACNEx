@@ -12,8 +12,9 @@ import clusterSamps.smoothing
 import CNCalls.CNCallsFile
 import figures.plots
 
-# prevent PIL flooding the logs when we are in DEBUG loglevel
+# prevent PIL and numba flooding the logs when we are in DEBUG loglevel
 logging.getLogger('PIL').setLevel(logging.WARNING)
+logging.getLogger('numba').setLevel(logging.WARNING)
 
 # set up logger, using inherited config
 logger = logging.getLogger(__name__)
@@ -22,7 +23,7 @@ logger = logging.getLogger(__name__)
 class Timer:
     # Initializes a Timer object.
     # Args:
-    #     debug_mode (bool): Indicates whether the logger is in debug mode. Defaults to False    
+    #     debug_mode (bool): Indicates whether the logger is in debug mode. Defaults to False
     def __init__(self, debug_mode=False):
         self.timer_dict = {}  # Initialize an empty dictionary
         self.debug_mode = debug_mode
@@ -199,9 +200,9 @@ def clusterCalls(clustID, exonsFPM, intergenicsFPM, samples, exons, clusters, ct
                         logger.error("preprocessExonProfilePlot failed : %s", repr(e))
                         print(traceback.format_exc())
                         raise
-                    
+
                 if exonInd4Exons in exonsToCheck:
-                    logger.error("cluster n°%s exonID %s to check according to the user is filtered",clustID,
+                    logger.error("cluster n°%s exonID %s to check according to the user is filtered", clustID,
                                  f"{'_'.join(map(str, exonInfos))}")
                 continue
 
@@ -752,7 +753,7 @@ def preprocessExonProfilePlot(status, exonsFiltersSummary, params, unCaptThresho
     if status != "exonsCalls":
         if exonsFiltersSummary[status] % nbExToPlot != 0:
             return
-        
+
     # Find the appropriate folder based on the 'status' value
     folder = next((f for f in folders if status in f), None)
 
@@ -784,16 +785,16 @@ def preprocessExonProfilePlot(status, exonsFiltersSummary, params, unCaptThresho
         # calculate the probability density function for the gaussian distribution (CN3)
         makePDF(params["CN3"], xi, yLists)
         plotLegs.append(f"RG CN3={params['CN3']['loc']:.2f}, {params['CN3']['scale']:.2f}")
-        
+
         for samp in clusterSamps2Plot:
             sampName = samples[samp]
-            sampFPM = exonFPM[sampsInd.index(samp)]            
+            sampFPM = exonFPM[sampsInd.index(samp)]        
 
             # Create individual data for the current sample
             individualVerticalLines = [sampFPM]
             individualVertLinesLegs = [f"sample name={sampName}"]
             individualFileTitle = f"{sampName}_{fileTitle}"
-            
+
             # Generate individual plot for the current sample
             individualPDF_File = matplotlib.backends.backend_pdf.PdfPages(os.path.join(folder, individualFileTitle))
             figures.plots.plotExonProfile(exonFPM, xi, yLists, plotLegs, individualVerticalLines, individualVertLinesLegs, plotTitle, ylim, individualPDF_File)

@@ -3,8 +3,9 @@ import gzip
 import numpy as np
 import numba
 
-# prevent matplotlib flooding the logs when we are in DEBUG loglevel
+# prevent matplotlib and numba flooding the logs when we are in DEBUG loglevel
 logging.getLogger('matplotlib').setLevel(logging.WARNING)
+logging.getLogger('numba').setLevel(logging.WARNING)
 
 # set up logger, using inherited config
 logger = logging.getLogger(__name__)
