@@ -240,9 +240,9 @@ def plotDendrogram(linkageMatrix, samples, clust2samps, fitWith, clustIsValid, t
 #
 # save a plot in the output pdf
 def plotPieChart(clustID, filterCounters, pdf):
-    
+
     matplotOpenFile = matplotlib.backends.backend_pdf.PdfPages(pdf)
-    
+
     fig = matplotlib.pyplot.figure(figsize=(5, 5))
     ax11 = fig.add_subplot(111)
     w, l, p = ax11.pie(filterCounters.values(),
@@ -270,7 +270,7 @@ def plotPieChart(clustID, filterCounters, pdf):
     matplotlib.pyplot.legend(loc='upper right', fontsize='small', labels=filterCounters.keys())
     matplotOpenFile.savefig(fig)
     matplotlib.pyplot.close()
-    
+
     matplotOpenFile.close()
 
 
@@ -280,7 +280,7 @@ def plotPieChart(clustID, filterCounters, pdf):
 # It takes the plot title, x-axis data, y-axis data, plot legends, and the
 # output file path for saving the plot as input.
 #
-# Args:     
+# Args:
 # - plotTitle [str]: The title of the plot.
 # - xi (np.ndarray[floats]): The x-axis data (FPM values).
 # - yLists (np.ndarray[floats]): A list of y-axis data for plotting.
@@ -292,22 +292,23 @@ def plotExponentialFit(plotTitle, dr, yLists, plotLegs, pdf):
     # sanity
     if (len(yLists[0]) != len(yLists[1])) or (len(yLists) != len(plotLegs)):
         raise Exception('plotDensities bad args, length mismatch')
-    
+
     matplotOpenFile = matplotlib.backends.backend_pdf.PdfPages(pdf)
     fig = matplotlib.pyplot.figure(figsize=(5, 5))
-    
+
     matplotlib.pyplot.plot(dr, yLists[0], label=plotLegs[0])
     matplotlib.pyplot.plot(dr, yLists[1], label=plotLegs[1])
     matplotlib.pyplot.legend()
     matplotlib.pyplot.title(plotTitle)
     matplotlib.pyplot.xlabel('FPM')
     matplotlib.pyplot.ylabel('densities')
-    matplotlib.pyplot.ylim(0, max(yLists[0])/100)
-    matplotlib.pyplot.xlim(0, max(dr)/3)
+    matplotlib.pyplot.ylim(0, max(yLists[0]) / 100)
+    matplotlib.pyplot.xlim(0, max(dr) / 3)
     matplotOpenFile.savefig(fig)
     matplotlib.pyplot.close()
     matplotOpenFile.close()
-    
+
+
 #########################
 # plotExonProfile
 # plots a density histogram for a raw data list, along with density or distribution
@@ -358,7 +359,8 @@ def plotExonProfile(rawData, xi, yLists, plotLegs, verticalLines, vertLinesLegs,
 
     pdf.savefig(fig)
     matplotlib.pyplot.close()
-    
+
+
 #############################################################
 # barPlot
 # Creates a bar plot of copy number frequencies based on the count array.
