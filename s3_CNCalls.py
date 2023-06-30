@@ -206,7 +206,7 @@ def main(argv):
     # parallel
     # -> we target targetCoresPerCluster, this is increased if we
     #    have few clusters to process (and we use ceil() so we may slighty overconsume)
-    paraClusters = min(math.ceil(jobs), len(clusters))
+    paraClusters = min(math.ceil(jobs / 2), len(clusters))
     logger.info("%i new clusters => will process %i in parallel", len(clusters), paraClusters)
 
     # identifying autosomes and gonosomes "exons" index
@@ -230,8 +230,7 @@ def main(argv):
         e = futurecounts2callsRes.exception()
         if e is not None:
             # exceptions raised by CNCalls are always Exception(str(clusterIndex))
-            si = int(str(e))
-            logger.warning("Failed to CNCalls for cluster n° %i, skipping it", si)
+            logger.warning("Failed to CNCalls for cluster n° %s, skipping it", str(e))
         else:
             counts2callsRes = futurecounts2callsRes.result()
             for exonIndex in range(len(counts2callsRes[2])):
