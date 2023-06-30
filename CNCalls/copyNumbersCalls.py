@@ -187,8 +187,12 @@ def clusterCalls(clustID, exonsFPM, intergenicsFPM, samples, exons, clusters, ct
             # retain parameters of law associated with homodeletions
             params["CN0"] = expParams
 
-            filterStatus = exonCalls(ex, exonFPM4Clust, params, unCaptFPMLimit, cnTypes,
-                                     len(targetSampsInd), clusterCallsArray)
+            try:
+                filterStatus = exonCalls(ex, exonFPM4Clust, params, unCaptFPMLimit, cnTypes,
+                                         len(targetSampsInd), clusterCallsArray)
+            except Exception as e:
+                        logger.error("exonCalls failed : %s", repr(e))
+                        raise
 
             if filterStatus is not None:  # Exon filtered
                 exonStatusCountsDict[filterStatus] += 1
@@ -198,7 +202,6 @@ def clusterCalls(clustID, exonsFPM, intergenicsFPM, samples, exons, clusters, ct
                                                   unCaptFPMLimit, exonInfos, exonFPM4Clust, pathPlotFolders)
                     except Exception as e:
                         logger.error("preprocessExonProfilePlot failed : %s", repr(e))
-                        print(traceback.format_exc())
                         raise
 
                 if exonInd4Exons in exonsToCheck:
@@ -443,16 +446,16 @@ def makePDF(params, rangeData, yLists):
 # exonCalls
 # processes an exon by applying a series of filters.
 # No specific output: It either returns a filter status string if the exon doesn't pass
-# the filters or updates the clusterCallsArray with the computed likelihoods for the exon.
+# the filters or updates the clusterCallsArray with the computed log-likelihoods for the exon.
 # Specs:
 # 1) Check if the exon is not captured (median coverage = 0).
 # 2) Fit a robust Gaussian distribution (CN2) to the exon FPM values.
 # 3) Check if the fitted Gaussian overlaps the threshold associated with the uncaptured exon profile.
 # 4) Check if the sample contribution rate to the Gaussian is too low (<50%).
 # 5) If any of the above filters is triggered, return the corresponding filter status.
-# 6) If the exon passes all filters, compute the likelihoods using the fitted parameters
+# 6) If the exon passes all filters, compute the log-likelihoods using the fitted parameters
 # for heterodeletion and duplication (CN1 and CN3).
-# 7) Store the computed likelihoods in the clusterCallsArray for the given exon index (exIndToProcess).
+# 7) Store the computed log-likelihoods in the clusterCallsArray for the given exon index (exIndToProcess).
 #
 # Args:
 # - exIndToProcess [int]
@@ -461,7 +464,7 @@ def makePDF(params, rangeData, yLists):
 # - unCaptFPMLimit [float]: FPM threshold value for uncaptured exons.
 # - cnTypes [list]: Types of copy number states.
 # - nbTargetSamps [int]: Number of target samples.
-# - clusterCallsArray (numpy.ndarray[floats]): store the cluster calls (likelihoods).
+# - clusterCallsArray (numpy.ndarray[floats]): store the cluster calls (log-likelihoods).
 @timer.measure_time
 def exonCalls(exIndToProcess, exonFPM4Clust, params, unCaptFPMLimit, cnTypes, nbTargetSamps, clusterCallsArray):
     #################
@@ -681,7 +684,7 @@ def filterSampsContrib2Gaussian(mean, stdev, exonFPM):
 
 #############################################################
 # sampFPM2Probs
-# Converts exon FPM values into PDF probabilities (likelihoods)
+# Converts exon FPM values into PDF probabilities (log-likelihoods)
 # for a given set of parameters and sample indexes.
 #
 # Args:
@@ -691,8 +694,8 @@ def filterSampsContrib2Gaussian(mean, stdev, exonFPM):
 # - CNTypes (List[str]): List of CN types.
 #
 # Returns:
-# -likelihoods (np.ndarray[float]): PDF values for each set of parameters and sample indexes.
-#                                   Dimensions: (CN0, CN1, CN2, CN3+) * NbTargetSamps
+# -log_probs(np.ndarray[float]): log PDF values for each set of parameters and sample indexes.
+#                                Dimensions: (CN0, CN1, CN2, CN3+) * NbTargetSamps
 @timer.measure_time
 def sampFPM2Probs(exonFPM, NbTargetSamps, params, CNTypes):
     exonFPM4Clust = exonFPM[:NbTargetSamps]
@@ -703,7 +706,14 @@ def sampFPM2Probs(exonFPM, NbTargetSamps, params, CNTypes):
         makePDF(params[cn], exonFPM4Clust, pdf_groups)
     likelihoods = np.array(pdf_groups)
 
-    return likelihoods
+    # Create a boolean mask for values strictly greater than zero
+    nonzero_mask = (likelihoods > 0)
+
+    # Apply logarithm only to values strictly greater than zero
+    log_probs = np.empty_like(likelihoods)
+    log_probs[nonzero_mask] = np.log(likelihoods[nonzero_mask])
+
+    return log_probs
 
 
 #############################################################
@@ -713,7 +723,7 @@ def sampFPM2Probs(exonFPM, NbTargetSamps, params, CNTypes):
 # - clusterCalls (np.ndarray[floats]): copy number call likelihood
 # - sampIndex [int]: "samples" index
 # - exIndex [int]: exon index in clusterCalls array
-# - likelihoods (list[floats]): likelihood for a sample and an exon
+# - likelihoods (list[floats]): log-likelihood for a sample and an exon
 @timer.measure_time
 def fillClusterCallsArray(clusterCalls, sampIndex, exIndex, likelihoods):
     sampIndInArray = sampIndex * len(likelihoods)

@@ -125,6 +125,7 @@ def parseCNCallsPrivate(CNCallsFile):
         exons.append(exon)
         # convert calls to 1D np array and save
         calls = np.fromstring(splitLine[4], dtype=np.float32, sep='\t')
+        calls = np.where(calls == 0, -np.inf, calls)  # Replace zeros with -np.inf
         callsList.append(calls)
     callsFH.close()
     return(exons, samples, callsList)
