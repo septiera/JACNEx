@@ -14,7 +14,7 @@ import numpy as np
 
 ####### MAGE-CNV modules
 import CNCalls.CNCallsFile
-import HMM.transitions
+import groupCalls.transitions
 
 # set up logger, using inherited config, in case we get called as a module
 logger = logging.getLogger(__name__)
@@ -37,6 +37,9 @@ def parseArgs(argv):
     callsFile = ""
     BPFolder = ""
     outFile = ""
+    # optionnal args with default values
+    priors = np.array([6.34e-4, 2.11e-3, 9.96e-1, 1.25e-3])
+    CNStatus = ["CN0", "CN1", "CN2", "CN3"]
 
     usage = "NAME:\n" + scriptName + """\n
 
@@ -102,7 +105,7 @@ ARGUMENTS:
         raise Exception("the directory where outFile " + outFile + " should be created doesn't exist")
 
     # AOK, return everything that's needed
-    return(callsFile, BPFolder, outFile)
+    return(callsFile, CNStatus, priors, BPFolder, outFile)
 
 
 ###############################################################################
@@ -116,17 +119,22 @@ ARGUMENTS:
 # may be available in the log
 def main(argv):
     # parse, check and preprocess arguments
-    (callsFile, BPFolder, outFile) = parseArgs(argv)
+    (callsFile, CNStatus, priors, BPFolder, outFile) = parseArgs(argv)
 
     # args seem OK, start working
     logger.debug("called with: " + " ".join(argv[1:]))
     logger.info("starting to work")
     startTime = time.time()
 
+    ############
+    # priors logtransformation 
+    if np.all(priors > 0):
+        priors = np.log(priors)
+        logger.info("priors are log transformed")
+
     #############
     # parse calls
     try:
-        CNStatus = ["CN0", "CN1", "CN2", "CN3"]
         (exons, samples, CNCallsArray) = CNCalls.CNCallsFile.parseCNcallsFile(callsFile, len(CNStatus))
     except Exception as e:
         logger.error("parseCNcallsFile failed for %s : %s", callsFile, repr(e))
@@ -138,18 +146,26 @@ def main(argv):
 
     ############
     # obtaining a list of observations and a transition matrix based on the data.
-    priors = np.array([6.34e-4, 2.11e-3, 9.96e-1, 1.25e-3])  # TO ADD ARG USER
+    try:
+        (obsDataBased, transitionMatrix) = groupCalls.transitions.getTransitionMatrix(CNCallsArray, priors, samples, CNStatus, os.path.dirname(outFile))
+    except Exception as e:
+        logger.error("getTransitionMatrix failed : %s", repr(e))
+        raise Exception("getTransitionMatrix failed")
 
-    (obsDataBased, transtionMatrix) = HMM.transitions.getTransitionMatrix(CNCallsArray, priors, samples, CNStatus, os.path.dirname(outFile))
+    thisTime = time.time()
+    logger.debug("Done getTransitionMatrix, in %.2fs", thisTime - startTime)
+    startTime = thisTime
 
     ### FOR DEBUG
     # Iterate over the rows of the array
-    for row in transtionMatrix:
+    for row in transitionMatrix:
         # Convert the row to a string representation
         row_str = ' '.join(map(str, row))
 
         # Log the row using the logger
         logger.info(row_str)
+
+
 
 
 ####################################################################################
