@@ -89,6 +89,7 @@ def printCNCallsFile(emissionArray, exons, samples, outFile):
 #     in the same order
 #   - samples (list[str]): sampleIDs copied from CNCallsFile's header
 #   - CNCallsList (list of list[float]]): dim = len(exons) x (len(samples)*4(CN0,CN1,CN2,CN3+))
+#                                         contains log10-likelihood (zeroes are replaced by -np.inf)
 def parseCNCallsPrivate(CNCallsFile):
     try:
         if CNCallsFile.endswith(".gz"):

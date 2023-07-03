@@ -111,7 +111,7 @@ timer = Timer()
 # - clustID [int]
 # - colInd4CNCallsArray (list[ints]): column indexes for the CNcallsArray.
 # - exonInd2Process (list[ints]): exons indexes (rows indexes) for the CNcallsArray.
-# - clusterCallsArray (np.ndarray[floats]): The cluster calls array.
+# - clusterCallsArray (np.ndarray[floats]): The cluster calls array (log10-likelihoods).
 def clusterCalls(clustID, exonsFPM, intergenicsFPM, samples, exons, clusters, ctrlsClusters,
                  specClusters, cnTypes, exonsBool, outFile, sampsExons2Check):
     startTime = time.time()
@@ -191,8 +191,8 @@ def clusterCalls(clustID, exonsFPM, intergenicsFPM, samples, exons, clusters, ct
                 filterStatus = exonCalls(ex, exonFPM4Clust, params, unCaptFPMLimit, cnTypes,
                                          len(targetSampsInd), clusterCallsArray)
             except Exception as e:
-                        logger.error("exonCalls failed : %s", repr(e))
-                        raise
+                logger.error("exonCalls failed : %s", repr(e))
+                raise
 
             if filterStatus is not None:  # Exon filtered
                 exonStatusCountsDict[filterStatus] += 1
@@ -464,7 +464,7 @@ def makePDF(params, rangeData, yLists):
 # - unCaptFPMLimit [float]: FPM threshold value for uncaptured exons.
 # - cnTypes [list]: Types of copy number states.
 # - nbTargetSamps [int]: Number of target samples.
-# - clusterCallsArray (numpy.ndarray[floats]): store the cluster calls (log-likelihoods).
+# - clusterCallsArray (numpy.ndarray[floats]): store the cluster calls (log10-likelihoods).
 @timer.measure_time
 def exonCalls(exIndToProcess, exonFPM4Clust, params, unCaptFPMLimit, cnTypes, nbTargetSamps, clusterCallsArray):
     #################
@@ -684,8 +684,9 @@ def filterSampsContrib2Gaussian(mean, stdev, exonFPM):
 
 #############################################################
 # sampFPM2Probs
-# Converts exon FPM values into PDF probabilities (log-likelihoods)
+# Converts exon FPM values into PDF probabilities (log10-likelihoods)
 # for a given set of parameters and sample indexes.
+# zero probabilities are kept at 0 to simplify saving the file
 #
 # Args:
 # - exonFPM (np.ndarray[float]): Array of FPM values for one exon.
@@ -711,7 +712,7 @@ def sampFPM2Probs(exonFPM, NbTargetSamps, params, CNTypes):
 
     # Apply logarithm only to values strictly greater than zero
     log_probs = np.empty_like(likelihoods)
-    log_probs[nonzero_mask] = np.log(likelihoods[nonzero_mask])
+    log_probs[nonzero_mask] = np.log10(likelihoods[nonzero_mask])
 
     return log_probs
 
