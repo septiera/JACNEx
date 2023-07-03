@@ -127,10 +127,10 @@ def main(argv):
     startTime = time.time()
 
     ############
-    # priors logtransformation 
+    # priors logtransformation
     if np.all(priors > 0):
-        priors = np.log(priors)
-        logger.info("priors are log transformed")
+        priors = np.log10(priors)
+        logger.info("priors are log10 transformed")
 
     #############
     # parse calls
@@ -147,24 +147,14 @@ def main(argv):
     ############
     # obtaining a list of observations and a transition matrix based on the data.
     try:
-        (obsDataBased, transitionMatrix) = groupCalls.transitions.getTransitionMatrix(CNCallsArray, priors, samples, CNStatus, os.path.dirname(outFile))
+        (transMatrix, exons2CN4Samps) = groupCalls.transitions.getTransMatrix(CNCallsArray, priors, samples, CNStatus, os.path.dirname(outFile))
     except Exception as e:
-        logger.error("getTransitionMatrix failed : %s", repr(e))
-        raise Exception("getTransitionMatrix failed")
+        logger.error("getTransMatrix failed : %s", repr(e))
+        raise Exception("getTransMatrix failed")
 
     thisTime = time.time()
-    logger.debug("Done getTransitionMatrix, in %.2fs", thisTime - startTime)
+    logger.debug("Done getTransMatrix, in %.2fs", thisTime - startTime)
     startTime = thisTime
-
-    ### FOR DEBUG
-    # Iterate over the rows of the array
-    for row in transitionMatrix:
-        # Convert the row to a string representation
-        row_str = ' '.join(map(str, row))
-
-        # Log the row using the logger
-        logger.info(row_str)
-
 
 
 
