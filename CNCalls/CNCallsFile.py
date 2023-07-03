@@ -89,7 +89,7 @@ def printCNCallsFile(emissionArray, exons, samples, outFile):
 #     in the same order
 #   - samples (list[str]): sampleIDs copied from CNCallsFile's header
 #   - CNCallsList (list of list[float]]): dim = len(exons) x (len(samples)*4(CN0,CN1,CN2,CN3+))
-#                                         contains log10-likelihood (zeroes are replaced by -np.inf)
+#                                         contains log10-likelihood
 def parseCNCallsPrivate(CNCallsFile):
     try:
         if CNCallsFile.endswith(".gz"):
@@ -126,7 +126,6 @@ def parseCNCallsPrivate(CNCallsFile):
         exons.append(exon)
         # convert calls to 1D np array and save
         calls = np.fromstring(splitLine[4], dtype=np.float32, sep='\t')
-        calls = np.where(calls == 0, -np.inf, calls)  # Replace zeros with -np.inf
         callsList.append(calls)
     callsFH.close()
     return(exons, samples, callsList)

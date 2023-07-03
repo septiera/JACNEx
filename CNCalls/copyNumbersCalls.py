@@ -438,6 +438,7 @@ def makePDF(params, rangeData, yLists):
 
     # Build PDF
     x = rangeData
+    # scipy v1.5.4 default np.float64 cannot be changed
     y = distribution.pdf(x, loc=loc, scale=scale)
     yLists.append(y)
 
@@ -684,9 +685,9 @@ def filterSampsContrib2Gaussian(mean, stdev, exonFPM):
 
 #############################################################
 # sampFPM2Probs
-# Converts exon FPM values into PDF probabilities (log10-likelihoods)
-# for a given set of parameters and sample indexes.
-# zero probabilities are kept at 0 to simplify saving the file
+# calculates the probability densities for a given set of parameters and data.
+# It replaces small probabilities with a minimum value and computes the logarithm
+# of the probabilities. The resulting probabilities are returned.
 #
 # Args:
 # - exonFPM (np.ndarray[float]): Array of FPM values for one exon.
@@ -695,26 +696,35 @@ def filterSampsContrib2Gaussian(mean, stdev, exonFPM):
 # - CNTypes (List[str]): List of CN types.
 #
 # Returns:
-# -log_probs(np.ndarray[float]): log PDF values for each set of parameters and sample indexes.
-#                                Dimensions: (CN0, CN1, CN2, CN3+) * NbTargetSamps
+# -logProbs(np.ndarray[float]): log PDF values for each set of parameters and sample indexes.
+#                               Dimensions: (CN0, CN1, CN2, CN3+) * NbTargetSamps
 @timer.measure_time
 def sampFPM2Probs(exonFPM, NbTargetSamps, params, CNTypes):
-    exonFPM4Clust = exonFPM[:NbTargetSamps]
+    # Fixed parameter
+    # divisor to adjust the minimum non-zero value.
+    scalingDivisor = 100
+
+    targetExonsFPM = exonFPM[:NbTargetSamps]
     pdf_groups = []
 
     # Calculate the PDF for each set of parameters and each value of x
     for cn in CNTypes:
-        makePDF(params[cn], exonFPM4Clust, pdf_groups)
-    likelihoods = np.array(pdf_groups)
+        makePDF(params[cn], targetExonsFPM, pdf_groups)
+    likelihoods = np.array(pdf_groups)  # np.float64 dictated by scipy
 
-    # Create a boolean mask for values strictly greater than zero
-    nonzero_mask = (likelihoods > 0)
+    # Find the minimum non-zero value in likelihoods using np.nextafter
+    minNonZeroValue = np.nextafter(0, 1)  # Next representable floating-point value after zero
 
-    # Apply logarithm only to values strictly greater than zero
-    log_probs = np.empty_like(likelihoods)
-    log_probs[nonzero_mask] = np.log10(likelihoods[nonzero_mask])
+    # Determine the adjusted minimum value
+    minAdjusted = np.maximum(minNonZeroValue, minNonZeroValue / scalingDivisor)
 
-    return log_probs
+    # Replace small values with the adjusted minimum value
+    likelihoods[likelihoods < minAdjusted] = minAdjusted
+
+    # Apply logarithm to the adjusted likelihoods
+    logProbs = np.log10(likelihoods)
+
+    return logProbs.astype(np.float32)
 
 
 #############################################################
