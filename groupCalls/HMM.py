@@ -44,22 +44,34 @@ def exonOnChr(exons):
 
 
 #######################################
-# HMM
-# Hidden Markov Model (HMM) function for processing exon data.
+# inferCNVsUsingHMM
+# Implements the Hidden Markov Model (HMM) algorithm to infer copy number variations (CNVs)
+# from a given sample's copy number calls.
+# Here's an overview of its steps:
+# 1- Create a boolean mask to identify non-called exons in the CNcallOnSamp array.
+# 2- Associate each exon with its corresponding chromosome using the exonOnChr function.
+# 3- Initialize the path array with -1 as a placeholder for inferred CNVs.
+# 4- Iterate over each chromosome present in the dataset.
+#     -Create a boolean mask to identify the exons called on the current chromosome.
+#     -Apply the Viterbi algorithm using the viterbi function to obtain the inferred path
+#      (CNVs) for the called exons.
+#     -Assign the obtained path to the corresponding exons in the path array.
+# 5- Group exons with the same copy number to obtain the CNVs using the aggregateCalls function.
+# Return the resulting CNVs stored in the CNVSampList array.
 #
 # Args:
-# - likelihoodMatrix (np.ndarray[floats]): pseudo emission probabilities (likelihood) of each state for each observation
+# - CNcallOnSamp (np.ndarray[floats]): pseudo emission probabilities (likelihood) of each state for each observation
 #                                          for one sample.
 #                                          dim = [NbStates, NbObservations]
 # - exons (list of lists[str, int, int, str]): A list of exon information [CHR,START,END, EXONID]
-# - transitionMatrix (np.ndarray[floats]): transition probabilities between states. dim = [NbStates, NbStates].
+# - transMatrix (np.ndarray[floats]): transition probabilities between states. dim = [NbStates, NbStates].
 # - priors (numpy.ndarray): Prior probabilities.
 #
 # Returns:
-#     numpy.ndarray: The path obtained from Viterbi algorithm.
-def HMM(likelihoodMatrix, exons, transitionMatrix, priors):
+#     numpy.ndarray: CNV informations [CNtype, startExonIndex, endExonIndex]
+def inferCNVsUsingHMM(CNcallOnSamp, exons, transMatrix, priors):
     # Create a boolean mask for non-called exons [-1]
-    exNotCalled = np.any(likelihoodMatrix == -1, axis=0)
+    exNotCalled = np.any(CNcallOnSamp == -1, axis=1)
 
     # Create a numpy array associating exons with chromosomes (counting)
     exon2Chr = exonOnChr(exons)
@@ -69,16 +81,22 @@ def HMM(likelihoodMatrix, exons, transitionMatrix, priors):
 
     # Iterate over each chromosome
     for thisChr in range(exon2Chr[-1] + 1):
+        print(thisChr)
         # Create a boolean mask for exons called on this chromosome
         exonsCalledThisChr = np.logical_and(~exNotCalled, exon2Chr == thisChr)
-        # Get the path for exons called on this chromosome using Viterbi algorithm
-        getPathThisChr = viterbi(likelihoodMatrix[exonsCalledThisChr], transitionMatrix, priors)
-        # Assign the obtained path to the corresponding exons
-        path[exonsCalledThisChr] = getPathThisChr
+        exonsInfThisChr = [sublist for sublist, m in zip(exons, exonsCalledThisChr) if m]
+        if len(exonsInfThisChr) != 0:
+            # Get the path for exons called on this chromosome using Viterbi algorithm
+            getPathThisChr = viterbi(CNcallOnSamp[exonsCalledThisChr], priors, transMatrix, exonsInfThisChr)
+            # Assign the obtained path to the corresponding exons
+            path[exonsCalledThisChr] = getPathThisChr
+    
+    # group exons with same CN to obtain CNVs
+    CNVSampList = aggregateCalls(path)
 
-    return path
-
-
+    return CNVSampList
+   
+    
 ###############################################################################
 ############################ PRIVATE FUNCTIONS ################################
 ###############################################################################
@@ -97,11 +115,12 @@ def HMM(likelihoodMatrix, exons, transitionMatrix, priors):
 #                                       dim = [NbObservations, NbStates]
 # - priors (np.ndarray[floats]): initial probabilities of each state
 # - transMatrix (np.ndarray[floats]): transition probabilities between states. dim = [NbStates, NbStates]
-# - exons (list of lists[str, int, int, str]): A list of exon information [CHR,START,END, EXONID]
+# - exonsInfThisChr (list of lists[str, int, int, str]): A list of exon information for one chromosome
+#                                                        [CHR,START,END, EXONID]
 #
 # Returns:
 # - bestPath (list[int]): the most likely sequence of hidden states given the observations and the HMM parameters.
-def viterbi(CNcallOneSamp, priors, transMatrix, exons):
+def viterbi(CNcallOneSamp, priors, transMatrix, exonsInfThisChr):
     # Fixed parameters
     # constant value used to normalise the distance between exons
     expectedCNVLength = 1.e8
@@ -123,7 +142,7 @@ def viterbi(CNcallOneSamp, priors, transMatrix, exons):
     pathProbs[:, 0] = priors + CNcallOneSamp[:, 0]
 
     # Keep track of the end position of the previous exon
-    previousExEnd = exons[0][2]
+    previousExEnd = exonsInfThisChr[0][2]
 
     # Step 3: Score propagation
     # Iterate through each observation, current states, and previous states.
@@ -132,14 +151,19 @@ def viterbi(CNcallOneSamp, priors, transMatrix, exons):
     #  - transition probabilities (weighted by the distance between exons)
     for obNum in range(1, NbObservations):
         # Get the start position of the current exon and deduce the distance between the previous and current exons
-        currentExStart = exons[obNum][1]
+        currentExStart = exonsInfThisChr[obNum][1]
         exDist = currentExStart - previousExEnd
 
         for state in range(NbStates):
             # Decreasing weighting for transitions between exons as a function of their distance
             # - favoring the normal number of copies (CN2)
             # - no weighting for overlapping exons
-            weight = 1.0
+            # Weighting for transitions between exons based on their distance
+            # - Greater distances are more penalized
+            # - Transition favoring the normal number of copies (CN2) is not weighted
+            # - No weighting for overlapping exons
+            # This weight is used to adjust the transition probabilities between states.
+            weight = 0
             if (state != 2) and (exDist > 0):
                 weight = -exDist / expectedCNVLength
 
@@ -161,7 +185,7 @@ def viterbi(CNcallOneSamp, priors, transMatrix, exons):
             pathProbs[state, obNum] = probMax
             path[state, obNum] = prevMax
 
-        previousExEnd = exons[obNum][2]
+        previousExEnd = exonsInfThisChr[obNum][2]
 
     # Step 4: Backtracking the path
     # Retrieve the most likely sequence of hidden states by backtracking through the "path" matrix.
@@ -173,3 +197,64 @@ def viterbi(CNcallOneSamp, priors, transMatrix, exons):
         bestPath[obNum - 1] = path[bestPath[obNum], obNum]
 
     return bestPath
+
+
+######################################
+# aggregateCalls
+# Groups the CNVs (Copy Number Variants) based on the specified conditions.
+# It then performs analysis on special cases and updates the boundaries of certain CNVs accordingly.
+# Finally, it returns an array CNVList containing the grouped and updated CNVs.
+#
+# Args:
+# - path (list[int]): the most likely sequence of hidden states given the observations and the HMM parameters.
+#
+# Returns:
+# - CNVList (np.ndarray[ints]): CNV informations [CNtype, startExonIndex, endExonIndex]
+def aggregateCalls(path):
+    CNVList = []
+    startExId = None
+    prevCN = None
+
+    # Group CNVs based on path
+    for i in range(len(path)):
+        currCN = path[i]
+        # Exclude CNs corresponding to no call exons and diploids (CN2, normal)
+        if currCN == -1 or currCN == 2:
+            # If the previous CNV exists, store the results and reset start
+            if startExId is not None:
+                CNVList.append([prevCN, startExId, endExId])
+                startExId = None
+            continue
+        # CNV case: CN0, CN1, CN3
+        else:
+            # First occurrence, store information of the first exon of the CNV
+            if startExId is None:
+                startExId = i
+                endExId = i
+                prevCN = currCN
+            # Difference between CNs, store results of the previous CNV and update information of the current CNV
+            elif currCN != prevCN:
+                CNVList.append([prevCN, startExId, endExId])
+                startExId = i
+                endExId = i
+                prevCN = currCN
+            # Same CN, update the end
+            else:
+                endExId = i
+
+    # Consider the last iteration
+    if startExId is not None:
+        CNVList.append([prevCN, startExId, endExId])
+
+    # Special cases:
+    # If a Homozygous Variant (HV) is followed by a Heterozygous Variant (HET) or vice versa,
+    # extend the HET CNV to the boundaries of the HV CNV.
+    # For Duplication CNVs (DUP), we do not want to change the boundaries if it has surrounding deletions.
+    for i in range(1, len(CNVList)):
+        if CNVList[i][0] == 1 and CNVList[i-1][0] == 0:
+            CNVList[i][1] = CNVList[i-1][1]
+
+        if CNVList[i][0] == 0 and CNVList[i-1][0] == 1:
+            CNVList[i-1][2] = CNVList[i][2]
+
+    return np.array(CNVList)
