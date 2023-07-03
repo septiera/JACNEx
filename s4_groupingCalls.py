@@ -156,6 +156,20 @@ def main(argv):
     logger.debug("Done getTransMatrix, in %.2fs", thisTime - startTime)
     startTime = thisTime
 
+    #############
+    # CNVs calls
+    result_array = np.empty((0, CNVsSampList.shape[1] + 1), dtype=np.unint)
+    for sampIndex in range(len(samples)):
+        # Extract the CN calls for the current sample
+        CNcallOneSamp = CNCallsArray[:, sampIndex * len(CNStatus): sampIndex * len(CNStatus) + len(CNStatus)]
+        # Perform CNV inference using HMM
+        CNVsSampList = groupCalls.HMM.inferCNVsUsingHMM(CNcallOneSamp, exons, transMatrix, priors)
+        # Create a column with sampIndex values
+        sampIndexColumn = np.full((CNVsSampList.shape[0], 1), sampIndex, dtype=CNVsSampList.dtype)
+        # Concatenate CNVsSampList with sampIndex column
+        CNVsSampListAddSampInd = np.hstack((CNVsSampList, sampIndexColumn))
+        # Stack CNVsSampList_with_sampIndex vertically with previous results
+        result_array = np.vstack((result_array, CNVsSampListAddSampInd))
 
 
 ####################################################################################
