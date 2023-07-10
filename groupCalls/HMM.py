@@ -2,6 +2,7 @@ import logging
 import numpy as np
 import scipy.stats
 import time
+import gzip
 
 # prevent PIL flooding the logs when we are in DEBUG loglevel
 logging.getLogger('PIL').setLevel(logging.WARNING)
@@ -60,7 +61,7 @@ def exonOnChr(exons):
 # Return the resulting CNVs stored in the CNVSampList array.
 #
 # Args:
-# - CNcallOnSamp (np.ndarray[floats]): pseudo emission probabilities (likelihood) of each state for each observation
+# - CNcallOneSamp (np.ndarray[floats]): pseudo emission probabilities (likelihood) of each state for each observation
 #                                          for one sample.
 #                                          dim = [NbStates, NbObservations]
 # - exons (list of lists[str, int, int, str]): A list of exon information [CHR,START,END, EXONID]
@@ -69,15 +70,17 @@ def exonOnChr(exons):
 #
 # Returns:
 #     numpy.ndarray: CNV informations [CNtype, startExonIndex, endExonIndex]
-def inferCNVsUsingHMM(CNcallOnSamp, exons, transMatrix, priors):
+def inferCNVsUsingHMM(CNcallOneSamp, exons, transMatrix, priors):
     # Create a boolean mask for non-called exons [-1]
-    exNotCalled = np.any(CNcallOnSamp == -1, axis=1)
+    exNotCalled = np.any(CNcallOneSamp == -1, axis=1)
 
     # Create a numpy array associating exons with chromosomes (counting)
     exon2Chr = exonOnChr(exons)
 
     # Initialize the path array with -1
     path = np.full(len(exons), -1, dtype=np.int8)
+
+    CNVSampArray = np.empty((0, 3), dtype=np.int)
 
     # Iterate over each chromosome
     for thisChr in range(exon2Chr[-1] + 1):
@@ -87,16 +90,26 @@ def inferCNVsUsingHMM(CNcallOnSamp, exons, transMatrix, priors):
         exonsInfThisChr = [sublist for sublist, m in zip(exons, exonsCalledThisChr) if m]
         if len(exonsInfThisChr) != 0:
             # Get the path for exons called on this chromosome using Viterbi algorithm
-            getPathThisChr = viterbi(CNcallOnSamp[exonsCalledThisChr], priors, transMatrix, exonsInfThisChr)
+            getPathThisChr = viterbi(CNcallOneSamp[exonsCalledThisChr], priors, transMatrix, exonsInfThisChr)
             # Assign the obtained path to the corresponding exons
             path[exonsCalledThisChr] = getPathThisChr
-    
-    # group exons with same CN to obtain CNVs
-    CNVSampList = aggregateCalls(path)
+        else:
+            continue  # no callable exons (e.g female no CNVs on chrY)
 
-    return CNVSampList
-   
-    
+        # group exons with same CN to obtain CNVs
+        CNVExIndSamp = aggregateCalls(path)
+
+        # Create a column with chr index
+        chrIndexColumn = np.full((CNVExIndSamp.shape[0], 1), thisChr, dtype=CNVExIndSamp.dtype)
+
+        # Concatenate CNVExIndSamp with chrIndexColumn
+        CNVExIndSampChr = np.hstack((CNVExIndSamp, chrIndexColumn))
+
+        CNVSampArray = np.vstack((CNVSampArray, CNVExIndSampChr))
+
+    return CNVSampArray
+
+
 ###############################################################################
 ############################ PRIVATE FUNCTIONS ################################
 ###############################################################################
@@ -155,9 +168,6 @@ def viterbi(CNcallOneSamp, priors, transMatrix, exonsInfThisChr):
         exDist = currentExStart - previousExEnd
 
         for state in range(NbStates):
-            # Decreasing weighting for transitions between exons as a function of their distance
-            # - favoring the normal number of copies (CN2)
-            # - no weighting for overlapping exons
             # Weighting for transitions between exons based on their distance
             # - Greater distances are more penalized
             # - Transition favoring the normal number of copies (CN2) is not weighted
@@ -251,10 +261,117 @@ def aggregateCalls(path):
     # extend the HET CNV to the boundaries of the HV CNV.
     # For Duplication CNVs (DUP), we do not want to change the boundaries if it has surrounding deletions.
     for i in range(1, len(CNVList)):
-        if CNVList[i][0] == 1 and CNVList[i-1][0] == 0:
-            CNVList[i][1] = CNVList[i-1][1]
+        if CNVList[i][0] == 1 and CNVList[i - 1][0] == 0:
+            CNVList[i][1] = CNVList[i - 1][1]
 
-        if CNVList[i][0] == 0 and CNVList[i-1][0] == 1:
-            CNVList[i-1][2] = CNVList[i][2]
+        if CNVList[i][0] == 0 and CNVList[i - 1][0] == 1:
+            CNVList[i - 1][2] = CNVList[i][2]
 
     return np.array(CNVList)
+
+
+##############
+# CNV2Vcf
+# Takes an array of CNV information, an array of exon information, and a
+# list of sample names as inputs.
+# It sorts the array of CNV informatio based on specific columns using np.lexsort.
+# Then, it iterates through the sorted array to create a VCF output list
+#
+# Args:
+# - CNVArray (np.ndarray[ints]) : an array of CNV information [CN,START,END,CHR,SAMPID]
+# - exons (list of lists[str, int, int, str]): A list of exon information [CHR,START,END, EXONID]
+# - samples (list[strs]): sample names
+# - padding [int]: user defined parameters (used in s1_countFrags.py)
+#
+# Returns:
+# - a list of lists (List[List[Any]]) representing the VCF output.
+#   Each inner list contains the information for a single VCF line.
+def CNV2Vcf(CNVArray, exons, samples, padding):
+    NBnonSampleColumns = 9  # ["#CHROM","POS","ID","REF","ALT","QUAL","FILTER","INFO","FORMAT"]
+    # Sort the array based on multiple columns in a specific order
+    # filtering step: END, START, CN, CHR
+    sorted_array = CNVArray[np.lexsort((CNVArray[:, 2], CNVArray[:, 1], CNVArray[:, 0], CNVArray[:, 3]))]
+
+    vcf = []  # output list
+
+    # Dictionary to store CNV information by key (chrom, pos, end, type)
+    cnv_dict = {}
+
+    for cnvIndex in range(len(sorted_array)):
+        cnvInfo = sorted_array[cnvIndex]
+        chrom = exons[cnvInfo[1]][0]  # str
+        # remove padding
+        pos = exons[cnvInfo[1]][1] + padding  # int
+        end = exons[cnvInfo[2]][2] - padding  # int
+        CNtype = cnvInfo[0]  # int
+        currentCNV = (chrom, pos, end, CNtype)
+
+        # CNV with the same key already exists in the dictionary,
+        # update the corresponding sample's value in the VCF line
+        if currentCNV in cnv_dict:
+            vcfLine = cnv_dict[currentCNV]
+            # Get the index of the sample in the VCF line
+            # (+9 to account for the non-sample columns)
+            sampleIndex = cnvInfo[3] + NBnonSampleColumns
+            # Determine the sample's genotype based on CNV type
+            sampleInfo = "1/1" if CNtype == 0 else "0/1"
+            vcfLine[sampleIndex] = sampleInfo
+
+        # CNV location and type not seen before, create a new VCF line
+        else:
+            if (CNtype != 3):
+                vcfLine = [chrom, pos, ".", ".", "<DEL>", ".", ".", "SVTYPE=DEL;END=" + str(end), "GT"]
+            else:
+                vcfLine = [chrom, pos, ".", ".", "<DUP>", ".", ".", "SVTYPE=DUP;END=" + str(end), "GT"]
+            # Set CN2 default values for all samples columns
+            sampleInfo = ["0/0"] * len(samples)
+            sampleIndex = cnvInfo[3] + NBnonSampleColumns
+            sampleInfo[sampleIndex] = "1/1" if CNtype == 0 else "0/1"
+            vcfLine += sampleInfo
+            # Store the VCF line in the dictionary for future reference
+            cnv_dict[currentCNV] = vcfLine
+            vcf.append(vcfLine)
+
+    return vcf
+
+
+##########################################
+# printVcf
+#
+# Args : 
+# - vcf (list of lists)
+# - outFile [str]: filename that doesn't exist, it can have a path component (which must exist),
+#                  output will be gzipped if outFile ends with '.gz'
+# - scriptName [str]
+# - samples (list[strs]): sample names.
+def printVcf(vcf, outFile, scriptName, samples):
+    try:
+        if outFile.endswith(".gz"):
+            outFH = gzip.open(outFile, "xt", compresslevel=6)
+        else:
+            outFH = open(outFile, "x")
+    except Exception as e:
+        logger.error("Cannot (gzip-)open CNCallsFile %s: %s", outFile, e)
+        raise Exception('cannot (gzip-)open CNCallsFile')
+    
+    # Header definition
+    toPrint = """##fileformat=VCFv4.3
+    ##fileDate=""" + time.strftime("%y%m%d") + """
+    ##source=""" + scriptName + """
+    ##ALT=<ID=DEL,Description="Deletion">
+    ##ALT=<ID=DUP,Description="Duplication">
+    ##INFO=<ID=SVTYPE,Number=1,Type=String,Description="Type of structural variant">
+    ##INFO=<ID=END,Number=1,Type=Integer,Description="End position of the variant described in this record">
+    ##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype (always 0/1 for duplications)">"""
+    toPrint += "\n"
+    outFH.write(toPrint)
+
+    colNames = ["#CHROM", "POS", "ID", "REF", "ALT", "QUAL", "FILTER", "INFO", "FORMAT"] + samples
+    print('\t'.join(colNames))
+    
+    #### fill results
+    for cnvIndex in range(len(vcf)):
+        toPrint = '\t'.join(str(x) for x in vcf[cnvIndex])
+        toPrint += "\n"
+        outFH.write(toPrint)
+    outFH.close()
