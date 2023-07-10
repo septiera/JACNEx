@@ -416,31 +416,33 @@ def preprocessExponFitPlot(clustID, meanIntergenicFPM, params, file):
     yLists.append(dens)
 
     # calculate the probability density function for the exponential distribution
-    makePDF(params, dr, yLists)
+    yLists.append(computeLikelihood(params, dr))
     plotLegs.append("expon={:.2f}, {:.2f}".format(params['loc'], params['scale']))
 
     figures.plots.plotExponentialFit(plotTitle, dr, yLists, plotLegs, file)
 
 
 ################################################
-# makePDF
-# Generate distributions's Probability Distribution Function (likelihood) and added it to yLists
+# computeLikelihood
+# Returns distributions's likelihood at the FPMs coordinates.
 # Args:
-# - params (dict[str:floats]): distribution parameters, including 'distribution', 'loc', and 'scale'.
-# - rangeData (list[floats]): range of FPM data
-# - yLists (list[floats]): computed PDF values are appended
+# - params (dict): distribution parameters, including 'distribution':scipy.distributionName,
+#                  'loc':float, and 'scale':float.
+# - FPMs (list[floats])
+#
+# Returns a np.ndarray[floats]: probability density (likelihood) for a concerned distribution and
+#                               FPMs.
 @timer.measure_time
-def makePDF(params, rangeData, yLists):
+def computeLikelihood(params, FPMs):
     # Separate parts of parameters
     distribution = params['distribution']
     loc = params['loc']
     scale = params['scale']
 
-    # Build PDF
-    x = rangeData
     # scipy v1.5.4 default np.float64 cannot be changed
-    y = distribution.pdf(x, loc=loc, scale=scale)
-    yLists.append(y)
+    y = distribution.pdf(FPMs, loc=loc, scale=scale)
+    
+    return y
 
 
 ##############################################
@@ -705,12 +707,11 @@ def sampFPM2Probs(exonFPM, NbTargetSamps, params, CNTypes):
     scalingDivisor = 100
 
     targetExonsFPM = exonFPM[:NbTargetSamps]
-    pdf_groups = []
+    likelihoods = np.zeros((len(CNTypes), len(targetExonsFPM)), dtype=np.float64)
 
     # Calculate the PDF for each set of parameters and each value of x
-    for cn in CNTypes:
-        makePDF(params[cn], targetExonsFPM, pdf_groups)
-    likelihoods = np.array(pdf_groups)  # np.float64 dictated by scipy
+    for cn in range(len(CNTypes)):
+        likelihoods[cn] = computeLikelihood(params[CNTypes[cn]], targetExonsFPM)
 
     # Find the minimum non-zero value in likelihoods using np.nextafter
     minNonZeroValue = np.nextafter(0, 1)  # Next representable floating-point value after zero
@@ -789,22 +790,22 @@ def preprocessExonProfilePlot(status, exonsFiltersSummary, params, unCaptThresho
     # creates FPM ranges base
     xi = np.linspace(0, np.max(exonFPM), 1000)
     # calculate the probability density function for the exponential distribution
-    makePDF(params["CN0"], xi, yLists)
+    yLists.append(computeLikelihood(params["CN0"], xi))
     ylim = np.max(yLists[0]) / 10
 
     if len(params) > 1:
         # calculate the probability density function for the gaussian distribution (CN2)
-        makePDF(params["CN2"], xi, yLists)
+        yLists.append(computeLikelihood(params["CN2"], xi))
         plotLegs.append(f"RG CN2={params['CN2']['loc']:.2f}, {params['CN2']['scale']:.2f}")
         ylim = 2 * np.max(yLists[1])
 
     if clusterSamps2Plot is not None:
         # calculate the probability density function for the gaussian distribution (CN1)
-        makePDF(params["CN1"], xi, yLists)
+        yLists.append(computeLikelihood(params["CN1"], xi))
         plotLegs.append(f"RG CN1={params['CN1']['loc']:.2f}, {params['CN1']['scale']:.2f}")
 
         # calculate the probability density function for the gaussian distribution (CN3)
-        makePDF(params["CN3"], xi, yLists)
+        yLists.append(computeLikelihood(params["CN3"], xi))
         plotLegs.append(f"RG CN3={params['CN3']['loc']:.2f}, {params['CN3']['scale']:.2f}")
 
         for samp in clusterSamps2Plot:
