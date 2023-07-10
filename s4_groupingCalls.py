@@ -15,6 +15,7 @@ import numpy as np
 ####### MAGE-CNV modules
 import CNCalls.CNCallsFile
 import groupCalls.transitions
+import groupCalls.HMM
 
 # set up logger, using inherited config, in case we get called as a module
 logger = logging.getLogger(__name__)
@@ -40,6 +41,7 @@ def parseArgs(argv):
     # optionnal args with default values
     priors = np.array([6.34e-4, 2.11e-3, 9.96e-1, 1.25e-3])
     CNStatus = ["CN0", "CN1", "CN2", "CN3"]
+    padding = 10
 
     usage = "NAME:\n" + scriptName + """\n
 
@@ -61,10 +63,11 @@ ARGUMENTS:
                       Files obtained from s1_countFrags.py
     --out [str]: file where results will be saved, must not pre-exist, will be gzipped if it ends
                  with '.gz', can have a path component but the subdir must exist
+    --padding [int] : number of bps used to pad the exon coordinates, default : """ + str(padding) + """
     -h , --help: display this help and exit\n"""
 
     try:
-        opts, args = getopt.gnu_getopt(sys.argv[1:], 'h', ["help", "calls=", "BPFolder=", "out="])
+        opts, args = getopt.gnu_getopt(sys.argv[1:], 'h', ["help", "calls=", "BPFolder=", "out=", "padding="])
     except getopt.GetoptError as e:
         raise Exception(e.msg + ". Try " + scriptName + " --help")
     if len(args) != 0:
@@ -80,6 +83,8 @@ ARGUMENTS:
             BPFolder = value
         elif opt in ("--out"):
             outFile = value
+        elif opt in ("--padding"):
+            padding = value
         else:
             raise Exception("unhandled option " + opt)
 
@@ -103,9 +108,16 @@ ARGUMENTS:
         raise Exception("outFile " + outFile + " already exists")
     elif (os.path.dirname(outFile) != '') and (not os.path.isdir(os.path.dirname(outFile))):
         raise Exception("the directory where outFile " + outFile + " should be created doesn't exist")
+    
+    try:
+        padding = int(padding)
+        if (padding < 0):
+            raise Exception()
+    except Exception:
+        raise Exception("padding must be a non-negative integer, not " + str(padding))
 
     # AOK, return everything that's needed
-    return(callsFile, CNStatus, priors, BPFolder, outFile)
+    return(callsFile, CNStatus, priors, BPFolder, outFile, padding)
 
 
 ###############################################################################
@@ -119,7 +131,7 @@ ARGUMENTS:
 # may be available in the log
 def main(argv):
     # parse, check and preprocess arguments
-    (callsFile, CNStatus, priors, BPFolder, outFile) = parseArgs(argv)
+    (callsFile, CNStatus, priors, BPFolder, outFile, padding) = parseArgs(argv)
 
     # args seem OK, start working
     logger.debug("called with: " + " ".join(argv[1:]))
@@ -147,7 +159,7 @@ def main(argv):
     ############
     # obtaining a list of observations and a transition matrix based on the data.
     try:
-        (transMatrix, exons2CN4Samps) = groupCalls.transitions.getTransMatrix(CNCallsArray, priors, samples, CNStatus, os.path.dirname(outFile))
+        transMatrix = groupCalls.transitions.getTransMatrix(CNCallsArray, priors, samples, CNStatus, os.path.dirname(outFile))
     except Exception as e:
         logger.error("getTransMatrix failed : %s", repr(e))
         raise Exception("getTransMatrix failed")
@@ -158,20 +170,61 @@ def main(argv):
 
     #############
     # CNVs calls
-    result_array = np.empty((0, CNVsSampList.shape[1] + 1), dtype=np.unint)
-    for sampIndex in range(len(samples)):
-        # Extract the CN calls for the current sample
-        CNcallOneSamp = CNCallsArray[:, sampIndex * len(CNStatus): sampIndex * len(CNStatus) + len(CNStatus)]
-        # Perform CNV inference using HMM
-        CNVsSampList = groupCalls.HMM.inferCNVsUsingHMM(CNcallOneSamp, exons, transMatrix, priors)
-        # Create a column with sampIndex values
-        sampIndexColumn = np.full((CNVsSampList.shape[0], 1), sampIndex, dtype=CNVsSampList.dtype)
-        # Concatenate CNVsSampList with sampIndex column
-        CNVsSampListAddSampInd = np.hstack((CNVsSampList, sampIndexColumn))
-        # Stack CNVsSampList_with_sampIndex vertically with previous results
-        result_array = np.vstack((result_array, CNVsSampListAddSampInd))
+    CNVArray = np.empty((0, 4), dtype=np.int)
+    try:
+        for sampIndex in range(len(samples)):
+            # Extract the CN calls for the current sample
+            CNcallOneSamp = CNCallsArray[:, sampIndex * len(CNStatus): sampIndex * len(CNStatus) + len(CNStatus)]
+            try:
+                # Perform CNV inference using HMM
+                CNVsSampList = groupCalls.HMM.inferCNVsUsingHMM(CNcallOneSamp, exons, transMatrix, priors)
+            except Exception as e:
+                logger.error("inferCNVsUsingHMM failed : %s", repr(e))
+                raise Exception("inferCNVsUsingHMM failed")
+            
+            # Create a column with sampIndex values
+            sampIndexColumn = np.full((CNVsSampList.shape[0], 1), sampIndex, dtype=CNVsSampList.dtype)
+            # Concatenate CNVsSampList with sampIndex column
+            CNVsSampListAddSampInd = np.hstack((CNVsSampList, sampIndexColumn))
+            # Stack CNVsSampList_with_sampIndex vertically with previous results
+            CNVArray = np.vstack((CNVArray, CNVsSampListAddSampInd))
+            
+    except Exception as e:
+        logger.error("CNVs calls failed : %s", repr(e))
+        raise Exception("CNVs calls failed")
+    
+    thisTime = time.time()
+    logger.debug("Done CNVs calls, in %.2fs", thisTime - startTime)
+    startTime = thisTime
 
-
+    ############
+    # vcf format
+    try:
+        resVcf = groupCalls.HMM.CNV2Vcf(CNVArray, exons, samples, padding)
+    except Exception as e:
+        logger.error("CNV2Vcf failed : %s", repr(e))
+        raise Exception("CNV2Vcf failed")
+    
+    thisTime = time.time()
+    logger.debug("Done CNV2Vcf, in %.2fs", thisTime - startTime)
+    startTime = thisTime
+    
+    ###########
+    # print results
+    try:
+        groupCalls.HMM.printVcf(resVcf, outFile, scriptName, samples)
+    except Exception as e:
+        logger.error("printVcf failed : %s", repr(e))
+        raise Exception("printVcf failed")
+    
+    thisTime = time.time()
+    logger.debug("Done printVcf, in %.2fs", thisTime - startTime)
+    startTime = thisTime
+    
+    thisTime = time.time()
+    logger.debug("Done printing groupingCalls, in %.2fs", thisTime - startTime)
+    logger.info("ALL DONE")
+    
 ####################################################################################
 ######################################## Main ######################################
 ####################################################################################
