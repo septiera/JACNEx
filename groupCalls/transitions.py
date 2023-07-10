@@ -82,7 +82,7 @@ def getTransMatrix(CNCallsArray, priors, samples, CNStatus, outFolder):
     row_sums = np.sum(countTransCN, axis=1, keepdims=True)
     normalized_arr = countTransCN / row_sums
     # Calculate the logarithm (base 10) of the normalized array for HMM transition matrix
-    transMatrix = np.log10(normalized_arr) # to return
+    transMatrix = np.log10(normalized_arr)  # to return
 
     #####################################
     ####### DEBUG PART ##################
@@ -104,4 +104,4 @@ def getTransMatrix(CNCallsArray, priors, samples, CNStatus, outFolder):
             logger.error("barPlot failed: %s", repr(e))
             raise
 
-    return (transMatrix, exons2CN4Samps)
+    return (transMatrix)
