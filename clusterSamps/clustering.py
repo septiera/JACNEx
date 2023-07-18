@@ -135,7 +135,7 @@ def clustersBuilds(FPMarray, maxCorr, minCorr, minSamps, plotFile):
 ###############################################################################
 #############################
 # computeSampsLinks
-# Pearson correlation distance (sqrt(1-r)) is unlikely to be a sensible
+# Pearson correlation distance (sqrt(1-r)) is likely to be a sensible
 # distance when clustering samples.
 # (sqrt(1-r)) is a true distance respecting symmetry, separation and triangular
 # inequality

@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 # - ylim (float): Y max plot limit
 # - pdf: matplotlib PDF object where the plot will be saved
 #
-# Returns a pdf file in the output folder
+# Returns nothing.
 def plotDensities(title, dataRanges, densities, legends, line1, line2, line1legend, line2legend, ylim, pdf):
     # sanity
     if (len(dataRanges) != len(densities)) or (len(dataRanges) != len(legends)):
@@ -81,7 +81,7 @@ def plotDensities(title, dataRanges, densities, legends, line1, line2, line1lege
 # - CM [str]: clustering method
 # - pdf: matplotlib PDF object where the plot will be saved
 #
-# Returns a pdf file in the output folder
+# Returns nothing.
 def plotDendrogram(linksMatrix, labelsGp, minDist, CM, pdf):
     # Disable interactive mode
     matplotlib.pyplot.ioff()

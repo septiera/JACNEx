@@ -42,7 +42,6 @@ def parseArgs(argv):
     maxCorr = 0.95
     minCorr = 0.85
     plotDir = "./plotDir/"
-    sexPred = False
 
     usage = "NAME:\n" + scriptName + """\n
 DESCRIPTION:
@@ -72,12 +71,10 @@ ARGUMENTS:
                       the clusters. A too high threshold will lead to a massive elimination of
                       non-clustered samples. default: """ + str(minCorr) + """
    --plotDir[str]: subdir (created if needed) where QC plot files will be produced, default:  """ + plotDir + """
-   --sexPred (optional): if set, predict the sex of each sample, and append the predictions to the
-                         outFile as two "clusters", one for each sex, listing the corresponding samples
    -h , --help  : display this help and exit\n"""
 
     try:
-        opts, args = getopt.gnu_getopt(argv[1:], 'h', ["help", "counts=", "out=", "minSamps=", "maxCorr=", "minCorr=", "plotDir=", "sexPred"])
+        opts, args = getopt.gnu_getopt(argv[1:], 'h', ["help", "counts=", "out=", "minSamps=", "maxCorr=", "minCorr=", "plotDir="])
     except getopt.GetoptError as e:
         raise Exception(e.msg + ". Try " + scriptName + " --help")
     if len(args) != 0:
@@ -99,8 +96,6 @@ ARGUMENTS:
             minCorr = value
         elif (opt in ("--plotDir")):
             plotDir = value
-        elif (opt in ("--sexPred")):
-            sexPred = True
         else:
             raise Exception("unhandled option " + opt)
 
@@ -149,7 +144,7 @@ ARGUMENTS:
             raise Exception("plotDir " + plotDir + " doesn't exist and can't be mkdir'd: " + str(e))
 
     # AOK, return everything that's needed
-    return(countsFile, outFile, minSamps, maxCorr, minCorr, plotDir, sexPred)
+    return(countsFile, outFile, minSamps, maxCorr, minCorr, plotDir)
 
 
 ####################################################
@@ -159,7 +154,7 @@ ARGUMENTS:
 # may be available in the log
 def main(argv):
     # parse, check and preprocess arguments
-    (countsFile, outFile, minSamps, maxCorr, minCorr, plotDir, sexPred) = parseArgs(argv)
+    (countsFile, outFile, minSamps, maxCorr, minCorr, plotDir) = parseArgs(argv)
 
     # args seem OK, start working
     logger.debug("called with: " + " ".join(argv[1:]))
