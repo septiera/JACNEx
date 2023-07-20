@@ -1,6 +1,5 @@
 import logging
 import numpy as np
-import scipy.stats
 import time
 import gzip
 
@@ -44,230 +43,231 @@ def exonOnChr(exons):
     return exon2Chr
 
 
-#######################################
-# inferCNVsUsingHMM
-# Implements the Hidden Markov Model (HMM) algorithm to infer copy number variations (CNVs)
-# from a given sample's copy number calls.
-# Here's an overview of its steps:
-# 1- Create a boolean mask to identify non-called exons in the CNcallOnSamp array.
-# 2- Associate each exon with its corresponding chromosome using the exonOnChr function.
-# 3- Initialize the path array with -1 as a placeholder for inferred CNVs.
-# 4- Iterate over each chromosome present in the dataset.
-#     -Create a boolean mask to identify the exons called on the current chromosome.
-#     -Apply the Viterbi algorithm using the viterbi function to obtain the inferred path
-#      (CNVs) for the called exons.
-#     -Assign the obtained path to the corresponding exons in the path array.
-# 5- Group exons with the same copy number to obtain the CNVs using the aggregateCalls function.
-# Return the resulting CNVs stored in the CNVSampList array.
-#
-# Args:
-# - CNcallOneSamp (np.ndarray[floats]): pseudo emission probabilities (likelihood) of each state for each observation
-#                                          for one sample.
-#                                          dim = [NbStates, NbObservations]
-# - exons (list of lists[str, int, int, str]): A list of exon information [CHR,START,END, EXONID]
-# - transMatrix (np.ndarray[floats]): transition probabilities between states. dim = [NbStates, NbStates].
-# - priors (numpy.ndarray): Prior probabilities.
-#
-# Returns:
-#     numpy.ndarray: CNV informations [CNtype, startExonIndex, endExonIndex]
-def inferCNVsUsingHMM(CNcallOneSamp, exons, transMatrix, priors):
-    # Create a boolean mask for non-called exons [-1]
-    exNotCalled = np.any(CNcallOneSamp == -1, axis=1)
-
-    # Create a numpy array associating exons with chromosomes (counting)
-    exon2Chr = exonOnChr(exons)
-
-    # Initialize the path array with -1
-    path = np.full(len(exons), -1, dtype=np.int8)
-
-    CNVSampArray = np.empty((0, 3), dtype=np.int)
-
-    # Iterate over each chromosome
-    for thisChr in range(exon2Chr[-1] + 1):
-        print(thisChr)
-        # Create a boolean mask for exons called on this chromosome
-        exonsCalledThisChr = np.logical_and(~exNotCalled, exon2Chr == thisChr)
-        exonsInfThisChr = [sublist for sublist, m in zip(exons, exonsCalledThisChr) if m]
-        if len(exonsInfThisChr) != 0:
-            # Get the path for exons called on this chromosome using Viterbi algorithm
-            getPathThisChr = viterbi(CNcallOneSamp[exonsCalledThisChr], priors, transMatrix, exonsInfThisChr)
-            # Assign the obtained path to the corresponding exons
-            path[exonsCalledThisChr] = getPathThisChr
-        else:
-            continue  # no callable exons (e.g female no CNVs on chrY)
-
-        # group exons with same CN to obtain CNVs
-        CNVExIndSamp = aggregateCalls(path)
-
-        # Create a column with chr index
-        chrIndexColumn = np.full((CNVExIndSamp.shape[0], 1), thisChr, dtype=CNVExIndSamp.dtype)
-
-        # Concatenate CNVExIndSamp with chrIndexColumn
-        CNVExIndSampChr = np.hstack((CNVExIndSamp, chrIndexColumn))
-
-        CNVSampArray = np.vstack((CNVSampArray, CNVExIndSampChr))
-
-    return CNVSampArray
-
-
 ###############################################################################
 ############################ PRIVATE FUNCTIONS ################################
 ###############################################################################
 ######################################
 # viterbi
-# Implements the Viterbi algorithm to compute the most likely sequence of hidden states given observed emissions.
-# It initializes the dynamic programming matrix, propagates scores through each observation, and performs
-# backtracking to find the optimal state sequence. Additionally, it incorporates a weight ponderation based
-# on the length of exons.
-# This weight is applied to transitions between exons, favoring the normal number of copies (CN2) and reducing
-# the impact of transitions between distant exons.
+# Implements the Viterbi algorithm to compute the most likely sequence of hidden
+# states given observed emissions.
+# It initializes the dynamic programming matrix, propagates scores through each
+# observation, and performs backtracking to find the optimal state sequence.
 #
 # Args:
-# - CNcallOneSamp (np.ndarray[floats]): pseudo emission probabilities (log10_likelihood) of each state for each observation
-#                                       for one sample
+# - CNcallOneSamp (np.ndarray[floats]): pseudo emission probabilities (likelihood)
+#                                       of each state for each observation for one sample
 #                                       dim = [NbObservations, NbStates]
-# - priors (np.ndarray[floats]): initial probabilities of each state
-# - transMatrix (np.ndarray[floats]): transition probabilities between states. dim = [NbStates, NbStates]
-# - exonsInfThisChr (list of lists[str, int, int, str]): A list of exon information for one chromosome
-#                                                        [CHR,START,END, EXONID]
+# - transMatrix (np.ndarray[floats]): transition probabilities between states + void status
+#                                     dim = [NbStates +1, NbStates + 1]
 #
 # Returns:
-# - bestPath (list[int]): the most likely sequence of hidden states given the observations and the HMM parameters.
-def viterbi(CNcallOneSamp, priors, transMatrix, exonsInfThisChr):
-    # Fixed parameters
-    # constant value used to normalise the distance between exons
-    expectedCNVLength = 1.e8
-    # Get the dimensions of the input matrix
-    NbObservations, NbStates = CNcallOneSamp.shape
+# - CNVs (list of lists[int,int,int,str]): [CNtype, FirstExonStart, LastExonEnd, CHR] to complete
+def viterbi(CNCallOneSamp, transMatrix):
+    CNVs = []  # list of lists to return
 
-    # Transpose the input matrix in the same format as the emission matrix in the classic Viterbi algorithm
-    # dim = [NbStates * NbObservations]
-    CNcallOneSamp = CNcallOneSamp.transpose()
+    # np.ndarray of called exon indexes
+    exIndexCalled = np.where(np.all(CNCallOneSamp != -1, axis=1))[0]
+
+    # Get the dimensions of the input matrix
+    NbObservations = len(exIndexCalled)
+    NbStatesWithVoid = len(transMatrix)
+
+    # control that the right number of hidden state
+    if NbStatesWithVoid != CNCallOneSamp.shape[1] + 1:
+        logger.error("NbStates not consistent with number of columns + 1 in CNcallOneSamp")
+        raise
+
+    # Transpose the input matrix in the same format as the emission matrix in the classic
+    # Viterbi algorithm, dim = [NbStates * NbObservations]
+    CNCallOneSamp = CNCallOneSamp.transpose()
 
     # Step 1: Initialize variables
-    # The algorithm starts by initializing the dynamic programming matrix "pathProbs" and the "path" matrix.
-    # pathProbs: stores the scores of state sequences up to a certain observation,
-    # path: is used to store the indices of previous states with the highest scores.
-    pathProbs = np.full((NbStates, NbObservations), -np.inf, dtype=np.float128)
-    path = np.zeros((NbStates, NbObservations), dtype=np.uint8)
+    # probsPrev[i]: stores the probability of the most likely path ending in state i at the previous exon
+    probsPrev = np.zeros(NbStatesWithVoid, dtype=np.float128)
+    probsPrev[0] = 1
+    # probsCurrent[i]: same ending at current exon
+    probsCurrent = np.zeros(NbStatesWithVoid, dtype=np.float128)
+    # path[i,e]: state at exon e-1 that produces the highest probability ending in state i at exon e
+    # (ie, probsCurrent[i])
+    # this state is 0 (void) if the path starts here
+    path = np.zeros((NbStatesWithVoid, NbObservations), dtype=np.uint8)
 
-    # Step 2: Fill the first column of path probabilities with prior values
-    pathProbs[:, 0] = priors + CNcallOneSamp[:, 0]
-
-    # Keep track of the end position of the previous exon
-    previousExEnd = exonsInfThisChr[0][2]
-
-    # Step 3: Score propagation
+    # Step 2: Score propagation
     # Iterate through each observation, current states, and previous states.
     # Calculate the score of each state by considering:
     #  - the scores of previous states
-    #  - transition probabilities (weighted by the distance between exons)
-    for obNum in range(1, NbObservations):
-        # Get the start position of the current exon and deduce the distance between the previous and current exons
-        currentExStart = exonsInfThisChr[obNum][1]
-        exDist = currentExStart - previousExEnd
+    #  - transition probabilities
+    exonIndex = 0
+    while exonIndex < len(exIndexCalled):
 
-        for state in range(NbStates):
-            # Weighting for transitions between exons based on their distance
-            # - Greater distances are more penalized
-            # - Transition favoring the normal number of copies (CN2) is not weighted
-            # - No weighting for overlapping exons
-            # This weight is used to adjust the transition probabilities between states.
-            weight = 0
-            if (state != 2) and (exDist > 0):
-                weight = -exDist / expectedCNVLength
+        for currentState in range(NbStatesWithVoid):
+            probMax = -1
+            prevStateMax = -1
 
-            probMax = -np.inf
-            prevMax = -1
+            # state 0 == void is never in a path except at initialisation/reset => keep defaults
+            if currentState == 0:
+                probsCurrent[currentState] = 0
+                path[currentState, exonIndex] = 0
+                continue
 
-            for prevState in range(NbStates):
-                pondTransition = (transMatrix[prevState, state] + weight)
-                # Calculate the probability of observing the current observation given a previous state
-                prob = pathProbs[prevState, obNum - 1] + pondTransition + CNcallOneSamp[state, obNum]
-                # Find the previous state with the maximum probability
-                # Update the value of the current state ("pathProbs")
-                # Store the index of the previous state with the maximum probability in the "path" matrix
-                if prob > probMax:
-                    probMax = prob
-                    prevMax = prevState
+            else:
+                for prevState in range(NbStatesWithVoid):
+                    # Calculate the probability of observing the current observation given a previous state
+                    prob = (probsPrev[prevState] *
+                            transMatrix[prevState, currentState] *
+                            CNCallOneSamp[currentState - 1, exIndexCalled[exonIndex]])
+                    # currentState - 1 because CNCallOneSamp doesn't have values for void state
 
-            # Store the maximum probability and CN type index for the current state and observation
-            pathProbs[state, obNum] = probMax
-            path[state, obNum] = prevMax
+                    # Find the previous state with the maximum probability
+                    # Store the index of the previous state with the maximum probability in the "path" matrix
+                    if prob >= probMax:
+                        probMax = prob
+                        prevStateMax = prevState
 
-        previousExEnd = exonsInfThisChr[obNum][2]
+                # Store the maximum probability and CN type index for the current state and observation
+                probsCurrent[currentState] = probMax
+                path[currentState, exonIndex] = prevStateMax
 
-    # Step 4: Backtracking the path
-    # Retrieve the most likely sequence of hidden states by backtracking through the "path" matrix.
-    # Start with the state with the highest score in the last row of the "pathProbs" matrix.
-    # Follow the indices of previous states stored in the "path" matrix to retrieve the previous state at each observation.
-    bestPath = np.full(NbObservations, -1, dtype=np.uint8)
-    bestPath[NbObservations - 1] = pathProbs[:, NbObservations - 1].argmax()
-    for obNum in range(NbObservations - 1, 0, -1):
-        bestPath[obNum - 1] = path[bestPath[obNum], obNum]
+        # if all LIVE states (currentScore > 0) at currentExon have the same
+        # predecessor state and that state is CN2 : backtrack from [previous exon, CN2]
+        # and reset
+        if (((probsCurrent[1] == 0) or (path[1, exonIndex] == 3)) and
+            ((probsCurrent[2] == 0) or (path[2, exonIndex] == 3)) and
+            ((probsCurrent[3] == 0) or (path[3, exonIndex] == 3)) and
+            ((probsCurrent[4] == 0) or (path[4, exonIndex] == 3))):
+            # print("viterbi reset:", exonIndex)
+            CNVs.extend(backtrack_aggregateCalls(path, exonIndex - 1, 3))
+            # reset prevScores to (1,0,0,0,0), and loop again (WITHOUT incrementing exonIndex)
+            probsPrev[1:] = 0
+            probsPrev[0] = 1
+            path[0, exonIndex - 1] = 0
+            path[1:, exonIndex - 1] = 5
+            continue
 
-    return bestPath
+        else:
+            for i in range(len(probsCurrent)):
+                probsPrev[i] = probsCurrent[i]
+            exonIndex += 1
+
+    CNVs.extend(backtrack_aggregateCalls(path, exonIndex - 1, probsPrev.argmax()))
+
+    mapCNVIndicesToExons(CNVs, exIndexCalled)
+
+    return CNVs
 
 
-######################################
-# aggregateCalls
-# Groups the CNVs (Copy Number Variants) based on the specified conditions.
-# It then performs analysis on special cases and updates the boundaries of certain CNVs accordingly.
-# Finally, it returns an array CNVList containing the grouped and updated CNVs.
+################################
+# backtrack_aggregateCalls
+# Retrieve the most likely sequence of hidden states by backtracking through the "path" matrix.
+# aggregation of exons if same CN predicted in CNVs.
 #
 # Args:
-# - path (list[int]): the most likely sequence of hidden states given the observations and the HMM parameters.
+# - path (np.ndarray[unint]): dynamic matrix generated by the Viterbi algorithm, used to store
+#                             the optimal state transitions for each time step.
+#                             dim = [NBState, NBObservations]
+# - lastExon [int]: last exon traversed by the viterbi algorithm before the reset or the end
+#                   of the chromosome path.
+# - lastState [int]: state with the best probability for the last exon, best path.
+#
+# Returns a list of CNVs, a CNV == [CNType, startExon, endExon] where CNType is the CN,
+# startExon and endExon are the indexes (in "path")
+def backtrack_aggregateCalls(path, lastExon, lastState):
+    CNVs = []
+    startExon = None
+    endExon = None
+    # retention of an exon index to correctly delimit hetDELs in special cases
+    # (see following description in the code)
+    hetDelEndExon = None
+
+    # Iterate over exons in reverse order
+    nextExon = lastExon
+    nextState = lastState
+
+    if nextState != 3:
+        endExon = nextExon
+
+    while True:
+        currentState = path[nextState, nextExon]
+
+        # currentState == 0, we are at the beginning of the best path,
+        # create first CNV(s) if needed
+        if currentState == 0:
+            if nextState != 3:
+                startExon = nextExon
+                CNVs.append([nextState, startExon, endExon])
+                if hetDelEndExon is not None:
+                    CNVs.append([2, startExon, hetDelEndExon])
+                    hetDelEndExon = None
+            break
+
+        elif currentState == nextState:
+            pass
+
+        elif nextState == 3:
+            endExon = nextExon - 1
+
+        elif currentState == 3:
+            startExon = nextExon
+            CNVs.append([nextState, startExon, endExon])
+            if hetDelEndExon is not None:
+                CNVs.append([2, startExon, hetDelEndExon])
+                hetDelEndExon = None
+
+        # DUPs
+        elif (currentState == 4) or (nextState == 4):
+            startExon = nextExon
+            CNVs.append([nextState, startExon, endExon])
+            if hetDelEndExon is not None:
+                CNVs.append([2, startExon, hetDelEndExon])
+                hetDelEndExon = None
+            endExon = nextExon - 1
+
+        # Special cases:
+        # If a HVDEL is followed by a HETDEL or vice versa,
+        # extend the HETDEL to the boundaries of the HVDEL.
+        # 1) HETDEL followed by HVDEL
+        elif (currentState == 2) and (nextState == 1):
+            # create HVDEL
+            startExon = nextExon
+            CNVs.append([nextState, startExon, endExon])
+            # keep endExon except if HVDEL was preceded by another HETDEL,
+            # in which case ...
+            if hetDelEndExon is not None:
+                endExon = hetDelEndExon
+                hetDelEndExon = None
+
+        # 2) HVDEL followed by HETDEL
+        elif (currentState == 1) and (nextState == 2):
+            hetDelEndExon = endExon
+            endExon = nextExon - 1
+        else:
+            raise Exception("not captured case")
+
+        nextState = currentState
+        nextExon -= 1
+
+    CNVs.reverse()
+
+    return(CNVs)
+
+
+############
+# mapCNVIndicesToExons
+# Map CNV indexes to "exons" indexes based on the 'exIndexCalled' list.
+#
+# Args:
+# CNVs (list of lists): A list containing CNV events, where each event is represented
+#                       as a list [start, end, state].
+# exIndexCalled (list[int]): A list containing the indexes of exons used in the Viterbi
+#                            algorithm's output.
 #
 # Returns:
-# - CNVList (np.ndarray[ints]): CNV informations [CNtype, startExonIndex, endExonIndex]
-def aggregateCalls(path):
-    CNVList = []
-    startExId = None
-    prevCN = None
-
-    # Group CNVs based on path
-    for i in range(len(path)):
-        currCN = path[i]
-        # Exclude CNs corresponding to no call exons and diploids (CN2, normal)
-        if currCN == -1 or currCN == 2:
-            # If the previous CNV exists, store the results and reset start
-            if startExId is not None:
-                CNVList.append([prevCN, startExId, endExId])
-                startExId = None
-            continue
-        # CNV case: CN0, CN1, CN3
-        else:
-            # First occurrence, store information of the first exon of the CNV
-            if startExId is None:
-                startExId = i
-                endExId = i
-                prevCN = currCN
-            # Difference between CNs, store results of the previous CNV and update information of the current CNV
-            elif currCN != prevCN:
-                CNVList.append([prevCN, startExId, endExId])
-                startExId = i
-                endExId = i
-                prevCN = currCN
-            # Same CN, update the end
-            else:
-                endExId = i
-
-    # Consider the last iteration
-    if startExId is not None:
-        CNVList.append([prevCN, startExId, endExId])
-
-    # Special cases:
-    # If a Homozygous Variant (HV) is followed by a Heterozygous Variant (HET) or vice versa,
-    # extend the HET CNV to the boundaries of the HV CNV.
-    # For Duplication CNVs (DUP), we do not want to change the boundaries if it has surrounding deletions.
-    for i in range(1, len(CNVList)):
-        if CNVList[i][0] == 1 and CNVList[i - 1][0] == 0:
-            CNVList[i][1] = CNVList[i - 1][1]
-
-        if CNVList[i][0] == 0 and CNVList[i - 1][0] == 1:
-            CNVList[i - 1][2] = CNVList[i][2]
-
-    return np.array(CNVList)
+# None (The CNVs list will be modified in-place.)
+def mapCNVIndicesToExons(CNVs, exIndexCalled):
+    for event in range(len(CNVs)):
+        CNVs[event][0] = CNVs[event][0] - 1
+        CNVs[event][1] = exIndexCalled[CNVs[event][1]]
+        CNVs[event][2] = exIndexCalled[CNVs[event][2]]
 
 
 ##############
@@ -338,7 +338,7 @@ def CNV2Vcf(CNVArray, exons, samples, padding):
 ##########################################
 # printVcf
 #
-# Args : 
+# Args :
 # - vcf (list of lists)
 # - outFile [str]: filename that doesn't exist, it can have a path component (which must exist),
 #                  output will be gzipped if outFile ends with '.gz'
@@ -353,7 +353,7 @@ def printVcf(vcf, outFile, scriptName, samples):
     except Exception as e:
         logger.error("Cannot (gzip-)open CNCallsFile %s: %s", outFile, e)
         raise Exception('cannot (gzip-)open CNCallsFile')
-    
+
     # Header definition
     toPrint = """##fileformat=VCFv4.3
     ##fileDate=""" + time.strftime("%y%m%d") + """
@@ -368,7 +368,7 @@ def printVcf(vcf, outFile, scriptName, samples):
 
     colNames = ["#CHROM", "POS", "ID", "REF", "ALT", "QUAL", "FILTER", "INFO", "FORMAT"] + samples
     print('\t'.join(colNames))
-    
+
     #### fill results
     for cnvIndex in range(len(vcf)):
         toPrint = '\t'.join(str(x) for x in vcf[cnvIndex])
