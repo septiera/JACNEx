@@ -14,94 +14,86 @@ logger = logging.getLogger(__name__)
 ############################ PUBLIC FUNCTIONS #################################
 ###############################################################################
 # getTransMatrix
-# Calculates the copy number transition matrix and copy number predictions for
-# exons and samples.
-# It iterates over each sample, filters out samples with all probabilities set to -1,
-# and calculates the weighted probabilities.
-# It determines the most probable copy number state for each exon and updates the
-# copy number counts by samples and copy number predictions for exons and samples.
-# Finally, it normalizes the copy number transition counts, calculates the logarithm
-# (base 10) of the normalized array for the transition matrix.
-# With  logger debug mode, prints the normalized copy number transition counts
-# and the transition matrix used for the hidden Markov model (HMM).
-# It generates a bar plot of the copy number counts by samples.
+# calculates the copy number transition matrix from a cluster and predictions for
+# exons and samples based on likelihoods(probability density) and prior probabilities.
+# It filters out irrelevant samples, determines the most probable copy number states
+# for each exon, and normalizes the transition counts.
+# The resulting transition matrix includes an additional 'void' state that incorporates
+# the priors for all current observations, providing better initialization and
+# resets during the Viterbi algorithm.
+# Additionally, it generates a bar plot of copy number counts by samples.
 #
 # Args:
-# - CNCallsArray (np.ndarray[floats]): log-likelihoods for each CN, each exon, each sample
-#                                     dim = [nbExons, (nbSamps * nbCNStates)]
-# - priors (np.ndarray[floats]): log-Prior probabilities for each copy number status.
+# - CNCallsArray (np.ndarray[floats]): likelihoods for each CN, each exon, each sample from a cluster
+#                                      dim = [nbExons, (nbSamps * nbCNStates)]
+# - priors (np.ndarray[floats]): prior probabilities for each copy number status.
+# - sampsInClust (list[int]): cluster "samples" indexes
 # - samples (list[str]): sample names
 # - CNStatus (list[str]): Names of copy number types.
 # - outFolder [str] : path to save the graphical representation.
 #
-# Returns a tuple (transMatrix, exons2CN4Samps)
-# - transMatrix (np.ndarray[floats]): transition matrix used for the hidden Markov model.
-#                                     dim = [nbStates, nbStates]
-# - exons2CN4Samps(np.ndarray[int]) : observation lists for each sample (conserved no call as -1).
-#                                     dim = [NbExons, NbSamps]
-def getTransMatrix(CNCallsArray, priors, samples, CNStatus, outFolder):
-    NBSamps = len(samples)
-    NBStates = len(CNStatus)
-    NBExons = CNCallsArray.shape[0]
+# Returns:
+# - normalized_arr (np.ndarray[floats]): transition matrix used for the hidden Markov model,
+#                                        including the "void" state.
+#                                        dim = [nbStates+1, nbStates+1]
+def getTransMatrix(CNCallsArray, priors, sampsInClust, samples, CNStatus, outFile):
+    nbSamps = len(sampsInClust)
+    nbStates = len(CNStatus)
+    nbExons = CNCallsArray.shape[0]
 
     # Initialize arrays
-    CNCountsBySamps = np.zeros((NBSamps, NBStates), dtype=int)
-    exons2CN4Samps = np.full((NBExons, NBSamps), -1, dtype=np.int8)  # to return
-    countTransCN = np.zeros((NBStates, NBStates), dtype=int)
+    sampCnCounts = np.zeros((nbSamps, nbStates), dtype=int)
+    sampBestPath = np.full((nbExons, nbSamps), -1, dtype=np.int8)
+    transitions = np.zeros((nbStates, nbStates), dtype=int)
 
-    filtered_samples = set()  # Set to store filtered sample indexes
+    for sampIndexGp in range(len(sampsInClust)):
+        sampleIndex = sampsInClust[sampIndexGp]
+        sampProbsArray = CNCallsArray[:, sampleIndex * nbStates:sampleIndex * nbStates + nbStates]
 
-    for sampleIndex in range(NBSamps):
-        exonCallInd = 0
-        SampProbsArray = CNCallsArray[:, sampleIndex * NBStates:sampleIndex * NBStates + NBStates]
-
-        # Check if the entire probsArray is -1 for each sample
-        if np.all(SampProbsArray == -1):
-            filtered_samples.add(sampleIndex)
+        # filter no call samples
+        if np.all(sampProbsArray == -1):
             print("Filtered samples:", samples[sampleIndex])
             continue
 
         # Filter -1 values
-        exonCallInd = np.where(np.any(SampProbsArray != -1, axis=1))[0]
+        exonCall = np.where(np.any(sampProbsArray != -1, axis=1))[0]
 
         # Calculate the weighted probabilities using filtered SampProbsArray and priors
-        callprobsArray = SampProbsArray[exonCallInd, :]
-        logOdds = callprobsArray + priors
+        callProbsArray = sampProbsArray[exonCall, :]
+        Odds = callProbsArray * priors
 
-        CNpred = np.argmax(logOdds, axis=1)
+        maxCN = np.argmax(Odds, axis=1)
 
-        CNCountsBySamps[sampleIndex, :] = np.bincount(CNpred, minlength=NBStates)
-        exons2CN4Samps[exonCallInd, sampleIndex] = CNpred
-
+        # Updates
+        unique_maxCN, counts = np.unique(maxCN, return_counts=True)
+        sampCnCounts[sampIndexGp, unique_maxCN] += counts
+        sampBestPath[exonCall, sampIndexGp] = maxCN
         prevCN = 2
-        for currCN in CNpred:
-            countTransCN[prevCN, currCN] += 1
+        for indexExon in range(len(maxCN)):
+            currCN = maxCN[indexExon]
+            transitions[prevCN, currCN] += 1
             prevCN = currCN
 
     # Normalize each row to ensure sum equals 1
-    row_sums = np.sum(countTransCN, axis=1, keepdims=True)
-    normalized_arr = countTransCN / row_sums
-    # Calculate the logarithm (base 10) of the normalized array for HMM transition matrix
-    transMatrix = np.log10(normalized_arr)  # to return
+    row_sums = np.sum(transitions, axis=1, keepdims=True)
+    normalized_arr = transitions / row_sums
+
+    # Add void status and incorporate priors for all current observations
+    transMatVoid = np.vstack((priors, normalized_arr))
+    transMatVoid = np.hstack((np.zeros((nbStates + 1, 1)), transMatVoid))
 
     #####################################
     ####### DEBUG PART ##################
     #####################################
-    logger.debug("Normalized Copy Number Transition Counts for All Samples:")
-    for row in normalized_arr:
-        row_str = ' '.join(format(num, ".3e") for num in row)
-        logger.debug(row_str)
-
-    logger.debug("Transition matrix used for HMM:")
-    for row in transMatrix:
+    for row in transMatVoid:
         row_str = ' '.join(format(num, ".3e") for num in row)
         logger.debug(row_str)
 
     if logging.getLogger().getEffectiveLevel() <= logging.DEBUG:
         try:
-            figures.plots.barPlot(CNCountsBySamps, CNStatus, outFolder)
+            figures.plots.barPlot(sampCnCounts, CNStatus, outFile)
         except Exception as e:
             logger.error("barPlot failed: %s", repr(e))
             raise
 
-    return (transMatrix)
+    return transMatVoid
