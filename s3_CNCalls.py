@@ -2,7 +2,8 @@
 ######################################## MAGE-CNV step 3: Copy numbers calls ##################
 ###############################################################################################
 # Given a TSV of exon fragment counts and a TSV with clustering information,
-# obtaining the observation probabilities per copy number (CN), per exon and for each sample.
+# obtaining a TSV file containing the parameters of the fitted statistical models
+# for each exon and sample.
 # See usage for more details.
 ###############################################################################################
 import sys
@@ -51,15 +52,15 @@ def parseArgs(argv):
     usage = "NAME:\n" + scriptName + """\n
 
 DESCRIPTION:
-Given a TSV file containing exon fragment counts and a TSV file containing clustering information.
-It deduces the observation probabilities of copy numbers (CN) for each exon and each sample.
-Results are displayed in TSV format on stdout, with exon definitions in the first four columns
-and probabilities in the subsequent columns (four columns per sample, in the order CN0, CN1, CN2, CN3+).
-Graphical support, such as coverage plots and pie charts, is printed in PDF files.
-These files are saved in analyzed cluster folders created in the output call TSV folder.
-Additional coverage plots can be generated in debug mode.
-If a TSV file containing sample IDs with targeted exons (--samps2check) is provided,
-coverage profile plots will be generated.
+From a TSV file containing exon fragment counts and another TSV file containing clustering information,
+this program deduces the parameters of two distributions: an exponential distribution for CN0 and
+a normal distribution for CN2.
+The results are displayed in TSV format on the standard output (stdout), where the first four columns
+represent the exon definitions, and the subsequent columns represent the "loc" and "scale" parameters.
+The first row corresponds to the parameters of the exponential distribution, and the following rows
+represent the parameters of a robustly fitted normal distribution for each exon.
+
+Graphical support, including pie charts, is generated and saved as PDF files for each sample cluster.
 
 ARGUMENTS:
     --counts [str]: TSV file, first 4 columns hold the exon definitions, subsequent columns
@@ -70,8 +71,6 @@ ARGUMENTS:
     --out [str]: file where results will be saved, must not pre-exist, will be gzipped if it ends
             with '.gz', can have a path component but the subdir must exist
     --jobs [int] : cores that we can use, defaults to 80% of available cores ie """ + str(jobs) + "\n" + """
-    --samps2check [str]: TSV file, contains 2 columns the sample name and exon identifier according to the bed
-                         file supplied in step 1. File created by the user.
     -h , --help: display this help and exit\n"""
 
     try:
@@ -94,8 +93,6 @@ ARGUMENTS:
             outFile = value
         elif opt in ("--jobs"):
             jobs = value
-        elif (opt in ("--samps2check")):
-            samps2CheckFile = value
         else:
             raise Exception("unhandled option " + opt)
 
@@ -127,12 +124,8 @@ ARGUMENTS:
     except Exception:
         raise Exception("jobs must be a positive integer, not " + str(jobs))
 
-    if not logging.getLogger().isEnabledFor(logging.DEBUG):
-        if samps2CheckFile != "":
-            raise Exception("samps2Check should not be provided when the logger level is not set to DEBUG.")
-
     # AOK, return everything that's needed
-    return(countsFile, clustFile, outFile, jobs, samps2CheckFile)
+    return(countsFile, clustFile, outFile, jobs)
 
 
 ###############################################################################
@@ -146,7 +139,7 @@ ARGUMENTS:
 # may be available in the log
 def main(argv):
     # parse, check and preprocess arguments
-    (countsFile, clustsFile, outFile, jobs, samps2CheckFile) = parseArgs(argv)
+    (countsFile, clustsFile, outFile, jobs) = parseArgs(argv)
 
     # args seem OK, start working
     logger.debug("called with: " + " ".join(argv[1:]))
