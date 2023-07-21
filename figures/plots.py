@@ -370,8 +370,7 @@ def plotExonProfile(rawData, xi, yLists, plotLegs, verticalLines, vertLinesLegs,
 # - countArray (np.ndarray[ints]): Count array representing copy number frequencies.
 # - CNStatus (list[str]): Names of copy number states.
 # - outFolder (str): Path to the output folder for saving the bar plot.
-def barPlot(countArray, CNStatus, outFolder):
-    pdf = os.path.join(outFolder, "CNFreqBarplot.pdf")
+def barPlot(countArray, CNStatus, pdf):
     matplotOpenFile = matplotlib.backends.backend_pdf.PdfPages(pdf)
     fig = matplotlib.pyplot.figure(figsize=(8, 8))
 
