@@ -4,7 +4,8 @@ import matplotlib.pyplot
 import matplotlib.backends.backend_pdf
 import scipy.cluster.hierarchy
 
-# prevent PIL flooding the logs when we are in DEBUG loglevel
+# prevent matplotlib and PIL flooding the logs when we are in DEBUG loglevel
+logging.getLogger('matplotlib').setLevel(logging.WARNING)
 logging.getLogger('PIL').setLevel(logging.WARNING)
 
 # set up logger, using inherited config
@@ -79,10 +80,12 @@ def plotDensities(title, dataRanges, densities, legends, line1, line2, line1lege
 # - labelsGp (list[str]): labels for each sample within each cluster, dim=NbSOIs*NbClusters
 # - minDist (float): is the distance to start cluster construction
 # - CM [str]: clustering method
-# - pdf: matplotlib PDF object where the plot will be saved
+# - plotFile: name of pdf file where the plot will be saved
 #
 # Returns nothing.
-def plotDendrogram(linksMatrix, labelsGp, minDist, CM, pdf):
+def plotDendrogram(linksMatrix, labelsGp, minDist, CM, plotFile):
+    # create matplotlib PDF object
+    pdf = matplotlib.backends.backend_pdf.PdfPages(plotFile)
     # Disable interactive mode
     matplotlib.pyplot.ioff()
     fig = matplotlib.pyplot.figure(figsize=(15, 5), facecolor="white")
@@ -92,6 +95,7 @@ def plotDendrogram(linksMatrix, labelsGp, minDist, CM, pdf):
     fig.subplots_adjust(bottom=0.3)
     pdf.savefig(fig)
     matplotlib.pyplot.close()
+    pdf.close()
 
 
 #############################################################

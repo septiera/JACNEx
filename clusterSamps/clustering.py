@@ -1,16 +1,12 @@
 import logging
 import numpy as np
 import os
-import matplotlib.backends.backend_pdf
 
 # different scipy submodules are used for the application of hierachical clustering
 import scipy.cluster.hierarchy
 import scipy.spatial.distance
 
 import figures.plots
-
-# prevent matplotlib flooding the logs when we are in DEBUG loglevel
-logging.getLogger('matplotlib').setLevel(logging.WARNING)
 
 # set up logger, using inherited config
 logger = logging.getLogger(__name__)
@@ -53,9 +49,6 @@ def clustersBuilds(FPMarray, maxCorr, minCorr, minSamps, plotFile):
     if os.path.isfile(plotFile):
         logger.error('clustering dendrogram : plotFile %s already exist', plotFile)
         raise Exception("plotFile already exist")
-
-    # create matplotlib PDF objects
-    pdf = matplotlib.backends.backend_pdf.PdfPages(plotFile)
 
     # clustering method
     CM = "average"
@@ -124,8 +117,7 @@ def clustersBuilds(FPMarray, maxCorr, minCorr, minSamps, plotFile):
         strToBind = "  ".join(i)
         labelsGp.append(strToBind)
 
-    figures.plots.plotDendrogram(linksMatrix, labelsGp, minDist, CM, pdf)
-    pdf.close()
+    figures.plots.plotDendrogram(linksMatrix, labelsGp, minDist, CM, plotFile)
 
     return (clusters, linksMatrix)
 
