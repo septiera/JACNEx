@@ -138,7 +138,7 @@ def SampsQC(counts, SOIs, plotFilePass, plotFileFail, minLow2high=0.2, testBW=Fa
     pdfFail.close()
 
     if len(sampsQCfailed) > 0:
-        logger.warn("%s/%s samples fail exon-density QC (see QC plots), these samples won't get CNV calls",
+        logger.warning("%s/%s samples fail exon-density QC (see QC plots), these samples won't get CNV calls",
                     len(sampsQCfailed), len(SOIs))
     logger.info("%s/%s exons are not covered/captured in any sample and will be ignored",
                 len(capturedExons[np.logical_not(capturedExons)]), len(capturedExons))

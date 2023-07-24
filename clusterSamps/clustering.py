@@ -2,9 +2,10 @@ import logging
 import numpy as np
 import os
 
-# different scipy submodules are used for the application of hierachical clustering
+# modules for hierachical clustering
 import scipy.cluster.hierarchy
 import scipy.spatial.distance
+# module for PCA: currently implemented using numpy.linalg
 
 import figures.plots
 
@@ -125,6 +126,46 @@ def clustersBuilds(FPMarray, maxCorr, minCorr, minSamps, plotFile):
 ###############################################################################
 ############################ PRIVATE FUNCTIONS ################################
 ###############################################################################
+
+
+#############################
+# Principal component analysis of an FPMarray, for reducing the dimensionality
+# in terms of exons (not samples).
+# Using a numpy.linalg implementation based on
+# https://stackoverflow.com/questions/13224362/principal-component-analysis-pca-in-python
+#
+# Args:
+# - FPMarray: np.ndarray[float] of size nbExons x nbSamples
+# - dim [int]: dimension of the projection space, ie number of PCs to keep
+#
+# Returns:
+# - the projected sample coordinates in thhe dim-dimensional PCA space, using the
+#   same layout as FPMarray, ie one column per sample (dim x nbSamples)
+# - the selected eigenvectors, one per column (nbExons x dim), corresponding to the
+#   dim largest eigenvalues of the centered FPMarray
+def PCA(FPMarray, dim):
+    # copy FPMarray so we don't modify it!
+    data = FPMarray.copy()
+    # our data is exons x samples, transpose for easier code (this returns a view)
+    data = data.transpose()
+    # mean center the data for each exon
+    data -= data.mean(axis=0)
+    # calculate the covariance matrix
+    covarMat = np.cov(data, rowvar=False)
+    # calculate eigenvectors & eigenvalues of the covariance matrix
+    # use 'eigh' rather than 'eig' since covarMat is symmetric (much faster)
+    evals, evecs = np.linalg.eigh(covarMat)
+    # sort eigenvalues in decreasing order and keep only the dim largest
+    idx = np.argsort(evals)[::-1][:dim]
+    evals = evals[idx]
+    # corresponding eigenvectors
+    evecs = evecs[:, idx]
+    # project each sample into the dim-dimensional PCA space
+    samplesInPCAspace = np.matmul(data, evecs)
+    # return the projected data and eigenvectors
+    return (samplesInPCAspace.transpose(), evecs)
+
+
 #############################
 # computeSampsLinks
 # Pearson correlation distance (sqrt(1-r)) is likely to be a sensible
