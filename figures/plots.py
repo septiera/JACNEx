@@ -79,19 +79,19 @@ def plotDensities(title, dataRanges, densities, legends, line1, line2, line1lege
 # - linksMatrix (np.ndarray[float])
 # - labelsGp (list[str]): labels for each sample within each cluster, dim=NbSOIs*NbClusters
 # - minDist (float): is the distance to start cluster construction
-# - CM [str]: clustering method
+# - title: string to use as plot title (with eg parameters of the clustering method)
 # - plotFile: name of pdf file where the plot will be saved
 #
 # Returns nothing.
-def plotDendrogram(linksMatrix, labelsGp, minDist, CM, plotFile):
+def plotDendrogram(linksMatrix, labelsGp, minDist, title, plotFile):
     # create matplotlib PDF object
     pdf = matplotlib.backends.backend_pdf.PdfPages(plotFile)
     # Disable interactive mode
     matplotlib.pyplot.ioff()
     fig = matplotlib.pyplot.figure(figsize=(15, 5), facecolor="white")
-    matplotlib.pyplot.title(CM + " linkage hierarchical clustering")
+    matplotlib.pyplot.title(title)
     dn1 = scipy.cluster.hierarchy.dendrogram(linksMatrix, labels=labelsGp, color_threshold=minDist)
-    matplotlib.pyplot.ylabel("Distance √(1-ρ) ")
+    matplotlib.pyplot.ylabel("Distance")
     fig.subplots_adjust(bottom=0.3)
     pdf.savefig(fig)
     matplotlib.pyplot.close()
