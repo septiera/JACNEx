@@ -18,55 +18,70 @@ logger = logging.getLogger(__name__)
 ###############################################################################
 
 #############################
-# clustersBuilds
-# Groups the samples according to their distance obtained with a hierarchical clustering.
-# Transforms the correlation thresholds (maxCorr, minCorr = ρ) passed as arguments into
-# distance (√(1-ρ)).
-# Compute distances between samples with the equation √(1-ρ) where ρ is
-# the Pearson correlation.
-# Calculate matrix links with hierarchical clustering using the 'average'
-# method on the distance data.
-# Parsing this links matrix and obtaining the clusters.
-# Formats the results by checking their validity
-# Produces a dendrogram in plotDir
+# buildClusters:
+# find subsets of "similar" samples. Samples within a cluster will be used
+# to fit the CN2 (ie wildtype) distribution, which in turn will allow
+# to calculate likelihoods of each exon-level CN state.
 #
 # Args:
-#  - FPMarray (np.ndarray[float]): normalised fragment counts for samples,
-#  dim = NbCapturedExons x NbSOIs
-#  - maxCorr (float): maximal Pearson correlation score tolerated by the user to start
-#   build clusters
-#  - minCorr (float): minimal Pearson correlation score tolerated by the user to end
-#   build clusters
-#  - minSamps (int): minimal sample number to validate a cluster
-#  - plotFile (str): full path (+ file name) for saving a dendrogram
+# - FPMarray (np.ndarray[float]): normalised fragment counts for exons on the
+#   chromosome type indicated by chromType, for all samples
+# - chromType (string): one of 'A', 'XZ', 'YW' indicating that FPMarray holds counts
+#   for exons on autosomes, X (or Z) chromosome, or Y (or W) chromosome, respectively
+# - samples: list of sampleIDs, same order as the columns of FPMarray
+# - startDist: smallest distance at which we start trying to build clusters
+# - maxDist: max distance up to which we can build clusters / populate FIT_WITH
+# - minSamps: min number of samples (in a cluster + its FIT_WITH friends) to declare
+#   the cluster VALID
+# - plotFile (str): filename (including path) for saving the dendrogram representing
+#   the resulting hierarchical clustering, use "" if you don't want a plot
 #
-# Returns (clusters, linksMatrix):
-#  - clusters (list of list[int, list[int], list[int], int]): cluster definitions
-# dim = nbClust * ["CLUSTER_ID","SAMPLES","CONTROLLED_BY","VALIDITY"]
-#  - linksMatrix (np.ndarray[float]): the hierarchical clustering encoded as a linkage
-#  matrix, dim = (NbSamples-1)*[clusterID1,clusterID2,distValue,NbSamplesInClust]
-# this output is only used for testing and debugging
-def clustersBuilds(FPMarray, maxCorr, minCorr, minSamps, plotFile):
-    if os.path.isfile(plotFile):
-        logger.error('clustering dendrogram : plotFile %s already exist', plotFile)
-        raise Exception("plotFile already exist")
+# Returns (clust2samps, fitWith, clustIsValid, linkageMatrix):
+# (clust2samps, fitWith, clustIsValid) are as defined in clustFile.py parseClustsFile(), ie
+# clusterIDs are formatted as TYPE_NUMBER, where TYPE is 'A', 'XZ' or 'YW', and:
+# - clust2samps: dict, key==clusterID, value == list of sampleIDs
+# - fitWith: dict, key==clusterID, value == list of clusterIDs
+# - clustIsValid: dict, key==clusterID, value == Boolean
+# - linkageMatrix (provided only for testing and debugging) is the linkage matrix
+#   encoding the hierarchical clustering as returned by scipy.cluster.hierarchy.linkage,
+#   ie each row corresponds to one merging step of 2 cluster (c1, c2) and holds
+#   [c1, c2, dist(c1,c2), size(c1) + size(c2)]
+def buildClusters(FPMarray, chromType, samples, startDist, maxDist, minSamps, plotFile):
+    if (plotFile != "") and os.path.isfile(plotFile):
+        logger.warning("buildClusters can't produce a dendrogram: plotFile %s already exists",
+                       plotFile)
+        plotFile = ""
 
-    # clustering method
-    CM = "average"
+    # reduce dimensionality with PCA
+    # we don't really want the smallest possible number of dimensions, try arbitrary
+    # smallish dims (must be < nbExons)
+    dim = 100
+    (samplesInPCAspace, eigenVectors) = PCA(FPMarray, dim)
 
-    # To Fill and returns
-    clusters = []
+    # hierarchical clustering of the samples projected in the PCA space:
+    # - use 'average' method to define the distance between clusters (== UPGMA),
+    #   not sure why but AS did a lot of testing and says it is the best choice
+    #   when there are different-sized groups;
+    # - use 'euclidean' metric tu define initial distances between samples;
+    # - reorder he linkage matrix so the distance between successive leaves is
+    #   minimal [NOT sure about this one, documentation says it slows down things a lot
+    #   and we can do some sorting within dendrogram()].
+    linkageMatrix = scipy.cluster.hierarchy.linkage(samplesInPCAspace, method='average',
+                                                    metric='euclidean', optimal_ordering=True)
 
-    # - minDist (float): is the distance to start cluster construction
-    minDist = (1 - maxCorr)**0.5
-    # - maxDist (float): is the distance to finalise the cluster construction
-    maxDist = (1 - minCorr)**0.5
+    # build clusters from the linkage matrix
+    (clust2samps, fitWith, clustIsValid) = linkage2clusters(linkageMatrix, chromType, samples,
+                                                            startDist, maxDist, minSamps)
 
-    # hierarchical clustering
-    linksMatrix = computeSampsLinks(FPMarray, CM)
+    # produce and plot dendrogram
+    if (plotFile != ""):
+        makeDendrogram(linkageMatrix, clust2samps, fitWith, clustIsValid, startDist, plotFile)
 
-    samps2Clusters, trgt2Ctrls = links2Clusters(linksMatrix, minDist, maxDist, minSamps)
-    clustsList = np.unique(samps2Clusters)
+    # sort samples in clust2samps and clusters in fitWith (for cosmetics)
+    for clust in clust2samps:
+        clust2samps[clust].sort()
+        fitWith[clust].sort()
+    return(clust2samps, fitWith, clustIsValid, linkageMatrix)
 
     # To Fill not returns
     # labelArray (np.ndarray[str]): labels for each sample within each cluster, dim=NbSOIs*NbClusters
