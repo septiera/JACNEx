@@ -4,6 +4,10 @@ import logging
 # import sklearn submodule for Kmeans calculation
 import sklearn.cluster
 
+import matplotlib.backends.backend_pdf
+import clusterSamps.smoothing
+import figures.plots
+
 # set up logger, using inherited config
 logger = logging.getLogger(__name__)
 
@@ -50,30 +54,72 @@ def exonOnSexChr(exons):
 # Args:
 # - exonsFPM: np.ndarray of FPM-normalized counts (floats), size = nbOfExons x nbOfSamples
 # - exonOnSexChr: uint8 np.ndarray of size = nbOfExons, as returned by exonOnSexChr()
+# - intergenicsFPM: same as exonsFPM for intergenic pseudo-exons
+# - samples: list of nbOfSamples strings
 #
 # Returns an uint8 np.ndarray, size = nbOfSamples, value at index i is:
-# - 1 if the sample/column index i is predicted to be Female
+# - 1 if the sample/column index i is predicted to be "Female" (actually Male if species
+#      uses the ZW sex detmination system)
 # - 2 if it's predicted to be Male
 #
 # If we're unable to assign a gender to each sample, log a warning and return an
 # all-female assignment vector. This can happen legitimately if the cohort is single-gender,
 # but it could also result from noisy / heterogeneous data, or flaws in our methodology.
-def assignGender(exonsFPM, exonOnSexChr):
+def assignGender(exonsFPM, exonOnSexChr, intergenicsFPM, samples):
     sample2gender = np.ones(exonsFPM.shape[1], dtype=np.uint8)
 
-    # TODO
-    # idea: ignore Y (too small), just calculate the sum of FPMs of exons on chrX for
-    # each sample (or Z but it doesn't change anything), ie exonOnSexChr == 1,
-    # and hopyfully the result wll be easily interpretable, with 2 separate gaussians.
-    # If needed this could be improved by only summing the FPMs for exons that are
-    # captured in every sample (ie exonsFPM must be >= a small cutoff in every sample).
-    # We could also do a K-means instead of looking for Gaussians.
+    # FPM cut-off to roughly characterize exons that aren't captured, using intergenic pseudo-exons,
+    # hard-coded 99%-quantile over all samples and all intergenic pseudo-exons
+    maxFPMuncaptured = np.quantile(intergenicsFPM, 0.99)
+    
+    # For each sex chromosome and each sample, calculate the sum of FPMs of "accepted" exons:
+    # "accepted" == every exon for YW, but for XZ we only count exons that are "captured"
+    # (FPM > maxFPMuncaptured) in "most" samples (at least 90%, hard-coded as 0.1 below).
+    # This provides a cleaner signal when samples use different capture kits.
+    # dtype=float64 to avoid rounding errors when summing the many small values
+    YWexonsFPM = exonsFPM[exonOnSexChr == 2]
+    sumOfFPMsYW = np.sum(YWexonsFPM, axis=0, dtype=np.float64)
 
-    if predictGenderFailed:
-        logger.warning("gender assignment failed. This is fine for single-gender cohorts,")
-        logger.warning("but otherwise expect low-confidence CNV calls on gonosomes.")
-        logger.warning("If your cohort is mixed-gender, please let us know so we can fix it.")
-        logger.warning("Proceeding anyways, assuming arbitrarily that all samples are Female")
+    XZexonsFPM = exonsFPM[exonOnSexChr == 1]
+    tenPercentQuantilePerExon = np.quantile(XZexonsFPM, 0.1, axis=1)
+    sumOfFPMsXZ = np.sum(XZexonsFPM[tenPercentQuantilePerExon > maxFPMuncaptured], axis=0, dtype=np.float64)
+
+    # EXPERIMENTING: plot the distributions
+    # create matplotlib PDF object
+    pdf = matplotlib.backends.backend_pdf.PdfPages("sumsOfFPMsCapturedMANE.pdf")
+    matplotlib.pyplot.ioff()
+    fig, axs = matplotlib.pyplot.subplots(1, 2)
+    axs[0].hist(sumOfFPMsXZ, density=True, bins=50)
+    axs[1].hist(sumOfFPMsYW, density=True, bins=50)
+    pdf.savefig(fig)
+    matplotlib.pyplot.close()
+    pdf.close()
+
+    # print sumOfFPMs as CSV
+    outFH = open("sumOfFPMsCapturedMANE.csv", "x")
+    toPrint = "sampleID\tsumOfFPMsXZ\tsumOfFPMsYW\n"
+    outFH.write(toPrint)
+    for i in range(len(samples)):
+        toPrint = samples[i] + "\t" + str(int(sumOfFPMsXZ[i])) + "\t" + str(int(sumOfFPMsYW[i])) + "\n"
+        outFH.write(toPrint)
+    outFH.close()
+
+    # working on sumOfFPMsYW:
+    # all F have FPM(Y) <= 32, 2 "M" are also <=32 bot they are the 2 annotated "suspected XX"
+    # all (non-suspect) M have FPM(Y) >= 536, nice bell-curve up to 1695 (N=558), a second smaller
+    #   one between 2603 and 3303 (N=34), and a single outlier grexome0711 at 5608
+
+
+    
+    # (drX, densX, bwValue) = clusterSamps.smoothing.smoothData(sumOfFPMsXZ, maxData=1000000)
+    # (drY, densY, bwValue) = clusterSamps.smoothing.smoothData(sumOfFPMsYW, maxData=1000000)
+    # figures.plots.plotDensities("sumOfFPMs", [drX, drY], [densX, densY], ["sumOfFPMsXZ", "sumOfFPMsYW"], 0, 0, "", "", 1, pdf)
+    
+    # if predictGenderFailed:
+    #     logger.warning("gender assignment failed. This is fine for single-gender cohorts,")
+    #     logger.warning("but otherwise expect low-confidence CNV calls on gonosomes.")
+    #     logger.warning("If your cohort is mixed-gender, please let us know so we can fix it.")
+    #     logger.warning("Proceeding anyways, assuming arbitrarily that all samples are Female")
 
     return(sample2gender)
 

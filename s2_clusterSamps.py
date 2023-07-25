@@ -216,11 +216,14 @@ def main(argv):
     # everywhere on chrX
 
     exonOnSexChr = clusterSamps.genderPrediction.exonOnSexChr(exons)
-    sample2gender = clusterSamps.genderPrediction.assignGender(exonsFPM, exonOnSexChr)
+    sample2gender = clusterSamps.genderPrediction.assignGender(exonsFPM, exonOnSexChr, intergenicsFPM, samples)
 
     thisTime = time.time()
     logger.debug("Done assigning genders to samples, in %.2fs", thisTime - startTime)
     startTime = thisTime
+
+    logger.error("EARLY EXIT, working on assignGender for now")
+    return()
 
     # subarrays of counts
     autosomesFPM = exonsFPM[exonOnSexChr == 0]
