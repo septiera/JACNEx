@@ -83,6 +83,192 @@ def buildClusters(FPMarray, chromType, samples, startDist, maxDist, minSamps, pl
         fitWith[clust].sort()
     return(clust2samps, fitWith, clustIsValid, linkageMatrix)
 
+
+###############################################################################
+############################ PRIVATE FUNCTIONS ################################
+###############################################################################
+
+
+#############################
+# Principal component analysis of an FPMarray, for reducing the dimensionality
+# in terms of exons (not samples).
+# Using a numpy.linalg implementation based on
+# https://stackoverflow.com/questions/13224362/principal-component-analysis-pca-in-python
+#
+# Args:
+# - FPMarray: np.ndarray[float] of size nbExons x nbSamples
+# - dim [int]: dimension of the projection space, ie number of PCs to keep
+#
+# Returns:
+# - the projected sample coordinates in the dim-dimensional PCA space, size == (nbSamples x dim)
+#   ie each sample is a row (as expected by scipy.cluster.hierarchy.linkage()
+# - the selected eigenvectors, one per column (nbExons x dim), corresponding to the
+#   dim largest eigenvalues of the centered FPMarray
+def PCA(FPMarray, dim):
+    # copy FPMarray so we don't modify it!
+    data = FPMarray.copy()
+    # our data is exons x samples, transpose for easier code (this returns a view)
+    data = data.transpose()
+    # mean center the data for each exon
+    data -= data.mean(axis=0)
+    # calculate the covariance matrix
+    covarMat = np.cov(data, rowvar=False)
+    # calculate eigenvectors & eigenvalues of the covariance matrix
+    # use 'eigh' rather than 'eig' since covarMat is symmetric (much faster)
+    evals, evecs = np.linalg.eigh(covarMat)
+    # sort eigenvalues in decreasing order and keep only the dim largest
+    idx = np.argsort(evals)[::-1][:dim]
+    evals = evals[idx]
+    # corresponding eigenvectors
+    evecs = evecs[:, idx]
+    # project each sample into the dim-dimensional PCA space
+    samplesInPCAspace = np.matmul(data, evecs)
+    # return the projected data and eigenvectors
+    return (samplesInPCAspace, evecs)
+
+
+#############################
+# Build clusters from the linkage matrix.
+#
+# Args:
+# - linkageMatrix: as returned by scipy.cluster.hierarchy.linkage
+# - chromType, samples: same args as buildClusters(), used for formatting/populating
+#   the returned data structures
+# - startDist, maxDist, minSamps: same args as buildClusters(), used for constructing
+#   the clusters
+#
+# Returns (clust2samps, fitWith, clustIsValid) as specified in the header of buildClusters()
+def linkage2clusters(linkageMatrix, chromType, samples, startDist, maxDist, minSamps):
+    ################
+    # step 1:
+    # - populate clustersTmp, a list of lists of ints:
+    #   clustersTmp[i] is the list of sample indexes that belong to cluster i (at this step),
+    #   this will be cleared at a later step if i is merged with another cluster
+    # NOTE I need to preallocate so I can use clustersTmp[i] = "toto"
+    clustersTmp = [None] * linkageMatrix.shape[0]
+    # - also populate fitWithTmp, a list of lists of ints, fitWithTmp[i] is the list
+    #   of (self-sufficient) cluster indexes that can be used for fitting CN2 in cluster i
+    #   (also need to preallocate)
+    fitWithTmp = [None] * linkageMatrix.shape[0]
+    # - also populate clustSizeTmp, clustSizeTmp[i] is the total number of samples in
+    #   cluster i PLUS all clusters listed in fitWithTmp[i]
+    clustSizeTmp = [None] * linkageMatrix.shape[0]
+    numSamples = len(samples)
+    for thisClust in range(linkageMatrix.shape[0]):
+        (c1, c2, dist, size) = linkageMatrix[thisClust]
+        if dist <= startDist:
+            clustersTmp[thisClust] = []
+            clustSizeTmp[thisClust] = size
+            for childClust in (c1, c2):
+                if childClust < numSamples:
+                    clustersTmp[thisClust].append(childClust)
+                else:
+                    clustersTmp[thisClust].extend(clustersTmp[childClust])
+                    clustersTmp[childClust] = None
+                    clustSizeTmp[childClust] = 0
+        elif dist <= maxDist:
+            # between startDist and maxDist: only merge / add to fitWithTmp if a cluster
+            # needs more friends, ie it is too small (counting the fitWith samples)
+            if (((c1 < numSamples) or (clustSizeTmp[c1] < minSamps)) and
+                ((c2 < numSamples) or (clustSizeTmp[c2] < minSamps))):
+                # c1 and c2 both still needs friends => merge them
+                clustersTmp[thisClust] = []
+                clustSizeTmp[thisClust] = size
+                for childClust in (c1, c2):
+                    if childClust < numSamples:
+                        clustersTmp[thisClust].append(childClust)
+                    else:
+                        clustersTmp[thisClust].extend(clustersTmp[childClust])
+                        clustersTmp[childClust] = None
+                        clustSizeTmp[childClust] = 0
+            else:
+                # at least one of (c1,c2) is self-sufficient, find which one it is and switch
+                # them if needed so that c2 is always self-sufficient
+                if (c1 >= numSamples) and (clustSizeTmp[c1] >= minSamps):
+                    # c1 self-sufficient, switch with c2
+                    cTmp = c1
+                    c1 = c2
+                    c2 = cTmp
+                if (c1 < numSamples) or (clustSizeTmp[c1] < minSamps):
+                    # c2 is (now) self-sufficient but c1 isn't =>
+                    # don't touch c2 but use it for fitting thisClust == ex-c1
+                    clustSizeTmp[thisClust] = size
+                    if c1 < numSamples:
+                        clustersTmp[thisClust] = [c1]
+                    else:
+                        clustersTmp[thisClust] = clustersTmp[c1]
+                        clustersTmp[c1] = None
+                        clustSizeTmp[c1] = 0
+                    if fitWithTmp[c1]:
+                        fitWithTmp[thisClust] = fitWithTmp[c1]
+                        fitWithTmp[c1] = None
+                    else:
+                        fitWithTmp[thisClust] = []
+                    if fitWithTmp[c2]:
+                        fitWithTmp[thisClust].extend(fitWithTmp[c2])
+                    if clustersTmp[c2]:
+                        # c2 is an actual cluster, not a virtual merger of 2 self-sufficient sub-clusters
+                        fitWithTmp[thisClust].append(c2)
+                else:
+                    # both c1 and c2 are self-sufficient, need to create a virtual merger of c1+c2 so that
+                    # if later thisClust is used as fitWith for another cluster, we can do the right thing...
+                    # A "virtual merger" has correct clustSize (so we'll know it's not a candidate for merging),
+                    # and fitWithTmp contains the list of its non-virtual sub-clusters / components,
+                    # but clustersTmp == None (the mark of a virtual merger)
+                    clustSizeTmp[thisClust] = size
+                    fitWithTmp[thisClust] = []
+                    if fitWithTmp[c1]:
+                        fitWithTmp[thisClust].extend(fitWithTmp[c1])
+                    if clustersTmp[c1]:
+                        fitWithTmp[thisClust].append(c1)
+                    if fitWithTmp[c2]:
+                        fitWithTmp[thisClust].extend(fitWithTmp[c2])
+                    if clustersTmp[c2]:
+                        fitWithTmp[thisClust].append(c2)
+        else:
+            # dist > maxDist, nothing more to do, just truncate the Tmp lists
+            del clustersTmp[thisClust:]
+            del fitWithTmp[thisClust:]
+            del clustSizeTmp[thisClust:]
+            break
+
+    ################
+    # step 2:
+    # populate the clustering data structures from the Tmp lists, with proper formatting
+    clust2samps = {}
+    fitWith = {}
+    clustIsValid = {}
+
+    # populate clustIndex2ID with correctly constructed clusterIDs for each non-virtual cluster index
+    clustIndex2ID = [None] * len(clustersTmp)
+    nextClustNb = 1
+    for thisClust in range(len(clustersTmp)):
+        if clustersTmp[thisClust]:
+            clustID = chromType + '_' + str(nextClustNb)
+            clustIndex2ID[thisClust] = clustID
+            nextClustNb += 1
+            clust2samps[clustID] = [samples[i] for i in clustersTmp[thisClust]]
+            if fitWithTmp[thisClust]:
+                fitWith[clustID] = [clustIndex2ID[i] for i in fitWithTmp[thisClust]]
+            else:
+                fitWith[clustID] = []
+            if (clustSizeTmp[thisClust] >= minSamps):
+                clustIsValid[clustID] = True
+            else:
+                clustIsValid[clustID] = False
+
+    return (clust2samps, fitWith, clustIsValid)
+
+
+#############################
+# TODO: write spec for makeDendrogram, which apparently needs to build some kind
+# of "labels" and prepare some stuff, then call figures.plots.plotDendrogram()
+# Below I just copy-pasted AS's code that she had in the main buildClusters() function.
+# I'm a bit confused because her code seems to do more than just dendrogram prep.
+# Actually I expect makeDendrogram should actually be pretty simple, just some small cosmetic
+# prep for plotDendrogram()...
+# I'll have to really dig into it, no time now
+def makeDendrogram(linkageMatrix, clust2samps, fitWith, clustIsValid, startDist, plotFile):
     # To Fill not returns
     # labelArray (np.ndarray[str]): labels for each sample within each cluster, dim=NbSOIs*NbClusters
     labelArray = np.empty([len(samps2Clusters), len(clustsList)], dtype="U1")
@@ -133,82 +319,19 @@ def buildClusters(FPMarray, chromType, samples, startDist, maxDist, minSamps, pl
         strToBind = "  ".join(i)
         labelsGp.append(strToBind)
 
-    figures.plots.plotDendrogram(linksMatrix, labelsGp, minDist, CM, plotFile)
-
-    return (clusters, linksMatrix)
-
-
-###############################################################################
-############################ PRIVATE FUNCTIONS ################################
-###############################################################################
-
-
-#############################
-# Principal component analysis of an FPMarray, for reducing the dimensionality
-# in terms of exons (not samples).
-# Using a numpy.linalg implementation based on
-# https://stackoverflow.com/questions/13224362/principal-component-analysis-pca-in-python
-#
-# Args:
-# - FPMarray: np.ndarray[float] of size nbExons x nbSamples
-# - dim [int]: dimension of the projection space, ie number of PCs to keep
-#
-# Returns:
-# - the projected sample coordinates in thhe dim-dimensional PCA space, using the
-#   same layout as FPMarray, ie one column per sample (dim x nbSamples)
-# - the selected eigenvectors, one per column (nbExons x dim), corresponding to the
-#   dim largest eigenvalues of the centered FPMarray
-def PCA(FPMarray, dim):
-    # copy FPMarray so we don't modify it!
-    data = FPMarray.copy()
-    # our data is exons x samples, transpose for easier code (this returns a view)
-    data = data.transpose()
-    # mean center the data for each exon
-    data -= data.mean(axis=0)
-    # calculate the covariance matrix
-    covarMat = np.cov(data, rowvar=False)
-    # calculate eigenvectors & eigenvalues of the covariance matrix
-    # use 'eigh' rather than 'eig' since covarMat is symmetric (much faster)
-    evals, evecs = np.linalg.eigh(covarMat)
-    # sort eigenvalues in decreasing order and keep only the dim largest
-    idx = np.argsort(evals)[::-1][:dim]
-    evals = evals[idx]
-    # corresponding eigenvectors
-    evecs = evecs[:, idx]
-    # project each sample into the dim-dimensional PCA space
-    samplesInPCAspace = np.matmul(data, evecs)
-    # return the projected data and eigenvectors
-    return (samplesInPCAspace.transpose(), evecs)
-
-
-#############################
-# computeSampsLinks
-# Pearson correlation distance (sqrt(1-r)) is likely to be a sensible
-# distance when clustering samples.
-# (sqrt(1-r)) is a true distance respecting symmetry, separation and triangular
-# inequality
-# average linkage method is the best choice when there are different-sized groups
-#
-# Args:
-# - FPMarray (np.ndarray[float]): normalised fragment counts, dim = NbCapturedExons x NbSamples
-# - CM [str]: clustering method
-# Returns:
-# - linksMatrix (np.ndarray[float]): the hierarchical clustering encoded as a linkage
-#  matrix, dim = (NbSamples-1)*[clusterID1,clusterID2,distValue,NbSamplesInClust]
-def computeSampsLinks(FPMarray, CM):
-
-    correlation = np.round(np.corrcoef(FPMarray, rowvar=False), 2)
-    dissimilarity = (1 - correlation)**0.5
-
-    # "squareform" transform squared distance matrix in a triangular matrix
-    # "optimal_ordering": linkage matrix will be reordered so that the distance between
-    # successive leaves is minimal.
-    linksMatrix = scipy.cluster.hierarchy.linkage(scipy.spatial.distance.squareform(dissimilarity), CM, optimal_ordering=True)
-    return(linksMatrix)
+    title = "hierarchical clustering method='average' metric='euclidean' chromType='" + chromType + "'"
+    figures.plots.plotDendrogram(linkageMatrix, labelsGp, startDist, title, plotFile)
 
 
 #############################
 # links2Clusters
+# OLD CODE FROM AS, should be somewhat equivalent to linkage2clusters() although
+# the code is shorter and it seems to do less (eg doesn't set clustIsValid)
+# ... I think this code only does a first step of cluster construction, despite
+# the function's name, and some of the functionality if linkage2clusters() is
+# actually in the makeDendrogram() code above...
+# WILL NEED TO DIG
+#
 # parse the linkage matrix produced by computeSampLinks,
 # goals: construct the clusters in descending order of correlations
 # Conditions for building a cluster:
