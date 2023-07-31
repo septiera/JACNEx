@@ -44,8 +44,6 @@ def parseArgs(argv):
     countsFile = ""
     clustFile = ""
     outFile = ""
-    # optionnal args with default values
-    samps2CheckFile = ""
     # jobs default: 80% of available cores
     jobs = round(0.8 * len(os.sched_getaffinity(0)))
 
@@ -53,12 +51,12 @@ def parseArgs(argv):
 
 DESCRIPTION:
 From a TSV file containing exon fragment counts and another TSV file containing clustering information,
-this program deduces the parameters of two distributions: an exponential distribution for CN0 and
-a normal distribution for CN2.
+this program filters out non-callable exons (no coverage, impossible to interpret) and deduces the
+parameters of two distributions: an exponential distribution for CN0 and a Gaussian distribution for CN2.
 The results are displayed in TSV format on the standard output (stdout), where the first four columns
 represent the exon definitions, and the subsequent columns represent the "loc" and "scale" parameters.
 The first row corresponds to the parameters of the exponential distribution, and the following rows
-represent the parameters of a robustly fitted normal distribution for each exon.
+represent the parameters of a robustly fitted Gaussian distribution for each exon.
 
 Graphical support, including pie charts, is generated and saved as PDF files for each sample cluster.
 
@@ -75,7 +73,7 @@ ARGUMENTS:
 
     try:
         opts, args = getopt.gnu_getopt(sys.argv[1:], 'h', ["help", "counts=", "clusts=", "out=",
-                                                           "jobs=", "samps2check="])
+                                                           "jobs="])
     except getopt.GetoptError as e:
         raise Exception(e.msg + ". Try " + scriptName + " --help")
     if len(args) != 0:
@@ -169,27 +167,13 @@ def main(argv):
     logger.debug("Done parsing clustsFile, in %.2f s", thisTime - startTime)
     startTime = thisTime
 
-    ####################################################
-    # parse user-defined tsv file of target samples and exons
-    samps2Check = []
-    if samps2CheckFile != "":
-        try:
-            samps2Check = CNCalls.userTSVFile.parseUserTSV(samps2CheckFile, samples, exons)
-        except Exception as e:
-            raise Exception("parseClustsFile failed for %s : %s", clustsFile, repr(e))
-
-        thisTime = time.time()
-        logger.debug("Done parsing userTSVFile, in %.2f s", thisTime - startTime)
-        startTime = thisTime
+    #########
+    # TODO compared previous clustering results with current clustering results
 
     ######################################################
-    # init calling process
-    # we have chosen to call copy numbers by exon, defining 4 copy number types:
-    # CN0: total loss of copies, CN1: single copy, CN2: two copies (normal),
-    # and CN3: three or more copies.
-    CNTypes = ["CN0", "CN1", "CN2", "CN3"]
-
-    CNCallsArray = CNCalls.CNCallsFile.allocateCNCallsArray(len(exons), len(samples), len(CNTypes))
+    # !!! (samples to be changed with the comparision between previous and current analysis)
+    paramsToKeep = ["loc", "scale"]
+    paramsArray = CNCalls.CNCallsFile.allocateParamsArray(len(exons), len(clusters), len(paramsToKeep))
 
     ####################################################
     # CN Calls
@@ -227,7 +211,7 @@ def main(argv):
         else:
             counts2callsRes = futurecounts2callsRes.result()
             for exonIndex in range(len(counts2callsRes[2])):
-                CNCallsArray[counts2callsRes[2][exonIndex], counts2callsRes[1]] = counts2callsRes[3][exonIndex]
+                paramsArray[counts2callsRes[2][exonIndex], counts2callsRes[1]] = counts2callsRes[3][exonIndex]
 
             logger.info("Done copy number calls for cluster n°%i", counts2callsRes[0])
 
@@ -241,14 +225,14 @@ def main(argv):
 
             ##### run prediction for current cluster
             futureRes = pool.submit(CNCalls.copyNumbersCalls.clusterCalls, clustID, exonsFPM,
-                                    intergenicsFPM, samples, exons, clusters, ctrlsClusters,
-                                    specClusters, CNTypes, exonsBool, outFile, samps2Check)
+                                    intergenicsFPM, exons, clusters, ctrlsClusters, specClusters,
+                                    exonsBool, outFile, paramsToKeep)
 
             futureRes.add_done_callback(mergeCalls)
 
     #####################################################
     # Print exon defs + calls to outFile
-    CNCalls.CNCallsFile.printCNCallsFile(CNCallsArray, exons, samples, outFile)
+    CNCalls.CNCallsFile.printCNCallsFile(paramsArray, exons, clusters, paramsToKeep, outFile)
 
     thisTime = time.time()
     logger.debug("Done printing calls for all (non-failed) clusters, in %.2fs", thisTime - startTime)

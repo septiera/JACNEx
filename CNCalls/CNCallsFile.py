@@ -41,14 +41,15 @@ def parseCNcallsFile(CNcallsFile, nbState):
 #############################
 # printCNCallsFile:
 # Args:
-# - emissionArray (np.ndarray[float]): contain emission probabilities. dim=NbExons* (NbSamples*[CN0,CN1,CN2,CN3+])
+# - paramsArray (np.ndarray[float]): contain loc scale parameters. dim=[NbExons + 1,(NbCluster * [loc,scale])]
 # - exons (list of lists[str,int,int,str]): information on exon, containing CHR,START,END,EXON_ID
-# - samples (list[str]): sample names copied from countsFile's header
+# - clusters
+# - paramsToKeep
 # - outFile is a filename that doesn't exist, it can have a path component (which must exist),
 #     output will be gzipped if outFile ends with '.gz'
 #
 # Print this data to outFile as a 'CNCallsFile'
-def printCNCallsFile(emissionArray, exons, samples, outFile):
+def printCNCallsFile(paramsArray, exons, clusters, paramsToKeep, outFile):
     try:
         if outFile.endswith(".gz"):
             outFH = gzip.open(outFile, "xt", compresslevel=6)
@@ -60,18 +61,24 @@ def printCNCallsFile(emissionArray, exons, samples, outFile):
 
     ### header definitions
     toPrint = "CHR\tSTART\tEND\tEXON_ID\t"
-    for i in samples:
-        for j in range(4):
-            toPrint += f"{i}_CN{j}" + "\t"
+    for i in range(len(clusters)):
+        for j in range(len(paramsToKeep)):
+            toPrint += f"{i}_{paramsToKeep[j]}" + "\t"
     toPrint += "\n"
     outFH.write(toPrint)
 
     #### fill results
     for i in range(len(exons)):
         toPrint = exons[i][0] + "\t" + str(exons[i][1]) + "\t" + str(exons[i][2]) + "\t" + exons[i][3]
-        toPrint += calls2str(emissionArray, i)
+        toPrint += calls2str(paramsArray, i)
         toPrint += "\n"
         outFH.write(toPrint)
+
+    #### print last row (exponential parameters)
+    toPrint = "" + "\t" + "" + "\t" + "" + "\t" + "exponential parameters"
+    toPrint += calls2str(paramsArray, len(exons) + 1)
+    toPrint += "\n"
+    outFH.write(toPrint)
     outFH.close()
 
 
@@ -132,14 +139,19 @@ def parseCNCallsPrivate(CNCallsFile):
 
 
 ##############################################################
-# allocateCNCallsArray:
+# allocateParamsArray:
 # Args:
-# - numExons, numSamples, numCNTypes
-# Returns an float array with -1, adapted for storing the probabilities for each
-# type of copy number. dim= NbExons x (NbSamples x NbCNTypes)
-def allocateCNCallsArray(numExons, numSamples, numCNTypes):
+# - numExons, numClusters, numParams
+#
+# Returns an float array with -1, adapted for storing the Gaussian
+# parameters [loc = mean, scale = stdev] for each sample and adds
+# an additional lines for the exponential parameters [loc = 0, scale = inverse lambda]
+# (same for each sample from a cluster)
+# dim= NbExons + 1  x NbClusters
+def allocateParamsArray(numExons, numClusters, numParams):
+    exponLinesToAdd = 1
     # order=F should improve performance
-    return np.full((numExons, (numSamples * numCNTypes)), -1, dtype=np.float32, order='F')
+    return np.full(((numExons + exponLinesToAdd), (numClusters * numParams)), -1, dtype=np.float64, order='F')
 
 
 #################################################

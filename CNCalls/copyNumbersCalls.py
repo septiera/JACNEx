@@ -6,7 +6,6 @@ import scipy.stats
 import matplotlib.pyplot
 import matplotlib.backends.backend_pdf
 import time
-import traceback
 
 import clusterSamps.smoothing
 import CNCalls.CNCallsFile
@@ -93,7 +92,6 @@ timer = Timer()
 # - clustID [int]
 # - exonsFPM (np.ndarray[floats]): normalised counts from exons
 # - intergenicsFPM (np.ndarray[floats]): normalised counts from intergenic windows
-# - samples (list [str]): samples names
 # - exons (list of lists[str, int, int, str]): exon definitions [CHR,START,END,EXONID]
 # - clusters (list of lists[ints]): each list corresponds to a cluster index containing the
 #                                 associated "samples" indexes
@@ -101,19 +99,17 @@ timer = Timer()
 #                                       control cluster index
 # - specClusters (list[int]): each list index = cluster index, values = autosomes (0)
 #                             or gonosomes (1)
-# - CNTypes (list[str]): Copy number states.
 # - exonsBool (np.ndarray[bool]): indicates if each exon is in a gonosomal region (True) or not (False).
 # - outFile [str]: results calls file path
-# - sampsExons2Check (list of lists[int]): exon indices for each "sample" index to be graphically
-#                                          validated.
+# - paramsToKeep (list[str])
 #
 # Returns a tuple (clustID, colInd4CNCallsArray, exonInd2Process, clusterCallsArray):
 # - clustID [int]
 # - colInd4CNCallsArray (list[ints]): column indexes for the CNcallsArray.
 # - exonInd2Process (list[ints]): exons indexes (rows indexes) for the CNcallsArray.
-# - clusterCallsArray (np.ndarray[floats]): The cluster calls array (log10-likelihoods).
-def clusterCalls(clustID, exonsFPM, intergenicsFPM, samples, exons, clusters, ctrlsClusters,
-                 specClusters, cnTypes, exonsBool, outFile, sampsExons2Check):
+# - clusterCallsArray (np.ndarray[floats]): The cluster calls array (likelihoods).
+def clusterCalls(clustID, exonsFPM, intergenicsFPM, exons, clusters, ctrlsClusters,
+                 specClusters, exonsBool, outFile, paramsToKeep):
     startTime = time.time()
     #############
     ### fixed parameters
@@ -139,19 +135,11 @@ def clusterCalls(clustID, exonsFPM, intergenicsFPM, samples, exons, clusters, ct
 
         # To Fill and return
         exonInd2Process = np.where(exonsBool == specClusters[clustID])[0]
-        clusterCallsArray = CNCalls.CNCallsFile.allocateCNCallsArray(len(exonInd2Process),
-                                                                     len(targetSampsInd),
-                                                                     len(cnTypes))
-        colInd4CNCallsArray = [idx * len(cnTypes) + i for idx in targetSampsInd for i in range(len(cnTypes))]
-
-        try:  # list of samples (from current cluster) and exons to be checked
-            (sampsToCheck, exonsToCheck) = getClustInfo2Check(targetSampsInd, sampsExons2Check)
-        except Exception as e:
-            logger.error("getClustInfo2Check failed for cluster %i : %s", clustID, repr(e))
-            raise
+        clusterParamsArray = CNCalls.CNCallsFile.allocateParamsArray(len(exonInd2Process), 1, len(paramsToKeep))
+        colInd4ParamsArray = [clustID * len(paramsToKeep), clustID * len(paramsToKeep) + 1]
 
         try:   # name of the output cluster folder and the list of subdirectories
-            (clustFolder, pathPlotFolders) = makeResFolders(clustID, outFolder, exonStatus, sampsToCheck)
+            (clustFolder, pathPlotFolders) = makeResFolders(clustID, outFolder, exonStatus)
         except Exception as e:
             logger.error("makeResFolders failed for cluster %i : %s", clustID, repr(e))
             raise
@@ -167,6 +155,8 @@ def clusterCalls(clustID, exonsFPM, intergenicsFPM, samples, exons, clusters, ct
             (meanIntergenicFPM, loc, invLambda) = fitExponential(intergenicsFPM[:, targetSampsInd + ctrlSampsInd])
             expParams = {'distribution': scipy.stats.expon, 'loc': loc, 'scale': invLambda}
             preprocessExponFitPlot(clustID, meanIntergenicFPM, expParams, os.path.join(clustFolder, expFitPlotFile))
+            clusterParamsArray[-1, 0] = loc
+            clusterParamsArray[-1, 1] = invLambda
         except Exception as e:
             logger.error("fitExponential failed for cluster %i : %s", clustID, repr(e))
             raise
@@ -188,8 +178,7 @@ def clusterCalls(clustID, exonsFPM, intergenicsFPM, samples, exons, clusters, ct
             params["CN0"] = expParams
 
             try:
-                filterStatus = exonCalls(ex, exonFPM4Clust, params, unCaptFPMLimit, cnTypes,
-                                         len(targetSampsInd), clusterCallsArray)
+                filterStatus = exonCalls(ex, exonFPM4Clust, params, unCaptFPMLimit, clusterParamsArray)
             except Exception as e:
                 logger.error("exonCalls failed : %s", repr(e))
                 raise
@@ -204,24 +193,8 @@ def clusterCalls(clustID, exonsFPM, intergenicsFPM, samples, exons, clusters, ct
                         logger.error("preprocessExonProfilePlot failed : %s", repr(e))
                         raise
 
-                if exonInd4Exons in exonsToCheck:
-                    logger.error("cluster n°%s exonID %s to check according to the user is filtered", clustID,
-                                 f"{'_'.join(map(str, exonInfos))}")
-                continue
-
             else:  # Exon passed filters
                 exonStatusCountsDict["exonsCalls"] += 1
-
-                # plot exonCalls only in DEBUG mode
-                if (pathPlotFolders) and (exonInd4Exons in exonsToCheck):
-                    try:
-                        preprocessExonProfilePlot("exonsCalls", exonStatusCountsDict, params,
-                                                  unCaptFPMLimit, exonInfos, exonFPM4Clust, pathPlotFolders,
-                                                  samples, sampsToCheck, targetSampsInd + ctrlSampsInd)
-
-                    except Exception as e:
-                        logger.error("preprocessExonProfilePlot2 failed : %s", repr(e))
-                        raise
 
         try:
             figures.plots.plotPieChart(clustID, exonStatusCountsDict, os.path.join(clustFolder, clusterPieChartFile))
@@ -235,7 +208,7 @@ def clusterCalls(clustID, exonsFPM, intergenicsFPM, samples, exons, clusters, ct
 
         thisTime = time.time()
         logger.debug("ClusterCalls ClustID: %s execution time, in %.2fs", clustID, thisTime - startTime)
-        return (clustID, colInd4CNCallsArray, exonInd2Process, clusterCallsArray)
+        return (clustID, colInd4ParamsArray, np.append(exonInd2Process, len(clusterParamsArray)), clusterParamsArray)
 
     except Exception as e:
         logger.error("CNCalls failed for cluster n°%i - %s", clustID, repr(e))
@@ -273,38 +246,6 @@ def getClusterSamps(clustID, ctrlsClustList, clusters):
     return (targetSampsInd, ctrlSampsInd)
 
 
-#################################
-# getClustInfo2Check
-# Given a list of sample indexes (allSampsInd) representing the samples
-# in the cluster, and a list of lists of exon indexes (sampsExons2Check) indicating
-# the exons to be analyzed for each sample index.
-# Identifies the samples in a cluster that need to be checked and the unique exons to be analyzed.
-# Note that all the samples to be checked, even if they do not have the same exons to be checked,
-# will be represented for all the exons. These samples are used as controls.
-#
-# Args:
-# - allSampsInd (list[int]): Indexes of "samples" in the cluster.
-# - sampsExons2Check (list of lists[int]): exon indices for each "sample" index to be graphically
-#   validated.
-#
-# Returns:
-# A tuple containing:
-# - sampsToCheck (list[int]): Indexes of samples in the cluster that need to be checked.
-# - exonsToCheck (list[int]): Indices of exons to analyze within the cluster.
-@timer.measure_time
-def getClustInfo2Check(allSampsInd, sampsExons2Check):
-    sampsToCheck = []
-    exonsToCheck = set()
-
-    for sampInd in allSampsInd:
-        if len(sampsExons2Check[sampInd]) > 0:  # sample has exons to be checked
-            sampsToCheck.append(sampInd)
-            # Update the set of exon indexes with the unique indexes from the sample
-            exonsToCheck.update(sampsExons2Check[sampInd])
-
-    return (sampsToCheck, list(exonsToCheck))
-
-
 ############################################
 # makeResFolders
 # creates the cluster directory within the main plot folder.
@@ -320,13 +261,12 @@ def getClustInfo2Check(allSampsInd, sampsExons2Check):
 # - outputFolder [str]: path to the main plot folder where the cluster directories should be created.
 # - folderNames (list[str]): folder names to be created within each cluster directory.
 #                            These folders are created only in DEBUG mode.
-# - samplesToCheck (list[str]): sample names associated with the cluster
 #
 # Returns a tuple (clustFolder, pathPlotFolders):
 # - clustFolder [str]: Path to the created cluster directory.
 # - pathPlotFolders (list[str]): paths to the subdirectories created within the cluster directory.
 @timer.measure_time
-def makeResFolders(clusterID, outputFolder, folderNames, samplesToCheck):
+def makeResFolders(clusterID, outputFolder, folderNames):
     # To fill and return
     pathPlotFolders = []
 
@@ -337,24 +277,13 @@ def makeResFolders(clusterID, outputFolder, folderNames, samplesToCheck):
         raise Exception("Error creating directory " + clusterFolder)
 
     if (logging.getLogger().getEffectiveLevel() <= logging.DEBUG):
-        numFolders = len(folderNames)  # Store the length of folderNames
-        for folderIndex in range(numFolders - 1):  # Exclude the last folder
+        for folderIndex in range(len(folderNames)):
             folderPath = os.path.join(clusterFolder, folderNames[folderIndex])
             try:
                 os.makedirs(folderPath, exist_ok=True)
             except OSError:
                 raise Exception("Error creating directory " + folderPath)
             pathPlotFolders.append(folderPath)
-
-        # Check if the last folder should be created
-        lastFolderIndex = numFolders - 1
-        if samplesToCheck or (lastFolderIndex >= 0 and len(samplesToCheck) > 0):
-            lastFolderPath = os.path.join(clusterFolder, folderNames[lastFolderIndex])
-            try:
-                os.makedirs(lastFolderPath, exist_ok=True)
-            except OSError:
-                raise Exception("Error creating directory " + lastFolderPath)
-            pathPlotFolders.append(lastFolderPath)
 
     return (clusterFolder, pathPlotFolders)
 
@@ -441,7 +370,7 @@ def computeLikelihood(params, FPMs):
 
     # scipy v1.5.4 default np.float64 cannot be changed
     y = distribution.pdf(FPMs, loc=loc, scale=scale)
-    
+
     return y
 
 
@@ -449,27 +378,22 @@ def computeLikelihood(params, FPMs):
 # exonCalls
 # processes an exon by applying a series of filters.
 # No specific output: It either returns a filter status string if the exon doesn't pass
-# the filters or updates the clusterCallsArray with the computed log-likelihoods for the exon.
+# the filters or updates the clusterCallsArray with the computed likelihoods for the exon.
 # Specs:
 # 1) Check if the exon is not captured (median coverage = 0).
 # 2) Fit a robust Gaussian distribution (CN2) to the exon FPM values.
 # 3) Check if the fitted Gaussian overlaps the threshold associated with the uncaptured exon profile.
 # 4) Check if the sample contribution rate to the Gaussian is too low (<50%).
 # 5) If any of the above filters is triggered, return the corresponding filter status.
-# 6) If the exon passes all filters, compute the log-likelihoods using the fitted parameters
-# for heterodeletion and duplication (CN1 and CN3).
-# 7) Store the computed log-likelihoods in the clusterCallsArray for the given exon index (exIndToProcess).
 #
 # Args:
 # - exIndToProcess [int]
 # - exonFPM4Clust (numpy.ndarray[floats]): Exon FPM (Fragments Per Million) values for the cluster.
 # - params [dict]: parameters for the distribution models.
 # - unCaptFPMLimit [float]: FPM threshold value for uncaptured exons.
-# - cnTypes [list]: Types of copy number states.
-# - nbTargetSamps [int]: Number of target samples.
-# - clusterCallsArray (numpy.ndarray[floats]): store the cluster calls (log10-likelihoods).
+# - clusterParamsArray (numpy.ndarray[floats]): store the Gaussian parameters [loc, scale].
 @timer.measure_time
-def exonCalls(exIndToProcess, exonFPM4Clust, params, unCaptFPMLimit, cnTypes, nbTargetSamps, clusterCallsArray):
+def exonCalls(exIndToProcess, exonFPM4Clust, params, unCaptFPMLimit, clusterParamsArray):
     #################
     ### init exon variable
     # a str which takes the name of the filter excluding the exon
@@ -500,19 +424,8 @@ def exonCalls(exIndToProcess, exonFPM4Clust, params, unCaptFPMLimit, cnTypes, nb
     if ((filterStatus is None) and (filterSampsContrib2Gaussian(mean, stdev, exonFPM4Clust))):
         return "fewSampsInRG"
 
-    # exon passed filters
-    # retain parameters of law associated with heterodeletion and duplication
-    params["CN1"] = {'distribution': scipy.stats.norm, 'loc': mean / 2, 'scale': stdev}
-    params["CN3"] = {'distribution': scipy.stats.norm, 'loc': 3 * (mean / 2), 'scale': stdev}
-    try:
-        likelihoods = sampFPM2Probs(exonFPM4Clust, nbTargetSamps, params, cnTypes)
-    except Exception as e:
-        logger.error("sampFPM2Probs failed : %s", repr(e))
-        raise
-    # likelihoods array dim = distribsNB * samplesNB
-    # flatten(order='F') specifies the Fortran-style (column-major)
-    # order of flattening the array.
-    clusterCallsArray[exIndToProcess] = likelihoods.flatten(order='F')
+    clusterParamsArray[exIndToProcess, 0] = mean
+    clusterParamsArray[exIndToProcess, 1] = stdev
 
 
 ###################
@@ -685,68 +598,6 @@ def filterSampsContrib2Gaussian(mean, stdev, exonFPM):
         return False
 
 
-#############################################################
-# sampFPM2Probs
-# calculates the probability densities for a given set of parameters and data.
-# It replaces small probabilities with a minimum value and computes the logarithm
-# of the probabilities. The resulting probabilities are returned.
-#
-# Args:
-# - exonFPM (np.ndarray[float]): Array of FPM values for one exon.
-# - NbTargetSamps (int): Number of target samples associated with the cluster.
-# - params (List[Dict]): List of parameter dictionaries for generating PDFs.
-# - CNTypes (List[str]): List of CN types.
-#
-# Returns:
-# -logProbs(np.ndarray[float]): log PDF values for each set of parameters and sample indexes.
-#                               Dimensions: (CN0, CN1, CN2, CN3+) * NbTargetSamps
-@timer.measure_time
-def sampFPM2Probs(exonFPM, NbTargetSamps, params, CNTypes):
-    # Fixed parameter
-    # divisor to adjust the minimum non-zero value.
-    scalingDivisor = 100
-
-    targetExonsFPM = exonFPM[:NbTargetSamps]
-    likelihoods = np.zeros((len(CNTypes), len(targetExonsFPM)), dtype=np.float64)
-
-    # Calculate the PDF for each set of parameters and each value of x
-    for cn in range(len(CNTypes)):
-        likelihoods[cn] = computeLikelihood(params[CNTypes[cn]], targetExonsFPM)
-
-    # Find the minimum non-zero value in likelihoods using np.nextafter
-    minNonZeroValue = np.nextafter(0, 1)  # Next representable floating-point value after zero
-
-    # Determine the adjusted minimum value
-    minAdjusted = np.maximum(minNonZeroValue, minNonZeroValue / scalingDivisor)
-
-    # Replace small values with the adjusted minimum value
-    likelihoods[likelihoods < minAdjusted] = minAdjusted
-
-    # Apply logarithm to the adjusted likelihoods
-    logProbs = np.log10(likelihoods)
-
-    return logProbs.astype(np.float32)
-
-
-#############################################################
-# fillClusterCallsArray
-#
-# Args:
-# - clusterCalls (np.ndarray[floats]): copy number call likelihood
-# - sampIndex [int]: "samples" index
-# - exIndex [int]: exon index in clusterCalls array
-# - likelihoods (list[floats]): log-likelihood for a sample and an exon
-@timer.measure_time
-def fillClusterCallsArray(clusterCalls, sampIndex, exIndex, likelihoods):
-    sampIndInArray = sampIndex * len(likelihoods)
-    # sanity check : don't overwrite data
-    if np.sum(clusterCalls[exIndex, sampIndInArray:(sampIndInArray + len(likelihoods))]) <= 0:
-        # Populate the clusterCalls with the copy number call likelihood probabilities
-        clusterCalls[exIndex, sampIndInArray:(sampIndInArray + len(likelihoods))] = likelihoods
-    else:
-        raise Exception("overwrite calls in clusterCalls array")
-
-
 #########################
 # preprocessExonProfilePlot
 # generates exon profile plots using given data, including probability density functions
@@ -767,8 +618,7 @@ def fillClusterCallsArray(clusterCalls, sampIndex, exIndex, likelihoods):
 # - sampsInd (list[int], optional): all sample indexes. Defaults to None.
 @timer.measure_time
 def preprocessExonProfilePlot(status, exonsFiltersSummary, params, unCaptThreshold,
-                              exonInfos, exonFPM, folders, samples=None,
-                              clusterSamps2Plot=None, sampsInd=None):
+                              exonInfos, exonFPM, folders):
     # Fixed parameter
     nbExToPlot = 500  # No. of threshold multiplier exons = one plot
 
@@ -798,29 +648,6 @@ def preprocessExonProfilePlot(status, exonsFiltersSummary, params, unCaptThresho
         yLists.append(computeLikelihood(params["CN2"], xi))
         plotLegs.append(f"RG CN2={params['CN2']['loc']:.2f}, {params['CN2']['scale']:.2f}")
         ylim = 2 * np.max(yLists[1])
-
-    if clusterSamps2Plot is not None:
-        # calculate the probability density function for the gaussian distribution (CN1)
-        yLists.append(computeLikelihood(params["CN1"], xi))
-        plotLegs.append(f"RG CN1={params['CN1']['loc']:.2f}, {params['CN1']['scale']:.2f}")
-
-        # calculate the probability density function for the gaussian distribution (CN3)
-        yLists.append(computeLikelihood(params["CN3"], xi))
-        plotLegs.append(f"RG CN3={params['CN3']['loc']:.2f}, {params['CN3']['scale']:.2f}")
-
-        for samp in clusterSamps2Plot:
-            sampName = samples[samp]
-            sampFPM = exonFPM[sampsInd.index(samp)]
-
-            # Create individual data for the current sample
-            individualVerticalLines = [sampFPM]
-            individualVertLinesLegs = [f"sample name={sampName}"]
-            individualFileTitle = f"{sampName}_{fileTitle}"
-
-            # Generate individual plot for the current sample
-            individualPDF_File = matplotlib.backends.backend_pdf.PdfPages(os.path.join(folder, individualFileTitle))
-            figures.plots.plotExonProfile(exonFPM, xi, yLists, plotLegs, individualVerticalLines, individualVertLinesLegs, plotTitle, ylim, individualPDF_File)
-            individualPDF_File.close()
 
     else:
         PDF_File = matplotlib.backends.backend_pdf.PdfPages(os.path.join(folder, fileTitle))
