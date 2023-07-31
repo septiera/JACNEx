@@ -108,7 +108,7 @@ ARGUMENTS:
         raise Exception("outFile " + outFile + " already exists")
     elif (os.path.dirname(outFile) != '') and (not os.path.isdir(os.path.dirname(outFile))):
         raise Exception("the directory where outFile " + outFile + " should be created doesn't exist")
-    
+
     try:
         padding = int(padding)
         if (padding < 0):
@@ -138,12 +138,6 @@ def main(argv):
     logger.info("starting to work")
     startTime = time.time()
 
-    ############
-    # priors logtransformation
-    if np.all(priors > 0):
-        priors = np.log10(priors)
-        logger.info("priors are log10 transformed")
-
     #############
     # parse calls
     try:
@@ -170,7 +164,6 @@ def main(argv):
 
     #############
     # CNVs calls
-    CNVArray = np.empty((0, 4), dtype=np.int)
     try:
         for sampIndex in range(len(samples)):
             # Extract the CN calls for the current sample
@@ -181,18 +174,18 @@ def main(argv):
             except Exception as e:
                 logger.error("inferCNVsUsingHMM failed : %s", repr(e))
                 raise Exception("inferCNVsUsingHMM failed")
-            
+
             # Create a column with sampIndex values
             sampIndexColumn = np.full((CNVsSampList.shape[0], 1), sampIndex, dtype=CNVsSampList.dtype)
             # Concatenate CNVsSampList with sampIndex column
             CNVsSampListAddSampInd = np.hstack((CNVsSampList, sampIndexColumn))
             # Stack CNVsSampList_with_sampIndex vertically with previous results
             CNVArray = np.vstack((CNVArray, CNVsSampListAddSampInd))
-            
+
     except Exception as e:
         logger.error("CNVs calls failed : %s", repr(e))
         raise Exception("CNVs calls failed")
-    
+
     thisTime = time.time()
     logger.debug("Done CNVs calls, in %.2fs", thisTime - startTime)
     startTime = thisTime
@@ -204,11 +197,11 @@ def main(argv):
     except Exception as e:
         logger.error("CNV2Vcf failed : %s", repr(e))
         raise Exception("CNV2Vcf failed")
-    
+
     thisTime = time.time()
     logger.debug("Done CNV2Vcf, in %.2fs", thisTime - startTime)
     startTime = thisTime
-    
+
     ###########
     # print results
     try:
@@ -216,15 +209,16 @@ def main(argv):
     except Exception as e:
         logger.error("printVcf failed : %s", repr(e))
         raise Exception("printVcf failed")
-    
+
     thisTime = time.time()
     logger.debug("Done printVcf, in %.2fs", thisTime - startTime)
     startTime = thisTime
-    
+
     thisTime = time.time()
     logger.debug("Done printing groupingCalls, in %.2fs", thisTime - startTime)
     logger.info("ALL DONE")
-    
+
+
 ####################################################################################
 ######################################## Main ######################################
 ####################################################################################
