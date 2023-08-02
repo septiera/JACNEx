@@ -281,14 +281,13 @@ def plotPieChart(clustID, filterCounters, pdf):
 # output file path for saving the plot as input.
 #
 # Args:
-# - plotTitle [str]: The title of the plot.
 # - xi (np.ndarray[floats]): The x-axis data (FPM values).
 # - yLists (np.ndarray[floats]): A list of y-axis data for plotting.
 # - plotLegs (list[str]): A list of legends for each dataset.
 # - pdf [str]: The output file path for saving the plot as a PDF.
 #
 # save a plot in the output pdf
-def plotExponentialFit(plotTitle, dr, yLists, plotLegs, pdf):
+def plotExponentialFit(dr, yLists, plotLegs, pdf):
     # sanity
     if (len(yLists[0]) != len(yLists[1])) or (len(yLists) != len(plotLegs)):
         raise Exception('plotDensities bad args, length mismatch')
@@ -299,7 +298,6 @@ def plotExponentialFit(plotTitle, dr, yLists, plotLegs, pdf):
     matplotlib.pyplot.plot(dr, yLists[0], label=plotLegs[0])
     matplotlib.pyplot.plot(dr, yLists[1], label=plotLegs[1])
     matplotlib.pyplot.legend()
-    matplotlib.pyplot.title(plotTitle)
     matplotlib.pyplot.xlabel('FPM')
     matplotlib.pyplot.ylabel('densities')
     matplotlib.pyplot.ylim(0, max(yLists[0]) / 100)
