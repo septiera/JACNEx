@@ -60,6 +60,48 @@ timer = Timer()
 ###############################################################################
 ############################ PUBLIC FUNCTIONS #################################
 ###############################################################################
+#############################################################
+# CN0ParamsAndFPMLimit
+# calculates the parameters "expon_loc" and "exp_scale" associated with the fitted exponential
+# distribution from the intergenic count data.
+# It also calculates the "unCaptFPMLimit," which is the FPM threshold equivalent to 99% of
+# the cumulative distribution function (CDF) of the exponential distribution.   
+# Additionally, a PDF plot depicting the fitted exponential distribution is generated and saved
+# in the specified 'plotDir'.
+#
+# Args:
+# - intergenicsFPM (np.ndarray[floats]): count data from intergenic regions.
+# - plotDir [str]: Path to the directory where plots will be saved.
+#
+# Returns:
+# - expon_loc [float]: The location parameter of the fitted exponential distribution.
+# - exp_scale [float]: The scale parameter of the fitted exponential distribution.
+# - unCaptFPMLimit [float]: FPM threshold
+def CN0ParamsAndFPMLimit(intergenicsFPM, plotDir):
+    # fraction of the CDF of CNO exponential beyond which we truncate this distribution
+    fracCDFExp = 0.99
+    
+    nbInterRegions = intergenicsFPM.shape[0]
+    nbSamps = intergenicsFPM.shape[1]
+    
+    try:
+        (meanIntergenicFPM, expon_loc, exp_scale) = CNCalls.copyNumbersCalls.fitExponential(intergenicsFPM)
+    except Exception as e:
+        logger.error("fitExponential failed : %s", repr(e))
+        raise
+
+    unCaptFPMLimit = scipy.stats.expon.ppf(fracCDFExp, loc=expon_loc, scale=exp_scale)
+    
+    try:
+        nameFile = "exponentialFittedOn_" + str(nbSamps) + "Samps_" + str(nbInterRegions) + "intergenicRegions.pdf"
+        pdfFile = os.path.join(plotDir, nameFile)
+        preprocessExponFitPlot(meanIntergenicFPM, expon_loc, exp_scale, pdfFile)
+    except Exception as e:
+        logger.error("preprocessExponFitPlot failed : %s", repr(e))
+        raise
+    
+    return (expon_loc, exp_scale, unCaptFPMLimit)
+
 #####################################
 # clusterCalls
 # Given a cluster ID, exon and intergenic fragment data, sample information,
@@ -113,15 +155,13 @@ def clusterCalls(clustID, exonsFPM, intergenicsFPM, exons, clusters, ctrlsCluste
     startTime = time.time()
     #############
     ### fixed parameters
-    # fraction of the CDF of CNO exponential beyond which we truncate this distribution
-    fracCDFExp = 0.99
+    
     exonStatus = ["notCaptured", "cannotFitRG", "RGClose2LowThreshold", "fewSampsInRG", "exonsCalls"]
     # counter dictionary for each filter, only used to plot the pie chart
     exonStatusCountsDict = {status: 0 for status in exonStatus}
     # get output folder name
     outFolder = os.path.dirname(outFile)
     # defined file plot paths
-    expFitPlotFile = "exponentialFit_coverageProfileSmoothed.pdf"
     clusterPieChartFile = "exonsFiltersSummary_pieChart.pdf"
 
     try:
@@ -147,22 +187,6 @@ def clusterCalls(clustID, exonsFPM, intergenicsFPM, exons, clusters, ctrlsCluste
         # DEBUG tracking
         logger.debug("cluster n°%i, clustSamps=%i, controlSamps=%i, exonsNB=%i",
                      clustID, len(targetSampsInd), len(ctrlSampsInd), len(exonInd2Process))
-
-        ################
-        ### Call process
-        # fit an exponential distribution from all intergenic regions (CN0)
-        try:
-            (meanIntergenicFPM, loc, invLambda) = fitExponential(intergenicsFPM[:, targetSampsInd + ctrlSampsInd])
-            expParams = {'distribution': scipy.stats.expon, 'loc': loc, 'scale': invLambda}
-            preprocessExponFitPlot(clustID, meanIntergenicFPM, expParams, os.path.join(clustFolder, expFitPlotFile))
-            clusterParamsArray[-1, 0] = loc
-            clusterParamsArray[-1, 1] = invLambda
-        except Exception as e:
-            logger.error("fitExponential failed for cluster %i : %s", clustID, repr(e))
-            raise
-
-        # Calculating the threshold in FPM equivalent to 99% of the CDF (PPF = percent point function)
-        unCaptFPMLimit = scipy.stats.expon.ppf(fracCDFExp, loc=loc, scale=invLambda)
 
         # Browse cluster-specific exons
         for ex in range(len(exonInd2Process)):
@@ -218,6 +242,65 @@ def clusterCalls(clustID, exonsFPM, intergenicsFPM, exons, clusters, ctrlsCluste
 ###############################################################################
 ############################ PRIVATE FUNCTIONS ################################
 ###############################################################################
+#############################
+# fitExponential
+# Given a count array (dim = nbOfExons*nbOfSamps), fits an exponential distribution,
+# setting location = 0.
+#
+# Args:
+# - intergenicsFPM (np.ndarray[floats]): count array (FPM normalized)
+#
+# Returns a tuple (meanIntergenicFPM, loc, scale):
+# - meanIntergenicFPM (np.ndarray[floats]): average count per exon, array needed for
+#                                           'preprocessExponFitPlot' function
+# - loc [float], scale[float]: parameters of the exponential distribution
+@timer.measure_time
+def fitExponential(intergenicsFPMClust):
+    # compute meanFPM for each intergenic region (speed up)
+    meanIntergenicFPM = np.mean(intergenicsFPMClust, axis=1)
+
+    # Fit an exponential distribution, imposing location = 0
+    # f(x, scale) = (1/scale)*exp(-x/scale)
+    # scale = 1 / lambda
+    loc, invLambda = scipy.stats.expon.fit(meanIntergenicFPM)
+
+    return (meanIntergenicFPM, loc, invLambda)
+
+
+###########################
+# preprocessExponFitPlot
+# Generates an exponential fit plot using the provided data and parameters.
+# It performs data smoothing, calculates the probability density function for the exponential
+# distribution, and plots the exponential fit.
+#
+# Args:
+# - meanIntergenicFPM (list[floats]): The list of mean intergenic FPM values.
+# - expon_loc[float], exp_scale[float]: parameters of the exponential distribution.
+# - file [str]: The path to the file where the plot should be saved.
+#
+# Return None
+@timer.measure_time
+def preprocessExponFitPlot(meanIntergenicFPM, expon_loc, exp_scale, file):
+    # initiate plots variables
+    yLists = []  # List to store the y-values for plotting
+    plotLegs = []  # List to store the plot legends
+
+    # Smooth the average coverage profile of intergenic regions using the specified bandwidth
+    try:
+        (dr, dens, bwValue) = clusterSamps.smoothing.smoothData(meanIntergenicFPM, maxData=max(meanIntergenicFPM))
+    except Exception as e:
+        logger.error('smoothing failed for %s : %s', str(bwValue), repr(e))
+        raise
+
+    plotLegs.append("coverage data smoothed \nbwValue={:0.2e}".format(bwValue))
+    yLists.append(dens)
+
+    # calculate the probability density function for the exponential distribution
+    yLists.append(scipy.stats.expon.pdf(dr, loc=expon_loc, scale=exp_scale))
+    plotLegs.append("expon={:.2f}, {:.2f}".format(expon_loc, exp_scale))
+
+    figures.plots.plotExponentialFit(dr, yLists, plotLegs, file)
+
 #############################################################
 # getClusterSamps
 # Given a cluster ID, a list of control clusters for each cluster,
@@ -244,112 +327,6 @@ def getClusterSamps(clustID, ctrlsClustList, clusters):
             ctrlSampsInd.extend(clusters[ctrl_index])
 
     return (targetSampsInd, ctrlSampsInd)
-
-
-############################################
-# makeResFolders
-# creates the cluster directory within the main plot folder.
-# It then checks if the logging level is set to DEBUG.
-# If it is, the function proceeds to create the specified subdirectories
-# within the cluster directory based on the provided folderNames.
-# The paths to these subdirectories are added to the pathPlotFolders list.
-# Note: The function handles exceptions if directory creation fails and raises
-# an exception with an appropriate error message.
-#
-# Args:
-# - clusterID[int]: cluster identifier for which directories will be created.
-# - outputFolder [str]: path to the main plot folder where the cluster directories should be created.
-# - folderNames (list[str]): folder names to be created within each cluster directory.
-#                            These folders are created only in DEBUG mode.
-#
-# Returns a tuple (clustFolder, pathPlotFolders):
-# - clustFolder [str]: Path to the created cluster directory.
-# - pathPlotFolders (list[str]): paths to the subdirectories created within the cluster directory.
-@timer.measure_time
-def makeResFolders(clusterID, outputFolder, folderNames):
-    # To fill and return
-    pathPlotFolders = []
-
-    clusterFolder = os.path.join(outputFolder, "cluster_" + str(clusterID))
-    try:
-        os.makedirs(clusterFolder, exist_ok=True)
-    except OSError:
-        raise Exception("Error creating directory " + clusterFolder)
-
-    if (logging.getLogger().getEffectiveLevel() <= logging.DEBUG):
-        for folderIndex in range(len(folderNames)):
-            folderPath = os.path.join(clusterFolder, folderNames[folderIndex])
-            try:
-                os.makedirs(folderPath, exist_ok=True)
-            except OSError:
-                raise Exception("Error creating directory " + folderPath)
-            pathPlotFolders.append(folderPath)
-
-    return (clusterFolder, pathPlotFolders)
-
-
-#############################################################
-# fitExponential
-# Given a count array (dim = exonNB*samplesNB), fits an exponential distribution,
-# setting location = 0.
-#
-# Args:
-# - intergenicsFPMClust (np.ndarray[floats]): count array (FPM normalized)
-#
-# Returns a tuple (meanIntergenicFPM, loc, scale):
-# - meanIntergenicFPM (np.ndarray[floats]): average count per exon, array needed for
-#                                           the debug plot (preprocessExponFitPlot)
-# - loc [float], scale[float]: parameters of the exponential
-@timer.measure_time
-def fitExponential(intergenicsFPMClust):
-    # compute meanFPM for each intergenic region (speed up)
-    meanIntergenicFPM = np.mean(intergenicsFPMClust, axis=1)
-
-    # Fit an exponential distribution, imposing location = 0
-    # f(x, scale) = (1/scale)*exp(-x/scale)
-    # scale = 1 / lambda
-    loc, invLambda = scipy.stats.expon.fit(meanIntergenicFPM)
-
-    return (meanIntergenicFPM, loc, invLambda)
-
-
-###########################
-# preprocessExponFitPlot
-# Generates an exponential fit plot for a given cluster using the provided data and parameters.
-# It performs data smoothing, calculates the probability density function for the exponential
-# distribution, and plots the exponential fit.
-#
-# Args:
-# - clustID [int]: The ID of the cluster.
-# - meanIntergenicFPM (list[floats]): The list of mean intergenic FPM values.
-# - params (list[floats]): loc and scale(invLambda) parameters of the exponential distribution.
-# - file [str]: The path to the file where the plot should be saved.
-#
-# Return None
-@timer.measure_time
-def preprocessExponFitPlot(clustID, meanIntergenicFPM, params, file):
-    # initiate plots variables
-    plotTitle = f"ClusterID n° {clustID}"
-    yLists = []  # List to store the y-values for plotting
-    plotLegs = []  # List to store the plot legends
-
-    # smoothing raw data
-    # Smooth the average coverage profile of intergenic regions using the specified bandwidth
-    try:
-        (dr, dens, bwValue) = clusterSamps.smoothing.smoothData(meanIntergenicFPM, maxData=max(meanIntergenicFPM))
-    except Exception as e:
-        logger.error('smoothing failed for %s : %s', str(bwValue), repr(e))
-        raise
-
-    plotLegs.append("coverage data smoothed \nbwValue={:0.2e}".format(bwValue))
-    yLists.append(dens)
-
-    # calculate the probability density function for the exponential distribution
-    yLists.append(computeLikelihood(params, dr))
-    plotLegs.append("expon={:.2f}, {:.2f}".format(params['loc'], params['scale']))
-
-    figures.plots.plotExponentialFit(plotTitle, dr, yLists, plotLegs, file)
-
 
 ################################################
 # computeLikelihood
