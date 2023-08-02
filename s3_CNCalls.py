@@ -176,8 +176,31 @@ def main(argv):
     thisTime = time.time()
     logger.debug("Done parsing clustsFile, in %.2f s", thisTime - startTime)
     startTime = thisTime
+    
+    # warning: there are no checks performed on the number of samples in 'samples' and
+    # the samples contained in clusters. However, if a sample is present in a cluster
+    # but not in 'samples', Python will raise an error when selecting the non-existent
+    # counts column. On the other hand, if an additional sample is present, it will not
+    # be analyzed and will be ignored without raising an error.
+    # In pipeline mode, this should not happen.
+    
+    ####################
+    # CN Calls
+    # calculates distribution parameters:
+    # -fits an exponential distribution to the entire dataset of intergenic counts (CN0),
+    # -selects cluster-specific exons on autosomes, chrY, or chrX.
+    #  Uninterpretable exons are filtered out while robustly calculating parameters for
+    #  a fitted Gaussian distribution.
+    
+    try:
+        (expon_loc, exp_scale, unCaptFPMLimit) = CNCalls.copyNumbersCalls.CN0ParamsAndFPMLimit(intergenicsFPM, plotDir)
+    except Exception as e:
+        raise Exception("CN0ParamsAndFPMLimit failed: %s", repr(e))
 
-
+    thisTime = time.time()
+    logger.debug("Done parsing CN0ParamsAndFPMLimit, in %.2f s", thisTime - startTime)
+    startTime = thisTime
+    
     # ######################################################
     # # !!! (samples to be changed with the comparision between previous and current analysis)
     # paramsToKeep = ["loc", "scale"]
