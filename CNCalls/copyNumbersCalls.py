@@ -8,7 +8,6 @@ import matplotlib.backends.backend_pdf
 import time
 
 import clusterSamps.smoothing
-import CNCalls.CNCallsFile
 import figures.plots
 
 # prevent PIL and numba flooding the logs when we are in DEBUG loglevel
@@ -65,7 +64,7 @@ timer = Timer()
 # calculates the parameters "expon_loc" and "exp_scale" associated with the fitted exponential
 # distribution from the intergenic count data.
 # It also calculates the "unCaptFPMLimit," which is the FPM threshold equivalent to 99% of
-# the cumulative distribution function (CDF) of the exponential distribution.   
+# the cumulative distribution function (CDF) of the exponential distribution.
 # Additionally, a PDF plot depicting the fitted exponential distribution is generated and saved
 # in the specified 'plotDir'.
 #
@@ -80,159 +79,124 @@ timer = Timer()
 def CN0ParamsAndFPMLimit(intergenicsFPM, plotDir):
     # fraction of the CDF of CNO exponential beyond which we truncate this distribution
     fracCDFExp = 0.99
-    
+
     nbInterRegions = intergenicsFPM.shape[0]
     nbSamps = intergenicsFPM.shape[1]
-    
+
     try:
-        (meanIntergenicFPM, expon_loc, exp_scale) = CNCalls.copyNumbersCalls.fitExponential(intergenicsFPM)
+        # Fit an exponential distribution to the intergenic fragment per million (FPM) data
+        (meanIntergenicFPM, expon_loc, exp_scale) = fitExponential(intergenicsFPM)
     except Exception as e:
         logger.error("fitExponential failed : %s", repr(e))
         raise
 
+    # Calculate the FPM limit below which exons are considered "uncaptured"
     unCaptFPMLimit = scipy.stats.expon.ppf(fracCDFExp, loc=expon_loc, scale=exp_scale)
-    
+
     try:
+        # Generate a plot to visualize the fitted exponential distribution
         nameFile = "exponentialFittedOn_" + str(nbSamps) + "Samps_" + str(nbInterRegions) + "intergenicRegions.pdf"
         pdfFile = os.path.join(plotDir, nameFile)
         preprocessExponFitPlot(meanIntergenicFPM, expon_loc, exp_scale, pdfFile)
     except Exception as e:
         logger.error("preprocessExponFitPlot failed : %s", repr(e))
         raise
-    
+
     return (expon_loc, exp_scale, unCaptFPMLimit)
 
+
 #####################################
-# clusterCalls
-# Given a cluster ID, exon and intergenic fragment data, sample information,
-# and various parameters.
-# - Initialization: set up fixed parameters, define variables, and prepare output
-#   file paths.
-# - Retrieve cluster-specific information: Obtain the indices of target and control
-#   samples associated with the cluster.
-# - Preparation of data structures: allocate an array to store copy number (CN)
-#   calls for each exon in the cluster and initialize relevant variables.
-# -Cluster-specific analysis:
-#   a. Exponential distribution fitting: fit an exponential distribution to the
-#      intergenic fragment data of target and control samples within the cluster,
-#      obtaining distribution parameters.
-#      Generate a plot showing the profile of the exponential distribution.
-#   b. Threshold calculation: calculate the threshold value in fragments per million (FPM)
-#      corresponding to a specified fraction of the cumulative distribution function (CDF)
-#      of the exponential distribution.
-#   c. Exon processing: iterate over each exon in the cluster and analyze the copy
-#      number data of target and control samples.
-#       - Filtering: apply various filters to determine the filter status of the exon
-#         based on its  copy number data and the obtained parameters.
-#         If the exon fails any filter, it is marked accordingly and excluded from
-#         further analysis.
-#       - Plotting: if not in debug mode, generate a plot showing the profile of the
-#         exon's exponential distribution.
-# - Generate a pie chart summarizing the filter status counts.
+# exonFilterAndCN2Params
+# identifies and processes exons specific to a given cluster, along with its
+# control clusters.
+# It filters or calls the exons based on their fragment count data and stores
+# the results (parameters of a Gaussian distribution and exon filtering status] in
+# a cluster-specific array.
+# Additionally, it generates a pie chart showing the status of the filtered
+# or called exons for the cluster.
 #
 # Args:
-# - clustID [int]
-# - exonsFPM (np.ndarray[floats]): normalised counts from exons
-# - intergenicsFPM (np.ndarray[floats]): normalised counts from intergenic windows
-# - exons (list of lists[str, int, int, str]): exon definitions [CHR,START,END,EXONID]
-# - clusters (list of lists[ints]): each list corresponds to a cluster index containing the
-#                                 associated "samples" indexes
-# - ctrlsClusters (list of lists[int]): each list corresponds to a cluster index containing
-#                                       control cluster index
-# - specClusters (list[int]): each list index = cluster index, values = autosomes (0)
-#                             or gonosomes (1)
-# - exonsBool (np.ndarray[bool]): indicates if each exon is in a gonosomal region (True) or not (False).
-# - outFile [str]: results calls file path
-# - paramsToKeep (list[str])
+# -clustID [str]
+# -exonsFPM (np.ndarray[floats]): normalised counts from exons
+# -samples (list[strs]): sample IDs in the same order as the columns of 'exonsFPM'.
+# -clust2samps (dict): mapping cluster IDs to lists of sample IDs.
+# -fitWith (dict): mapping cluster IDs to lists of control cluster IDs.
+# -exonOnSexChr (numpy.ndarray[ints]): chromosome category (autosomes=0 or gonosomes chrXZ=1, chrYW=2)
+#                                      for each exon.
+# -unCaptFPMLimit (float): Upper limit for fragment count data, used in exon filtering.
+# -expectedColNames (list[strs]): List of expected column names for the results array.
+# -filterStatus (list[strs]): List of status labels used in filtering or calling exons.
 #
 # Returns a tuple (clustID, colInd4CNCallsArray, exonInd2Process, clusterCallsArray):
 # - clustID [int]
-# - colInd4CNCallsArray (list[ints]): column indexes for the CNcallsArray.
+# - colInd4CNCallsArray (list[ints]): CN2ParamsArray column indexes .
 # - exonInd2Process (list[ints]): exons indexes (rows indexes) for the CNcallsArray.
 # - clusterCallsArray (np.ndarray[floats]): The cluster calls array (likelihoods).
-def clusterCalls(clustID, exonsFPM, intergenicsFPM, exons, clusters, ctrlsClusters,
-                 specClusters, exonsBool, outFile, paramsToKeep):
+def exonFilterAndCN2Params(clustID, exonsFPM, samples, clust2samps, fitWith, exonOnSexChr,
+                           unCaptFPMLimit, expectedColNames, filterStatus):
     startTime = time.time()
-    #############
-    ### fixed parameters
-    
-    exonStatus = ["notCaptured", "cannotFitRG", "RGClose2LowThreshold", "fewSampsInRG", "exonsCalls"]
-    # counter dictionary for each filter, only used to plot the pie chart
-    exonStatusCountsDict = {status: 0 for status in exonStatus}
-    # get output folder name
-    outFolder = os.path.dirname(outFile)
-    # defined file plot paths
-    clusterPieChartFile = "exonsFiltersSummary_pieChart.pdf"
-
     try:
         #############
         ### get cluster-specific informations
+        #############
+        # Get the index of the current cluster in the list of keys from 'clust2samps'
+        # enabling parallel storage of results in CN2ParamsArray
+        clustInd = list(clust2samps).index(clustID)
+
+        # Get target and control 'samples' indexes for each cluster
+        # enables retrieval of fragment count data from exonsFPM array for all samples of interest,
+        # including the target cluster and control clusters.
         try:
-            (targetSampsInd, ctrlSampsInd) = getClusterSamps(clustID, ctrlsClusters, clusters)
+            (targetSampsInd, ctrlSampsInd) = getSampIndex(clustID, clust2samps, samples, fitWith)
         except Exception as e:
             logger.error("getClusterSamps failed for cluster %i : %s", clustID, repr(e))
             raise
 
-        # To Fill and return
-        exonInd2Process = np.where(exonsBool == specClusters[clustID])[0]
-        clusterParamsArray = CNCalls.CNCallsFile.allocateParamsArray(len(exonInd2Process), 1, len(paramsToKeep))
-        colInd4ParamsArray = [clustID * len(paramsToKeep), clustID * len(paramsToKeep) + 1]
+        # Get appropriate chromosome category for clustID (autosomes or gonosomes)
+        # enables identification of cluster-specific exons for analysis
+        chrMap = {"A": 0, "XZ": 1, "YW": 2}
+        clustChr = clustID.split("_")[0]
+        # sanity check
+        if clustChr not in chrMap:
+            raise Exception("Cluster identifier not expected: ", clustID)
 
-        try:   # name of the output cluster folder and the list of subdirectories
-            (clustFolder, pathPlotFolders) = makeResFolders(clustID, outFolder, exonStatus)
-        except Exception as e:
-            logger.error("makeResFolders failed for cluster %i : %s", clustID, repr(e))
-            raise
+        #############
+        # Data to be returned
+        exonInd2Process = np.where(exonOnSexChr == chrMap[clustChr])[0]
+        colInd4ParamsArray = np.arange(clustInd * len(expectedColNames), clustInd * len(expectedColNames) + len(expectedColNames))
+        clusterParamsArray = np.full((len(exonInd2Process), len(expectedColNames)), -1, dtype=np.float64, order='F')
 
-        # DEBUG tracking
-        logger.debug("cluster n°%i, clustSamps=%i, controlSamps=%i, exonsNB=%i",
+        #############
+        # cluster summary
+        logger.debug("cluster n°%s, clustSamps=%i, controlSamps=%i, exonsNB=%i",
                      clustID, len(targetSampsInd), len(ctrlSampsInd), len(exonInd2Process))
 
-        # Browse cluster-specific exons
-        for ex in range(len(exonInd2Process)):
-            ### exon-specific data
-            exonInd4Exons = exonInd2Process[ex]
-            exonInfos = exons[exonInd4Exons]  # list [CHR, START, END, EXONID]
-            exonFPM4Clust = exonsFPM[exonInd4Exons, targetSampsInd + ctrlSampsInd]
-
-            # dictionary list containing information about the fitted laws
-            # {distribution:str, loc:float, scale:float}, list CNtype ordered, i.e. CN0, CN1, CN2, CN3.
-            params = {}
-            # retain parameters of law associated with homodeletions
-            params["CN0"] = expParams
+        #############
+        ### Filter or call exons
+        #############
+        # Loop through each exon index to process
+        for ei in range(len(exonInd2Process)):
+            exonBedInd = exonInd2Process[ei]
+            exonFPMs = exonsFPM[exonBedInd, targetSampsInd + ctrlSampsInd]
 
             try:
-                filterStatus = exonCalls(ex, exonFPM4Clust, params, unCaptFPMLimit, clusterParamsArray)
+                # Perform filtering or calling for the current exon and get the status
+                exStatus = exonFilteredOrCalled(ei, exonFPMs, unCaptFPMLimit, clusterParamsArray, expectedColNames)
             except Exception as e:
-                logger.error("exonCalls failed : %s", repr(e))
+                logger.error("exonFilteredOrCalled failed : %s", repr(e))
                 raise
 
-            if filterStatus is not None:  # Exon filtered
-                exonStatusCountsDict[filterStatus] += 1
-                if pathPlotFolders:
-                    try:
-                        preprocessExonProfilePlot(filterStatus, exonStatusCountsDict, params,
-                                                  unCaptFPMLimit, exonInfos, exonFPM4Clust, pathPlotFolders)
-                    except Exception as e:
-                        logger.error("preprocessExonProfilePlot failed : %s", repr(e))
-                        raise
+            # Update the clusterParamsArray with the status of the current exon
+            clusterParamsArray[ei, expectedColNames.index("filterStatus")] = filterStatus.index(exStatus)
 
-            else:  # Exon passed filters
-                exonStatusCountsDict["exonsCalls"] += 1
-
-        try:
-            figures.plots.plotPieChart(clustID, exonStatusCountsDict, os.path.join(clustFolder, clusterPieChartFile))
-        except Exception as e:
-            logger.error("plotPieChart failed for cluster %i : %s", clustID, repr(e))
-            raise
-
-        # real time monitoring of function execution times
+        # real-time monitoring of function execution times
         for key, value in timer.timer_dict.items():
             logger.debug("ClustID: %s,  %s : %.2f sec", clustID, key, value)
 
+        logger.info(clusterParamsArray.shape)
         thisTime = time.time()
         logger.debug("ClusterCalls ClustID: %s execution time, in %.2fs", clustID, thisTime - startTime)
-        return (clustID, colInd4ParamsArray, np.append(exonInd2Process, len(clusterParamsArray)), clusterParamsArray)
+        return (clustID, colInd4ParamsArray, exonInd2Process, clusterParamsArray)
 
     except Exception as e:
         logger.error("CNCalls failed for cluster n°%i - %s", clustID, repr(e))
@@ -301,76 +265,82 @@ def preprocessExponFitPlot(meanIntergenicFPM, expon_loc, exp_scale, file):
 
     figures.plots.plotExponentialFit(dr, yLists, plotLegs, file)
 
+
 #############################################################
-# getClusterSamps
-# Given a cluster ID, a list of control clusters for each cluster,
-# and a list of sample indexes for each cluster.
-# It returns a tuple containing the target sample indexes (specific to the cluster)
-# and the combined sample indexes (including both target and control samples).
+# getSampleIndex
+# identifies the indices of 'samples' belonging to the target cluster and control clusters.
+# Control clusters consist of samples with coverage profiles similar to those in the target cluster.
+# also checks for potential errors where a sample could be present in both a control and
+# a target cluster, raising an error if such a case is detected.
 #
 # Args:
-# - clustID [int]: cluster identifier
-# - ctrlsClustList (list of lists[int]]): control clusters for each cluster.
-# - clusters (list of lists[int]]): sample indexes for each cluster.
+# -clustID [str]
+# -clust2samps (dict): key==clusterID, value == list of sampleIDs
+# -samples (list[strs]): sampleIDs, same order as the columns of FPMarray
+# -fitWith(dict): key==clusterID, value == list of clusterIDs
 #
-# Returns a tuple (targetSampsInd, allSampsInd) containing:
-#  - targetSampsInd [list[int]]: sample indexes specific to the target cluster.
-#  - allSampsInd [list[int]]: combined sample indexes (target + control).
+# Returns a tuple (targetSampsInd, allSampsInd) containing two lists
+# - the 'samples' indexes of target samples and control samples.
 @timer.measure_time
-def getClusterSamps(clustID, ctrlsClustList, clusters):
-    targetSampsInd = clusters[clustID]
+def getSampIndex(clustID, clust2samps, samples, fitWith):
+    # Convert the list of samples for the current cluster (clusterID)
+    # into sets for faster membership checks
+    targetSamps = set(clust2samps[clustID])
+    ctrlSamps = set()
+
+    # controlClusters is not empty, extract the control 'samples' names
+    if len(fitWith[clustID]) != 0:
+        for ctrlInd in fitWith[clustID]:
+            ctrlSamps.update(clust2samps[ctrlInd])
+
+    # Lists to store the 'samples' indexes of target and control samples
+    targetSampsInd = []
     ctrlSampsInd = []
 
-    if len(ctrlsClustList[clustID]) != 0:
-        # Extract cluster control sample indexes
-        for ctrl_index in ctrlsClustList[clustID]:
-            ctrlSampsInd.extend(clusters[ctrl_index])
+    for sampInd, sampName in enumerate(samples):
+        # sanity check
+        if sampName in targetSamps and sampName in ctrlSamps:
+            logger.error('%s is present in both the control cluster %s and the target cluster %s',
+                         sampName, clustID, " ".join(fitWith[clustID]))
+            raise
+
+        # Check if the current sample is in the target and/or control group
+        isTargetSamp = sampName in targetSamps
+        isCtrlSamp = sampName in ctrlSamps
+
+        # Append the sample index to the appropriate list based on its group membership
+        if isTargetSamp and not isCtrlSamp:
+            targetSampsInd.append(sampInd)
+        elif not isTargetSamp and isCtrlSamp:
+            ctrlSampsInd.append(sampInd)
 
     return (targetSampsInd, ctrlSampsInd)
 
-################################################
-# computeLikelihood
-# Returns distributions's likelihood at the FPMs coordinates.
-# Args:
-# - params (dict): distribution parameters, including 'distribution':scipy.distributionName,
-#                  'loc':float, and 'scale':float.
-# - FPMs (list[floats])
-#
-# Returns a np.ndarray[floats]: probability density (likelihood) for a concerned distribution and
-#                               FPMs.
-@timer.measure_time
-def computeLikelihood(params, FPMs):
-    # Separate parts of parameters
-    distribution = params['distribution']
-    loc = params['loc']
-    scale = params['scale']
-
-    # scipy v1.5.4 default np.float64 cannot be changed
-    y = distribution.pdf(FPMs, loc=loc, scale=scale)
-
-    return y
-
 
 ##############################################
-# exonCalls
-# processes an exon by applying a series of filters.
-# No specific output: It either returns a filter status string if the exon doesn't pass
-# the filters or updates the clusterCallsArray with the computed likelihoods for the exon.
+# exonFilteredOrCalled
+# Processes an exon by applying a series of filters to determine its filter status.
 # Specs:
 # 1) Check if the exon is not captured (median coverage = 0).
 # 2) Fit a robust Gaussian distribution (CN2) to the exon FPM values.
 # 3) Check if the fitted Gaussian overlaps the threshold associated with the uncaptured exon profile.
 # 4) Check if the sample contribution rate to the Gaussian is too low (<50%).
 # 5) If any of the above filters is triggered, return the corresponding filter status.
+# 6) If the exon passes all filters, the clusterParamsArray is updated with the computed parameters
+# of the Gaussian distribution for the exon.
 #
 # Args:
-# - exIndToProcess [int]
-# - exonFPM4Clust (numpy.ndarray[floats]): Exon FPM (Fragments Per Million) values for the cluster.
-# - params [dict]: parameters for the distribution models.
-# - unCaptFPMLimit [float]: FPM threshold value for uncaptured exons.
-# - clusterParamsArray (numpy.ndarray[floats]): store the Gaussian parameters [loc, scale].
+# -exIndToProcess [int]
+# -exonFPM (numpy.ndarray[floats]): Exon FPM (Fragments Per Million) values for the cluster.
+# -unCaptFPMLimit [float]: FPM threshold associated with the uncaptured exons.
+# -clusterParamsArray (numpy.ndarray[floats]): store the Gaussian parameters [loc, scale].
+# -expectedColNames (list[strs]): List of column names for the clusterParamsArray ["loc","scale","filterStatus"]
+# Returns:
+# - str: exon filter status("notCaptured", "cannotFitRG", "RGClose2LowThreshold", "fewSampsInRG", or "call").
+# If the filter status is "call", it means the exon passes all filters and is callable.
+# If the filter status is any other value, the exon does not pass one or more filters.
 @timer.measure_time
-def exonCalls(exIndToProcess, exonFPM4Clust, params, unCaptFPMLimit, clusterParamsArray):
+def exonFilteredOrCalled(exIndToProcess, exonFPMs, unCaptFPMLimit, clusterParamsArray, expectedColNames):
     #################
     ### init exon variable
     # a str which takes the name of the filter excluding the exon
@@ -378,15 +348,14 @@ def exonCalls(exIndToProcess, exonFPM4Clust, params, unCaptFPMLimit, clusterPara
     filterStatus = None
 
     ### Filter n°1: not captured => median coverage of the exon = 0
-    if filterUncapturedExons(exonFPM4Clust):
+    if filterUncapturedExons(exonFPMs):
         return "notCaptured"
 
     ### robustly fit a gaussian (CN2)
     ### Filter n°2: fitting is impossible (median close to 0)
     try:
-        (mean, stdev) = fitRobustGaussian(exonFPM4Clust)
-        # retain parameters of law associated with normal case (CN2)
-        params["CN2"] = {'distribution': scipy.stats.norm, 'loc': mean, 'scale': stdev}
+        (gaussian_loc, gaussian_scale) = fitRobustGaussian(exonFPMs)
+
     except Exception as e:
         if str(e) == "cannot fit":
             return "cannotFitRG"
@@ -394,15 +363,16 @@ def exonCalls(exIndToProcess, exonFPM4Clust, params, unCaptFPMLimit, clusterPara
             raise Exception("fitRobustGaussian %s", repr(e))
 
     ### Filter n°3: fitted gaussian overlaps the threshold associated with the uncaptured exon profile
-    if ((filterStatus is None) and (filterZscore(mean, stdev, unCaptFPMLimit))):
+    if ((filterStatus is None) and (filterZscore(gaussian_loc, gaussian_scale, unCaptFPMLimit))):
         return "RGClose2LowThreshold"
 
     ### Filter n°4: the samples contribution rate to the gaussian is too low (<50%)
-    if ((filterStatus is None) and (filterSampsContrib2Gaussian(mean, stdev, exonFPM4Clust))):
+    if ((filterStatus is None) and (filterSampsContrib2Gaussian(gaussian_loc, gaussian_scale, exonFPMs))):
         return "fewSampsInRG"
 
-    clusterParamsArray[exIndToProcess, 0] = mean
-    clusterParamsArray[exIndToProcess, 1] = stdev
+    clusterParamsArray[exIndToProcess, expectedColNames.index("loc")] = gaussian_loc
+    clusterParamsArray[exIndToProcess, expectedColNames.index("scale")] = gaussian_scale
+    return "call"
 
 
 ###################
@@ -573,60 +543,3 @@ def filterSampsContrib2Gaussian(mean, stdev, exonFPM):
         return True
     else:
         return False
-
-
-#########################
-# preprocessExonProfilePlot
-# generates exon profile plots using given data, including probability density functions
-# for different distributions.
-# It checks conditions, prepares titles and variables, calculates distributions,
-# creates plots, and saves them in a PDF file.
-#
-# Args:
-# - status [str]: Status of the exon filters.
-# - exonsFiltersSummary (dict): Summary of exon filters. keys = filter status[str], value= exons counter
-# - params (list[dict]): List of parameter dictionaries for generating PDFs.
-# - unCaptThreshold [float]: FPM threshold separating captured and non-captured exons
-# - exonInfos (list[int]): Exon information [CHR,START,END,EXONID].
-# - exonFPM (np.ndarray[floats]): Array of FPM values for one exon.
-# - folders (list[str]): folder paths for storing the generated plots.
-# - samples (list[str], optional): sample names. Defaults to None.
-# - clusterSamps2Plot (list[int], optional): sample indexes to plot. Defaults to None.
-# - sampsInd (list[int], optional): all sample indexes. Defaults to None.
-@timer.measure_time
-def preprocessExonProfilePlot(status, exonsFiltersSummary, params, unCaptThreshold,
-                              exonInfos, exonFPM, folders):
-    # Fixed parameter
-    nbExToPlot = 500  # No. of threshold multiplier exons = one plot
-
-    if status != "exonsCalls":
-        if exonsFiltersSummary[status] % nbExToPlot != 0:
-            return
-
-    # Find the appropriate folder based on the 'status' value
-    folder = next((f for f in folders if status in f), None)
-
-    # Prepare the file and plot titles
-    fileTitle = f"coverage_profil_{'_'.join(map(str, exonInfos))}"
-    plotTitle = f"{'_'.join(map(str, exonInfos))}"
-    # Lists to store plot data
-    yLists = []
-    plotLegs = [f"expon={params['CN0']['loc']:.2f}, {params['CN0']['scale']:.2f}"]
-    verticalLines = [unCaptThreshold]
-    vertLinesLegs = [f"UncoverThreshold={unCaptThreshold:.3f}"]
-    # creates FPM ranges base
-    xi = np.linspace(0, np.max(exonFPM), 1000)
-    # calculate the probability density function for the exponential distribution
-    yLists.append(computeLikelihood(params["CN0"], xi))
-    ylim = np.max(yLists[0]) / 10
-
-    if len(params) > 1:
-        # calculate the probability density function for the gaussian distribution (CN2)
-        yLists.append(computeLikelihood(params["CN2"], xi))
-        plotLegs.append(f"RG CN2={params['CN2']['loc']:.2f}, {params['CN2']['scale']:.2f}")
-        ylim = 2 * np.max(yLists[1])
-
-    else:
-        PDF_File = matplotlib.backends.backend_pdf.PdfPages(os.path.join(folder, fileTitle))
-        figures.plots.plotExonProfile(exonFPM, xi, yLists, plotLegs, verticalLines, vertLinesLegs, plotTitle, ylim, PDF_File)
-        PDF_File.close()
