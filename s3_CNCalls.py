@@ -191,12 +191,12 @@ def main(argv):
     # calculates distribution parameters:
     # 1) fits an exponential distribution to the entire dataset of intergenic counts (CN0)
     try:
-        (expon_loc, exp_scale, unCaptFPMLimit) = CNCalls.copyNumbersCalls.CN0ParamsAndFPMLimit(intergenicsFPM, plotDir)
+        (exp_loc, exp_scale, unCaptFPMLimit) = CNCalls.copyNumbersCalls.CN0ParamsAndFPMLimit(intergenicsFPM, plotDir)
     except Exception as e:
         raise Exception("CN0ParamsAndFPMLimit failed: %s", repr(e))
 
     thisTime = time.time()
-    logger.debug("Done CN0ParamsAndFPMLimit, loc=%.2f, scale=%.2f, in %.2f s",expon_loc, exp_scale, thisTime - startTime)
+    logger.debug("Done CN0ParamsAndFPMLimit, loc=%.2f, scale=%.2f, in %.2f s",exp_loc, exp_scale, thisTime - startTime)
     startTime = thisTime
 
     ###
@@ -285,13 +285,13 @@ def main(argv):
     # close PDF file containing pie charts
     matplotOpenFile.close()
 
-    # #####################################################
-    # # Print exon defs + calls to outFile
-    # CNCalls.CNCallsFile.printCNCallsFile(CN2ParamsArray, exons, clusters, paramsToKeep, outFile)
+    #####################################################
+    # Print exon defs + calls to outFile
+    CNCalls.CNCallsFile.printParamsFile(outFile, clust2samps, expectedColNames, exp_loc, exp_scale, exons, CN2ParamsArray)
 
-    # thisTime = time.time()
-    # logger.debug("Done printing calls for all (non-failed) clusters, in %.2fs", thisTime - startTime)
-    # logger.info("ALL DONE")
+    thisTime = time.time()
+    logger.debug("Done printing calls for all (non-failed) clusters, in %.2fs", thisTime - startTime)
+    logger.info("ALL DONE")
 
 
 ####################################################################################
