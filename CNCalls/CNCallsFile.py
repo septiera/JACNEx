@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 def parseCNcallsFile(CNcallsFile, nbState):
     (exons, samples, CNCallsList) = parseCNCallsPrivate(CNcallsFile)
     # callsArray[exonIndex,sampleIndex] will store the specified probabilities
-    CNCallsArray = allocateCNCallsArray(len(exons), len(samples), nbState)
+    CNCallsArray = allocateParamsArray(len(exons), len(samples), nbState)
     # Fill callsArray from callsList
     for i in range(len(exons)):
         callsVec2array(CNCallsArray, i, CNCallsList[i])
@@ -141,17 +141,14 @@ def parseCNCallsPrivate(CNCallsFile):
 ##############################################################
 # allocateParamsArray:
 # Args:
-# - numExons, numClusters, numParams
+# - numExons, numClusters, numCol
 #
 # Returns an float array with -1, adapted for storing the Gaussian
-# parameters [loc = mean, scale = stdev] for each sample and adds
-# an additional lines for the exponential parameters [loc = 0, scale = inverse lambda]
-# (same for each sample from a cluster)
-# dim= NbExons + 1  x NbClusters
-def allocateParamsArray(numExons, numClusters, numParams):
-    exponLinesToAdd = 1
+# parameters [loc = mean, scale = stdev] for each cluster
+# dim= NbOfExons * (NbOfClusters * NbOfCol)
+def allocateParamsArray(numExons, numClusters, numCol):
     # order=F should improve performance
-    return np.full(((numExons + exponLinesToAdd), (numClusters * numParams)), -1, dtype=np.float64, order='F')
+    return np.full((numExons, (numClusters * numCol)), -1, dtype=np.float64, order='F')
 
 
 #################################################
