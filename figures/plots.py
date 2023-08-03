@@ -228,52 +228,6 @@ def plotDendrogram(linkageMatrix, samples, clust2samps, fitWith, clustIsValid, t
     pdf.close()
 
 
-#############################################################
-# plotPieChart:
-# generates a pie by cluster resuming the filtering of exons
-#
-# Args:
-# - clustID [str]: cluster identifier
-# - filterCounters (dict[str:int]): dictionary of exon counters of different filtering
-# performed for the cluster
-# - pdf [str]: file path to save plot
-#
-# save a plot in the output pdf
-def plotPieChart(clustID, filterCounters, pdf):
-
-    matplotOpenFile = matplotlib.backends.backend_pdf.PdfPages(pdf)
-
-    fig = matplotlib.pyplot.figure(figsize=(5, 5))
-    ax11 = fig.add_subplot(111)
-    w, l, p = ax11.pie(filterCounters.values(),
-                       labels=None,
-                       autopct=lambda x: str(round(x, 2)) + '%',
-                       textprops={'fontsize': 14},
-                       startangle=160,
-                       radius=0.5,
-                       pctdistance=1,
-                       labeldistance=None)
-
-    step = (0.8 - 0.2) / (len(filterCounters.keys()) - 1)
-    pctdists = [0.8 - i * step for i in range(len(filterCounters.keys()))]
-
-    for t, d in zip(p, pctdists):
-        xi, yi = t.get_position()
-        ri = np.sqrt(xi**2 + yi**2)
-        phi = np.arctan2(yi, xi)
-        x = d * ri * np.cos(phi)
-        y = d * ri * np.sin(phi)
-        t.set_position((x, y))
-
-    matplotlib.pyplot.axis('equal')
-    matplotlib.pyplot.title("Filtered and called exons from cluster " + str(clustID))
-    matplotlib.pyplot.legend(loc='upper right', fontsize='small', labels=filterCounters.keys())
-    matplotOpenFile.savefig(fig)
-    matplotlib.pyplot.close()
-
-    matplotOpenFile.close()
-
-
 #########################
 # plotExponentialFit
 # generates a plot to visualize the exponential fit for a given dataset.
@@ -356,6 +310,57 @@ def plotExonProfile(rawData, xi, yLists, plotLegs, verticalLines, vertLinesLegs,
     matplotlib.pyplot.legend(loc='upper right', fontsize='small')
 
     pdf.savefig(fig)
+    matplotlib.pyplot.close()
+
+
+#############################################################
+# plotPieChart:
+# Generate and save a pie chart representing the distribution of exon status
+# (filtered or called).
+#
+# Args:
+# - clustID [str]: cluster identifier
+# - filterStatus (list[strs]): exon filter status names
+# - exStatusArray (numpy.ndarray[ints]): exon status indexes from "filterStatus"
+# - matplotOpenFile: File handle to save the generated plot
+def plotPieChart(clustID, filterStatus, exStatusArray, matplotOpenFile):
+    # Use numpy.unique() to obtain unique values and their occurrences
+    # with return_counts=True, unique_values will contain the sorted unique values
+    # in ascending order, and counts will correspond to the number of occurrences
+    # for each unique value in the same sorted order.
+    uniqueValues, counts = np.unique(exStatusArray, return_counts=True)
+    
+    # Create the pie chart figure and subplot
+    fig = matplotlib.pyplot.figure(figsize=(5, 5))
+    ax11 = fig.add_subplot(111)
+    
+    # Plot the pie chart with customization
+    w, l, p = ax11.pie(counts,
+                       labels=None,
+                       autopct=lambda x: str(round(x, 2)) + '%',
+                       textprops={'fontsize': 14},
+                       startangle=160,
+                       radius=0.5,
+                       pctdistance=1,
+                       labeldistance=None)
+
+    # Calculate percentage distances for custom label positioning
+    step = (0.8 - 0.2) / (len(filterStatus) - 1)
+    pctdists = [0.8 - i * step for i in range(len(filterStatus))]
+
+    # Position the labels at custom percentage distances
+    for t, d in zip(p, pctdists):
+        xi, yi = t.get_position()
+        ri = np.sqrt(xi**2 + yi**2)
+        phi = np.arctan2(yi, xi)
+        x = d * ri * np.cos(phi)
+        y = d * ri * np.sin(phi)
+        t.set_position((x, y))
+
+    matplotlib.pyplot.axis('equal')
+    matplotlib.pyplot.title("Filtered and called exons from cluster " + str(clustID))
+    matplotlib.pyplot.legend(loc='upper right', fontsize='small', labels=filterStatus)
+    matplotOpenFile.savefig(fig)
     matplotlib.pyplot.close()
 
 
