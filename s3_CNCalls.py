@@ -1,10 +1,11 @@
 ###############################################################################################
-######################################## JACNEx step 3: Copy numbers calls ##################
+######################## JACNEx step 3: exon filtering and calling ############################
 ###############################################################################################
 # Given a TSV of exon fragment counts produced by 1_countFrags.py
 # and a TSV with clustering information produced by 2_clusterSamps.py:
-# calculates robust Gaussian distribution parameters for sample exon counts and
-# exponential distribution parameters for intergenic regions counts within a patient cluster.
+# It filters out non-callable exons and computes parameters for two distributions:
+# an exponential distribution (loc=0, scale=lambda) for CN0 and a robust Gaussian distribution
+# (loc=mean, scale=stdev) for CN2.
 # See usage for more details.
 ###############################################################################################
 import sys
@@ -13,6 +14,7 @@ import os
 import math
 import time
 import logging
+import matplotlib.backends.backend_pdf
 from concurrent.futures import ProcessPoolExecutor
 
 ####### JACNEx modules
@@ -21,6 +23,7 @@ import clusterSamps.clustFile
 import clusterSamps.genderPrediction
 import CNCalls.CNCallsFile
 import CNCalls.copyNumbersCalls
+import figures.plots
 
 # set up logger, using inherited config, in case we get called as a module
 logger = logging.getLogger(__name__)
@@ -52,7 +55,7 @@ def parseArgs(argv):
 DESCRIPTION:
 Processes two TSV files: one containing exon fragment counts and another with samples clusters.
 It filters out non-callable exons (with no coverage) and computes parameters for two distributions:
-an exponential distribution (loc=0, scale=lambda) for CN0 and a robust Gaussian distribution 
+an exponential distribution (loc=0, scale=lambda) for CN0 and a robust Gaussian distribution
 (loc=mean, scale=stdev) for CN2.
 The results are displayed in TSV format on the standard output (stdout).
 The first row represents the parameters of the exponential distribution, while the subsequent rows
@@ -108,7 +111,7 @@ ARGUMENTS:
         raise Exception("you must provide a clustering results file use --clusts. Try " + scriptName + " --help.")
     elif (not os.path.isfile(clustFile)):
         raise Exception("clustsFile " + clustFile + " doesn't exist.")
-    
+
     if outFile == "":
         raise Exception("you must provide an outFile with --out. Try " + scriptName + " --help")
     elif os.path.exists(outFile):
@@ -117,14 +120,14 @@ ARGUMENTS:
         raise Exception("the directory where outFile " + outFile + " should be created doesn't exist")
 
     #####################################################
-    # Check other args 
+    # Check other args
     try:
         jobs = int(jobs)
         if (jobs <= 0):
             raise Exception()
     except Exception:
         raise Exception("jobs must be a positive integer, not " + str(jobs))
-    
+
     # test plotdir last so we don't mkdir unless all other args are OK
     if not os.path.isdir(plotDir):
         try:
@@ -176,94 +179,115 @@ def main(argv):
     thisTime = time.time()
     logger.debug("Done parsing clustsFile, in %.2f s", thisTime - startTime)
     startTime = thisTime
-    
+
     # warning: there are no checks performed on the number of samples in 'samples' and
     # the samples contained in clusters. However, if a sample is present in a cluster
     # but not in 'samples', Python will raise an error when selecting the non-existent
     # counts column. On the other hand, if an additional sample is present, it will not
     # be analyzed and will be ignored without raising an error.
     # In pipeline mode, this should not happen.
-    
+
     ####################
-    # CN Calls
     # calculates distribution parameters:
-    # -fits an exponential distribution to the entire dataset of intergenic counts (CN0),
-    # -selects cluster-specific exons on autosomes, chrY, or chrX.
-    #  Uninterpretable exons are filtered out while robustly calculating parameters for
-    #  a fitted Gaussian distribution.
-    
+    # 1) fits an exponential distribution to the entire dataset of intergenic counts (CN0)
     try:
         (expon_loc, exp_scale, unCaptFPMLimit) = CNCalls.copyNumbersCalls.CN0ParamsAndFPMLimit(intergenicsFPM, plotDir)
     except Exception as e:
         raise Exception("CN0ParamsAndFPMLimit failed: %s", repr(e))
 
     thisTime = time.time()
-    logger.debug("Done parsing CN0ParamsAndFPMLimit, in %.2f s", thisTime - startTime)
+    logger.debug("Done CN0ParamsAndFPMLimit, loc=%.2f, scale=%.2f, in %.2f s",expon_loc, exp_scale, thisTime - startTime)
     startTime = thisTime
-    
-    # ######################################################
-    # # !!! (samples to be changed with the comparision between previous and current analysis)
-    # paramsToKeep = ["loc", "scale"]
-    # paramsArray = CNCalls.CNCallsFile.allocateParamsArray(len(exons), len(clusters), len(paramsToKeep))
 
-    # ####################################################
-    # # CN Calls
-    # ##############################
-    # # decide how the work will be parallelized
-    # # we are allowed to use jobs cores in total: we will process paraClusters clusters in
-    # # parallel
-    # # -> we target targetCoresPerCluster, this is increased if we
-    # #    have few clusters to process (and we use ceil() so we may slighty overconsume)
-    # paraClusters = min(math.ceil(jobs / 2), len(clusters))
-    # logger.info("%i new clusters => will process %i in parallel", len(clusters), paraClusters)
+    ###
+    # 2) selects cluster-specific exons on autosomes, chrY, or chrX.
+    # Uninterpretable exons are filtered out while robustly calculating parameters for
+    # a fitted Gaussian distribution.
 
-    # # identifying autosomes and gonosomes "exons" index
-    # # recall clusters are derived from autosomal or gonosomal analyses
-    # try:
-    #     exonsBool = clusterSamps.getGonosomesExonsIndexes.getSexChrIndexes(exons)
-    # except Exception as e:
-    #     raise Exception("getSexChrIndexes failed %s", e)
+    exonOnSexChr = clusterSamps.genderPrediction.exonOnSexChr(exons)
 
-    # #####################################################
-    # # Define nested callback for processing CNCalls() result (so CNCallsArray et al
-    # # are in its scope)
+    # defined the result columns for each cluster.
+    # 'loc' column corresponds to the mean of the Gaussian distribution
+    # 'scale' column represents the standard deviation of the Gaussian distribution
+    # 'filterStatus' column indicates the status of the corresponding exon
+    expectedColNames = ["loc", "scale", "filterStatus"]
 
-    # # mergeCalls:
-    # # arg: a Future object returned by ProcessPoolExecutor.submit(CNCalls.copyNumbersCalls.CNCalls).
-    # # CNCalls() returns a 4-element tuple (clustID, colIndInCNCallsArray, sourceExons, clusterCalls).
-    # # If something went wrong, log and populate failedClusters;
-    # # otherwise fill column at index colIndInCNCallsArray and row at index sourceExons in CNCallsArray
-    # # with calls stored in clusterCalls
-    # def mergeCalls(futurecounts2callsRes):
-    #     e = futurecounts2callsRes.exception()
-    #     if e is not None:
-    #         # exceptions raised by CNCalls are always Exception(str(clusterIndex))
-    #         logger.warning("Failed to CNCalls for cluster n° %s, skipping it", str(e))
-    #     else:
-    #         counts2callsRes = futurecounts2callsRes.result()
-    #         for exonIndex in range(len(counts2callsRes[2])):
-    #             paramsArray[counts2callsRes[2][exonIndex], counts2callsRes[1]] = counts2callsRes[3][exonIndex]
+    # Output matrix creation
+    CN2ParamsArray = CNCalls.CNCallsFile.allocateParamsArray(len(exons), len(clust2samps), len(expectedColNames))
+    logger.info(CN2ParamsArray.shape)
+    # filterStatus represents the set of filters applied to the exons.
+    # The indexes of this list will be used to map the filtered status of each
+    # exon in the output file.
+    # e.g: index 0 corresponds to an exon filtered as 'notCaptured',
+    # while the index -1 (initialized during the output matrix allocation)
+    # represents exons that are not used for cluster parameter calculation.
+    filterStatus = ["notCaptured", "cannotFitRG", "RGClose2LowThreshold", "fewSampsInRG", "call"]
 
-    #         logger.info("Done copy number calls for cluster n°%i", counts2callsRes[0])
+    # generates a PDF file containing pie charts summarizing the filters 
+    # applied to exons in each cluster.
+    # matplotlib.backends.backend_pdf.PdfPages object matplotOpenFile is used to
+    # open the PDF file and add the pie charts to it.
+    namePieChartsFile = "exonsFiltersSummary_pieChart_" + str(len(clust2samps)) + "Clusters.pdf"
+    pdfPieCharts = os.path.join(plotDir, namePieChartsFile)
+    matplotOpenFile = matplotlib.backends.backend_pdf.PdfPages(pdfPieCharts)
 
-    # # To be parallelised => browse clusters
-    # with ProcessPoolExecutor(paraClusters) as pool:
-    #     for clustID in range(len(clusters)):
-    #         #### validity sanity check
-    #         if validity[clustID] == 0:
-    #             logger.warning("cluster %s is invalid, low sample number", clustID)
-    #             continue
+    #######################
+    # decide how the work will be parallelized
+    # we are allowed to use jobs cores in total: we will process paraClusters clusters in
+    # parallel
+    # -> we target targetCoresPerCluster, this is increased if we
+    #    have few clusters to process (and we use ceil() so we may slighty overconsume)
+    paraClusters = min(math.ceil(jobs / 2), len(clust2samps))
+    logger.info("%i new clusters => will process %i in parallel", len(clust2samps), paraClusters)
 
-    #         ##### run prediction for current cluster
-    #         futureRes = pool.submit(CNCalls.copyNumbersCalls.clusterCalls, clustID, exonsFPM,
-    #                                 intergenicsFPM, exons, clusters, ctrlsClusters, specClusters,
-    #                                 exonsBool, outFile, paramsToKeep)
+    #####################################################
+    # mergeParams:
+    # arg: a Future object returned by ProcessPoolExecutor.submit(CNCalls.copyNumbersCalls.exonFilterAndCN2Params).
+    # exonFilterAndCN2Params() returns a 4-element tuple (clustID, colIndInParamsArray, sourceExons, clusterCN2Params).
+    # If something went wrong, log and populate failedClusters;
+    # otherwise fill column at index colIndInParamsArray and row at index sourceExons in paramsArray
+    # with calls stored in clusterCN2Params
+    def mergeParams(futurecounts2ParamsRes):
+        e = futurecounts2ParamsRes.exception()
+        if e is not None:
+            # exceptions raised by ExonFilterAndCN2Params are always Exception(str(clusterIndex))
+            logger.warning("Failed to ExonFilterAndCN2Params for cluster n° %s, skipping it", str(e))
+        else:
+            counts2ParamsRes = futurecounts2ParamsRes.result()
+            for exonIndex in range(len(counts2ParamsRes[2])):
+                CN2ParamsArray[counts2ParamsRes[2][exonIndex], counts2ParamsRes[1]] = counts2ParamsRes[3][exonIndex]
+                
+            try:
+                # Generate pie chart for the cluster based on the filterStatus
+                exStatusArray = counts2ParamsRes[3][:, expectedColNames.index("filterStatus")]
+                figures.plots.plotPieChart(counts2ParamsRes[0], filterStatus, exStatusArray, matplotOpenFile)
+            except Exception as e:
+                logger.error("plotPieChart failed for cluster %s : %s", clustID, repr(e))
+                raise
 
-    #         futureRes.add_done_callback(mergeCalls)
+            logger.info("Done copy number calls for cluster n°%s", counts2ParamsRes[0])
+
+    # To be parallelised => browse clusters
+    with ProcessPoolExecutor(paraClusters) as pool:
+        for clustID in clust2samps.keys():
+            #### validity sanity check
+            if not clustIsValid[clustID]:
+                logger.warning("cluster %s is invalid, low sample number", clustID)
+                continue
+
+            ##### run prediction for current cluster
+            futureRes = pool.submit(CNCalls.copyNumbersCalls.exonFilterAndCN2Params, clustID,
+                                    exonsFPM, samples, clust2samps, fitWith, exonOnSexChr,
+                                    unCaptFPMLimit, expectedColNames, filterStatus)
+
+            futureRes.add_done_callback(mergeParams)
+
+    # close PDF file containing pie charts
+    matplotOpenFile.close()
 
     # #####################################################
     # # Print exon defs + calls to outFile
-    # CNCalls.CNCallsFile.printCNCallsFile(paramsArray, exons, clusters, paramsToKeep, outFile)
+    # CNCalls.CNCallsFile.printCNCallsFile(CN2ParamsArray, exons, clusters, paramsToKeep, outFile)
 
     # thisTime = time.time()
     # logger.debug("Done printing calls for all (non-failed) clusters, in %.2fs", thisTime - startTime)
