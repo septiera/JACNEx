@@ -39,17 +39,19 @@ def parseCNcallsFile(CNcallsFile, nbState):
 
 
 #############################
-# printCNCallsFile:
+# printParamsFile:
 # Args:
-# - paramsArray (np.ndarray[float]): contain loc scale parameters. dim=[NbExons + 1,(NbCluster * [loc,scale])]
-# - exons (list of lists[str,int,int,str]): information on exon, containing CHR,START,END,EXON_ID
-# - clusters
-# - paramsToKeep
 # - outFile is a filename that doesn't exist, it can have a path component (which must exist),
-#     output will be gzipped if outFile ends with '.gz'
+#   output will be gzipped if outFile ends with '.gz'
+# - clust2samps (dict): A dictionary mapping cluster IDs to sample names.
+# - expectedColNames (list): A list of column names to be used in the output file.
+# - exp_loc[float], exp_scale[float]: parameters for the exponential distribution 
+# - exons (list of lists[str,int,int,str]): information on exon, containing CHR,START,END,EXON_ID
+# - CN2ParamsArray (np.ndarray[floats]): parameters of the Gaussian distribution [loc = mean, scale = stdev]
+#                                        and exon filtering status [int] for each cluster
 #
-# Print this data to outFile as a 'CNCallsFile'
-def printCNCallsFile(paramsArray, exons, clusters, paramsToKeep, outFile):
+# Print this data to outFile as a 'ParamsFile'
+def printParamsFile(outFile, clust2samps, expectedColNames, exp_loc, exp_scale, exons, CN2ParamsArray):
     try:
         if outFile.endswith(".gz"):
             outFH = gzip.open(outFile, "xt", compresslevel=6)
@@ -61,24 +63,26 @@ def printCNCallsFile(paramsArray, exons, clusters, paramsToKeep, outFile):
 
     ### header definitions
     toPrint = "CHR\tSTART\tEND\tEXON_ID\t"
-    for i in range(len(clusters)):
-        for j in range(len(paramsToKeep)):
-            toPrint += f"{i}_{paramsToKeep[j]}" + "\t"
+    for i in clust2samps.keys():
+        for j in range(len(expectedColNames)):
+            toPrint += f"{i}_{expectedColNames[j]}" + "\t"
     toPrint += "\n"
     outFH.write(toPrint)
 
+    #### print first row (exponential parameters)
+    toPrint = "" + "\t" + "" + "\t" + "" + "\t" + "exponential parameters"
+    expLine = "\t".join(["{:0.2e}\t{:0.2e}\t-1".format(exp_loc, exp_scale)] * len(clust2samps.keys()))
+    toPrint += expLine
+    toPrint += "\n"
+    outFH.write(toPrint)
+    
     #### fill results
     for i in range(len(exons)):
         toPrint = exons[i][0] + "\t" + str(exons[i][1]) + "\t" + str(exons[i][2]) + "\t" + exons[i][3]
-        toPrint += calls2str(paramsArray, i)
+        toPrint += calls2str(CN2ParamsArray, i)
         toPrint += "\n"
         outFH.write(toPrint)
 
-    #### print last row (exponential parameters)
-    toPrint = "" + "\t" + "" + "\t" + "" + "\t" + "exponential parameters"
-    toPrint += calls2str(paramsArray, len(exons) + 1)
-    toPrint += "\n"
-    outFH.write(toPrint)
     outFH.close()
 
 
@@ -144,7 +148,8 @@ def parseCNCallsPrivate(CNCallsFile):
 # - numExons, numClusters, numCol
 #
 # Returns an float array with -1, adapted for storing the Gaussian
-# parameters [loc = mean, scale = stdev] for each cluster
+# parameters [loc = mean, scale = stdev] and exon filtering status [int]
+# for each cluster
 # dim= NbOfExons * (NbOfClusters * NbOfCol)
 def allocateParamsArray(numExons, numClusters, numCol):
     # order=F should improve performance
