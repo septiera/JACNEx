@@ -3,8 +3,7 @@ import gzip
 import numpy as np
 import numba
 
-# prevent matplotlib and numba flooding the logs when we are in DEBUG loglevel
-logging.getLogger('matplotlib').setLevel(logging.WARNING)
+# prevent numba flooding the logs when we are in DEBUG loglevel
 logging.getLogger('numba').setLevel(logging.WARNING)
 
 # set up logger, using inherited config
@@ -15,27 +14,38 @@ logger = logging.getLogger(__name__)
 ############################ PUBLIC FUNCTIONS #################################
 ###############################################################################
 #############################################################
-# parseCNcallsFile:
-# Arg:
-#   - CNcallsFile [str]: produced by s3_CNCalls.py, possibly gzipped
-#   - nbState [int]: number of copy number states
+# parseExonParamsFile:
+# warning : This function does not explicitly verify that the cluster names
+# in exonParamsFile and clustFile are identical because exonParamsFile is
+# typically derived from clustFile.
 #
-# Returns a tuple (exons, samples, CNCallsArray), each is created here and populated
-# by parsing CNCallsFile:
-#   - exons (list of list[str,int,int,str]): exon is a lists of 4 scalars
-#     containing CHR,START,END,EXON_ID copied from the first 4 columns of CNcallsFile,
-#     in the same order
-#   - samples (list[str]): sampleIDs copied from CNcallsFile's header
-#   - CNCallsArray (np.ndarray[float]): dim = len(exons) x (len(samples)*4(CN0,CN1,CN2,CN3+))
-def parseCNcallsFile(CNcallsFile, nbState):
-    (exons, samples, CNCallsList) = parseCNCallsPrivate(CNcallsFile)
-    # callsArray[exonIndex,sampleIndex] will store the specified probabilities
-    CNCallsArray = allocateParamsArray(len(exons), len(samples), nbState)
-    # Fill callsArray from callsList
-    for i in range(len(exons)):
-        callsVec2array(CNCallsArray, i, CNCallsList[i])
+# Arg:
+#  - exonParamsFile [str]: path to a TSV file containing exon parameters.
+#                          produces by s3_exonFilteringAndParams.py.
+#  - nbExons [int]: The number of exons.
+#  - nbClusters [int]: The number of clusters.
+#
+# Returns a tupple (exonParamsArray, exp_loc, exp_scale):
+#  - exonParamsArray [list of lists[floats]]: contains the parsed exon parameters for
+#                                             each exon and cluster.
+#  - exp_loc [float], exp_scale [float: The exponential parameters.
+def parseExonParamsFile(exonParamsFile, nbExons, nbClusters):
+    (exonParamsList, exp_loc, exp_scale) = parseExonParamsPrivate(exonParamsFile)
 
-    return(exons, samples, CNCallsArray)
+    nbCol = len(exonParamsFile[0]) / nbClusters
+
+    # Sanity check to ensure the number of columns matches the expected
+    if nbCol != len(["loc", "scale", "filterStatus"]):
+        raise Exception('number of clusters differs between clustFile and exonParamsFile')
+
+    # exonParamsArray[exonIndex, clusterIndex * ["loc", "scale", "filterStatus"]]
+    exonParamsArray = allocateParamsArray(nbExons, nbClusters, nbCol)
+
+    # Fill exonParamsArray from exonParamsList
+    for i in range(len(nbExons)):
+        callsVec2array(exonParamsArray, i, exonParamsList[i])
+
+    return (exonParamsArray, exp_loc, exp_scale)
 
 
 #############################
@@ -45,10 +55,10 @@ def parseCNcallsFile(CNcallsFile, nbState):
 #   output will be gzipped if outFile ends with '.gz'
 # - clust2samps (dict): A dictionary mapping cluster IDs to sample names.
 # - expectedColNames (list): A list of column names to be used in the output file.
-# - exp_loc[float], exp_scale[float]: parameters for the exponential distribution 
+# - exp_loc[float], exp_scale[float]: parameters for the exponential distribution.
 # - exons (list of lists[str,int,int,str]): information on exon, containing CHR,START,END,EXON_ID
 # - CN2ParamsArray (np.ndarray[floats]): parameters of the Gaussian distribution [loc = mean, scale = stdev]
-#                                        and exon filtering status [int] for each cluster
+#                                        and exon filtering status [int] for each cluster.
 #
 # Print this data to outFile as a 'ParamsFile'
 def printParamsFile(outFile, clust2samps, expectedColNames, exp_loc, exp_scale, exons, CN2ParamsArray):
@@ -71,11 +81,11 @@ def printParamsFile(outFile, clust2samps, expectedColNames, exp_loc, exp_scale, 
 
     #### print first row (exponential parameters)
     toPrint = "" + "\t" + "" + "\t" + "" + "\t" + "exponential parameters"
-    expLine = "\t".join(["{:0.2e}\t{:0.2e}\t-1".format(exp_loc, exp_scale)] * len(clust2samps.keys()))
+    expLine = "\t".join(["{:0.4e}\t{:0.4e}\t-1".format(exp_loc, exp_scale)] * len(clust2samps.keys()))
     toPrint += expLine
     toPrint += "\n"
     outFH.write(toPrint)
-    
+
     #### fill results
     for i in range(len(exons)):
         toPrint = exons[i][0] + "\t" + str(exons[i][1]) + "\t" + str(exons[i][2]) + "\t" + exons[i][3]
@@ -90,56 +100,51 @@ def printParamsFile(outFile, clust2samps, expectedColNames, exp_loc, exp_scale, 
 ############################ PRIVATE FUNCTIONS ################################
 ###############################################################################
 #############################################################
-# parseCNCallsPrivate
+# parseExonParamsPrivate
 # Arg:
-#  - CNcallsFile [str]: produced by s3_CNCalls.py, possibly gzipped
+#  - CNcallsFile [str]: path to a TSV file containing exon parameters.
+#                       produces by s3_exonFilteringAndParams.py.
 #
-# Returns a tuple (exons, samples, CNCallsList), each is created here
-#   - exons (list of list[str,int,int,str]): exon is a lists of 4 scalars
-#     containing CHR,START,END,EXON_ID copied from the first 4 columns of CNCallsFile,
-#     in the same order
-#   - samples (list[str]): sampleIDs copied from CNCallsFile's header
-#   - CNCallsList (list of list[float]]): dim = len(exons) x (len(samples)*4(CN0,CN1,CN2,CN3+))
-#                                         contains log10-likelihood
-def parseCNCallsPrivate(CNCallsFile):
+# Returns a tuple (paramsList, exp_loc, exp_scale), each is created here
+#   - paramsList (list of list[float]]): dim = nbOfExons * (nbOfClusters * ["loc", "scale", "filterStatus"])
+#                                        contains mean, stdev parameters from gaussian distribution and
+#                                        exon filter status index from
+#                                        ["notCaptured", "cannotFitRG", "RGClose2LowThreshold", "fewSampsInRG", "call"].
+#  - exp_loc [float], exp_scale [float: The exponential parameters.
+def parseExonParamsPrivate(exonParamsFile):
     try:
-        if CNCallsFile.endswith(".gz"):
-            callsFH = gzip.open(CNCallsFile, "rt")
+        if exonParamsFile.endswith(".gz"):
+            callsFH = gzip.open(exonParamsFile, "rt")
         else:
-            callsFH = open(CNCallsFile, "r")
+            callsFH = open(exonParamsFile, "r")
     except Exception as e:
-        logger.error("Opening provided CNCallsFile %s: %s", CNCallsFile, e)
+        logger.error("Opening provided CNCallsFile %s: %s", exonParamsFile, e)
         raise Exception('cannot open CNCallsFile')
 
-    # list of exons to be returned
-    exons = []
-    # list of calls to be returned
-    callsList = []
+    # grab header (not used)
+    # The clusters are organized according to the dictionary clust2samps in 
+    # s2_clusterSamps.py, ensuring the corresponding order without the need
+    # for additional verification (to be confirmed).
+    callsFH.readline().rstrip().split("\t")
 
-    # grab samples columns from header
-    samplesColname = callsFH.readline().rstrip().split("\t")
-    # get rid of exon definition headers "CHR", "START", "END", "EXON_ID"
-    del samplesColname[0:4]
+    # grab parameters of the exponential distribution common for all clusters
+    expLine = callsFH.readline().rstrip().split("\t")
+    exp_loc = expLine[5]
+    exp_scale = expLine[6]
 
-    # list of unique sample names
-    samples = []
-    for i in samplesColname:
-        samp = i.split("_")[0]
-        if samp not in samples:
-            samples.append(samp)
-
-    # populate exons and probabilities from data lines
+    paramsList = []
+    # populate paramsList from data lines
     for line in callsFH:
         # split into 4 exon definition strings + one string containing all the calls
         splitLine = line.rstrip().split("\t", maxsplit=4)
-        # convert START-END to ints and save
-        exon = [splitLine[0], int(splitLine[1]), int(splitLine[2]), splitLine[3]]
-        exons.append(exon)
-        # convert calls to 1D np array and save
-        calls = np.fromstring(splitLine[4], dtype=np.float32, sep='\t')
-        callsList.append(calls)
+        # not retrieve exon information as it has already been extracted using
+        # the countsFile.
+        # convert params to 1D np array and save
+        params = np.fromstring(splitLine[4], dtype=np.float64, sep='\t')
+        paramsList.append(params)
     callsFH.close()
-    return(exons, samples, callsList)
+
+    return (paramsList, exp_loc, exp_scale)
 
 
 ##############################################################
