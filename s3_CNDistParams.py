@@ -21,8 +21,8 @@ from concurrent.futures import ProcessPoolExecutor
 import countFrags.countsFile
 import clusterSamps.clustFile
 import clusterSamps.genderPrediction
-import exonFilterAndParams.exonParamsFile
-import exonFilterAndParams.exonFilterAndContinousLawFitter
+import exonFilteringAndParams.exonParamsFile
+import exonFilteringAndParams.exonFilterAndContinousLawFitter
 import figures.plots
 
 # set up logger, using inherited config, in case we get called as a module
@@ -191,7 +191,7 @@ def main(argv):
     # calculates distribution parameters:
     # 1) fits an exponential distribution to the entire dataset of intergenic counts (CN0)
     try:
-        (exp_loc, exp_scale, unCaptFPMLimit) = exonFilterAndParams.exonFilterAndContinousLawFitter.CN0ParamsAndFPMLimit(intergenicsFPM, plotDir)
+        (exp_loc, exp_scale, unCaptFPMLimit) = exonFilteringAndParams.exonFilterAndContinousLawFitter.CN0ParamsAndFPMLimit(intergenicsFPM, plotDir)
     except Exception as e:
         raise Exception("CN0ParamsAndFPMLimit failed: %s", repr(e))
 
@@ -213,7 +213,7 @@ def main(argv):
     expectedColNames = ["loc", "scale", "filterStatus"]
 
     # Output matrix creation
-    CN2ParamsArray = exonFilterAndParams.exonParamsFile.allocateParamsArray(len(exons), len(clust2samps), len(expectedColNames))
+    CN2ParamsArray = exonFilteringAndParams.exonParamsFile.allocateParamsArray(len(exons), len(clust2samps), len(expectedColNames))
     logger.info(CN2ParamsArray.shape)
     # filterStatus represents the set of filters applied to the exons.
     # The indexes of this list will be used to map the filtered status of each
@@ -276,7 +276,7 @@ def main(argv):
                 continue
 
             ##### run prediction for current cluster
-            futureRes = pool.submit(exonFilterAndParams.exonFilterAndContinousLawFitter.exonFilterAndCN2Params, clustID,
+            futureRes = pool.submit(exonFilteringAndParams.exonFilterAndContinousLawFitter.exonFilterAndCN2Params, clustID,
                                     exonsFPM, samples, clust2samps, fitWith, exonOnSexChr,
                                     unCaptFPMLimit, expectedColNames, filterStatus)
 
@@ -287,7 +287,7 @@ def main(argv):
 
     #####################################################
     # Print exon defs + calls to outFile
-    exonFilterAndParams.exonParamsFile.printParamsFile(outFile, clust2samps, expectedColNames, exp_loc, exp_scale, exons, CN2ParamsArray)
+    exonFilteringAndParams.exonParamsFile.printParamsFile(outFile, clust2samps, expectedColNames, exp_loc, exp_scale, exons, CN2ParamsArray)
 
     thisTime = time.time()
     logger.debug("Done printing calls for all (non-failed) clusters, in %.2fs", thisTime - startTime)
