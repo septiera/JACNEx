@@ -15,7 +15,7 @@ import numpy as np
 ####### JACNEx modules
 import countFrags.countsFile
 import clusterSamps.clustFile
-import CNCalls.CNCallsFile
+import exonFilteringAndParams.exonParamsFile
 import groupCalls.transitions
 import groupCalls.HMM
 
@@ -111,7 +111,7 @@ ARGUMENTS:
         raise Exception("you must provide a clustering results file use --clusts. Try " + scriptName + " --help.")
     elif (not os.path.isfile(clustsFile)):
         raise Exception("clustsFile " + clustsFile + " doesn't exist.")
-    
+
     if paramsFile == "":
         raise Exception("you must provide a continuous distribution parameters file use --params. Try " + scriptName + " --help.")
     elif (not os.path.isfile(paramsFile)):
@@ -157,10 +157,49 @@ ARGUMENTS:
 # If anything goes wrong, raise Exception("SOME EXPLICIT ERROR MESSAGE"), more details
 # may be available in the log
 def main(argv):
-  
+
     # parse, check and preprocess arguments
     (countsFile, clustsFile, paramsFile, outFile, BPFolder, padding) = parseArgs(argv)
-    
+
+    # args seem OK, start working
+    logger.debug("called with: " + " ".join(argv[1:]))
+    logger.info("starting to work")
+    startTime = time.time()
+
+    ###################
+    # parse counts, perform FPM normalization, distinguish between intergenic regions and exons
+    try:
+        (samples, exons, intergenics, exonsFPM, intergenicsFPM) = countFrags.countsFile.parseAndNormalizeCounts(countsFile)
+    except Exception as e:
+        logger.error("parseAndNormalizeCounts failed for %s : %s", countsFile, repr(e))
+        raise Exception("parseAndNormalizeCounts failed")
+
+    thisTime = time.time()
+    logger.debug("Done parseAndNormalizeCounts, in %.2fs", thisTime - startTime)
+    startTime = thisTime
+
+    ###################
+    # parse clusters informations
+    try:
+        (clust2samps, samp2clusts, fitWith, clustIsValid) = clusterSamps.clustFile.parseClustsFile(clustsFile)
+    except Exception as e:
+        raise Exception("parseClustsFile failed for %s : %s", clustsFile, repr(e))
+
+    thisTime = time.time()
+    logger.debug("Done parsing clustsFile, in %.2f s", thisTime - startTime)
+    startTime = thisTime
+
+    ####################
+    # parse params clusters (parameters of continuous distributions fitted on CN0, CN2 coverage profil)
+    try:
+        (exParams, exp_loc, exp_scale) = exonFilteringAndParams.exonParamsFile.parseExonParamsFile(paramsFile)
+    except Exception as e:
+        raise Exception("parseParamsFile failed for %s : %s", paramsFile, repr(e))
+
+    thisTime = time.time()
+    logger.debug("Done parsing paramsFile, in %.2f s", thisTime - startTime)
+    startTime = thisTime
+
     # # --CN [str]: TXT file contains two lines separated by tabulations.
     # # The first line consists of entries naming the default copy number status,
     # # default: """ + CNStatus + """, and the second line contains the prior
