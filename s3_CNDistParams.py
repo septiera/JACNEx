@@ -21,8 +21,8 @@ from concurrent.futures import ProcessPoolExecutor
 import countFrags.countsFile
 import clusterSamps.clustFile
 import clusterSamps.genderPrediction
-import CNCalls.CNCallsFile
-import CNCalls.copyNumbersCalls
+import exonFilterAndParams.exonParamsFile
+import exonFilterAndParams.exonFilterAndContinousLawFitter
 import figures.plots
 
 # set up logger, using inherited config, in case we get called as a module
@@ -44,7 +44,7 @@ def parseArgs(argv):
 
     # mandatory args
     countsFile = ""
-    clustFile = ""
+    clustsFile = ""
     outFile = ""
     # jobs default: 80% of available cores
     plotDir = "./plotDir/"
@@ -53,7 +53,7 @@ def parseArgs(argv):
     usage = "NAME:\n" + scriptName + """\n
 
 DESCRIPTION:
-Processes two TSV files: one containing exon fragment counts and another with samples clusters.
+Given two TSV files: one containing exon fragment counts and another with samples clusters.
 It filters out non-callable exons (with no coverage) and computes parameters for two distributions:
 an exponential distribution (loc=0, scale=lambda) for CN0 and a robust Gaussian distribution
 (loc=mean, scale=stdev) for CN2.
@@ -90,7 +90,7 @@ ARGUMENTS:
         elif (opt in ("--counts")):
             countsFile = value
         elif (opt in ("--clusts")):
-            clustFile = value
+            clustsFile = value
         elif opt in ("--out"):
             outFile = value
         elif (opt in ("--plotDir")):
@@ -107,10 +107,10 @@ ARGUMENTS:
     elif (not os.path.isfile(countsFile)):
         raise Exception("countsFile " + countsFile + " doesn't exist.")
 
-    if clustFile == "":
+    if clustsFile == "":
         raise Exception("you must provide a clustering results file use --clusts. Try " + scriptName + " --help.")
-    elif (not os.path.isfile(clustFile)):
-        raise Exception("clustsFile " + clustFile + " doesn't exist.")
+    elif (not os.path.isfile(clustsFile)):
+        raise Exception("clustsFile " + clustsFile + " doesn't exist.")
 
     if outFile == "":
         raise Exception("you must provide an outFile with --out. Try " + scriptName + " --help")
@@ -136,7 +136,7 @@ ARGUMENTS:
             raise Exception("plotDir " + plotDir + " doesn't exist and can't be mkdir'd: " + str(e))
 
     # AOK, return everything that's needed
-    return(countsFile, clustFile, outFile, plotDir, jobs)
+    return(countsFile, clustsFile, outFile, plotDir, jobs)
 
 
 ###############################################################################
@@ -191,12 +191,12 @@ def main(argv):
     # calculates distribution parameters:
     # 1) fits an exponential distribution to the entire dataset of intergenic counts (CN0)
     try:
-        (exp_loc, exp_scale, unCaptFPMLimit) = CNCalls.copyNumbersCalls.CN0ParamsAndFPMLimit(intergenicsFPM, plotDir)
+        (exp_loc, exp_scale, unCaptFPMLimit) = exonFilterAndParams.exonFilterAndContinousLawFitter.CN0ParamsAndFPMLimit(intergenicsFPM, plotDir)
     except Exception as e:
         raise Exception("CN0ParamsAndFPMLimit failed: %s", repr(e))
 
     thisTime = time.time()
-    logger.debug("Done CN0ParamsAndFPMLimit, loc=%.2f, scale=%.2f, in %.2f s",exp_loc, exp_scale, thisTime - startTime)
+    logger.debug("Done CN0ParamsAndFPMLimit, loc=%.2f, scale=%.2f, in %.2f s", exp_loc, exp_scale, thisTime - startTime)
     startTime = thisTime
 
     ###
@@ -213,7 +213,7 @@ def main(argv):
     expectedColNames = ["loc", "scale", "filterStatus"]
 
     # Output matrix creation
-    CN2ParamsArray = CNCalls.CNCallsFile.allocateParamsArray(len(exons), len(clust2samps), len(expectedColNames))
+    CN2ParamsArray = exonFilterAndParams.exonParamsFile.allocateParamsArray(len(exons), len(clust2samps), len(expectedColNames))
     logger.info(CN2ParamsArray.shape)
     # filterStatus represents the set of filters applied to the exons.
     # The indexes of this list will be used to map the filtered status of each
@@ -223,7 +223,7 @@ def main(argv):
     # represents exons that are not used for cluster parameter calculation.
     filterStatus = ["notCaptured", "cannotFitRG", "RGClose2LowThreshold", "fewSampsInRG", "call"]
 
-    # generates a PDF file containing pie charts summarizing the filters 
+    # generates a PDF file containing pie charts summarizing the filters
     # applied to exons in each cluster.
     # matplotlib.backends.backend_pdf.PdfPages object matplotOpenFile is used to
     # open the PDF file and add the pie charts to it.
@@ -256,7 +256,7 @@ def main(argv):
             counts2ParamsRes = futurecounts2ParamsRes.result()
             for exonIndex in range(len(counts2ParamsRes[2])):
                 CN2ParamsArray[counts2ParamsRes[2][exonIndex], counts2ParamsRes[1]] = counts2ParamsRes[3][exonIndex]
-                
+
             try:
                 # Generate pie chart for the cluster based on the filterStatus
                 exStatusArray = counts2ParamsRes[3][:, expectedColNames.index("filterStatus")]
@@ -276,7 +276,7 @@ def main(argv):
                 continue
 
             ##### run prediction for current cluster
-            futureRes = pool.submit(CNCalls.copyNumbersCalls.exonFilterAndCN2Params, clustID,
+            futureRes = pool.submit(exonFilterAndParams.exonFilterAndContinousLawFitter.exonFilterAndCN2Params, clustID,
                                     exonsFPM, samples, clust2samps, fitWith, exonOnSexChr,
                                     unCaptFPMLimit, expectedColNames, filterStatus)
 
@@ -287,7 +287,7 @@ def main(argv):
 
     #####################################################
     # Print exon defs + calls to outFile
-    CNCalls.CNCallsFile.printParamsFile(outFile, clust2samps, expectedColNames, exp_loc, exp_scale, exons, CN2ParamsArray)
+    exonFilterAndParams.exonParamsFile.printParamsFile(outFile, clust2samps, expectedColNames, exp_loc, exp_scale, exons, CN2ParamsArray)
 
     thisTime = time.time()
     logger.debug("Done printing calls for all (non-failed) clusters, in %.2fs", thisTime - startTime)
