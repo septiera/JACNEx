@@ -25,16 +25,17 @@ logger = logging.getLogger(__name__)
 #  - nbExons [int]: The number of exons.
 #  - nbClusters [int]: The number of clusters.
 #
-# Returns a tupple (exonParamsArray, exp_loc, exp_scale):
+# Returns a tupple (exonParamsArray, exp_loc, exp_scale, paramsTitles):
 #  - exonParamsArray [list of lists[floats]]: contains the parsed exon parameters for
 #                                             each exon and cluster.
 #  - exp_loc [float], exp_scale [float: The exponential parameters.
+#  - paramsTitles (list[strs]): title of expected columns for each cluster
 def parseExonParamsFile(exonParamsFile, nbExons, nbClusters):
-    (exonParamsList, exp_loc, exp_scale) = parseExonParamsPrivate(exonParamsFile)
+    (exonParamsList, exp_loc, exp_scale, paramsTitles) = parseExonParamsPrivate(exonParamsFile)
 
     nbCol = len(exonParamsList[0]) // nbClusters  # int format necessary for allocateParamsArray
     # Sanity check to ensure the number of columns matches the expected
-    if nbCol != len(["loc", "scale", "filterStatus"]):
+    if nbCol != len(paramsTitles):
         raise Exception('number of clusters differs between clustFile and exonParamsFile')
 
     # exonParamsArray[exonIndex, clusterIndex * ["loc", "scale", "filterStatus"]]
@@ -44,7 +45,7 @@ def parseExonParamsFile(exonParamsFile, nbExons, nbClusters):
     for i in range(nbExons):
         callsVec2array(exonParamsArray, i, exonParamsList[i])
 
-    return (exonParamsArray, exp_loc, exp_scale)
+    return (exonParamsArray, exp_loc, exp_scale, paramsTitles)
 
 
 #############################
@@ -104,12 +105,13 @@ def printParamsFile(outFile, clust2samps, expectedColNames, exp_loc, exp_scale, 
 #  - CNcallsFile [str]: path to a TSV file containing exon parameters.
 #                       produces by s3_exonFilteringAndParams.py.
 #
-# Returns a tuple (paramsList, exp_loc, exp_scale), each is created here
+# Returns a tuple (paramsList, exp_loc, exp_scale, paramsTitles), each is created here
 #   - paramsList (list of list[float]]): dim = nbOfExons * (nbOfClusters * ["loc", "scale", "filterStatus"])
 #                                        contains mean, stdev parameters from gaussian distribution and
 #                                        exon filter status index from
 #                                        ["notCaptured", "cannotFitRG", "RGClose2LowThreshold", "fewSampsInRG", "call"].
 #  - exp_loc [float], exp_scale [float: The exponential parameters.
+#  - paramsTitles (list[strs]): title of expected columns for each cluster
 def parseExonParamsPrivate(exonParamsFile):
     try:
         if exonParamsFile.endswith(".gz"):
@@ -120,17 +122,16 @@ def parseExonParamsPrivate(exonParamsFile):
         logger.error("Opening provided CNCallsFile %s: %s", exonParamsFile, e)
         raise Exception('cannot open CNCallsFile')
 
-    # grab header (not used)
-    # The clusters are organized according to the dictionary clust2samps in
-    # s2_clusterSamps.py, ensuring the corresponding order without the need
-    # for additional verification (to be confirmed).
-    callsFH.readline().rstrip().split("\t")
+    # grab header unique title
+    header = callsFH.readline().rstrip().split("\t")
+    del header[0:4]
+    headerTitles = [item.split('_')[-1] for item in header]
+    paramsTitles = list(set(headerTitles))
 
     # grab parameters of the exponential distribution common for all clusters
     expLine = callsFH.readline().rstrip().split("\t")
-    print(expLine)
-    exp_loc = expLine[4]
-    exp_scale = expLine[5]
+    exp_loc = np.float64(expLine[4])
+    exp_scale = np.float64(expLine[5])
 
     paramsList = []
     # populate paramsList from data lines
@@ -144,7 +145,7 @@ def parseExonParamsPrivate(exonParamsFile):
         paramsList.append(params)
     callsFH.close()
 
-    return (paramsList, exp_loc, exp_scale)
+    return (paramsList, exp_loc, exp_scale, paramsTitles)
 
 
 ##############################################################
