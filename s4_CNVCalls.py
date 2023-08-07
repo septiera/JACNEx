@@ -8,14 +8,17 @@
 import sys
 import getopt
 import os
+import math
 import time
 import logging
 import numpy as np
+from concurrent.futures import ProcessPoolExecutor
 
 ####### JACNEx modules
 import countFrags.countsFile
 import clusterSamps.clustFile
 import exonFilteringAndParams.exonParamsFile
+import groupCalls.likelihoods
 import groupCalls.transitions
 import groupCalls.HMM
 
@@ -44,6 +47,7 @@ def parseArgs(argv):
     # optionnal args with default values
     BPFolder = ""
     padding = 10
+    jobs = round(0.8 * len(os.sched_getaffinity(0)))
 
     usage = "NAME:\n" + scriptName + """\n
 
@@ -71,11 +75,12 @@ ARGUMENTS:
     --BPFolder [str]: folder containing gzipped or ungzipped TSV for all samples analysed.
                       Files obtained from s1_countFrags.py
     --padding [int] : number of bps used to pad the exon coordinates, default : """ + str(padding) + """
+    --jobs [int] : cores that we can use, defaults to 80% of available cores ie """ + str(jobs) + "\n" + """
     -h , --help: display this help and exit\n"""
 
     try:
         opts, args = getopt.gnu_getopt(sys.argv[1:], 'h', ["help", "counts=", "clusts=", "params=", "out=",
-                                                           "BPFolder=", "padding="])
+                                                           "BPFolder=", "padding=", "jobs="])
     except getopt.GetoptError as e:
         raise Exception(e.msg + ". Try " + scriptName + " --help")
     if len(args) != 0:
@@ -97,6 +102,8 @@ ARGUMENTS:
             BPFolder = value
         elif opt in ("--padding"):
             padding = value
+        elif opt in ("--jobs"):
+            jobs = value
         else:
             raise Exception("unhandled option " + opt)
 
@@ -143,8 +150,15 @@ ARGUMENTS:
     except Exception:
         raise Exception("padding must be a non-negative integer, not " + str(padding))
 
+    try:
+        jobs = int(jobs)
+        if (jobs <= 0):
+            raise Exception()
+    except Exception:
+        raise Exception("jobs must be a positive integer, not " + str(jobs))
+
     # AOK, return everything that's needed
-    return(countsFile, clustsFile, paramsFile, outFile, BPFolder, padding)
+    return(countsFile, clustsFile, paramsFile, outFile, BPFolder, padding, jobs)
 
 
 ###############################################################################
@@ -159,7 +173,7 @@ ARGUMENTS:
 def main(argv):
 
     # parse, check and preprocess arguments
-    (countsFile, clustsFile, paramsFile, outFile, BPFolder, padding) = parseArgs(argv)
+    (countsFile, clustsFile, paramsFile, outFile, BPFolder, padding, jobs) = parseArgs(argv)
 
     # args seem OK, start working
     logger.debug("called with: " + " ".join(argv[1:]))
@@ -192,13 +206,70 @@ def main(argv):
     ####################
     # parse params clusters (parameters of continuous distributions fitted on CN0, CN2 coverage profil)
     try:
-        (exParams, exp_loc, exp_scale) = exonFilteringAndParams.exonParamsFile.parseExonParamsFile(paramsFile)
+        (exParams, exp_loc, exp_scale, paramsTitles) = exonFilteringAndParams.exonParamsFile.parseExonParamsFile(paramsFile, len(exons), len(clust2samps))
     except Exception as e:
         raise Exception("parseParamsFile failed for %s : %s", paramsFile, repr(e))
 
     thisTime = time.time()
     logger.debug("Done parsing paramsFile, in %.2f s", thisTime - startTime)
     startTime = thisTime
+
+    ####################
+    # calculate likelihoods
+    # cette étape peut être multiprocessée
+    #######################
+    CNStatus = ["CN0", "CN1", "CN2", "CN3"]
+    # likelihood matrix creation
+    likelihoodsArray = groupCalls.likelihoods.allocateLikelihoodsArray(len(samples), len(exons), len(CNStatus))
+    print(likelihoodsArray.shape)
+    # decide how the work will be parallelized
+    # we are allowed to use jobs cores in total: we will process paraClusters clusters in
+    # parallel
+    # -> we target targetCoresPerCluster, this is increased if we
+    #    have few clusters to process (and we use ceil() so we may slighty overconsume)
+    paraClusters = min(math.ceil(jobs / 2), len(clust2samps))
+    logger.info("%i new clusters => will process %i in parallel", len(clust2samps), paraClusters)
+
+    #####################################################
+    # mergeParams:
+    # arg: a Future object returned by ProcessPoolExecutor.submit(CNCalls.copyNumbersCalls.exonFilterAndCN2Params).
+    # exonFilterAndCN2Params() returns a 4-element tuple (clustID, colIndInParamsArray, sourceExons, clusterCN2Params).
+    # If something went wrong, log and populate failedClusters;
+    # otherwise fill column at index colIndInParamsArray and row at index sourceExons in paramsArray
+    # with calls stored in clusterCN2Params
+    def mergeLikelihoods(futurecounts2Likelihoods):
+        e = futurecounts2Likelihoods.exception()
+        if e is not None:
+            # exceptions raised by observationCounts2Likelihoods are always Exception(str(clusterIndex))
+            logger.warning("Failed to observationCounts2Likelihoods for cluster n° %s, skipping it", str(e))
+        else:
+            counts2LikelihoodsRes = futurecounts2Likelihoods.result()
+            print(len(counts2LikelihoodsRes[2]), len(counts2LikelihoodsRes[1]))
+            for exonIndex in range(len(counts2LikelihoodsRes[2])):
+                likelihoodsArray[counts2LikelihoodsRes[2][exonIndex], counts2LikelihoodsRes[1]] = counts2LikelihoodsRes[3][exonIndex]
+            logger.info("Done compute likelihoods for cluster n°%s", counts2LikelihoodsRes[0])
+
+    # To be parallelised => browse clusters
+    with ProcessPoolExecutor(paraClusters) as pool:
+        for clusterID in clust2samps.keys():
+            #### validity sanity check
+            if not clustIsValid[clusterID]:
+                logger.warning("cluster %s is invalid, low sample number", clusterID)
+                continue
+
+            ##### run prediction for current cluster
+            futureRes = pool.submit(groupCalls.likelihoods.observationCounts2Likelihoods, clusterID, samples, exonsFPM,
+                                    clust2samps, exp_loc, exp_scale, exParams, len(CNStatus), len(paramsTitles))
+
+            futureRes.add_done_callback(mergeLikelihoods)
+
+    logger.error("EARLY EXIT, working on observationCounts2Likelihoods for now")
+    return()
+    ####################
+    # calculate the transition matrix from the likelihoods
+
+    ####################
+    # apply HMM and obtain CNVs
 
     # # --CN [str]: TXT file contains two lines separated by tabulations.
     # # The first line consists of entries naming the default copy number status,
