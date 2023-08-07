@@ -53,7 +53,8 @@ def allocateLikelihoodsArray(numSamps, numExons, numCN):
 # - numCNs [int]: 4 copy number status: ["CN0", "CN1", "CN2", "CN3"]
 # - numParamsCols [int]: ["loc", "scale", "filterStatus"]
 #
-# Returns a tupple (sampLikelihoodsColInd, sampLikelihoodArray):
+# Returns a tupple (clusterID, relevantCols, relevantRows, likelihoodArray):
+# - clusterID [str]
 # - relevantCols (list[ints]): column indices in the larger array of all analyzed samples,
 #                              where each column corresponds to a specific copy number type (CN0, CN1, CN2, CN3)
 #                              for the given clusterID and samples.
@@ -107,7 +108,7 @@ def observationCounts2Likelihoods(clusterID, samples, counts, clust2samps, exp_l
             # Assign values to likelihoodArray using correct indexes
             likelihoodArray[rowIndex, colIndices] = CNLikelihoods
 
-    return (relevantCols, relevantRows, likelihoodArray)
+    return (clusterID, relevantCols, relevantRows, likelihoodArray)
 
 
 ###############################################################################
