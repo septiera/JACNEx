@@ -22,8 +22,11 @@ import countFrags.countsFile
 import clusterSamps.clustFile
 import clusterSamps.genderPrediction
 import exonFilteringAndParams.exonParamsFile
-import exonFilteringAndParams.exonFilterAndContinousLawFitter
+import exonFilteringAndParams.exonFilterAndContinuousLawFitter
 import figures.plots
+
+# prevent matplotlib flooding the logs when we are in DEBUG loglevel
+logging.getLogger('matplotlib').setLevel(logging.WARNING)
 
 # set up logger, using inherited config, in case we get called as a module
 logger = logging.getLogger(__name__)
@@ -191,7 +194,7 @@ def main(argv):
     # calculates distribution parameters:
     # 1) fits an exponential distribution to the entire dataset of intergenic counts (CN0)
     try:
-        (exp_loc, exp_scale, unCaptFPMLimit) = exonFilteringAndParams.exonFilterAndContinousLawFitter.CN0ParamsAndFPMLimit(intergenicsFPM, plotDir)
+        (exp_loc, exp_scale, unCaptFPMLimit) = exonFilteringAndParams.exonFilterAndContinuousLawFitter.CN0ParamsAndFPMLimit(intergenicsFPM, plotDir)
     except Exception as e:
         raise Exception("CN0ParamsAndFPMLimit failed: %s", repr(e))
 
@@ -214,7 +217,7 @@ def main(argv):
 
     # Output matrix creation
     CN2ParamsArray = exonFilteringAndParams.exonParamsFile.allocateParamsArray(len(exons), len(clust2samps), len(expectedColNames))
-    logger.info(CN2ParamsArray.shape)
+   
     # filterStatus represents the set of filters applied to the exons.
     # The indexes of this list will be used to map the filtered status of each
     # exon in the output file.
@@ -276,7 +279,7 @@ def main(argv):
                 continue
 
             ##### run prediction for current cluster
-            futureRes = pool.submit(exonFilteringAndParams.exonFilterAndContinousLawFitter.exonFilterAndCN2Params, clustID,
+            futureRes = pool.submit(exonFilteringAndParams.exonFilterAndContinuousLawFitter.exonFilterAndCN2Params, clustID,
                                     exonsFPM, samples, clust2samps, fitWith, exonOnSexChr,
                                     unCaptFPMLimit, expectedColNames, filterStatus)
 

@@ -32,8 +32,7 @@ logger = logging.getLogger(__name__)
 def parseExonParamsFile(exonParamsFile, nbExons, nbClusters):
     (exonParamsList, exp_loc, exp_scale) = parseExonParamsPrivate(exonParamsFile)
 
-    nbCol = len(exonParamsFile[0]) / nbClusters
-
+    nbCol = len(exonParamsList[0]) // nbClusters  # int format necessary for allocateParamsArray
     # Sanity check to ensure the number of columns matches the expected
     if nbCol != len(["loc", "scale", "filterStatus"]):
         raise Exception('number of clusters differs between clustFile and exonParamsFile')
@@ -42,7 +41,7 @@ def parseExonParamsFile(exonParamsFile, nbExons, nbClusters):
     exonParamsArray = allocateParamsArray(nbExons, nbClusters, nbCol)
 
     # Fill exonParamsArray from exonParamsList
-    for i in range(len(nbExons)):
+    for i in range(nbExons):
         callsVec2array(exonParamsArray, i, exonParamsList[i])
 
     return (exonParamsArray, exp_loc, exp_scale)
@@ -80,7 +79,7 @@ def printParamsFile(outFile, clust2samps, expectedColNames, exp_loc, exp_scale, 
     outFH.write(toPrint)
 
     #### print first row (exponential parameters)
-    toPrint = "" + "\t" + "" + "\t" + "" + "\t" + "exponential parameters"
+    toPrint = "" + "\t" + "" + "\t" + "" + "\t" + "exponential parameters"+ "\t"
     expLine = "\t".join(["{:0.4e}\t{:0.4e}\t-1".format(exp_loc, exp_scale)] * len(clust2samps.keys()))
     toPrint += expLine
     toPrint += "\n"
@@ -122,15 +121,16 @@ def parseExonParamsPrivate(exonParamsFile):
         raise Exception('cannot open CNCallsFile')
 
     # grab header (not used)
-    # The clusters are organized according to the dictionary clust2samps in 
+    # The clusters are organized according to the dictionary clust2samps in
     # s2_clusterSamps.py, ensuring the corresponding order without the need
     # for additional verification (to be confirmed).
     callsFH.readline().rstrip().split("\t")
 
     # grab parameters of the exponential distribution common for all clusters
     expLine = callsFH.readline().rstrip().split("\t")
-    exp_loc = expLine[5]
-    exp_scale = expLine[6]
+    print(expLine)
+    exp_loc = expLine[4]
+    exp_scale = expLine[5]
 
     paramsList = []
     # populate paramsList from data lines
