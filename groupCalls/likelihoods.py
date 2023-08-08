@@ -29,7 +29,7 @@ def allocateLikelihoodsArray(numSamps, numExons, numCN):
 
 
 ######################################
-# observationCounts2Likelihoods:
+# counts2Likelihoods:
 # Given a cluster identifier, represented by a list of associated samples (each sample
 # represented by a list of fragment counts), this function calculates the likelihoods
 # (probability density values) based on the parameters of the continuous distributions
@@ -65,7 +65,7 @@ def allocateLikelihoodsArray(numSamps, numExons, numCN):
 #                              These rows represent the exons for which likelihoods are calculated.
 # - likelihoodArray (np.ndarray[floats]): precomputed likelihoods for each sample and copy number type.
 #                                         dim = nbOfRelevantRows * nbOfRelevantCols
-def observationCounts2Likelihoods(clusterID, samples, counts, clust2samps, exp_loc, exp_scale,
+def counts2Likelihoods(clusterID, samples, counts, clust2samps, exp_loc, exp_scale,
                                   exonCN2Params, numCNs, numParamsCols):
 
     # Convert the dictionary keys to a list and find the index of the clusterID
@@ -74,7 +74,7 @@ def observationCounts2Likelihoods(clusterID, samples, counts, clust2samps, exp_l
 
     # Get the samples belonging to the specified cluster
     sampsIDs = clust2samps[clusterID]
-    sampsIndexes = np.where(np.isin(sampsIDs, samples))[0]
+    sampsIndexes = np.where(np.isin(samples, sampsIDs))[0]
 
     numSamps = len(sampsIndexes)
 
@@ -82,9 +82,11 @@ def observationCounts2Likelihoods(clusterID, samples, counts, clust2samps, exp_l
     CN2paramsClust = exonCN2Params[:, clusterIndex * numParamsCols:(clusterIndex + 1) * numParamsCols]
 
     # Create an array of column indices for each sample,
-    # np.tile: repeating the pattern [0, 1, 2, 3] numSamps times
-    relevantCols = np.tile(np.arange(numCNs), numSamps) + np.repeat(sampsIndexes, numCNs) * numCNs
+    relevantCols = np.zeros(len(sampsIndexes)*numCNs, dtype = np.int)
     # relevantCols = [ci + sampsIndex * numCNs for sampsIndex in sampsIndexes for ci in range(numCNs)]
+    for sampsIndex in range(len(sampsIndexes)):
+        for ci in range(numCNs):
+            relevantCols[sampsIndex * numCNs + ci] = sampsIndexes[sampsIndex] * numCNs + ci
 
     # Find the row indices where the third column of CN2paramsCluster is equal to 4 ("Calls")
     relevantRows = np.where(CN2paramsClust[:, 2] == 4)[0]
