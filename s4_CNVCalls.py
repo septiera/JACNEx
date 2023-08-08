@@ -45,10 +45,11 @@ def parseArgs(argv):
     paramsFile = ""
     outFile = ""
     # optionnal args with default values
-    BPFolder = ""
-    padding = 10
     jobs = round(0.8 * len(os.sched_getaffinity(0)))
-
+    plotDir = "./plotDir/"
+    padding = 10
+    BPDir = ""
+    
     usage = "NAME:\n" + scriptName + """\n
 
 DESCRIPTION:
@@ -72,15 +73,16 @@ ARGUMENTS:
                     The file is generated using the 3_CNDistParams.py script.
     --out [str]: file where results will be saved, must not pre-exist, will be gzipped if it ends
                  with '.gz', can have a path component but the subdir must exist
-    --BPFolder [str]: folder containing gzipped or ungzipped TSV for all samples analysed.
-                      Files obtained from s1_countFrags.py
-    --padding [int] : number of bps used to pad the exon coordinates, default : """ + str(padding) + """
     --jobs [int] : cores that we can use, defaults to 80% of available cores ie """ + str(jobs) + "\n" + """
+    --plotDir[str]: sub-directory in which the graphical PDFs will be produced, default:  """ + plotDir + """
+    --padding [int] : number of bps used to pad the exon coordinates, default : """ + str(padding) + """
+    --BPDir [str]: folder containing gzipped or ungzipped TSV for all samples analysed.
+                   Files obtained from s1_countFrags.py
     -h , --help: display this help and exit\n"""
 
     try:
         opts, args = getopt.gnu_getopt(sys.argv[1:], 'h', ["help", "counts=", "clusts=", "params=", "out=",
-                                                           "BPFolder=", "padding=", "jobs="])
+                                                           "jobs=", "plotDir=", "padding=", "BPDir="])
     except getopt.GetoptError as e:
         raise Exception(e.msg + ". Try " + scriptName + " --help")
     if len(args) != 0:
@@ -98,12 +100,14 @@ ARGUMENTS:
             paramsFile = value
         elif opt in ("--out"):
             outFile = value
-        elif (opt in ("--BPFolder")):
-            BPFolder = value
-        elif opt in ("--padding"):
-            padding = value
         elif opt in ("--jobs"):
             jobs = value
+        elif (opt in ("--plotDir")):
+            plotDir = value
+        elif opt in ("--padding"):
+            padding = value
+        elif (opt in ("--BPDir")):
+            BPDir = value
         else:
             raise Exception("unhandled option " + opt)
 
@@ -140,7 +144,14 @@ ARGUMENTS:
     elif (os.path.dirname(outFile) != '') and (not os.path.isdir(os.path.dirname(outFile))):
         raise Exception("the directory where outFile " + outFile + " should be created doesn't exist")
 
-    if os.path.isdir(BPFolder):
+    try:
+        jobs = int(jobs)
+        if (jobs <= 0):
+            raise Exception()
+    except Exception:
+        raise Exception("jobs must be a positive integer, not " + str(jobs))
+
+    if os.path.isdir(BPDir):
         print("TODO dev BPFolder treatments")
 
     try:
@@ -149,16 +160,16 @@ ARGUMENTS:
             raise Exception()
     except Exception:
         raise Exception("padding must be a non-negative integer, not " + str(padding))
-
-    try:
-        jobs = int(jobs)
-        if (jobs <= 0):
-            raise Exception()
-    except Exception:
-        raise Exception("jobs must be a positive integer, not " + str(jobs))
+    
+    # test plotdir last so we don't mkdir unless all other args are OK
+    if not os.path.isdir(plotDir):
+        try:
+            os.mkdir(plotDir)
+        except Exception as e:
+            raise Exception("plotDir " + plotDir + " doesn't exist and can't be mkdir'd: " + str(e))
 
     # AOK, return everything that's needed
-    return(countsFile, clustsFile, paramsFile, outFile, BPFolder, padding, jobs)
+    return(countsFile, clustsFile, paramsFile, outFile, jobs, plotDir, padding, BPDir)
 
 
 ###############################################################################
@@ -173,7 +184,7 @@ ARGUMENTS:
 def main(argv):
 
     # parse, check and preprocess arguments
-    (countsFile, clustsFile, paramsFile, outFile, BPFolder, padding, jobs) = parseArgs(argv)
+    (countsFile, clustsFile, paramsFile, outFile, jobs, plotDir, padding, BPDir) = parseArgs(argv)
 
     # args seem OK, start working
     logger.debug("called with: " + " ".join(argv[1:]))
@@ -221,7 +232,7 @@ def main(argv):
     CNStatus = ["CN0", "CN1", "CN2", "CN3"]
     # likelihood matrix creation
     likelihoodsArray = groupCalls.likelihoods.allocateLikelihoodsArray(len(samples), len(exons), len(CNStatus))
-    print(likelihoodsArray.shape)
+
     # decide how the work will be parallelized
     # we are allowed to use jobs cores in total: we will process paraClusters clusters in
     # parallel
@@ -231,12 +242,12 @@ def main(argv):
     logger.info("%i new clusters => will process %i in parallel", len(clust2samps), paraClusters)
 
     #####################################################
-    # mergeParams:
-    # arg: a Future object returned by ProcessPoolExecutor.submit(CNCalls.copyNumbersCalls.exonFilterAndCN2Params).
-    # exonFilterAndCN2Params() returns a 4-element tuple (clustID, colIndInParamsArray, sourceExons, clusterCN2Params).
-    # If something went wrong, log and populate failedClusters;
-    # otherwise fill column at index colIndInParamsArray and row at index sourceExons in paramsArray
-    # with calls stored in clusterCN2Params
+    # mergeLikelihoods:
+    # arg: a Future object returned by ProcessPoolExecutor.submit(groupCalls.likelihoods.observationCounts2Likelihoods).
+    # observationCounts2Likelihoods returns a 4-element tuple (clusterID, relevantCols, relevantRows, likelihoodArray).
+    # If something went wrong, raise log;
+    # otherwise fill column at index relevantCols and row at index relevantRows in likelihoodsArray
+    # with likelihoods stored in likelihoodsArray
     def mergeLikelihoods(futurecounts2Likelihoods):
         e = futurecounts2Likelihoods.exception()
         if e is not None:
@@ -244,10 +255,11 @@ def main(argv):
             logger.warning("Failed to observationCounts2Likelihoods for cluster n° %s, skipping it", str(e))
         else:
             counts2LikelihoodsRes = futurecounts2Likelihoods.result()
-            print(len(counts2LikelihoodsRes[2]), len(counts2LikelihoodsRes[1]))
             for exonIndex in range(len(counts2LikelihoodsRes[2])):
                 likelihoodsArray[counts2LikelihoodsRes[2][exonIndex], counts2LikelihoodsRes[1]] = counts2LikelihoodsRes[3][exonIndex]
-            logger.info("Done compute likelihoods for cluster n°%s", counts2LikelihoodsRes[0])
+            logger.info("Likelihoods calculated for cluster n°%s, NbOfSampsFilled %i, NbOfExonCalls %i/%i",
+                        counts2LikelihoodsRes[0], len(counts2LikelihoodsRes[1])//len(CNStatus),
+                        len(counts2LikelihoodsRes[2]), len(exons))
 
     # To be parallelised => browse clusters
     with ProcessPoolExecutor(paraClusters) as pool:
@@ -258,68 +270,54 @@ def main(argv):
                 continue
 
             ##### run prediction for current cluster
-            futureRes = pool.submit(groupCalls.likelihoods.observationCounts2Likelihoods, clusterID, samples, exonsFPM,
+            futureRes = pool.submit(groupCalls.likelihoods.counts2Likelihoods, clusterID, samples, exonsFPM,
                                     clust2samps, exp_loc, exp_scale, exParams, len(CNStatus), len(paramsTitles))
 
             futureRes.add_done_callback(mergeLikelihoods)
-
-    logger.error("EARLY EXIT, working on observationCounts2Likelihoods for now")
-    return()
+    
+    thisTime = time.time()
+    logger.debug("Done calculate likelihoods, in %.2fs", thisTime - startTime)
+    startTime = thisTime
+    
     ####################
     # calculate the transition matrix from the likelihoods
+    priors = np.array([6.34e-4, 2.11e-3, 9.96e-1, 1.25e-3])
+    
+    try:
+        outPlotFile = os.path.join(plotDir, "CN_Frequencies_Likelihoods_Plot.pdf")
+        transMatrix = groupCalls.transitions.getTransMatrix(likelihoodsArray, priors, samples, CNStatus, outPlotFile)
+    except Exception as e:
+        logger.error("getTransMatrix failed : %s", repr(e))
+        raise Exception("getTransMatrix failed")
 
-    ####################
-    # apply HMM and obtain CNVs
+    thisTime = time.time()
+    logger.debug("Done getTransMatrix, in %.2fs", thisTime - startTime)
+    startTime = thisTime
+
+    logger.error("EARLY EXIT, working on assignGender for now")
+    return()
+    # ####################
+    # # apply HMM and obtain CNVs
 
     # # --CN [str]: TXT file contains two lines separated by tabulations.
     # # The first line consists of entries naming the default copy number status,
     # # default: """ + CNStatus + """, and the second line contains the prior
     # # probabilities of occurrence for the events, default: """ + priors + """
     # # obtained from 1000 genome data (doi:10.1186/1471-2105-13-305).
-    # CNStatus = ["CN0", "CN1", "CN2", "CN3"]
-    # priors = np.array([6.34e-4, 2.11e-3, 9.96e-1, 1.25e-3])
-
-    # # args seem OK, start working
-    # logger.debug("called with: " + " ".join(argv[1:]))
-    # logger.info("starting to work")
-    # startTime = time.time()
-
-    # #############
-    # # parse calls
-    # try:
-    #     (exons, samples, CNCallsArray) = CNCalls.CNCallsFile.parseCNcallsFile(callsFile, len(CNStatus))
-    # except Exception as e:
-    #     logger.error("parseCNcallsFile failed for %s : %s", callsFile, repr(e))
-    #     raise Exception("parseCNcallsFile failed")
-
-    # thisTime = time.time()
-    # logger.debug("Done parse callsFile, in %.2fs", thisTime - startTime)
-    # startTime = thisTime
-
-    # ############
-    # # obtaining a list of observations and a transition matrix based on the data.
-    # try:
-    #     transMatrix = groupCalls.transitions.getTransMatrix(CNCallsArray, priors, samples, CNStatus, os.path.dirname(outFile))
-    # except Exception as e:
-    #     logger.error("getTransMatrix failed : %s", repr(e))
-    #     raise Exception("getTransMatrix failed")
-
-    # thisTime = time.time()
-    # logger.debug("Done getTransMatrix, in %.2fs", thisTime - startTime)
-    # startTime = thisTime
-
+    # #CNStatus = ["CN0", "CN1", "CN2", "CN3"]
+    
     # #############
     # # CNVs calls
     # try:
     #     for sampIndex in range(len(samples)):
     #         # Extract the CN calls for the current sample
-    #         CNcallOneSamp = CNCallsArray[:, sampIndex * len(CNStatus): sampIndex * len(CNStatus) + len(CNStatus)]
+    #         CNcallOneSamp = likelihoodsArray[:, sampIndex * len(CNStatus): sampIndex * len(CNStatus) + len(CNStatus)]
     #         try:
     #             # Perform CNV inference using HMM
-    #             CNVsSampList = groupCalls.HMM.inferCNVsUsingHMM(CNcallOneSamp, exons, transMatrix, priors)
+    #             CNVsSampList = groupCalls.HMM.viterbi(CNcallOneSamp, transMatrix)
     #         except Exception as e:
-    #             logger.error("inferCNVsUsingHMM failed : %s", repr(e))
-    #             raise Exception("inferCNVsUsingHMM failed")
+    #             logger.error("viterbi failed : %s", repr(e))
+    #             raise Exception("viterbi failed")
 
     #         # Create a column with sampIndex values
     #         sampIndexColumn = np.full((CNVsSampList.shape[0], 1), sampIndex, dtype=CNVsSampList.dtype)
