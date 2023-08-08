@@ -5,6 +5,8 @@ import figures.plots
 
 # prevent numba flooding the logs when we are in DEBUG loglevel
 logging.getLogger('numba').setLevel(logging.WARNING)
+# prevent matplotlib flooding the logs when we are in DEBUG loglevel
+logging.getLogger('matplotlib').setLevel(logging.WARNING)
 
 # set up logger, using inherited config
 logger = logging.getLogger(__name__)
@@ -27,17 +29,16 @@ logger = logging.getLogger(__name__)
 # - CNCallsArray (np.ndarray[floats]): likelihoods for each CN, each exon, each sample from a cluster
 #                                      dim = [nbExons, (nbSamps * nbCNStates)]
 # - priors (np.ndarray[floats]): prior probabilities for each copy number status.
-# - sampsInClust (list[int]): cluster "samples" indexes
 # - samples (list[str]): sample names
 # - CNStatus (list[str]): Names of copy number types.
-# - outFolder [str] : path to save the graphical representation.
+# - outFile [str] : path to save the graphical representation.
 #
 # Returns:
 # - normalized_arr (np.ndarray[floats]): transition matrix used for the hidden Markov model,
 #                                        including the "void" state.
 #                                        dim = [nbStates+1, nbStates+1]
-def getTransMatrix(CNCallsArray, priors, sampsInClust, samples, CNStatus, outFile):
-    nbSamps = len(sampsInClust)
+def getTransMatrix(CNCallsArray, priors, samples, CNStatus, outFile):
+    nbSamps = len(samples)
     nbStates = len(CNStatus)
     nbExons = CNCallsArray.shape[0]
 
@@ -46,13 +47,12 @@ def getTransMatrix(CNCallsArray, priors, sampsInClust, samples, CNStatus, outFil
     sampBestPath = np.full((nbExons, nbSamps), -1, dtype=np.int8)
     transitions = np.zeros((nbStates, nbStates), dtype=int)
 
-    for sampIndexGp in range(len(sampsInClust)):
-        sampleIndex = sampsInClust[sampIndexGp]
-        sampProbsArray = CNCallsArray[:, sampleIndex * nbStates:sampleIndex * nbStates + nbStates]
+    for sampIndex in range(len(samples)):
+        sampProbsArray = CNCallsArray[:, sampIndex * nbStates:sampIndex * nbStates + nbStates]
 
         # filter no call samples
         if np.all(sampProbsArray == -1):
-            print("Filtered samples:", samples[sampleIndex])
+            print("Filtered samples:", samples[sampIndex])
             continue
 
         # Filter -1 values
@@ -66,8 +66,8 @@ def getTransMatrix(CNCallsArray, priors, sampsInClust, samples, CNStatus, outFil
 
         # Updates
         unique_maxCN, counts = np.unique(maxCN, return_counts=True)
-        sampCnCounts[sampIndexGp, unique_maxCN] += counts
-        sampBestPath[exonCall, sampIndexGp] = maxCN
+        sampCnCounts[sampIndex, unique_maxCN] += counts
+        sampBestPath[exonCall, sampIndex] = maxCN
         prevCN = 2
         for indexExon in range(len(maxCN)):
             currCN = maxCN[indexExon]
