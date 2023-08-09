@@ -4,7 +4,7 @@
 # Given a TSV of exon fragment counts produced by 1_countFrags.py
 # and a TSV with clustering information produced by 2_clusterSamps.py:
 # It filters out non-callable exons and computes parameters for two distributions:
-# an exponential distribution (loc=0, scale=lambda) for CN0 and a robust Gaussian distribution
+# an exponential distribution (loc=0, scale=lambda) for CN0 and a Gaussian distribution
 # (loc=mean, scale=stdev) for CN2.
 # See usage for more details.
 ###############################################################################################
@@ -21,8 +21,8 @@ from concurrent.futures import ProcessPoolExecutor
 import countFrags.countsFile
 import clusterSamps.clustFile
 import clusterSamps.genderPrediction
-import exonFilteringAndParams.exonParamsFile
-import exonFilteringAndParams.exonFilterAndContinuousLawFitter
+import exonCalls.exonCallsFile
+import exonCalls.exonProcessing
 import figures.plots
 
 # prevent matplotlib flooding the logs when we are in DEBUG loglevel
@@ -64,7 +64,7 @@ The results are displayed in TSV format on the standard output (stdout).
 The first row represents the parameters of the exponential distribution, while the subsequent rows
 contain the exon definitions along with the corresponding 'loc' and 'scale' parameters for the
 Gaussian distribution.
-In addition, all the graphics (exponential fit on count data and dendograms summarising the
+In addition, all the graphics (exponential fit on count data and pie charts summarising the
 proportions of filtered and unfiltered exons) are printed in pdf files created in plotDir.
 
 ARGUMENTS:
@@ -191,10 +191,12 @@ def main(argv):
     # In pipeline mode, this should not happen.
 
     ####################
-    # calculates distribution parameters:
-    # 1) fits an exponential distribution to the entire dataset of intergenic counts (CN0)
+    # fits an exponential distribution to the entire dataset of intergenic counts (CN0)
+    # Extracts the continuous distribution's floating-point parameters, along with a
+    # threshold value distinguishing FPM values representing non-captured exons(<unCaptFPMLimit)
+    # from those indicating captured exons(>unCaptFPMLimit).
     try:
-        (exp_loc, exp_scale, unCaptFPMLimit) = exonFilteringAndParams.exonFilterAndContinuousLawFitter.CN0ParamsAndFPMLimit(intergenicsFPM, plotDir)
+        (exp_loc, exp_scale, unCaptFPMLimit) = exonCalls.exonProcessing.CN0ParamsAndFPMLimit(intergenicsFPM, plotDir)
     except Exception as e:
         raise Exception("CN0ParamsAndFPMLimit failed: %s", repr(e))
 
@@ -202,22 +204,10 @@ def main(argv):
     logger.debug("Done CN0ParamsAndFPMLimit, loc=%.2f, scale=%.2f, in %.2f s", exp_loc, exp_scale, thisTime - startTime)
     startTime = thisTime
 
-    ###
-    # 2) selects cluster-specific exons on autosomes, chrY, or chrX.
+    ####################
     # Uninterpretable exons are filtered out while robustly calculating parameters for
     # a fitted Gaussian distribution.
 
-    exonOnSexChr = clusterSamps.genderPrediction.exonOnSexChr(exons)
-
-    # defined the result columns for each cluster.
-    # 'loc' column corresponds to the mean of the Gaussian distribution
-    # 'scale' column represents the standard deviation of the Gaussian distribution
-    # 'filterStatus' column indicates the status of the corresponding exon
-    expectedColNames = ["loc", "scale", "filterStatus"]
-
-    # Output matrix creation
-    CN2ParamsArray = exonFilteringAndParams.exonParamsFile.allocateParamsArray(len(exons), len(clust2samps), len(expectedColNames))
-   
     # filterStatus represents the set of filters applied to the exons.
     # The indexes of this list will be used to map the filtered status of each
     # exon in the output file.
@@ -225,6 +215,18 @@ def main(argv):
     # while the index -1 (initialized during the output matrix allocation)
     # represents exons that are not used for cluster parameter calculation.
     filterStatus = ["notCaptured", "cannotFitRG", "RGClose2LowThreshold", "fewSampsInRG", "call"]
+    
+    # defined the result columns for each cluster.
+    # 'loc' column corresponds to the mean of the Gaussian distribution
+    # 'scale' column represents the standard deviation of the Gaussian distribution
+    # 'filterStatus' column indicates the status of the corresponding exon
+    expectedColNames = ["loc", "scale", "filterStatus"]
+
+    # CN2ParamsArray[exonIndex, clusterIndex + expectedColNames] will store exon processing results.
+    CN2ParamsArray = exonCalls.exonCallsFile.allocateParamsArray(len(exons), len(clust2samps), len(expectedColNames))
+
+    # selects cluster-specific exons on autosomes, chrXZ, or chrYW.
+    exonOnSexChr = clusterSamps.genderPrediction.exonOnSexChr(exons)
 
     # generates a PDF file containing pie charts summarizing the filters
     # applied to exons in each cluster.
@@ -234,26 +236,20 @@ def main(argv):
     pdfPieCharts = os.path.join(plotDir, namePieChartsFile)
     matplotOpenFile = matplotlib.backends.backend_pdf.PdfPages(pdfPieCharts)
 
-    #######################
-    # decide how the work will be parallelized
-    # we are allowed to use jobs cores in total: we will process paraClusters clusters in
-    # parallel
-    # -> we target targetCoresPerCluster, this is increased if we
-    #    have few clusters to process (and we use ceil() so we may slighty overconsume)
+    # This step is parallelized across clusters,
     paraClusters = min(math.ceil(jobs / 2), len(clust2samps))
     logger.info("%i new clusters => will process %i in parallel", len(clust2samps), paraClusters)
 
-    #####################################################
+    ##
     # mergeParams:
-    # arg: a Future object returned by ProcessPoolExecutor.submit(CNCalls.copyNumbersCalls.exonFilterAndCN2Params).
-    # exonFilterAndCN2Params() returns a 4-element tuple (clustID, colIndInParamsArray, sourceExons, clusterCN2Params).
-    # If something went wrong, log and populate failedClusters;
-    # otherwise fill column at index colIndInParamsArray and row at index sourceExons in paramsArray
+    # arg: a Future object returned by ProcessPoolExecutor.submit(exonCalls.exonProcessing.exonFilterAndCN2Params).
+    # exonFilterAndCN2Params() returns a 4-element tuple (clusterID, relevantCols, relevantRows, exonProcessRes).
+    # If something went wrong, raise error in log;
+    # otherwise fill column at index relevantCols and row at index relevantRows in exonProcessRes
     # with calls stored in clusterCN2Params
     def mergeParams(futurecounts2ParamsRes):
         e = futurecounts2ParamsRes.exception()
         if e is not None:
-            # exceptions raised by ExonFilterAndCN2Params are always Exception(str(clusterIndex))
             logger.warning("Failed to ExonFilterAndCN2Params for cluster n° %s, skipping it", str(e))
         else:
             counts2ParamsRes = futurecounts2ParamsRes.result()
@@ -279,7 +275,7 @@ def main(argv):
                 continue
 
             ##### run prediction for current cluster
-            futureRes = pool.submit(exonFilteringAndParams.exonFilterAndContinuousLawFitter.exonFilterAndCN2Params, clustID,
+            futureRes = pool.submit(exonCalls.exonProcessing.exonFilterAndCN2Params, clustID,
                                     exonsFPM, samples, clust2samps, fitWith, exonOnSexChr,
                                     unCaptFPMLimit, expectedColNames, filterStatus)
 
@@ -290,7 +286,7 @@ def main(argv):
 
     #####################################################
     # Print exon defs + calls to outFile
-    exonFilteringAndParams.exonParamsFile.printParamsFile(outFile, clust2samps, expectedColNames, exp_loc, exp_scale, exons, CN2ParamsArray)
+    exonCalls.exonCallsFile.printParamsFile(outFile, clust2samps, expectedColNames, exp_loc, exp_scale, exons, CN2ParamsArray)
 
     thisTime = time.time()
     logger.debug("Done printing calls for all (non-failed) clusters, in %.2fs", thisTime - startTime)
