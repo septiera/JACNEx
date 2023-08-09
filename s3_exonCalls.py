@@ -58,7 +58,7 @@ def parseArgs(argv):
 DESCRIPTION:
 Given two TSV files: one containing exon fragment counts and another with samples clusters.
 It filters out non-callable exons (with no coverage) and computes parameters for two distributions:
-an exponential distribution (loc=0, scale=lambda) for CN0 and a robust Gaussian distribution
+an exponential distribution (loc=0, scale=lambda) for CN0 and a Gaussian distribution
 (loc=mean, scale=stdev) for CN2.
 The results are displayed in TSV format on the standard output (stdout).
 The first row represents the parameters of the exponential distribution, while the subsequent rows
@@ -215,17 +215,17 @@ def main(argv):
     # while the index -1 (initialized during the output matrix allocation)
     # represents exons that are not used for cluster parameter calculation.
     filterStatus = ["notCaptured", "cannotFitRG", "RGClose2LowThreshold", "fewSampsInRG", "call"]
-    
+
     # defined the result columns for each cluster.
     # 'loc' column corresponds to the mean of the Gaussian distribution
     # 'scale' column represents the standard deviation of the Gaussian distribution
     # 'filterStatus' column indicates the status of the corresponding exon
-    expectedColNames = ["loc", "scale", "filterStatus"]
+    clustResColnames = ["loc", "scale", "filterStatus"]
 
-    # CN2ParamsArray[exonIndex, clusterIndex + expectedColNames] will store exon processing results.
-    CN2ParamsArray = exonCalls.exonCallsFile.allocateParamsArray(len(exons), len(clust2samps), len(expectedColNames))
+    # callsArray[exonIndex, clusterIndex + clustResColnames] will store exon processing results.
+    callsArray = exonCalls.exonCallsFile.allocateParamsArray(len(exons), len(clust2samps), len(clustResColnames))
 
-    # selects cluster-specific exons on autosomes, chrXZ, or chrYW.
+    # selects cluster-specific exons on autosomes, chrXZ or chrYW.
     exonOnSexChr = clusterSamps.genderPrediction.exonOnSexChr(exons)
 
     # generates a PDF file containing pie charts summarizing the filters
@@ -243,10 +243,10 @@ def main(argv):
     ##
     # mergeParams:
     # arg: a Future object returned by ProcessPoolExecutor.submit(exonCalls.exonProcessing.exonFilterAndCN2Params).
-    # exonFilterAndCN2Params() returns a 4-element tuple (clusterID, relevantCols, relevantRows, exonProcessRes).
+    # exonFilterAndCN2Params() returns a 4-element tupple (clusterID, relevantCols, relevantRows, clusterCallsArray).
     # If something went wrong, raise error in log;
-    # otherwise fill column at index relevantCols and row at index relevantRows in exonProcessRes
-    # with calls stored in clusterCN2Params
+    # otherwise fill column at index relevantCols and row at index relevantRows in clusterCallsArray
+    # with calls stored in callsArray
     def mergeParams(futurecounts2ParamsRes):
         e = futurecounts2ParamsRes.exception()
         if e is not None:
@@ -254,11 +254,11 @@ def main(argv):
         else:
             counts2ParamsRes = futurecounts2ParamsRes.result()
             for exonIndex in range(len(counts2ParamsRes[2])):
-                CN2ParamsArray[counts2ParamsRes[2][exonIndex], counts2ParamsRes[1]] = counts2ParamsRes[3][exonIndex]
+                callsArray[counts2ParamsRes[2][exonIndex], counts2ParamsRes[1]] = counts2ParamsRes[3][exonIndex]
 
             try:
                 # Generate pie chart for the cluster based on the filterStatus
-                exStatusArray = counts2ParamsRes[3][:, expectedColNames.index("filterStatus")]
+                exStatusArray = counts2ParamsRes[3][:, clustResColnames.index("filterStatus")]
                 figures.plots.plotPieChart(counts2ParamsRes[0], filterStatus, exStatusArray, matplotOpenFile)
             except Exception as e:
                 logger.error("plotPieChart failed for cluster %s : %s", clustID, repr(e))
@@ -277,7 +277,7 @@ def main(argv):
             ##### run prediction for current cluster
             futureRes = pool.submit(exonCalls.exonProcessing.exonFilterAndCN2Params, clustID,
                                     exonsFPM, samples, clust2samps, fitWith, exonOnSexChr,
-                                    unCaptFPMLimit, expectedColNames, filterStatus)
+                                    unCaptFPMLimit, clustResColnames, filterStatus)
 
             futureRes.add_done_callback(mergeParams)
 
@@ -286,7 +286,7 @@ def main(argv):
 
     #####################################################
     # Print exon defs + calls to outFile
-    exonCalls.exonCallsFile.printParamsFile(outFile, clust2samps, expectedColNames, exp_loc, exp_scale, exons, CN2ParamsArray)
+    exonCalls.exonCallsFile.printParamsFile(outFile, clust2samps, clustResColnames, exp_loc, exp_scale, exons, callsArray)
 
     thisTime = time.time()
     logger.debug("Done printing calls for all (non-failed) clusters, in %.2fs", thisTime - startTime)
