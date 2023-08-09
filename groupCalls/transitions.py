@@ -16,69 +16,72 @@ logger = logging.getLogger(__name__)
 ############################ PUBLIC FUNCTIONS #################################
 ###############################################################################
 # getTransMatrix
-# calculates the copy number transition matrix from a cluster and predictions for
-# exons and samples based on likelihoods(probability density) and prior probabilities.
-# It filters out irrelevant samples, determines the most probable copy number states
-# for each exon, and normalizes the transition counts.
-# The resulting transition matrix includes an additional 'void' state that incorporates
-# the priors for all current observations, providing better initialization and
-# resets during the Viterbi algorithm.
-# Additionally, it generates a bar plot of copy number counts by samples.
+# Given likelihoods and priors, calculates the copy number transition matrix.
+# Filters out irrelevant samples, determines most probable states for exons,
+# and normalizes transitions.
+# Includes a 'void' state incorporating priors for better initialization and restart
+# in the personalised Viterbi algorithm.
+# Also generates a bar plot of copy number counts by samples (only if logger debug mode).
 #
 # Args:
 # - CNCallsArray (np.ndarray[floats]): likelihoods for each CN, each exon, each sample from a cluster
 #                                      dim = [nbExons, (nbSamps * nbCNStates)]
 # - priors (np.ndarray[floats]): prior probabilities for each copy number status.
-# - samples (list[str]): sample names
-# - CNStatus (list[str]): Names of copy number types.
+# - samples (list[strs]): sample names
+# - CNStatus (list[strs]): Names of copy number types.
 # - outFile [str] : path to save the graphical representation.
 #
 # Returns:
-# - normalized_arr (np.ndarray[floats]): transition matrix used for the hidden Markov model,
-#                                        including the "void" state.
-#                                        dim = [nbStates+1, nbStates+1]
+# - transMatVoid (np.ndarray[floats]): transition matrix used for the hidden Markov model,
+#                                      including the "void" state.
+#                                      dim = [nbStates+1, nbStates+1]
 def getTransMatrix(CNCallsArray, priors, samples, CNStatus, outFile):
     nbSamps = len(samples)
     nbStates = len(CNStatus)
-    nbExons = CNCallsArray.shape[0]
 
-    # Initialize arrays
+    # initialize arrays:
+    # 2D array, each row represents a sample and each value is the count for a specific copy number type
     sampCnCounts = np.zeros((nbSamps, nbStates), dtype=int)
-    sampBestPath = np.full((nbExons, nbSamps), -1, dtype=np.int8)
+    # 2D array, expected format for a transition matrix [i; j]
+    # contains all prediction counts of states, taking into account
+    # the preceding states for the entire sampling.
     transitions = np.zeros((nbStates, nbStates), dtype=int)
 
     for sampIndex in range(len(samples)):
         sampProbsArray = CNCallsArray[:, sampIndex * nbStates:sampIndex * nbStates + nbStates]
 
-        # filter no call samples
+        # filter columns associated with no-call samples, same as those non-clusterable
         if np.all(sampProbsArray == -1):
-            print("Filtered samples:", samples[sampIndex])
+            logger.debug("Filtered sample: %s", samples[sampIndex])
             continue
 
-        # Filter -1 values
+        # filter row with -1 values, corresponding to filtered non-callable exons
         exonCall = np.where(np.any(sampProbsArray != -1, axis=1))[0]
 
-        # Calculate the weighted probabilities using filtered SampProbsArray and priors
+        # calculate the most probable copy number state for each exon based on the
+        # combined probabilities of the exon call likelihood and the prior probabilities
         callProbsArray = sampProbsArray[exonCall, :]
-        Odds = callProbsArray * priors
+        odds = callProbsArray * priors
+        maxCN = np.argmax(odds, axis=1)
 
-        maxCN = np.argmax(Odds, axis=1)
-
-        # Updates
+        # updates arrays
+        # count of each predicted copy number type for the sample
         unique_maxCN, counts = np.unique(maxCN, return_counts=True)
         sampCnCounts[sampIndex, unique_maxCN] += counts
-        sampBestPath[exonCall, sampIndex] = maxCN
-        prevCN = 2
+        # Incrementing the overall count of the sample's
+        # The initial previous state is set to CN2.
+        prevCN = np.argmax(priors)
         for indexExon in range(len(maxCN)):
             currCN = maxCN[indexExon]
             transitions[prevCN, currCN] += 1
             prevCN = currCN
 
-    # Normalize each row to ensure sum equals 1
+    # normalize each row to ensure sum equals 1
+    # not require normalization with the total number of samples
     row_sums = np.sum(transitions, axis=1, keepdims=True)
     normalized_arr = transitions / row_sums
 
-    # Add void status and incorporate priors for all current observations
+    # add void status and incorporate priors for all current observations
     transMatVoid = np.vstack((priors, normalized_arr))
     transMatVoid = np.hstack((np.zeros((nbStates + 1, 1)), transMatVoid))
 
