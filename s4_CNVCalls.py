@@ -49,7 +49,7 @@ def parseArgs(argv):
     plotDir = "./plotDir/"
     padding = 10
     BPDir = ""
-    
+
     usage = "NAME:\n" + scriptName + """\n
 
 DESCRIPTION:
@@ -160,7 +160,7 @@ ARGUMENTS:
             raise Exception()
     except Exception:
         raise Exception("padding must be a non-negative integer, not " + str(padding))
-    
+
     # test plotdir last so we don't mkdir unless all other args are OK
     if not os.path.isdir(plotDir):
         try:
@@ -226,66 +226,79 @@ def main(argv):
     startTime = thisTime
 
     ####################
-    # calculate likelihoods
-    # cette étape peut être multiprocessée
-    #######################
-    CNStatus = ["CN0", "CN1", "CN2", "CN3"]
-    # likelihood matrix creation
-    likelihoodsArray = groupCalls.likelihoods.allocateLikelihoodsArray(len(samples), len(exons), len(CNStatus))
+    # Calling CNVs
+    ####################
+    # Entails a multi-step process to acquire data related to HMM parameters.
+    # Defining unique variables to our model:
+    # - States to be emitted by the HMM corresponding to different types of copy numbers:
+    # CNO = homodeletion , CN1 = heterodeletion, CN2 = diploid (normal copy number)
+    # CN3 = duplication, we decided not to distinguish the number of copies, so 3+.
+    CNStates = ["CN0", "CN1", "CN2", "CN3"]
+    # - CNState occurrence probabilities of the human genome, obtained from 1000 genome data
+    # (doi:10.1186/1471-2105-13-305).
+    priors = np.array([6.34e-4, 2.11e-3, 9.96e-1, 1.25e-3])
 
-    # decide how the work will be parallelized
-    # we are allowed to use jobs cores in total: we will process paraClusters clusters in
-    # parallel
-    # -> we target targetCoresPerCluster, this is increased if we
-    #    have few clusters to process (and we use ceil() so we may slighty overconsume)
-    paraClusters = min(math.ceil(jobs / 2), len(clust2samps))
+    #########
+    # Likelihood calculation,
+    # given count data (observation data in the HMM) and parameters of continuous distributions
+    # computed for each cluster.
+    # These likelihoods are computed for each hidden state(CNStates) and serve as a pseudo-emission
+    # table(likelihoodsArray).
+    # Cannot be performed within the Viterbi process itself, as it's necessary for the generation
+    # of a transition matrix derived from the data, which serves as one of the HMM parameters.
+
+    # np.ndarray 2D, dim = NbOfExons * (NbOfSamples * NbOfCNStates), initialized with -1.
+    emissionArray = groupCalls.likelihoods.allocateLikelihoodsArray(len(samples), len(exons), len(CNStates))
+
+    # This step is parallelized across clusters,
+    paraClusters = min(math.ceil(jobs), len(clust2samps))
     logger.info("%i new clusters => will process %i in parallel", len(clust2samps), paraClusters)
 
-    #####################################################
-    # mergeLikelihoods:
-    # arg: a Future object returned by ProcessPoolExecutor.submit(groupCalls.likelihoods.observationCounts2Likelihoods).
-    # observationCounts2Likelihoods returns a 4-element tuple (clusterID, relevantCols, relevantRows, likelihoodArray).
-    # If something went wrong, raise log;
-    # otherwise fill column at index relevantCols and row at index relevantRows in likelihoodsArray
+    ##
+    # mergeEmission:
+    # arg: a Future object returned by ProcessPoolExecutor.submit(groupCalls.likelihoods.counts2Likelihoods).
+    # counts2Likelihoods returns a 4-element tuple (clusterID, relevantCols, relevantRows, likelihoodsArray).
+    # If something went wrong, raise error in log;
+    # otherwise fill column at index relevantCols and row at index relevantRows in emissionArray
     # with likelihoods stored in likelihoodsArray
-    def mergeLikelihoods(futurecounts2Likelihoods):
-        e = futurecounts2Likelihoods.exception()
+    def mergeEmission(futurecounts2emission):
+        e = futurecounts2emission.exception()
         if e is not None:
-            # exceptions raised by observationCounts2Likelihoods are always Exception(str(clusterIndex))
-            logger.warning("Failed to observationCounts2Likelihoods for cluster n° %s, skipping it", str(e))
+            logger.warning("Failed counts2likelihoods for cluster n° %s, skipping it", str(e))
         else:
-            counts2LikelihoodsRes = futurecounts2Likelihoods.result()
-            for exonIndex in range(len(counts2LikelihoodsRes[2])):
-                likelihoodsArray[counts2LikelihoodsRes[2][exonIndex], counts2LikelihoodsRes[1]] = counts2LikelihoodsRes[3][exonIndex]
+            counts2emissionRes = futurecounts2emission.result()
+            for exonIndex in range(len(counts2emissionRes[2])):
+                emissionArray[counts2emissionRes[2][exonIndex], counts2emissionRes[1]] = counts2emissionRes[3][exonIndex]
             logger.info("Likelihoods calculated for cluster n°%s, NbOfSampsFilled %i, NbOfExonCalls %i/%i",
-                        counts2LikelihoodsRes[0], len(counts2LikelihoodsRes[1])//len(CNStatus),
-                        len(counts2LikelihoodsRes[2]), len(exons))
+                        counts2emissionRes[0], len(counts2emissionRes[1]) // len(CNStates),
+                        len(counts2emissionRes[2]), len(exons))
 
     # To be parallelised => browse clusters
     with ProcessPoolExecutor(paraClusters) as pool:
         for clusterID in clust2samps.keys():
             #### validity sanity check
             if not clustIsValid[clusterID]:
-                logger.warning("cluster %s is invalid, low sample number", clusterID)
+                logger.warning("Cluster %s is invalid, low sample number %i", clusterID, len(clust2samps[clusterID]))
                 continue
 
-            ##### run prediction for current cluster
-            futureRes = pool.submit(groupCalls.likelihoods.counts2Likelihoods, clusterID, samples, exonsFPM,
-                                    clust2samps, exp_loc, exp_scale, exParams, len(CNStatus), len(paramsTitles))
+            futureRes = pool.submit(groupCalls.likelihoods.counts2likelihoods, clusterID, samples, exonsFPM,
+                                    clust2samps, exp_loc, exp_scale, exParams, len(CNStates), len(paramsTitles))
 
-            futureRes.add_done_callback(mergeLikelihoods)
-    
+            futureRes.add_done_callback(mergeEmission)
+
     thisTime = time.time()
     logger.debug("Done calculate likelihoods, in %.2fs", thisTime - startTime)
     startTime = thisTime
-    
-    ####################
-    # calculate the transition matrix from the likelihoods
-    priors = np.array([6.34e-4, 2.11e-3, 9.96e-1, 1.25e-3])
-    
+
+    #########
+    # Transition matrix generated from likelihood data, based on the overall sampling.
+    # Contains an additional state, the 'void' state, it's a customization for the HMM
+    # involves initializing and resetting HMM steps using priors.
+    # The 'void' state does not appear among the emitted states.
+    # np.ndarray 2D, dim = (nbOfCNStates + void) * (nbOfCNStates + void)
     try:
-        outPlotFile = os.path.join(plotDir, "CN_Frequencies_Likelihoods_Plot.pdf")
-        transMatrix = groupCalls.transitions.getTransMatrix(likelihoodsArray, priors, samples, CNStatus, outPlotFile)
+        plotFile = os.path.join(plotDir, "CN_Frequencies_Likelihoods_Plot.pdf")
+        transMatrix = groupCalls.transitions.getTransMatrix(emissionArray, priors, samples, CNStates, plotFile)
     except Exception as e:
         logger.error("getTransMatrix failed : %s", repr(e))
         raise Exception("getTransMatrix failed")
@@ -294,45 +307,49 @@ def main(argv):
     logger.debug("Done getTransMatrix, in %.2fs", thisTime - startTime)
     startTime = thisTime
 
-    logger.error("EARLY EXIT, working on assignGender for now")
+    #########
+    # Application of the HMM using the Viterbi algorithm.
+    # returns a list of lists [CNtype, exonStart, exonEnd, sampleName].
+    CNVs = []
+
+    # this step is parallelized across samples.
+    paraSample = min(math.ceil(jobs), len(samples))
+    logger.info("%i samples => will process %i in parallel", len(samples), paraSample)
+
+    ##
+    # concatCNVs:
+    # arg: a Future object returned by ProcessPoolExecutor.submit(groupCalls.HMM.viterbi).
+    # viterbi returns a 4-element tuple (sampleID, CNVsList).
+    # If something went wrong, raise error in log;
+    # otherwise associating the sample name in the fourth list item and concatenate the
+    # previous predictions(CNVs) with the new ones(CNVsList).
+    def concatCNVs(futureViterbi):
+        e = futureViterbi.exception()
+        if e is not None:
+            logger.warning("Failed viterbi for sample %s, skipping it", str(e))
+        else:
+            viterbiRes = futureViterbi.result()
+            for sublist in viterbiRes[1]:
+                sublist.append(viterbiRes[0])
+            CNVs.extend(viterbiRes[1])
+            logger.info("Calling %i CNVs for sample %s", len(viterbiRes[1]), viterbiRes[0])
+
+    # To be parallelised => browse samples
+    with ProcessPoolExecutor(paraSample) as pool:
+        for si in range(len(samples)):
+            # Extract the likelihoods for the current sample
+            CNcallOneSamp = emissionArray[:, si * len(CNStates): si * len(CNStates) + len(CNStates)]
+
+            futureRes = pool.submit(groupCalls.HMM.viterbi, CNcallOneSamp, transMatrix, samples[si])
+
+            futureRes.add_done_callback(concatCNVs)
+
+    thisTime = time.time()
+    logger.debug("Done CNVs calls, in %.2fs", thisTime - startTime)
+    startTime = thisTime
+
+    logger.error("EARLY EXIT, working on viterbi for now")
     return()
-    # ####################
-    # # apply HMM and obtain CNVs
-
-    # # --CN [str]: TXT file contains two lines separated by tabulations.
-    # # The first line consists of entries naming the default copy number status,
-    # # default: """ + CNStatus + """, and the second line contains the prior
-    # # probabilities of occurrence for the events, default: """ + priors + """
-    # # obtained from 1000 genome data (doi:10.1186/1471-2105-13-305).
-    # #CNStatus = ["CN0", "CN1", "CN2", "CN3"]
-    
-    # #############
-    # # CNVs calls
-    # try:
-    #     for sampIndex in range(len(samples)):
-    #         # Extract the CN calls for the current sample
-    #         CNcallOneSamp = likelihoodsArray[:, sampIndex * len(CNStatus): sampIndex * len(CNStatus) + len(CNStatus)]
-    #         try:
-    #             # Perform CNV inference using HMM
-    #             CNVsSampList = groupCalls.HMM.viterbi(CNcallOneSamp, transMatrix)
-    #         except Exception as e:
-    #             logger.error("viterbi failed : %s", repr(e))
-    #             raise Exception("viterbi failed")
-
-    #         # Create a column with sampIndex values
-    #         sampIndexColumn = np.full((CNVsSampList.shape[0], 1), sampIndex, dtype=CNVsSampList.dtype)
-    #         # Concatenate CNVsSampList with sampIndex column
-    #         CNVsSampListAddSampInd = np.hstack((CNVsSampList, sampIndexColumn))
-    #         # Stack CNVsSampList_with_sampIndex vertically with previous results
-    #         CNVArray = np.vstack((CNVArray, CNVsSampListAddSampInd))
-
-    # except Exception as e:
-    #     logger.error("CNVs calls failed : %s", repr(e))
-    #     raise Exception("CNVs calls failed")
-
-    # thisTime = time.time()
-    # logger.debug("Done CNVs calls, in %.2fs", thisTime - startTime)
-    # startTime = thisTime
 
     # ############
     # # vcf format
