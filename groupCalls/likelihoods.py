@@ -63,10 +63,10 @@ def allocateLikelihoodsArray(numSamps, numExons, numCN):
 # - relevantRows (list[ints]): exon indexes in the likelihoodArray corresponding to exons
 #                              with filtering status 4 ("Calls") for the given clusterID.
 #                              These rows represent the exons for which likelihoods are calculated.
-# - likelihoodArray (np.ndarray[floats]): precomputed likelihoods for each sample and copy number type.
+# - likelihoodsArray (np.ndarray[floats]): precomputed likelihoods for each sample and copy number type.
 #                                         dim = nbOfRelevantRows * nbOfRelevantCols
-def counts2Likelihoods(clusterID, samples, counts, clust2samps, exp_loc, exp_scale,
-                                  exonCN2Params, numCNs, numParamsCols):
+def counts2likelihoods(clusterID, samples, counts, clust2samps, exp_loc, exp_scale,
+                       exonCN2Params, numCNs, numParamsCols):
 
     # Convert the dictionary keys to a list and find the index of the clusterID
     clusterIDs = list(clust2samps.keys())
@@ -82,7 +82,7 @@ def counts2Likelihoods(clusterID, samples, counts, clust2samps, exp_loc, exp_sca
     CN2paramsClust = exonCN2Params[:, clusterIndex * numParamsCols:(clusterIndex + 1) * numParamsCols]
 
     # Create an array of column indices for each sample,
-    relevantCols = np.zeros(len(sampsIndexes)*numCNs, dtype = np.int)
+    relevantCols = np.zeros(len(sampsIndexes) * numCNs, dtype=np.int)
     # relevantCols = [ci + sampsIndex * numCNs for sampsIndex in sampsIndexes for ci in range(numCNs)]
     for sampsIndex in range(len(sampsIndexes)):
         for ci in range(numCNs):
@@ -91,7 +91,7 @@ def counts2Likelihoods(clusterID, samples, counts, clust2samps, exp_loc, exp_sca
     # Find the row indices where the third column of CN2paramsCluster is equal to 4 ("Calls")
     relevantRows = np.where(CN2paramsClust[:, 2] == 4)[0]
 
-    likelihoodArray = allocateLikelihoodsArray(numSamps, len(relevantRows), numCNs)
+    likelihoodsArray = allocateLikelihoodsArray(numSamps, len(relevantRows), numCNs)
 
     for rowIndex, exonIndex in enumerate(relevantRows):
         FPMs = counts[exonIndex, sampsIndexes]
@@ -108,9 +108,9 @@ def counts2Likelihoods(clusterID, samples, counts, clust2samps, exp_loc, exp_sca
             colIndices = np.arange(ci, numSamps * numCNs, numCNs)
 
             # Assign values to likelihoodArray using correct indexes
-            likelihoodArray[rowIndex, colIndices] = CNLikelihoods
+            likelihoodsArray[rowIndex, colIndices] = CNLikelihoods
 
-    return (clusterID, relevantCols, relevantRows, likelihoodArray)
+    return (clusterID, relevantCols, relevantRows, likelihoodsArray)
 
 
 ###############################################################################
