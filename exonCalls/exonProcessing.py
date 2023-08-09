@@ -116,93 +116,90 @@ def CN0ParamsAndFPMLimit(intergenicsFPM, plotDir):
 # or called exons for the cluster.
 #
 # Args:
-# -clustID [str]
+# -clusterID [str]
 # -exonsFPM (np.ndarray[floats]): normalised counts from exons
 # -samples (list[strs]): sample IDs in the same order as the columns of 'exonsFPM'.
 # -clust2samps (dict): mapping cluster IDs to lists of sample IDs.
 # -fitWith (dict): mapping cluster IDs to lists of control cluster IDs.
 # -exonOnSexChr (numpy.ndarray[ints]): chromosome category (autosomes=0 or gonosomes chrXZ=1, chrYW=2)
 #                                      for each exon.
-# -unCaptFPMLimit (float): Upper limit for fragment count data, used in exon filtering.
-# -expectedColNames (list[strs]): List of expected column names for the results array.
+# -unCaptFPMLimit [float]: Upper limit for fragment count data, used in exon filtering.
+# -clustResColnames (list[strs]): List of expected column names for the results array.
 # -filterStatus (list[strs]): List of status labels used in filtering or calling exons.
 #
-# Returns a tuple (clustID, colInd4CNCallsArray, exonInd2Process, clusterCallsArray):
-# - clustID [int]
-# - colInd4CNCallsArray (list[ints]): CN2ParamsArray column indexes .
-# - exonInd2Process (list[ints]): exons indexes (rows indexes) for the CNcallsArray.
+# Returns a tuple (clustID, relevantCols, relevantRows, clusterCallsArray):
+# - clusterID [str]
+# - relevantCols (list[ints]): callsArray column indexes .
+# - relevantRows (list[ints]): exons indexes (rows indexes) for the callsArray.
 # - clusterCallsArray (np.ndarray[floats]): The cluster calls array (likelihoods).
-def exonFilterAndCN2Params(clustID, exonsFPM, samples, clust2samps, fitWith, exonOnSexChr,
-                           unCaptFPMLimit, expectedColNames, filterStatus):
+def exonFilterAndCN2Params(clusterID, exonsFPM, samples, clust2samps, fitWith, exonOnSexChr,
+                           unCaptFPMLimit, clustResColnames, filterStatus):
     startTime = time.time()
     try:
         #############
         ### get cluster-specific informations
         #############
         # Get the index of the current cluster in the list of keys from 'clust2samps'
-        # enabling parallel storage of results in CN2ParamsArray
-        clustInd = list(clust2samps).index(clustID)
+        # enabling parallel storage of results in callsArray
+        clustInd = list(clust2samps).index(clusterID)
 
         # Get target and control 'samples' indexes for each cluster
         # enables retrieval of fragment count data from exonsFPM array for all samples of interest,
         # including the target cluster and control clusters.
         try:
-            (targetSampsInd, ctrlSampsInd) = getSampIndex(clustID, clust2samps, samples, fitWith)
+            (targetSampsInd, ctrlSampsInd) = getSampIndex(clusterID, clust2samps, samples, fitWith)
         except Exception as e:
-            logger.error("getClusterSamps failed for cluster %i : %s", clustID, repr(e))
+            logger.error("getClusterSamps failed for cluster %i : %s", clusterID, repr(e))
             raise
 
-        # Get appropriate chromosome category for clustID (autosomes or gonosomes)
+        # Get appropriate chromosome category for clusterID (autosomes or gonosomes)
         # enables identification of cluster-specific exons for analysis
         chrMap = {"A": 0, "XZ": 1, "YW": 2}
-        clustChr = clustID.split("_")[0]
+        clustChr = clusterID.split("_")[0]
         # sanity check
         if clustChr not in chrMap:
-            raise Exception("Cluster identifier not expected: ", clustID)
+            raise Exception("Cluster identifier not expected: ", clusterID)
 
         #############
         # Data to be returned
-        exonInd2Process = np.where(exonOnSexChr == chrMap[clustChr])[0]
-        colInd4ParamsArray = np.arange(clustInd * len(expectedColNames), clustInd * len(expectedColNames) + len(expectedColNames))
-        clusterParamsArray = np.full((len(exonInd2Process), len(expectedColNames)), -1, dtype=np.float64, order='F')
+        relevantRows = np.where(exonOnSexChr == chrMap[clustChr])[0]
+        relevantCols = np.arange(clustInd * len(clustResColnames), clustInd * len(clustResColnames) + len(clustResColnames))
+        clusterResArray = np.full((len(relevantRows), len(clustResColnames)), -1, dtype=np.float64, order='F')
 
         #############
         # cluster summary
         logger.debug("cluster n°%s, clustSamps=%i, controlSamps=%i, exonsNB=%i",
-                     clustID, len(targetSampsInd), len(ctrlSampsInd), len(exonInd2Process))
+                     clusterID, len(targetSampsInd), len(ctrlSampsInd), len(relevantRows))
 
         #############
         ### Filter or call exons
         #############
         # Loop through each exon index to process
-        for ei in range(len(exonInd2Process)):
-            exonBedInd = exonInd2Process[ei]
-            test = targetSampsInd + ctrlSampsInd
-            exonFPMs = exonsFPM[exonBedInd, test]
-            print(exonFPMs.shape)
+        for ei in range(len(relevantRows)):
+            exonBedInd = relevantRows[ei]
+            oneExonFPM = exonsFPM[exonBedInd, targetSampsInd + ctrlSampsInd]
 
             try:
                 # Perform filtering or calling for the current exon and get the status
-                exStatus = exonFilteredOrCalled(ei, exonFPMs, unCaptFPMLimit, clusterParamsArray, expectedColNames)
+                exStatus = exonFilteredOrCalled(ei, oneExonFPM, unCaptFPMLimit, clusterResArray, clustResColnames)
             except Exception as e:
                 logger.error("exonFilteredOrCalled failed : %s", repr(e))
                 raise
 
-            # Update the clusterParamsArray with the status of the current exon
-            clusterParamsArray[ei, expectedColNames.index("filterStatus")] = filterStatus.index(exStatus)
+            # Update the clusterResArray with the status of the current exon
+            clusterResArray[ei, clustResColnames.index("filterStatus")] = filterStatus.index(exStatus)
 
         # real-time monitoring of function execution times
         for key, value in timer.timer_dict.items():
-            logger.debug("ClustID: %s,  %s : %.2f sec", clustID, key, value)
+            logger.debug("ClustID: %s,  %s : %.2f sec", clusterID, key, value)
 
-        logger.info(clusterParamsArray.shape)
         thisTime = time.time()
-        logger.debug("ClusterCalls ClustID: %s execution time, in %.2fs", clustID, thisTime - startTime)
-        return (clustID, colInd4ParamsArray, exonInd2Process, clusterParamsArray)
+        logger.debug("ClusterCalls ClustID: %s execution time, in %.2fs", clusterID, thisTime - startTime)
+        return (clusterID, relevantCols, relevantRows, clusterResArray)
 
     except Exception as e:
-        logger.error("CNCalls failed for cluster n°%i - %s", clustID, repr(e))
-        raise Exception(str(clustID))
+        logger.error("CNCalls failed for cluster n°%i - %s", clusterID, repr(e))
+        raise Exception(str(clusterID))
 
 
 ###############################################################################
@@ -225,10 +222,12 @@ def fitExponential(intergenicsFPMClust):
     # compute meanFPM for each intergenic region (speed up)
     meanIntergenicFPM = np.mean(intergenicsFPMClust, axis=1)
 
-    # Fit an exponential distribution, imposing location = 0
+    # Fit an exponential distribution, 
+    # enforces the "loc" parameter to be 0 because our model requires the distribution
+    # to start at zero.
     # f(x, scale) = (1/scale)*exp(-x/scale)
     # scale = 1 / lambda
-    loc, invLambda = scipy.stats.expon.fit(meanIntergenicFPM)
+    loc, invLambda = scipy.stats.expon.fit(meanIntergenicFPM, floc=0)
 
     return (meanIntergenicFPM, loc, invLambda)
 
@@ -333,7 +332,7 @@ def getSampIndex(clustID, clust2samps, samples, fitWith):
 #
 # Args:
 # -exIndToProcess [int]
-# -exonFPM (numpy.ndarray[floats]): Exon FPM (Fragments Per Million) values for the cluster.
+# -oneExonFPM (numpy.ndarray[floats]): Exon FPM (Fragments Per Million) values for the cluster.
 # -unCaptFPMLimit [float]: FPM threshold associated with the uncaptured exons.
 # -clusterParamsArray (numpy.ndarray[floats]): store the Gaussian parameters [loc, scale].
 # -expectedColNames (list[strs]): List of column names for the clusterParamsArray ["loc","scale","filterStatus"]
@@ -342,21 +341,21 @@ def getSampIndex(clustID, clust2samps, samples, fitWith):
 # If the filter status is "call", it means the exon passes all filters and is callable.
 # If the filter status is any other value, the exon does not pass one or more filters.
 @timer.measure_time
-def exonFilteredOrCalled(exIndToProcess, exonFPMs, unCaptFPMLimit, clusterParamsArray, expectedColNames):
+def exonFilteredOrCalled(exIndToProcess, oneExonFPM, unCaptFPMLimit, clusterResArray, clustResColnames):
     #################
     ### init exon variable
     # a str which takes the name of the filter excluding the exon
-    # (same name as the exFiltersReport keys). Remains "None" if exon is callable
+    # (same name as the filterStatus strs).
     filterStatus = None
 
     ### Filter n°1: not captured => median coverage of the exon = 0
-    if filterUncapturedExons(exonFPMs):
+    if filterUncapturedExons(oneExonFPM):
         return "notCaptured"
 
     ### robustly fit a gaussian (CN2)
     ### Filter n°2: fitting is impossible (median close to 0)
     try:
-        (gaussian_loc, gaussian_scale) = fitRobustGaussian(exonFPMs)
+        (gaussian_loc, gaussian_scale) = fitRobustGaussian(oneExonFPM)
 
     except Exception as e:
         if str(e) == "cannot fit":
@@ -369,11 +368,11 @@ def exonFilteredOrCalled(exIndToProcess, exonFPMs, unCaptFPMLimit, clusterParams
         return "RGClose2LowThreshold"
 
     ### Filter n°4: the samples contribution rate to the gaussian is too low (<50%)
-    if ((filterStatus is None) and (filterSampsContrib2Gaussian(gaussian_loc, gaussian_scale, exonFPMs))):
+    if ((filterStatus is None) and (filterSampsContrib2Gaussian(gaussian_loc, gaussian_scale, oneExonFPM))):
         return "fewSampsInRG"
 
-    clusterParamsArray[exIndToProcess, expectedColNames.index("loc")] = gaussian_loc
-    clusterParamsArray[exIndToProcess, expectedColNames.index("scale")] = gaussian_scale
+    clusterResArray[exIndToProcess, clustResColnames.index("loc")] = gaussian_loc
+    clusterResArray[exIndToProcess, clustResColnames.index("scale")] = gaussian_scale
     return "call"
 
 
@@ -387,13 +386,13 @@ def exonFilteredOrCalled(exIndToProcess, exonFPMs, unCaptFPMLimit, clusterParams
 # them because they affect too many samples
 #
 # Args:
-# - exonFPM (list[floats]): FPM counts from an exon
+# - oneExonFPM (list[floats]): FPM counts from an exon
 #
 # Returns "True" if exon doesn't pass the filter otherwise "False"
 @timer.measure_time
 @numba.njit
-def filterUncapturedExons(exonFPM):
-    medianFPM = np.median(exonFPM)
+def filterUncapturedExons(oneExonFPM):
+    medianFPM = np.median(oneExonFPM)
     if medianFPM == 0:
         return True
     else:
@@ -527,19 +526,19 @@ def filterZscore(mean, stdev, unCaptFPMLimit):
 
 # Args:
 # - mean [float], stdev [float]: parameters of the normal
-# - exonFPM (list[floats]): FPM counts from an exon
+# - oneExonFPM (list[floats]): FPM counts from an exon
 #
 # Returns "True" if exon doesn't pass the filter otherwise "False"
 @timer.measure_time
 @numba.njit
-def filterSampsContrib2Gaussian(mean, stdev, exonFPM):
+def filterSampsContrib2Gaussian(mean, stdev, oneExonFPM):
     # Fixed parameters
     contribThreshold = 0.5
     stdevLim = 2
 
-    FPMValuesUnderGaussian = exonFPM[(exonFPM > (mean - (stdevLim * stdev))) & (exonFPM < (mean + (stdevLim * stdev))), ]
+    FPMValuesUnderGaussian = oneExonFPM[(oneExonFPM > (mean - (stdevLim * stdev))) & (oneExonFPM < (mean + (stdevLim * stdev))), ]
 
-    sampsContribution = len(FPMValuesUnderGaussian) / len(exonFPM)
+    sampsContribution = len(FPMValuesUnderGaussian) / len(oneExonFPM)
 
     if (sampsContribution < contribThreshold):
         return True
