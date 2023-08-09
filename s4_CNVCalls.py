@@ -17,10 +17,11 @@ from concurrent.futures import ProcessPoolExecutor
 ####### JACNEx modules
 import countFrags.countsFile
 import clusterSamps.clustFile
-import exonFilteringAndParams.exonParamsFile
-import groupCalls.likelihoods
-import groupCalls.transitions
-import groupCalls.HMM
+import exonCalls.exonCallsFile
+import CNVCalls.likelihoods
+import CNVCalls.transitions
+import CNVCalls.HMM
+import CNVCalls.vcfFile
 
 # set up logger, using inherited config, in case we get called as a module
 logger = logging.getLogger(__name__)
@@ -217,7 +218,7 @@ def main(argv):
     ####################
     # parse params clusters (parameters of continuous distributions fitted on CN0, CN2 coverage profil)
     try:
-        (exParams, exp_loc, exp_scale, paramsTitles) = exonFilteringAndParams.exonParamsFile.parseExonParamsFile(paramsFile, len(exons), len(clust2samps))
+        (exParams, exp_loc, exp_scale, paramsTitles) = exonCalls.exonCallsFile.parseExonParamsFile(paramsFile, len(exons), len(clust2samps))
     except Exception as e:
         raise Exception("parseParamsFile failed for %s : %s", paramsFile, repr(e))
 
@@ -248,7 +249,7 @@ def main(argv):
     # of a transition matrix derived from the data, which serves as one of the HMM parameters.
 
     # np.ndarray 2D, dim = NbOfExons * (NbOfSamples * NbOfCNStates), initialized with -1.
-    emissionArray = groupCalls.likelihoods.allocateLikelihoodsArray(len(samples), len(exons), len(CNStates))
+    emissionArray = CNVCalls.likelihoods.allocateLikelihoodsArray(len(samples), len(exons), len(CNStates))
 
     # This step is parallelized across clusters,
     paraClusters = min(math.ceil(jobs), len(clust2samps))
@@ -256,7 +257,7 @@ def main(argv):
 
     ##
     # mergeEmission:
-    # arg: a Future object returned by ProcessPoolExecutor.submit(groupCalls.likelihoods.counts2Likelihoods).
+    # arg: a Future object returned by ProcessPoolExecutor.submit(CNVCalls.likelihoods.counts2Likelihoods).
     # counts2Likelihoods returns a 4-element tuple (clusterID, relevantCols, relevantRows, likelihoodsArray).
     # If something went wrong, raise error in log;
     # otherwise fill column at index relevantCols and row at index relevantRows in emissionArray
@@ -269,7 +270,7 @@ def main(argv):
             counts2emissionRes = futurecounts2emission.result()
             for exonIndex in range(len(counts2emissionRes[2])):
                 emissionArray[counts2emissionRes[2][exonIndex], counts2emissionRes[1]] = counts2emissionRes[3][exonIndex]
-            logger.info("Likelihoods calculated for cluster n°%s, NbOfSampsFilled %i, NbOfExonCalls %i/%i",
+            logger.debug("Likelihoods calculated for cluster n°%s, NbOfSampsFilled %i, NbOfExonCalls %i/%i",
                         counts2emissionRes[0], len(counts2emissionRes[1]) // len(CNStates),
                         len(counts2emissionRes[2]), len(exons))
 
@@ -281,7 +282,7 @@ def main(argv):
                 logger.warning("Cluster %s is invalid, low sample number %i", clusterID, len(clust2samps[clusterID]))
                 continue
 
-            futureRes = pool.submit(groupCalls.likelihoods.counts2likelihoods, clusterID, samples, exonsFPM,
+            futureRes = pool.submit(CNVCalls.likelihoods.counts2likelihoods, clusterID, samples, exonsFPM,
                                     clust2samps, exp_loc, exp_scale, exParams, len(CNStates), len(paramsTitles))
 
             futureRes.add_done_callback(mergeEmission)
@@ -298,7 +299,7 @@ def main(argv):
     # np.ndarray 2D, dim = (nbOfCNStates + void) * (nbOfCNStates + void)
     try:
         plotFile = os.path.join(plotDir, "CN_Frequencies_Likelihoods_Plot.pdf")
-        transMatrix = groupCalls.transitions.getTransMatrix(emissionArray, priors, samples, CNStates, plotFile)
+        transMatrix = CNVCalls.transitions.getTransMatrix(emissionArray, priors, samples, CNStates, plotFile)
     except Exception as e:
         logger.error("getTransMatrix failed : %s", repr(e))
         raise Exception("getTransMatrix failed")
@@ -332,15 +333,19 @@ def main(argv):
             for sublist in viterbiRes[1]:
                 sublist.append(viterbiRes[0])
             CNVs.extend(viterbiRes[1])
-            logger.info("Calling %i CNVs for sample %s", len(viterbiRes[1]), viterbiRes[0])
+            logger.debug("Calling %i CNVs for sample %s", len(viterbiRes[1]), viterbiRes[0])
 
     # To be parallelised => browse samples
     with ProcessPoolExecutor(paraSample) as pool:
         for si in range(len(samples)):
             # Extract the likelihoods for the current sample
             CNcallOneSamp = emissionArray[:, si * len(CNStates): si * len(CNStates) + len(CNStates)]
+            
+            if np.all(CNcallOneSamp == -1):
+                logger.warning("sample %s is invalid for CNV calling", samples[si])
+                continue
 
-            futureRes = pool.submit(groupCalls.HMM.viterbi, CNcallOneSamp, transMatrix, samples[si])
+            futureRes = pool.submit(CNVCalls.HMM.viterbi, CNcallOneSamp, transMatrix, samples[si])
 
             futureRes.add_done_callback(concatCNVs)
 
@@ -348,36 +353,27 @@ def main(argv):
     logger.debug("Done CNVs calls, in %.2fs", thisTime - startTime)
     startTime = thisTime
 
-    logger.error("EARLY EXIT, working on viterbi for now")
-    return()
+    ############
+    # vcf format
+    try:
+        resVcf = CNVCalls.vcfFile.CNV2Vcf(CNVs, exons, samples, padding)
+    except Exception as e:
+        logger.error("CNV2Vcf failed : %s", repr(e))
+        raise Exception("CNV2Vcf failed")
 
-    # ############
-    # # vcf format
-    # try:
-    #     resVcf = groupCalls.HMM.CNV2Vcf(CNVArray, exons, samples, padding)
-    # except Exception as e:
-    #     logger.error("CNV2Vcf failed : %s", repr(e))
-    #     raise Exception("CNV2Vcf failed")
+    thisTime = time.time()
+    logger.debug("Done CNV2Vcf, in %.2fs", thisTime - startTime)
+    startTime = thisTime
 
-    # thisTime = time.time()
-    # logger.debug("Done CNV2Vcf, in %.2fs", thisTime - startTime)
-    # startTime = thisTime
+    ###########
+    # print results
+    CNVCalls.vcfFile.printVcf(resVcf, outFile, scriptName, samples)
 
-    # ###########
-    # # print results
-    # try:
-    #     groupCalls.HMM.printVcf(resVcf, outFile, scriptName, samples)
-    # except Exception as e:
-    #     logger.error("printVcf failed : %s", repr(e))
-    #     raise Exception("printVcf failed")
 
-    # thisTime = time.time()
-    # logger.debug("Done printVcf, in %.2fs", thisTime - startTime)
-    # startTime = thisTime
-
-    # thisTime = time.time()
-    # logger.debug("Done printing groupingCalls, in %.2fs", thisTime - startTime)
-    # logger.info("ALL DONE")
+    thisTime = time.time()
+    logger.debug("Done printVcf, in %.2fs", thisTime - startTime)
+    startTime = thisTime
+    logger.info("ALL DONE")
 
 
 ####################################################################################
