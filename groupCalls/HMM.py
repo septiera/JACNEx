@@ -13,45 +13,14 @@ logger = logging.getLogger(__name__)
 ###############################################################################
 ############################ PUBLIC FUNCTIONS #################################
 ###############################################################################
-###############################################################################
-# exonOnChr:
-# Iterates over the exons and assigns a chromosome count to each exon based on
-# the order in which the chromosomes appear.
-# It keeps track of the previous chromosome encountered and increments the count
-# when a new chromosome is found.
-#
-# Arg:
-#  - a list of exons, each exon is a list of 4 scalars (types: str,int,int,str)
-# containing CHR,START,END,EXON_ID
-#
-# Returns an uint8 numpy.ndarray of the same size as exons, value is
-# chromosome count for the corresponding exon.
-def exonOnChr(exons):
-    chrCounter = 0
-    exon2Chr = np.zeros(len(exons), dtype=np.uint8)
-    prevChr = exons[0][0]
-
-    for idx, exon in enumerate(exons):
-        currentChr = exon[0]
-
-        if currentChr != prevChr:
-            prevChr = currentChr
-            chrCounter += 1
-
-        exon2Chr[idx] = chrCounter
-
-    return exon2Chr
-
-
-###############################################################################
-############################ PRIVATE FUNCTIONS ################################
-###############################################################################
 ######################################
 # viterbi
-# Implements the Viterbi algorithm to compute the most likely sequence of hidden
-# states given observed emissions.
-# It initializes the dynamic programming matrix, propagates scores through each
-# observation, and performs backtracking to find the optimal state sequence.
+# Implements the Viterbi algorithm for Hidden Markov Models.
+# Given likelihoods for observations and transition probabilities, it finds
+# the most likely hidden state sequence.
+# The function returns a list of CNVs represented as [CNType, startExon, endExon].
+# It calculates probabilities and paths, handles resets, and aggregates CNVs.
+# The process involves backtracking and path tracking.
 #
 # Args:
 # - CNcallOneSamp (np.ndarray[floats]): pseudo emission probabilities (likelihood)
@@ -59,103 +28,116 @@ def exonOnChr(exons):
 #                                       dim = [NbObservations, NbStates]
 # - transMatrix (np.ndarray[floats]): transition probabilities between states + void status
 #                                     dim = [NbStates +1, NbStates + 1]
+# - sampleName [str]
 #
 # Returns:
-# - CNVs (list of lists[int,int,int,str]): [CNtype, FirstExonStart, LastExonEnd, CHR] to complete
-def viterbi(CNCallOneSamp, transMatrix):
-    CNVs = []  # list of lists to return
+# - CNVs (list of lists[int,int,int]): [CNType, startExon, endExon] to complete
+def viterbi(CNCallOneSamp, transMatrix, sampleName):
+    try:
+        # list of lists to return
+        # First filled with [Cntype, startExonCalledIndex, endExonCalledIndex],
+        # and then with [Cntype, startExonIndex, endExonIndex].
+        CNVs = []
 
-    # np.ndarray of called exon indexes
-    exIndexCalled = np.where(np.all(CNCallOneSamp != -1, axis=1))[0]
+        # np.ndarray of called exon indexes
+        exIndexCalled = np.where(np.all(CNCallOneSamp != -1, axis=1))[0]
 
-    # Get the dimensions of the input matrix
-    NbObservations = len(exIndexCalled)
-    NbStatesWithVoid = len(transMatrix)
+        # Get the dimensions of the input matrix
+        NbObservations = len(exIndexCalled)
+        NbStatesWithVoid = len(transMatrix)
 
-    # control that the right number of hidden state
-    if NbStatesWithVoid != CNCallOneSamp.shape[1] + 1:
-        logger.error("NbStates not consistent with number of columns + 1 in CNcallOneSamp")
-        raise
+        # control that the right number of hidden state
+        if NbStatesWithVoid != CNCallOneSamp.shape[1] + 1:
+            logger.error("NbStates not consistent with number of columns + 1 in CNcallOneSamp")
+            raise
 
-    # Transpose the input matrix in the same format as the emission matrix in the classic
-    # Viterbi algorithm, dim = [NbStates * NbObservations]
-    CNCallOneSamp = CNCallOneSamp.transpose()
+        # Transpose the input matrix in the same format as the emission matrix in the classic
+        # Viterbi algorithm, dim = [NbStates * NbObservations]
+        CNCallOneSamp = CNCallOneSamp.transpose()
 
-    # Step 1: Initialize variables
-    # probsPrev[i]: stores the probability of the most likely path ending in state i at the previous exon
-    probsPrev = np.zeros(NbStatesWithVoid, dtype=np.float128)
-    probsPrev[0] = 1
-    # probsCurrent[i]: same ending at current exon
-    probsCurrent = np.zeros(NbStatesWithVoid, dtype=np.float128)
-    # path[i,e]: state at exon e-1 that produces the highest probability ending in state i at exon e
-    # (ie, probsCurrent[i])
-    # this state is 0 (void) if the path starts here
-    path = np.zeros((NbStatesWithVoid, NbObservations), dtype=np.uint8)
+        # Step 1: Initialize variables
+        # probsPrev[i]: stores the probability of the most likely path ending in state i at the previous exon
+        probsPrev = np.zeros(NbStatesWithVoid, dtype=np.float128)
+        probsPrev[0] = 1
+        # probsCurrent[i]: same ending at current exon
+        probsCurrent = np.zeros(NbStatesWithVoid, dtype=np.float128)
+        # path[i,e]: state at exon e-1 that produces the highest probability ending in state i at exon e
+        # (ie, probsCurrent[i])
+        # this state is 0 (void) if the path starts here
+        path = np.zeros((NbStatesWithVoid, NbObservations), dtype=np.uint8)
 
-    # Step 2: Score propagation
-    # Iterate through each observation, current states, and previous states.
-    # Calculate the score of each state by considering:
-    #  - the scores of previous states
-    #  - transition probabilities
-    exonIndex = 0
-    while exonIndex < len(exIndexCalled):
+        # Step 2: Score propagation
+        # Iterate through each observation, current states, and previous states.
+        # Calculate the score of each state by considering:
+        #  - the scores of previous states
+        #  - transition probabilities
+        exonIndex = 0
+        while exonIndex < len(exIndexCalled):
 
-        for currentState in range(NbStatesWithVoid):
-            probMax = -1
-            prevStateMax = -1
+            for currentState in range(NbStatesWithVoid):
+                probMax = -1
+                prevStateMax = -1
 
-            # state 0 == void is never in a path except at initialisation/reset => keep defaults
-            if currentState == 0:
-                probsCurrent[currentState] = 0
-                path[currentState, exonIndex] = 0
+                # state 0 == void is never in a path except at initialisation/reset => keep defaults
+                if currentState == 0:
+                    probsCurrent[currentState] = 0
+                    path[currentState, exonIndex] = 0
+                    continue
+
+                else:
+                    for prevState in range(NbStatesWithVoid):
+                        # Calculate the probability of observing the current observation given a previous state
+                        prob = (probsPrev[prevState] *
+                                transMatrix[prevState, currentState] *
+                                CNCallOneSamp[currentState - 1, exIndexCalled[exonIndex]])
+                        # currentState - 1 because CNCallOneSamp doesn't have values for void state
+
+                        # Find the previous state with the maximum probability
+                        # Store the index of the previous state with the maximum probability in the "path" matrix
+                        if prob >= probMax:
+                            probMax = prob
+                            prevStateMax = prevState
+
+                    # Store the maximum probability and CN type index for the current state and observation
+                    probsCurrent[currentState] = probMax
+                    path[currentState, exonIndex] = prevStateMax
+
+            # if all LIVE states (currentScore > 0) at currentExon have the same
+            # predecessor state and that state is CN2 : backtrack from [previous exon, CN2]
+            # and reset
+            if (((probsCurrent[1] == 0) or (path[1, exonIndex] == 3)) and
+                ((probsCurrent[2] == 0) or (path[2, exonIndex] == 3)) and
+                ((probsCurrent[3] == 0) or (path[3, exonIndex] == 3)) and
+                ((probsCurrent[4] == 0) or (path[4, exonIndex] == 3))):
+
+                CNVs.extend(backtrack_aggregateCalls(path, exonIndex - 1, 3))
+
+                # reset prevScores to (1,0,0,0,0), and loop again (WITHOUT incrementing exonIndex)
+                probsPrev[1:] = 0
+                probsPrev[0] = 1
+                path[0, exonIndex - 1] = 0
+                path[1:, exonIndex - 1] = 3
                 continue
 
             else:
-                for prevState in range(NbStatesWithVoid):
-                    # Calculate the probability of observing the current observation given a previous state
-                    prob = (probsPrev[prevState] *
-                            transMatrix[prevState, currentState] *
-                            CNCallOneSamp[currentState - 1, exIndexCalled[exonIndex]])
-                    # currentState - 1 because CNCallOneSamp doesn't have values for void state
+                for i in range(len(probsCurrent)):
+                    probsPrev[i] = probsCurrent[i]
+                exonIndex += 1
 
-                    # Find the previous state with the maximum probability
-                    # Store the index of the previous state with the maximum probability in the "path" matrix
-                    if prob >= probMax:
-                        probMax = prob
-                        prevStateMax = prevState
+        CNVs.extend(backtrack_aggregateCalls(path, exonIndex - 1, probsPrev.argmax()))
 
-                # Store the maximum probability and CN type index for the current state and observation
-                probsCurrent[currentState] = probMax
-                path[currentState, exonIndex] = prevStateMax
+        mapCNVIndexToExons(CNVs, exIndexCalled)
 
-        # if all LIVE states (currentScore > 0) at currentExon have the same
-        # predecessor state and that state is CN2 : backtrack from [previous exon, CN2]
-        # and reset
-        if (((probsCurrent[1] == 0) or (path[1, exonIndex] == 3)) and
-            ((probsCurrent[2] == 0) or (path[2, exonIndex] == 3)) and
-            ((probsCurrent[3] == 0) or (path[3, exonIndex] == 3)) and
-            ((probsCurrent[4] == 0) or (path[4, exonIndex] == 3))):
-            # print("viterbi reset:", exonIndex)
-            CNVs.extend(backtrack_aggregateCalls(path, exonIndex - 1, 3))
-            # reset prevScores to (1,0,0,0,0), and loop again (WITHOUT incrementing exonIndex)
-            probsPrev[1:] = 0
-            probsPrev[0] = 1
-            path[0, exonIndex - 1] = 0
-            path[1:, exonIndex - 1] = 5
-            continue
+        return (sampleName, CNVs)
 
-        else:
-            for i in range(len(probsCurrent)):
-                probsPrev[i] = probsCurrent[i]
-            exonIndex += 1
-
-    CNVs.extend(backtrack_aggregateCalls(path, exonIndex - 1, probsPrev.argmax()))
-
-    mapCNVIndicesToExons(CNVs, exIndexCalled)
-
-    return CNVs
+    except Exception as e:
+        logger.error("CNCalls failed for sample n°%s - %s", sampleName, repr(e))
+        raise Exception(sampleName)
 
 
+###############################################################################
+############################ PRIVATE FUNCTIONS ################################
+###############################################################################
 ################################
 # backtrack_aggregateCalls
 # Retrieve the most likely sequence of hidden states by backtracking through the "path" matrix.
@@ -252,7 +234,7 @@ def backtrack_aggregateCalls(path, lastExon, lastState):
 
 
 ############
-# mapCNVIndicesToExons
+# mapCNVIndexToExons
 # Map CNV indexes to "exons" indexes based on the 'exIndexCalled' list.
 #
 # Args:
@@ -263,7 +245,7 @@ def backtrack_aggregateCalls(path, lastExon, lastState):
 #
 # Returns:
 # None (The CNVs list will be modified in-place.)
-def mapCNVIndicesToExons(CNVs, exIndexCalled):
+def mapCNVIndexToExons(CNVs, exIndexCalled):
     for event in range(len(CNVs)):
         CNVs[event][0] = CNVs[event][0] - 1
         CNVs[event][1] = exIndexCalled[CNVs[event][1]]
