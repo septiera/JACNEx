@@ -36,8 +36,9 @@ def allocateLikelihoodsArray(numSamps, numExons, numCN):
 # associated with each copy number type:
 # - CN0: Parameters from the exponential distribution.
 # - CN2: Parameters from the Gaussian distribution contained in exonCN2Params.
-# - CN1: Calculated as meanCN2/2 with the same standard deviation as CN2.
-# - CN3+: Calculated as 3*(meanCN2/2) with the same standard deviation as CN2.
+# - CN1: Calculated as meanCN2*0.5 with the same standard deviation as CN2.
+# - CN3+: Fit a gamma distribution using the parameters from the Gaussian distribution
+#   (loc= meanCN2*1.5, scale = stdevCN2).
 # This function is an advanced step of the Hidden Markov Model (HMM) as it
 # precomputes the emission probabilities from the observations(FPMs).
 #
@@ -67,6 +68,10 @@ def allocateLikelihoodsArray(numSamps, numExons, numCN):
 #                                         dim = nbOfRelevantRows * nbOfRelevantCols
 def counts2likelihoods(clusterID, samples, counts, clust2samps, exp_loc, exp_scale,
                        exonCN2Params, numCNs, numParamsCols):
+    # Fixed parameter:
+    # shape parameter "a" in the gamma distribution controls the shape of the distribution's tail.
+    # a higher "a" results in a heavier tail, while a lower "a" leads to a lighter tail.
+    a = 2
 
     # Convert the dictionary keys to a list and find the index of the clusterID
     clusterIDs = list(clust2samps.keys())
@@ -102,7 +107,10 @@ def counts2likelihoods(clusterID, samples, counts, clust2samps, exp_loc, exp_sca
             distribution, loc, scale = CN_params[ci]
 
             # Compute the likelihoods for the current CNStatus using vectorized operation
-            CNLikelihoods = distribution.pdf(FPMs, loc=loc, scale=scale)
+            if distribution != scipy.stats.gamma:
+                CNLikelihoods = distribution.pdf(FPMs, loc=loc, scale=scale)
+            else:
+                CNLikelihoods = distribution.pdf(FPMs, a=a, loc=loc, scale=scale)
 
             # Compute the column indices using vectorized operations
             colIndices = np.arange(ci, numSamps * numCNs, numCNs)
@@ -119,6 +127,10 @@ def counts2likelihoods(clusterID, samples, counts, clust2samps, exp_loc, exp_sca
 ######################################
 # getDistributionParams
 # Get the parameters of the continuous distributions for each copy number type.
+# Caution: The parameters of the robust Gaussian are used to fit a gamma distribution (CN3);
+# however, the parameters of the gamma distribution differ.
+# "loc" corresponds to the distribution's location parameter,
+# "scale" controls the distribution's spread.
 #
 # Args:
 # - exp_loc [float]: Location parameter for the exponential distribution (CN0).
@@ -131,8 +143,8 @@ def counts2likelihoods(clusterID, samples, counts, clust2samps, exp_loc, exp_sca
 def getDistributionParams(exp_loc, exp_scale, gauss_loc, gauss_scale):
     CN_params = [
         (scipy.stats.expon, exp_loc, exp_scale),  # CN0
-        (scipy.stats.norm, gauss_loc / 2, gauss_scale),  # CN1
+        (scipy.stats.norm, gauss_loc * 0.5, gauss_scale),  # CN1
         (scipy.stats.norm, gauss_loc, gauss_scale),  # CN2
-        (scipy.stats.norm, 3 * (gauss_loc / 2), gauss_scale),  # CN3
+        (scipy.stats.gamma, gauss_loc * 1.5, gauss_scale),  # CN3
     ]
     return CN_params
