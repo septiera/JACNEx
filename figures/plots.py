@@ -298,13 +298,11 @@ def plotExonProfile(rawData, xi, yLists, plotLegs, verticalLines, vertLinesLegs,
 
     # Plot vertical lines to mark points of interest on the histogram
     if verticalLines:
-        for j in range(len(verticalLines)):
-            color = vertColor(j / len(verticalLines))
-            matplotlib.pyplot.axvline(verticalLines[j], color=color, linestyle='dashdot', linewidth=1, label=vertLinesLegs[j])
+        matplotlib.pyplot.axvline(verticalLines, color="red", linestyle='dashdot', linewidth=1, label=vertLinesLegs)
 
     # Set the x- and y-axis labels, y-axis limits, title, and legend
     matplotlib.pyplot.xlabel("FPM")
-    matplotlib.pyplot.ylabel("Density or PDF")
+    matplotlib.pyplot.ylabel("probability density (=likelihoods)")
     matplotlib.pyplot.ylim(0, ylim)
     matplotlib.pyplot.title(plotTitle)
     matplotlib.pyplot.legend(loc='upper right', fontsize='small')
