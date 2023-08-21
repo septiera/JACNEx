@@ -57,7 +57,8 @@ def CNV2Vcf(CNVList, exons, samples, padding):
             vcfLine = cnv_dict[currentCNV]
             # Get the index of the sample in the VCF line
             # (+9 to account for the non-sample columns)
-            sampleIndex = cnvInfo[3] + infoColumns
+            sampleIndex = samples.index(cnvInfo[3])
+            
             # Determine the sample's genotype based on CNV type
             sampleInfo = "1/1" if CNtype == 0 else "0/1"
             vcfLine[sampleIndex] = sampleInfo
@@ -70,7 +71,8 @@ def CNV2Vcf(CNVList, exons, samples, padding):
                 vcfLine = [chrom, pos, ".", ".", "<DUP>", ".", ".", "SVTYPE=DUP;END=" + str(end), "GT"]
             # Set CN2 default values for all samples columns
             sampleInfo = ["0/0"] * len(samples)
-            sampleIndex = cnvInfo[3] + infoColumns
+            sampleIndex = samples.index(cnvInfo[3])
+            print(sampleIndex,cnvIndex, currentCNV)
             sampleInfo[sampleIndex] = "1/1" if CNtype == 0 else "0/1"
             vcfLine += sampleInfo
             # Store the VCF line in the dictionary for future reference
@@ -100,18 +102,18 @@ def printVcf(vcf, outFile, scriptName, samples):
 
     # Header definition
     toPrint = """##fileformat=VCFv4.3
-    ##fileDate=""" + time.strftime("%y%m%d") + """
-    ##source=""" + scriptName + """
-    ##ALT=<ID=DEL,Description="Deletion">
-    ##ALT=<ID=DUP,Description="Duplication">
-    ##INFO=<ID=SVTYPE,Number=1,Type=String,Description="Type of structural variant">
-    ##INFO=<ID=END,Number=1,Type=Integer,Description="End position of the variant described in this record">
-    ##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype (always 0/1 for duplications)">"""
+##fileDate=""" + time.strftime("%y%m%d") + """
+##source=""" + scriptName + """
+##ALT=<ID=DEL,Description="Deletion">
+##ALT=<ID=DUP,Description="Duplication">
+##INFO=<ID=SVTYPE,Number=1,Type=String,Description="Type of structural variant">
+##INFO=<ID=END,Number=1,Type=Integer,Description="End position of the variant described in this record">
+##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype (always 0/1 for duplications)">"""
     toPrint += "\n"
     outFH.write(toPrint)
 
     colNames = ["#CHROM", "POS", "ID", "REF", "ALT", "QUAL", "FILTER", "INFO", "FORMAT"] + samples
-    print('\t'.join(colNames))
+    outFH.write('\t'.join(colNames))
 
     #### fill results
     for cnvIndex in range(len(vcf)):
