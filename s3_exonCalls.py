@@ -222,7 +222,7 @@ def main(argv):
     # 'filterStatus' column indicates the status of the corresponding exon
     clustResColnames = ["loc", "scale", "filterStatus"]
 
-    # callsArray[exonIndex, clusterIndex + clustResColnames] will store exon processing results.
+    # callsArray[exonIndex, clusterIndex * clustResColnames] will store exon processing results.
     callsArray = exonCalls.exonCallsFile.allocateParamsArray(len(exons), len(clust2samps), len(clustResColnames))
 
     # selects cluster-specific exons on autosomes, chrXZ or chrYW.
@@ -250,7 +250,7 @@ def main(argv):
     def mergeParams(futurecounts2ParamsRes):
         e = futurecounts2ParamsRes.exception()
         if e is not None:
-            logger.warning("Failed to ExonFilterAndCN2Params for cluster n° %s, skipping it", str(e))
+            logger.warning("Failed to ExonFilterAndCN2Params for cluster %s, skipping it", str(e))
         else:
             counts2ParamsRes = futurecounts2ParamsRes.result()
             for exonIndex in range(len(counts2ParamsRes[2])):
@@ -264,7 +264,7 @@ def main(argv):
                 logger.error("plotPieChart failed for cluster %s : %s", clustID, repr(e))
                 raise
 
-            logger.info("Done copy number calls for cluster n°%s", counts2ParamsRes[0])
+            logger.info("Done copy number calls for cluster %s", counts2ParamsRes[0])
 
     # To be parallelised => browse clusters
     with ProcessPoolExecutor(paraClusters) as pool:
