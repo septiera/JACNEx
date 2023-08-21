@@ -122,11 +122,20 @@ def parseExonParamsPrivate(exonParamsFile):
         logger.error("Opening provided CNCallsFile %s: %s", exonParamsFile, e)
         raise Exception('cannot open CNCallsFile')
 
-    # grab header unique title
+    # Read the first line of the file and split it into header titles
     header = callsFH.readline().rstrip().split("\t")
-    del header[0:4]
-    headerTitles = [item.split('_')[-1] for item in header]
-    paramsTitles = list(set(headerTitles))
+    del header[0:4]  # Remove the first four columns
+    headerTitles = [item.split('_')[-1] for item in header]  # Extract the last part after "_"
+
+    # Use a temporary list to maintain the order of appearance
+    paramsTitles_set = set()
+    temp_paramsTitles = []
+    for title in headerTitles:
+        if title not in paramsTitles_set:
+            paramsTitles_set.add(title)
+            temp_paramsTitles.append(title)
+
+    paramsTitles = temp_paramsTitles
 
     # grab parameters of the exponential distribution common for all clusters
     expLine = callsFH.readline().rstrip().split("\t")
