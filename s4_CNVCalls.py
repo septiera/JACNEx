@@ -271,8 +271,8 @@ def main(argv):
             for exonIndex in range(len(counts2emissionRes[2])):
                 emissionArray[counts2emissionRes[2][exonIndex], counts2emissionRes[1]] = counts2emissionRes[3][exonIndex]
             logger.debug("Likelihoods calculated for cluster n°%s, NbOfSampsFilled %i, NbOfExonCalls %i/%i",
-                        counts2emissionRes[0], len(counts2emissionRes[1]) // len(CNStates),
-                        len(counts2emissionRes[2]), len(exons))
+                         counts2emissionRes[0], len(counts2emissionRes[1]) // len(CNStates),
+                         len(counts2emissionRes[2]), len(exons))
 
     # To be parallelised => browse clusters
     with ProcessPoolExecutor(paraClusters) as pool:
@@ -340,7 +340,7 @@ def main(argv):
         for si in range(len(samples)):
             # Extract the likelihoods for the current sample
             CNcallOneSamp = emissionArray[:, si * len(CNStates): si * len(CNStates) + len(CNStates)]
-            
+
             if np.all(CNcallOneSamp == -1):
                 logger.warning("sample %s is invalid for CNV calling", samples[si])
                 continue
@@ -368,7 +368,6 @@ def main(argv):
     ###########
     # print results
     CNVCalls.vcfFile.printVcf(resVcf, outFile, scriptName, samples)
-
 
     thisTime = time.time()
     logger.debug("Done printVcf, in %.2fs", thisTime - startTime)
