@@ -363,6 +363,9 @@ def exonFilteredOrCalled(exIndToProcess, oneExonFPM, unCaptFPMLimit, clusterResA
         else:
             raise Exception("fitRobustGaussian %s", repr(e))
 
+    clusterResArray[exIndToProcess, clustResColnames.index("loc")] = gaussian_loc
+    clusterResArray[exIndToProcess, clustResColnames.index("scale")] = gaussian_scale
+
     ### Filter n°3: fitted gaussian overlaps the threshold associated with the uncaptured exon profile
     if ((filterStatus is None) and (filterZscore(gaussian_loc, gaussian_scale, unCaptFPMLimit))):
         return "RGClose2LowThreshold"
@@ -371,8 +374,6 @@ def exonFilteredOrCalled(exIndToProcess, oneExonFPM, unCaptFPMLimit, clusterResA
     if ((filterStatus is None) and (filterSampsContrib2Gaussian(gaussian_loc, gaussian_scale, oneExonFPM))):
         return "fewSampsInRG"
 
-    clusterResArray[exIndToProcess, clustResColnames.index("loc")] = gaussian_loc
-    clusterResArray[exIndToProcess, clustResColnames.index("scale")] = gaussian_scale
     return "call"
 
 
