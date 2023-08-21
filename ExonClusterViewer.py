@@ -175,7 +175,7 @@ def parseUserTSV(userTSV, samples, exons):
             exonIDFound = False
             for exonID in range(len(exons)):
                 # Check if the exon identifier is present in "exons"
-                if exons[exonID][3].startswith(splitLine[1]):
+                if exons[exonID][3] == splitLine[1]:
                     samps2Check[splitLine[0]].append(exonID)
                     exonIDFound = True
 
@@ -246,7 +246,7 @@ def parsePlotExon(sampleName, exonIndex, exonOnSexChr, samp2clusts, clust2samps,
     xi = np.linspace(0, np.max(exonFPM), len(targetSampIndexes + ctrlSampIndexes) * 3)
 
     exonInfo = '_'.join(map(str, exons[exonIndex]))
-    plotTitle = f"Cluster:{clusterID}, NbSamps:{len(targetSampIndexes) + len(ctrlSampIndexes)}, exonInd:{exonIndex}\nexonInfos:{exonInfo}"
+    plotTitle = f"Cluster:{clusterID}, NbSamps:{len(targetSampIndexes) + len(ctrlSampIndexes)}, exonInd:{exonIndex}\nexonInfos:{exonInfo}, filteringState:{exonFilterState}"
 
     yLists = [scipy.stats.expon.pdf(xi, exp_loc, exp_scale)]
     plotLegs = [f"CN0 exponential [loc={exp_loc:.2f}, scale={exp_scale:.2f}]"]
