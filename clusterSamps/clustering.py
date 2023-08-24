@@ -5,7 +5,8 @@ import os
 # modules for hierachical clustering
 import scipy.cluster.hierarchy
 import scipy.spatial.distance
-# module for PCA: currently implemented using numpy.linalg
+# module for PCA
+import sklearn.decomposition
 
 import figures.plots
 
@@ -54,16 +55,16 @@ def buildClusters(FPMarray, chromType, samples, startDist, maxDist, minSamps, pl
 
     # reduce dimensionality with PCA
     # we don't really want the smallest possible number of dimensions, try arbitrary
-    # smallish dims (must be < nbExons)
-    dim = 100
-    (samplesInPCAspace, eigenVectors) = PCA(FPMarray, dim)
+    # smallish dims (must be < nbExons and < nbSamples)
+    dim = min(100, FPMarray.shape[0], FPMarray.shape[1])
+    samplesInPCAspace = sklearn.decomposition.PCA(n_components=dim).fit_transform(FPMarray.transpose())
 
     # hierarchical clustering of the samples projected in the PCA space:
     # - use 'average' method to define the distance between clusters (== UPGMA),
     #   not sure why but AS did a lot of testing and says it is the best choice
     #   when there are different-sized groups;
-    # - use 'euclidean' metric tu define initial distances between samples;
-    # - reorder he linkage matrix so the distance between successive leaves is
+    # - use 'euclidean' metric to define initial distances between samples;
+    # - reorder the linkage matrix so the distance between successive leaves is
     #   minimal [NOT sure about this one, documentation says it slows down things a lot
     #   and we can do some sorting within dendrogram()].
     linkageMatrix = scipy.cluster.hierarchy.linkage(samplesInPCAspace, method='average',
@@ -87,44 +88,6 @@ def buildClusters(FPMarray, chromType, samples, startDist, maxDist, minSamps, pl
 ###############################################################################
 ############################ PRIVATE FUNCTIONS ################################
 ###############################################################################
-
-
-#############################
-# Principal component analysis of an FPMarray, for reducing the dimensionality
-# in terms of exons (not samples).
-# Using a numpy.linalg implementation based on
-# https://stackoverflow.com/questions/13224362/principal-component-analysis-pca-in-python
-#
-# Args:
-# - FPMarray: np.ndarray[float] of size nbExons x nbSamples
-# - dim [int]: dimension of the projection space, ie number of PCs to keep
-#
-# Returns:
-# - the projected sample coordinates in the dim-dimensional PCA space, size == (nbSamples x dim)
-#   ie each sample is a row (as expected by scipy.cluster.hierarchy.linkage()
-# - the selected eigenvectors, one per column (nbExons x dim), corresponding to the
-#   dim largest eigenvalues of the centered FPMarray
-def PCA(FPMarray, dim):
-    # copy FPMarray so we don't modify it!
-    data = FPMarray.copy()
-    # our data is exons x samples, transpose for easier code (this returns a view)
-    data = data.transpose()
-    # mean center the data for each exon
-    data -= data.mean(axis=0)
-    # calculate the covariance matrix
-    covarMat = np.cov(data, rowvar=False)
-    # calculate eigenvectors & eigenvalues of the covariance matrix
-    # use 'eigh' rather than 'eig' since covarMat is symmetric (much faster)
-    evals, evecs = np.linalg.eigh(covarMat)
-    # sort eigenvalues in decreasing order and keep only the dim largest
-    idx = np.argsort(evals)[::-1][:dim]
-    evals = evals[idx]
-    # corresponding eigenvectors
-    evecs = evecs[:, idx]
-    # project each sample into the dim-dimensional PCA space
-    samplesInPCAspace = np.matmul(data, evecs)
-    # return the projected data and eigenvectors
-    return (samplesInPCAspace, evecs)
 
 
 #############################
@@ -156,6 +119,9 @@ def linkage2clusters(linkageMatrix, chromType, samples, startDist, maxDist, minS
     numSamples = len(samples)
     for thisClust in range(linkageMatrix.shape[0]):
         (c1, c2, dist, size) = linkageMatrix[thisClust]
+        c1 = int(c1)
+        c2 = int(c2)
+        dist = int(dist)
         if dist <= startDist:
             clustersTmp[thisClust] = []
             clustSizeTmp[thisClust] = size
@@ -163,14 +129,15 @@ def linkage2clusters(linkageMatrix, chromType, samples, startDist, maxDist, minS
                 if childClust < numSamples:
                     clustersTmp[thisClust].append(childClust)
                 else:
+                    childClust -= numSamples
                     clustersTmp[thisClust].extend(clustersTmp[childClust])
                     clustersTmp[childClust] = None
                     clustSizeTmp[childClust] = 0
         elif dist <= maxDist:
             # between startDist and maxDist: only merge / add to fitWithTmp if a cluster
             # needs more friends, ie it is too small (counting the fitWith samples)
-            if (((c1 < numSamples) or (clustSizeTmp[c1] < minSamps)) and
-                ((c2 < numSamples) or (clustSizeTmp[c2] < minSamps))):
+            if (((c1 < numSamples) or (clustSizeTmp[c1 - numSamples] < minSamps)) and
+                ((c2 < numSamples) or (clustSizeTmp[c2 - numSamples] < minSamps))):
                 # c1 and c2 both still needs friends => merge them
                 clustersTmp[thisClust] = []
                 clustSizeTmp[thisClust] = size
@@ -178,32 +145,36 @@ def linkage2clusters(linkageMatrix, chromType, samples, startDist, maxDist, minS
                     if childClust < numSamples:
                         clustersTmp[thisClust].append(childClust)
                     else:
+                        childClust -= numSamples
                         clustersTmp[thisClust].extend(clustersTmp[childClust])
                         clustersTmp[childClust] = None
                         clustSizeTmp[childClust] = 0
             else:
                 # at least one of (c1,c2) is self-sufficient, find which one it is and switch
                 # them if needed so that c2 is always self-sufficient
-                if (c1 >= numSamples) and (clustSizeTmp[c1] >= minSamps):
+                if (c1 >= numSamples) and (clustSizeTmp[c1 - numSamples] >= minSamps):
                     # c1 self-sufficient, switch with c2
                     cTmp = c1
                     c1 = c2
                     c2 = cTmp
-                if (c1 < numSamples) or (clustSizeTmp[c1] < minSamps):
+                if (c1 < numSamples) or (clustSizeTmp[c1 - numSamples] < minSamps):
                     # c2 is (now) self-sufficient but c1 isn't =>
                     # don't touch c2 but use it for fitting thisClust == ex-c1
+                    c2 -= numSamples
                     clustSizeTmp[thisClust] = size
                     if c1 < numSamples:
                         clustersTmp[thisClust] = [c1]
+                        fitWithTmp[thisClust] = []
                     else:
+                        c1 -= numSamples
                         clustersTmp[thisClust] = clustersTmp[c1]
                         clustersTmp[c1] = None
                         clustSizeTmp[c1] = 0
-                    if fitWithTmp[c1]:
-                        fitWithTmp[thisClust] = fitWithTmp[c1]
-                        fitWithTmp[c1] = None
-                    else:
-                        fitWithTmp[thisClust] = []
+                        if fitWithTmp[c1]:
+                            fitWithTmp[thisClust] = fitWithTmp[c1]
+                            fitWithTmp[c1] = None
+                        else:
+                            fitWithTmp[thisClust] = []
                     if fitWithTmp[c2]:
                         fitWithTmp[thisClust].extend(fitWithTmp[c2])
                     if clustersTmp[c2]:
@@ -215,6 +186,8 @@ def linkage2clusters(linkageMatrix, chromType, samples, startDist, maxDist, minS
                     # A "virtual merger" has correct clustSize (so we'll know it's not a candidate for merging),
                     # and fitWithTmp contains the list of its non-virtual sub-clusters / components,
                     # but clustersTmp == None (the mark of a virtual merger)
+                    c1 -= numSamples
+                    c2 -= numSamples
                     clustSizeTmp[thisClust] = size
                     fitWithTmp[thisClust] = []
                     if fitWithTmp[c1]:
