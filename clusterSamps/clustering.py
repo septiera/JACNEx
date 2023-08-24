@@ -217,7 +217,9 @@ def linkage2clusters(linkageMatrix, chromType, samples, startDist, maxDist, minS
     nextClustNb = 1
     for thisClust in range(len(clustersTmp)):
         if clustersTmp[thisClust]:
-            clustID = chromType + '_' + str(nextClustNb)
+            # left-pad with leading zeroes if less than 2 digits (for pretty-sorting, won't
+            # sort correctly if more than 100 clusters but it's just cosmetic
+            clustID = chromType + '_' + f"{nextClustNb:02}"
             clustIndex2ID[thisClust] = clustID
             nextClustNb += 1
             clust2samps[clustID] = [samples[i] for i in clustersTmp[thisClust]]
