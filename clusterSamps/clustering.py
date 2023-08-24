@@ -102,107 +102,94 @@ def buildClusters(FPMarray, chromType, samples, startDist, maxDist, minSamps, pl
 #
 # Returns (clust2samps, fitWith, clustIsValid) as specified in the header of buildClusters()
 def linkage2clusters(linkageMatrix, chromType, samples, startDist, maxDist, minSamps):
+    numSamples = len(samples)
     ################
     # step 1:
     # - populate clustersTmp, a list of lists of ints:
     #   clustersTmp[i] is the list of sample indexes that belong to cluster i (at this step),
     #   this will be cleared at a later step if i is merged with another cluster
     # NOTE I need to preallocate so I can use clustersTmp[i] = "toto"
-    clustersTmp = [None] * linkageMatrix.shape[0]
+    clustersTmp = [None] * (numSamples + linkageMatrix.shape[0])
     # - also populate fitWithTmp, a list of lists of ints, fitWithTmp[i] is the list
     #   of (self-sufficient) cluster indexes that can be used for fitting CN2 in cluster i
-    #   (also need to preallocate)
-    fitWithTmp = [None] * linkageMatrix.shape[0]
+    fitWithTmp = [None] * (numSamples + linkageMatrix.shape[0])
     # - also populate clustSizeTmp, clustSizeTmp[i] is the total number of samples in
     #   cluster i PLUS all clusters listed in fitWithTmp[i]
-    clustSizeTmp = [None] * linkageMatrix.shape[0]
-    numSamples = len(samples)
+    clustSizeTmp = [0] * (numSamples + linkageMatrix.shape[0])
+
+    # initialize structures: first numSamples "clusters" are singletons with just the
+    # corresponding sample
+    for sample in range(numSamples):
+        clustersTmp[sample] = [sample]
+        clustSizeTmp[sample] = 1
+        fitWithTmp[sample] = []
+
+    # parse linkageMatrix
     for thisClust in range(linkageMatrix.shape[0]):
         (c1, c2, dist, size) = linkageMatrix[thisClust]
         c1 = int(c1)
         c2 = int(c2)
-        dist = int(dist)
+        size = int(size)
+        thisClust += numSamples
+
         if dist <= startDist:
-            clustersTmp[thisClust] = []
+            clustersTmp[thisClust] = clustersTmp[c1] + clustersTmp[c2]
             clustSizeTmp[thisClust] = size
+            fitWithTmp[thisClust] = []
             for childClust in (c1, c2):
-                if childClust < numSamples:
-                    clustersTmp[thisClust].append(childClust)
-                else:
-                    childClust -= numSamples
-                    clustersTmp[thisClust].extend(clustersTmp[childClust])
-                    clustersTmp[childClust] = None
-                    clustSizeTmp[childClust] = 0
+                clustersTmp[childClust] = None
+                clustSizeTmp[childClust] = 0
+                fitWithTmp[childClust] = None
+
         elif dist <= maxDist:
             # between startDist and maxDist: only merge / add to fitWithTmp if a cluster
             # needs more friends, ie it is too small (counting the fitWith samples)
-            if (((c1 < numSamples) or (clustSizeTmp[c1 - numSamples] < minSamps)) and
-                ((c2 < numSamples) or (clustSizeTmp[c2 - numSamples] < minSamps))):
+            if (clustSizeTmp[c1] < minSamps) and (clustSizeTmp[c2] < minSamps):
                 # c1 and c2 both still needs friends => merge them
-                clustersTmp[thisClust] = []
+                clustersTmp[thisClust] = clustersTmp[c1] + clustersTmp[c2]
                 clustSizeTmp[thisClust] = size
+                fitWithTmp[thisClust] = fitWithTmp[c1] + fitWithTmp[c2]
                 for childClust in (c1, c2):
-                    if childClust < numSamples:
-                        clustersTmp[thisClust].append(childClust)
-                    else:
-                        childClust -= numSamples
-                        clustersTmp[thisClust].extend(clustersTmp[childClust])
-                        clustersTmp[childClust] = None
-                        clustSizeTmp[childClust] = 0
+                    clustersTmp[childClust] = None
+                    clustSizeTmp[childClust] = 0
+                    fitWithTmp[childClust] = None
             else:
                 # at least one of (c1,c2) is self-sufficient, find which one it is and switch
                 # them if needed so that c2 is always self-sufficient
-                if (c1 >= numSamples) and (clustSizeTmp[c1 - numSamples] >= minSamps):
-                    # c1 self-sufficient, switch with c2
+                if (clustSizeTmp[c2] < minSamps):
+                    # c2 not self-sufficient, switch with c1
                     cTmp = c1
                     c1 = c2
                     c2 = cTmp
-                if (c1 < numSamples) or (clustSizeTmp[c1 - numSamples] < minSamps):
+                if (clustSizeTmp[c1] < minSamps):
                     # c2 is (now) self-sufficient but c1 isn't =>
                     # don't touch c2 but use it for fitting thisClust == ex-c1
-                    c2 -= numSamples
+                    clustersTmp[thisClust] = clustersTmp[c1]
                     clustSizeTmp[thisClust] = size
-                    if c1 < numSamples:
-                        clustersTmp[thisClust] = [c1]
-                        fitWithTmp[thisClust] = []
-                    else:
-                        c1 -= numSamples
-                        clustersTmp[thisClust] = clustersTmp[c1]
-                        clustersTmp[c1] = None
-                        clustSizeTmp[c1] = 0
-                        if fitWithTmp[c1]:
-                            fitWithTmp[thisClust] = fitWithTmp[c1]
-                            fitWithTmp[c1] = None
-                        else:
-                            fitWithTmp[thisClust] = []
-                    if fitWithTmp[c2]:
-                        fitWithTmp[thisClust].extend(fitWithTmp[c2])
+                    fitWithTmp[thisClust] = fitWithTmp[c1] + fitWithTmp[c2]
                     if clustersTmp[c2]:
                         # c2 is an actual cluster, not a virtual merger of 2 self-sufficient sub-clusters
                         fitWithTmp[thisClust].append(c2)
+                    clustersTmp[c1] = None
+                    clustSizeTmp[c1] = 0
+                    fitWithTmp[c1] = None
                 else:
                     # both c1 and c2 are self-sufficient, need to create a virtual merger of c1+c2 so that
                     # if later thisClust is used as fitWith for another cluster, we can do the right thing...
                     # A "virtual merger" has correct clustSize (so we'll know it's not a candidate for merging),
                     # and fitWithTmp contains the list of its non-virtual sub-clusters / components,
                     # but clustersTmp == None (the mark of a virtual merger)
-                    c1 -= numSamples
-                    c2 -= numSamples
                     clustSizeTmp[thisClust] = size
-                    fitWithTmp[thisClust] = []
-                    if fitWithTmp[c1]:
-                        fitWithTmp[thisClust].extend(fitWithTmp[c1])
+                    fitWithTmp[thisClust] = fitWithTmp[c1] + fitWithTmp[c2]
                     if clustersTmp[c1]:
                         fitWithTmp[thisClust].append(c1)
-                    if fitWithTmp[c2]:
-                        fitWithTmp[thisClust].extend(fitWithTmp[c2])
                     if clustersTmp[c2]:
                         fitWithTmp[thisClust].append(c2)
         else:
             # dist > maxDist, nothing more to do, just truncate the Tmp lists
             del clustersTmp[thisClust:]
-            del fitWithTmp[thisClust:]
             del clustSizeTmp[thisClust:]
+            del fitWithTmp[thisClust:]
             break
 
     ################
