@@ -3,9 +3,6 @@ import os
 import numba
 import numpy as np
 import scipy.stats
-import matplotlib.pyplot
-import matplotlib.backends.backend_pdf
-import time
 
 import clusterSamps.smoothing
 import figures.plots
@@ -16,44 +13,6 @@ logging.getLogger('numba').setLevel(logging.WARNING)
 
 # set up logger, using inherited config
 logger = logging.getLogger(__name__)
-
-
-class Timer:
-    # Initializes a Timer object.
-    # Args:
-    #     debug_mode (bool): Indicates whether the logger is in debug mode. Defaults to False
-    def __init__(self, debug_mode=False):
-        self.timer_dict = {}  # Initialize an empty dictionary
-        self.debug_mode = debug_mode
-
-    # Decorator function that measures the execution time of a function.
-    # Args:
-    #     func (callable): The function to measure the execution time of.
-    # Returns:
-    #     callable: The wrapped function.
-    def measure_time(self, func):
-        # Wrapper function that measures the execution time of the decorated function.
-        # Args:
-        #     *args: Variable-length argument list.
-        #     **kwargs: Arbitrary keyword arguments.
-        # Returns:
-        #     The result of the decorated function.
-        def wrapper(*args, **kwargs):
-            start_time = time.time()  # Record the start time
-            result = func(*args, **kwargs)  # Execute the function
-            end_time = time.time()  # Record the end time
-            execution_time = end_time - start_time
-
-            # Add the execution time to the dictionary
-            if func.__name__ not in self.timer_dict:
-                self.timer_dict[func.__name__] = 0
-            self.timer_dict[func.__name__] += execution_time
-
-            return result
-        return wrapper
-
-
-timer = Timer()
 
 
 ###############################################################################
@@ -106,99 +65,71 @@ def CN0ParamsAndFPMLimit(intergenicsFPM, plotDir):
 
 
 #####################################
-# exonFilterAndCN2Params
-# identifies and processes exons specific to a given cluster, along with its
-# control clusters.
-# It filters or calls the exons based on their fragment count data and stores
-# the results (parameters of a Gaussian distribution and exon filtering status] in
-# a cluster-specific array.
-# Additionally, it generates a pie chart showing the status of the filtered
-# or called exons for the cluster.
+# adjustExonMetricsWithFilters
+# Adjusts exon metrics using filters for a specific cluster and its controls.
+# This function processes exon metrics by applying filters or calls based on
+# fragment count data.
+# The resulting metrics, which include Gaussian distribution parameters and
+# filter states, are stored in a cluster-specific metrics array.
 #
 # Args:
 # -clusterID [str]
-# -exonsFPM (np.ndarray[floats]): normalised counts from exons
-# -samples (list[strs]): sample IDs in the same order as the columns of 'exonsFPM'.
+# -counts (np.ndarray[floats]): normalised counts from exons
+# -samples (list[strs]): sample IDs in the same order as the columns of 'counts'.
 # -clust2samps (dict): mapping cluster IDs to lists of sample IDs.
 # -fitWith (dict): mapping cluster IDs to lists of control cluster IDs.
 # -exonOnSexChr (numpy.ndarray[ints]): chromosome category (autosomes=0 or gonosomes chrXZ=1, chrYW=2)
 #                                      for each exon.
 # -unCaptFPMLimit [float]: Upper limit for fragment count data, used in exon filtering.
-# -clustResColnames (list[strs]): List of expected column names for the results array.
-# -filterStatus (list[strs]): List of status labels used in filtering or calling exons.
+# -metricsNames (list[strs]): List of expected column names for the results array.
+# -filterStates (list[strs]): List of states labels used in filtering or calling exons.
+# -exonChrState [int]: chromosome category state assigned to exons, indicating their location
+#                      on different chromosome types. Same terminology as 'exonOnSexChr'.
 #
-# Returns a tuple (clustID, relevantCols, relevantRows, clusterCallsArray):
+# Returns a tuple (clusterID, clustExMetrics):
 # - clusterID [str]
-# - relevantCols (list[ints]): callsArray column indexes .
-# - relevantRows (list[ints]): exons indexes (rows indexes) for the callsArray.
-# - clusterCallsArray (np.ndarray[floats]): The cluster calls array (likelihoods).
-def exonFilterAndCN2Params(clusterID, exonsFPM, samples, clust2samps, fitWith, exonOnSexChr,
-                           unCaptFPMLimit, clustResColnames, filterStatus):
-    startTime = time.time()
+# - clustExMetrics (dict): key == clusterID, value == np.ndarray[floats]
+#                          dim = NbOfExons * NbOfExonsMetrics
+#
+# Raises an exception: If an error occurs during execution.
+def adjustExonMetricsWithFilters(clusterID, counts, samples, clust2samps, fitWith, exonOnSexChr,
+                                 unCaptFPMLimit, metricsNames, filterStates, exonChrState):
     try:
-        #############
-        ### get cluster-specific informations
-        #############
-        # Get the index of the current cluster in the list of keys from 'clust2samps'
-        # enabling parallel storage of results in callsArray
-        clustInd = list(clust2samps).index(clusterID)
+        # Initialize an array to store metrics with -1 as default value
+        clustExMetrics = np.full((counts.shape[0], len(metricsNames)), -1, dtype=np.float64, order='C')
 
-        # Get target and control 'samples' indexes for each cluster
-        # enables retrieval of fragment count data from exonsFPM array for all samples of interest,
-        # including the target cluster and control clusters.
         try:
-            (targetSampsInd, ctrlSampsInd) = getSampIndex(clusterID, clust2samps, samples, fitWith)
+            # Get sample indexes for the current cluster
+            sampsInd = getSampIndexes(clusterID, clust2samps, samples, fitWith)
         except Exception as e:
             logger.error("getClusterSamps failed for cluster %i : %s", clusterID, repr(e))
             raise
 
-        # Get appropriate chromosome category for clusterID (autosomes or gonosomes)
-        # enables identification of cluster-specific exons for analysis
-        chrMap = {"A": 0, "XZ": 1, "YW": 2}
-        clustChr = clusterID.split("_")[0]
-        # sanity check
-        if clustChr not in chrMap:
-            raise Exception("Cluster identifier not expected: ", clusterID)
+        logger.debug("cluster %s, clustSamps=%i", clusterID, len(sampsInd))
 
-        #############
-        # Data to be returned
-        relevantRows = np.where(exonOnSexChr == chrMap[clustChr])[0]
-        relevantCols = np.arange(clustInd * len(clustResColnames), clustInd * len(clustResColnames) + len(clustResColnames))
-        clusterResArray = np.full((len(relevantRows), len(clustResColnames)), -1, dtype=np.float64, order='F')
+        # Iterate through each exon
+        for ei in range(counts.shape[0]):
+            # Skip exons not on the specified chromosome state
+            if exonOnSexChr[ei] != exonChrState:
+                continue
 
-        #############
-        # cluster summary
-        logger.debug("cluster n°%s, clustSamps=%i, controlSamps=%i, exonsNB=%i",
-                     clusterID, len(targetSampsInd), len(ctrlSampsInd), len(relevantRows))
-
-        #############
-        ### Filter or call exons
-        #############
-        # Loop through each exon index to process
-        for ei in range(len(relevantRows)):
-            exonBedInd = relevantRows[ei]
-            oneExonFPM = exonsFPM[exonBedInd, targetSampsInd + ctrlSampsInd]
+            # Extract exon FPMs for target and control samples
+            exFPMs = counts[ei, sampsInd]
 
             try:
-                # Perform filtering or calling for the current exon and get the status
-                exStatus = exonFilteredOrCalled(ei, oneExonFPM, unCaptFPMLimit, clusterResArray, clustResColnames)
+                # Determine filter applied and update clustExMetrics
+                filter = exonFilteredOrCalled(ei, exFPMs, unCaptFPMLimit, clustExMetrics, metricsNames)
             except Exception as e:
                 logger.error("exonFilteredOrCalled failed : %s", repr(e))
                 raise
 
-            # Update the clusterResArray with the status of the current exon
-            clusterResArray[ei, clustResColnames.index("filterStatus")] = filterStatus.index(exStatus)
+            # Update filter state in metrics array
+            clustExMetrics[ei, metricsNames.index("filterStates")] = filterStates.index(filter)
 
-        # real-time monitoring of function execution times
-        for key, value in timer.timer_dict.items():
-            logger.debug("ClustID: %s,  %s : %.2f sec", clusterID, key, value)
-
-        thisTime = time.time()
-        logger.debug("ClusterCalls ClustID: %s execution time, in %.2fs", clusterID, thisTime - startTime)
-        return (clusterID, relevantCols, relevantRows, clusterResArray)
+        return (clusterID, clustExMetrics)
 
     except Exception as e:
-        logger.error("CNCalls failed for cluster n°%i - %s", clusterID, repr(e))
+        logger.error("CNCalls failed for cluster %s - %s", clusterID, repr(e))
         raise Exception(str(clusterID))
 
 
@@ -217,12 +148,11 @@ def exonFilterAndCN2Params(clusterID, exonsFPM, samples, clust2samps, fitWith, e
 # - meanIntergenicFPM (np.ndarray[floats]): average count per exon, array needed for
 #                                           'preprocessExponFitPlot' function
 # - loc [float], scale[float]: parameters of the exponential distribution
-@timer.measure_time
-def fitExponential(intergenicsFPMClust):
+def fitExponential(intergenicsFPM):
     # compute meanFPM for each intergenic region (speed up)
-    meanIntergenicFPM = np.mean(intergenicsFPMClust, axis=1)
+    meanIntergenicFPM = np.mean(intergenicsFPM, axis=1)
 
-    # Fit an exponential distribution, 
+    # Fit an exponential distribution,
     # enforces the "loc" parameter to be 0 because our model requires the distribution
     # to start at zero.
     # f(x, scale) = (1/scale)*exp(-x/scale)
@@ -244,7 +174,6 @@ def fitExponential(intergenicsFPMClust):
 # - file [str]: The path to the file where the plot should be saved.
 #
 # Return None
-@timer.measure_time
 def preprocessExponFitPlot(meanIntergenicFPM, expon_loc, exp_scale, file):
     # initiate plots variables
     yLists = []  # List to store the y-values for plotting
@@ -275,23 +204,21 @@ def preprocessExponFitPlot(meanIntergenicFPM, expon_loc, exp_scale, file):
 # a target cluster, raising an error if such a case is detected.
 #
 # Args:
-# -clustID [str]
+# -clusterID [str]
 # -clust2samps (dict): key==clusterID, value == list of sampleIDs
 # -samples (list[strs]): sampleIDs, same order as the columns of FPMarray
 # -fitWith(dict): key==clusterID, value == list of clusterIDs
 #
-# Returns a tuple (targetSampsInd, allSampsInd) containing two lists
-# - the 'samples' indexes of target samples and control samples.
-@timer.measure_time
-def getSampIndex(clustID, clust2samps, samples, fitWith):
+# Returns a list of samples indexes from 'counts' ordering for the current cluster
+def getSampIndexes(clusterID, clust2samps, samples, fitWith):
     # Convert the list of samples for the current cluster (clusterID)
     # into sets for faster membership checks
-    targetSamps = set(clust2samps[clustID])
+    targetSamps = set(clust2samps[clusterID])
     ctrlSamps = set()
 
     # controlClusters is not empty, extract the control 'samples' names
-    if len(fitWith[clustID]) != 0:
-        for ctrlInd in fitWith[clustID]:
+    if len(fitWith[clusterID]) != 0:
+        for ctrlInd in fitWith[clusterID]:
             ctrlSamps.update(clust2samps[ctrlInd])
 
     # Lists to store the 'samples' indexes of target and control samples
@@ -302,7 +229,7 @@ def getSampIndex(clustID, clust2samps, samples, fitWith):
         # sanity check
         if sampName in targetSamps and sampName in ctrlSamps:
             logger.error('%s is present in both the control cluster %s and the target cluster %s',
-                         sampName, clustID, " ".join(fitWith[clustID]))
+                         sampName, clusterID, " ".join(fitWith[clusterID]))
             raise
 
         # Check if the current sample is in the target and/or control group
@@ -314,8 +241,10 @@ def getSampIndex(clustID, clust2samps, samples, fitWith):
             targetSampsInd.append(sampInd)
         elif not isTargetSamp and isCtrlSamp:
             ctrlSampsInd.append(sampInd)
+    
+    listFinale = targetSampsInd + ctrlSampsInd
 
-    return (targetSampsInd, ctrlSampsInd)
+    return listFinale
 
 
 ##############################################
@@ -332,7 +261,7 @@ def getSampIndex(clustID, clust2samps, samples, fitWith):
 #
 # Args:
 # -exIndToProcess [int]
-# -oneExonFPM (numpy.ndarray[floats]): Exon FPM (Fragments Per Million) values for the cluster.
+# -exFPMs (numpy.ndarray[floats]): Exon FPM (Fragments Per Million) values for the cluster.
 # -unCaptFPMLimit [float]: FPM threshold associated with the uncaptured exons.
 # -clusterParamsArray (numpy.ndarray[floats]): store the Gaussian parameters [loc, scale].
 # -expectedColNames (list[strs]): List of column names for the clusterParamsArray ["loc","scale","filterStatus"]
@@ -340,8 +269,7 @@ def getSampIndex(clustID, clust2samps, samples, fitWith):
 # - str: exon filter status("notCaptured", "cannotFitRG", "RGClose2LowThreshold", "fewSampsInRG", or "call").
 # If the filter status is "call", it means the exon passes all filters and is callable.
 # If the filter status is any other value, the exon does not pass one or more filters.
-@timer.measure_time
-def exonFilteredOrCalled(exIndToProcess, oneExonFPM, unCaptFPMLimit, clusterResArray, clustResColnames):
+def exonFilteredOrCalled(exIndToProcess, exFPMs, unCaptFPMLimit, clusterResArray, clustResColnames):
     #################
     ### init exon variable
     # a str which takes the name of the filter excluding the exon
@@ -349,13 +277,13 @@ def exonFilteredOrCalled(exIndToProcess, oneExonFPM, unCaptFPMLimit, clusterResA
     filterStatus = None
 
     ### Filter n°1: not captured => median coverage of the exon = 0
-    if filterUncapturedExons(oneExonFPM):
+    if filterUncapturedExons(exFPMs):
         return "notCaptured"
 
     ### robustly fit a gaussian (CN2)
     ### Filter n°2: fitting is impossible (median close to 0)
     try:
-        (gaussian_loc, gaussian_scale) = fitRobustGaussian(oneExonFPM)
+        (gaussian_loc, gaussian_scale) = fitRobustGaussian(exFPMs)
 
     except Exception as e:
         if str(e) == "cannot fit":
@@ -371,7 +299,7 @@ def exonFilteredOrCalled(exIndToProcess, oneExonFPM, unCaptFPMLimit, clusterResA
         return "RGClose2LowThreshold"
 
     ### Filter n°4: the samples contribution rate to the gaussian is too low (<50%)
-    if ((filterStatus is None) and (filterSampsContrib2Gaussian(gaussian_loc, gaussian_scale, oneExonFPM))):
+    if ((filterStatus is None) and (filterSampsContrib2Gaussian(gaussian_loc, gaussian_scale, exFPMs))):
         return "fewSampsInRG"
 
     return "call"
@@ -387,13 +315,12 @@ def exonFilteredOrCalled(exIndToProcess, oneExonFPM, unCaptFPMLimit, clusterResA
 # them because they affect too many samples
 #
 # Args:
-# - oneExonFPM (list[floats]): FPM counts from an exon
+# - exFPMs (numpy.ndarray[floats]): FPM counts from an exon
 #
 # Returns "True" if exon doesn't pass the filter otherwise "False"
-@timer.measure_time
 @numba.njit
-def filterUncapturedExons(oneExonFPM):
-    medianFPM = np.median(oneExonFPM)
+def filterUncapturedExons(exFPMs):
+    medianFPM = np.median(exFPMs)
     if medianFPM == 0:
         return True
     else:
@@ -415,7 +342,6 @@ def filterUncapturedExons(oneExonFPM):
 #
 # Returns a tuple (mu, stdev), parameters of the normal fitted,
 # may return an exception if the fit cannot be achieved.
-@timer.measure_time
 def fitRobustGaussian(X, mean=None, stdev=None, bandwidth=2.0, eps=1.0e-5):
     if mean is None:
         # median is an approach as robust and naïve as possible to Expectation
@@ -496,7 +422,6 @@ def truncated_integral_and_sigma(x):
 # - unCaptFPMLimit [float]: FPM threshold separating captured and non-captured exons
 #
 # Returns "True" if exon doesn't pass the filter otherwise "False"
-@timer.measure_time
 @numba.njit
 def filterZscore(mean, stdev, unCaptFPMLimit):
     # Fixed paramater
@@ -527,19 +452,18 @@ def filterZscore(mean, stdev, unCaptFPMLimit):
 
 # Args:
 # - mean [float], stdev [float]: parameters of the normal
-# - oneExonFPM (list[floats]): FPM counts from an exon
+# - exFPMs (numpy.ndarray[floats]): FPM counts from an exon
 #
 # Returns "True" if exon doesn't pass the filter otherwise "False"
-@timer.measure_time
 @numba.njit
-def filterSampsContrib2Gaussian(mean, stdev, oneExonFPM):
+def filterSampsContrib2Gaussian(mean, stdev, exFPMs):
     # Fixed parameters
     contribThreshold = 0.5
     stdevLim = 2
 
-    FPMValuesUnderGaussian = oneExonFPM[(oneExonFPM > (mean - (stdevLim * stdev))) & (oneExonFPM < (mean + (stdevLim * stdev))), ]
+    FPMValuesUnderGaussian = exFPMs[(exFPMs > (mean - (stdevLim * stdev))) & (exFPMs < (mean + (stdevLim * stdev))), ]
 
-    sampsContribution = len(FPMValuesUnderGaussian) / len(oneExonFPM)
+    sampsContribution = len(FPMValuesUnderGaussian) / len(exFPMs)
 
     if (sampsContribution < contribThreshold):
         return True

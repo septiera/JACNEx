@@ -281,7 +281,6 @@ def plotExonProfile(rawData, xi, yLists, plotLegs, verticalLines, vertLinesLegs,
     # Define a list of colours based on the number of distributions to plot.
     # The 'plasma' colormap is specifically designed for people with color vision deficiencies.
     distColor = matplotlib.pyplot.cm.get_cmap('plasma', len(xi))
-    vertColor = matplotlib.pyplot.cm.get_cmap('plasma', len(verticalLines))
 
     # Disable interactive mode to prevent display of the plot during execution
     matplotlib.pyplot.ioff()
@@ -326,12 +325,12 @@ def plotPieChart(clustID, filterStatus, exStatusArray, matplotOpenFile):
     # with return_counts=True, unique_values will contain the sorted unique values
     # in ascending order, and counts will correspond to the number of occurrences
     # for each unique value in the same sorted order.
-    uniqueValues, counts = np.unique(exStatusArray, return_counts=True)
-    
+    uniqueValues, counts = np.unique(exStatusArray[exStatusArray != -1], return_counts=True)
+
     # Create the pie chart figure and subplot
     fig = matplotlib.pyplot.figure(figsize=(5, 5))
     ax11 = fig.add_subplot(111)
-    
+
     # Plot the pie chart with customization
     w, l, p = ax11.pie(counts,
                        labels=None,

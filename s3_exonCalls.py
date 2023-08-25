@@ -183,17 +183,11 @@ def main(argv):
     logger.debug("Done parsing clustsFile, in %.2f s", thisTime - startTime)
     startTime = thisTime
 
-    # warning: there are no checks performed on the number of samples in 'samples' and
-    # the samples contained in clusters. However, if a sample is present in a cluster
-    # but not in 'samples', Python will raise an error when selecting the non-existent
-    # counts column. On the other hand, if an additional sample is present, it will not
-    # be analyzed and will be ignored without raising an error.
-    # In pipeline mode, this should not happen.
-
     ####################
-    # fits an exponential distribution to the entire dataset of intergenic counts (CN0)
-    # Extracts the continuous distribution's floating-point parameters, along with a
-    # threshold value distinguishing FPM values representing non-captured exons(<unCaptFPMLimit)
+    # Exponential fitting = CN0
+    # Over the whole dataset of intergenic counts
+    # Extracts the distribution's parameters, and a threshold value distinguishing
+    # FPM values representing non-captured exons(<unCaptFPMLimit)
     # from those indicating captured exons(>unCaptFPMLimit).
     try:
         (exp_loc, exp_scale, unCaptFPMLimit) = exonCalls.exonProcessing.CN0ParamsAndFPMLimit(intergenicsFPM, plotDir)
@@ -205,28 +199,33 @@ def main(argv):
     startTime = thisTime
 
     ####################
-    # Uninterpretable exons are filtered out while robustly calculating parameters for
-    # a fitted Gaussian distribution.
+    # Exon Metrics Processing and Filtering
+    ####################
+    # output dictionary: keys == clusterID and values == np.ndarray[float],
+    # dim = NbOfExons * NbOfMetrics, contains the fitting results
+    # of the Gaussian distribution and filters for all exons and clusters.
+    exonMetrics = {}
 
-    # filterStatus represents the set of filters applied to the exons.
-    # The indexes of this list will be used to map the filtered status of each
+    # filterStates list [str] represents the set of filter names applied to the exons.
+    # The indexes of this list will be used to map the filtered states of each
     # exon in the output file.
     # e.g: index 0 corresponds to an exon filtered as 'notCaptured',
     # while the index -1 (initialized during the output matrix allocation)
     # represents exons that are not used for cluster parameter calculation.
-    filterStatus = ["notCaptured", "cannotFitRG", "RGClose2LowThreshold", "fewSampsInRG", "call"]
+    filterStates = ["notCaptured", "cannotFitRG", "RGClose2LowThreshold", "fewSampsInRG", "call"]
 
-    # defined the result columns for each cluster.
-    # 'loc' column corresponds to the mean of the Gaussian distribution
-    # 'scale' column represents the standard deviation of the Gaussian distribution
-    # 'filterStatus' column indicates the status of the corresponding exon
-    clustResColnames = ["loc", "scale", "filterStatus"]
-
-    # callsArray[exonIndex, clusterIndex * clustResColnames] will store exon processing results.
-    callsArray = exonCalls.exonCallsFile.allocateParamsArray(len(exons), len(clust2samps), len(clustResColnames))
+    # list[str] of output metric names:
+    # 'loc': the mean of the Gaussian distribution
+    # 'scale': the standard deviation of the Gaussian distribution
+    # 'filterStatus': filtering state indexes
+    metricsNames = ["loc", "scale", "filterStates"]
 
     # selects cluster-specific exons on autosomes, chrXZ or chrYW.
     exonOnSexChr = clusterSamps.genderPrediction.exonOnSexChr(exons)
+    # Create a mapping dictionary to associate sex chromosomes with numeric indexes.
+    # Used to associate cluster-specific exons with the chromosomes they are analyzed on.
+    # NOTE: to change
+    chrMap = {"A": 0, "XZ": 1, "YW": 2}
 
     # generates a PDF file containing pie charts summarizing the filters
     # applied to exons in each cluster.
@@ -240,53 +239,58 @@ def main(argv):
     paraClusters = min(math.ceil(jobs / 2), len(clust2samps))
     logger.info("%i new clusters => will process %i in parallel", len(clust2samps), paraClusters)
 
-    ##
-    # mergeParams:
-    # arg: a Future object returned by ProcessPoolExecutor.submit(exonCalls.exonProcessing.exonFilterAndCN2Params).
-    # exonFilterAndCN2Params() returns a 4-element tupple (clusterID, relevantCols, relevantRows, clusterCallsArray).
+    ############
+    # updateMetricsDictionary:
+    # arg: a Future object returned by ProcessPoolExecutor.submit(exonCalls.exonProcessing.adjustExonMetricsWithFilters).
+    # returns a 2-element tupple (clusterID, clustExMetrics).
     # If something went wrong, raise error in log;
-    # otherwise fill column at index relevantCols and row at index relevantRows in clusterCallsArray
-    # with calls stored in callsArray
-    def mergeParams(futurecounts2ParamsRes):
+    # otherwise fill exonMetrics key with clusterID and value with clustExMetrics np.ndarray dim=NbOfExons * NbOfMetrics
+    # In addition, plot a pie chart summarizing the performed filtering for the current cluster.
+    def updateMetricsDictionary(futurecounts2ParamsRes):
         e = futurecounts2ParamsRes.exception()
         if e is not None:
             logger.warning("Failed to ExonFilterAndCN2Params for cluster %s, skipping it", str(e))
         else:
             counts2ParamsRes = futurecounts2ParamsRes.result()
-            for exonIndex in range(len(counts2ParamsRes[2])):
-                callsArray[counts2ParamsRes[2][exonIndex], counts2ParamsRes[1]] = counts2ParamsRes[3][exonIndex]
+            exonMetrics[counts2ParamsRes[0]] = counts2ParamsRes[1]
 
+            # Generate pie chart for the cluster based on the filterStatus
             try:
-                # Generate pie chart for the cluster based on the filterStatus
-                exStatusArray = counts2ParamsRes[3][:, clustResColnames.index("filterStatus")]
-                figures.plots.plotPieChart(counts2ParamsRes[0], filterStatus, exStatusArray, matplotOpenFile)
+                figures.plots.plotPieChart(counts2ParamsRes[0], filterStates,
+                                           counts2ParamsRes[1][:, metricsNames.index("filterStates")],
+                                           matplotOpenFile)
             except Exception as e:
-                logger.error("plotPieChart failed for cluster %s : %s", clustID, repr(e))
+                logger.error("plotPieChart failed for cluster %s : %s", clusterID, repr(e))
                 raise
 
             logger.info("Done copy number calls for cluster %s", counts2ParamsRes[0])
 
     # To be parallelised => browse clusters
     with ProcessPoolExecutor(paraClusters) as pool:
-        for clustID in clust2samps.keys():
+        for clusterID in clust2samps.keys():
             #### validity sanity check
-            if not clustIsValid[clustID]:
-                logger.warning("cluster %s is invalid, low sample number", clustID)
+            if not clustIsValid[clusterID]:
+                logger.warning("cluster %s is invalid, low sample number", clusterID)
                 continue
 
-            ##### run prediction for current cluster
-            futureRes = pool.submit(exonCalls.exonProcessing.exonFilterAndCN2Params, clustID,
-                                    exonsFPM, samples, clust2samps, fitWith, exonOnSexChr,
-                                    unCaptFPMLimit, clustResColnames, filterStatus)
+            #### chromosome sanity check
+            clustChr = clusterID.split("_")[0]
+            if clustChr not in chrMap:
+                raise Exception("cluster identifier not expected: ", clusterID)
 
-            futureRes.add_done_callback(mergeParams)
+            ##### run prediction for current cluster
+            futureRes = pool.submit(exonCalls.exonProcessing.adjustExonMetricsWithFilters,
+                                    clusterID, exonsFPM, samples, clust2samps, fitWith, exonOnSexChr,
+                                    unCaptFPMLimit, metricsNames, filterStates, chrMap[clustChr])
+
+            futureRes.add_done_callback(updateMetricsDictionary)
 
     # close PDF file containing pie charts
     matplotOpenFile.close()
 
     #####################################################
     # Print exon defs + calls to outFile
-    exonCalls.exonCallsFile.printParamsFile(outFile, clust2samps, clustResColnames, exp_loc, exp_scale, exons, callsArray)
+    exonCalls.exonCallsFile.printParamsFile(outFile, exonMetrics, metricsNames, exp_loc, exp_scale, exons)
 
     thisTime = time.time()
     logger.debug("Done printing calls for all (non-failed) clusters, in %.2fs", thisTime - startTime)

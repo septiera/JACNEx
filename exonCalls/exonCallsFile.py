@@ -1,7 +1,6 @@
 import logging
 import gzip
 import numpy as np
-import numba
 
 # prevent numba flooding the logs when we are in DEBUG loglevel
 logging.getLogger('numba').setLevel(logging.WARNING)
@@ -15,37 +14,36 @@ logger = logging.getLogger(__name__)
 ###############################################################################
 #############################################################
 # parseExonParamsFile:
-# warning : This function does not explicitly verify that the cluster names
-# in exonParamsFile and clustFile are identical because exonParamsFile is
-# typically derived from clustFile.
 #
 # Arg:
 #  - exonParamsFile [str]: path to a TSV file containing exon parameters.
-#                          produces by s3_exonFilteringAndParams.py.
-#  - nbExons [int]: The number of exons.
-#  - nbClusters [int]: The number of clusters.
+#                          produces by s3_exonCalls.py.
 #
 # Returns a tupple (exonParamsArray, exp_loc, exp_scale, paramsTitles):
-#  - exonParamsArray [list of lists[floats]]: contains the parsed exon parameters for
-#                                             each exon and cluster.
+#  - exonMetrics [dict]: keys == clusterID and values == np.ndarray[floats]
+#                        dim  = NbOfExons * NbOfMetrics, contains the fitting
+#                        results of the Gaussian distribution and filters for
+#                        all exons.
 #  - exp_loc [float], exp_scale [float: The exponential parameters.
-#  - paramsTitles (list[strs]): title of expected columns for each cluster
-def parseExonParamsFile(exonParamsFile, nbExons, nbClusters):
-    (exonParamsList, exp_loc, exp_scale, paramsTitles) = parseExonParamsPrivate(exonParamsFile)
+#  - metricsNames (list[strs]): ["loc","scale","filterStates"]
+def parseExonParamsFile(exonParamsFile):
+    # Call the parseExonParamsPrivate function to obtain the necessary data.
+    (clusterIDs, metricsNames, paramsList, exp_loc, exp_scale) = parseExonParamsPrivate(exonParamsFile)
 
-    nbCol = len(exonParamsList[0]) // nbClusters  # int format necessary for allocateParamsArray
-    # Sanity check to ensure the number of columns matches the expected
-    if nbCol != len(paramsTitles):
-        raise Exception('number of clusters differs between clustFile and exonParamsFile')
+    numMetrics = len(paramsList)
 
-    # exonParamsArray[exonIndex, clusterIndex * ["loc", "scale", "filterStatus"]]
-    exonParamsArray = allocateParamsArray(nbExons, nbClusters, nbCol)
+    # Create the output dictionary
+    exonMetrics = {}
+    for clust in clusterIDs:
+        # Initialize the dictionary value with a 2D array of -1's using np.full().
+        exonMetrics[clust] = np.full((paramsList.shape[0], len(metricsNames)), -1, dtype=np.float64, order='C')
 
-    # Fill exonParamsArray from exonParamsList
-    for i in range(nbExons):
-        callsVec2array(exonParamsArray, i, exonParamsList[i])
+    # Fill the exonMetrics dictionary by iterating over exons and clusters.
+    for ei in range(paramsList.shape[0]):
+        for ci in range(len(clusterIDs)):
+            exonMetrics[clusterIDs[ci]][ei, :] = paramsList[ei, ci * numMetrics: ci * numMetrics + numMetrics]
 
-    return (exonParamsArray, exp_loc, exp_scale, paramsTitles)
+    return (exonMetrics, exp_loc, exp_scale, metricsNames)
 
 
 #############################
@@ -53,15 +51,13 @@ def parseExonParamsFile(exonParamsFile, nbExons, nbClusters):
 # Args:
 # - outFile is a filename that doesn't exist, it can have a path component (which must exist),
 #   output will be gzipped if outFile ends with '.gz'
-# - clust2samps (dict): A dictionary mapping cluster IDs to sample names.
-# - expectedColNames (list): A list of column names to be used in the output file.
+# - exonMetrics (dict): A dictionary mapping cluster IDs to np.ndarray of exon metrics results.
+# - metricsNames (list[str])
 # - exp_loc[float], exp_scale[float]: parameters for the exponential distribution.
 # - exons (list of lists[str,int,int,str]): information on exon, containing CHR,START,END,EXON_ID
-# - CN2ParamsArray (np.ndarray[floats]): parameters of the Gaussian distribution [loc = mean, scale = stdev]
-#                                        and exon filtering status [int] for each cluster.
 #
 # Print this data to outFile as a 'ParamsFile'
-def printParamsFile(outFile, clust2samps, expectedColNames, exp_loc, exp_scale, exons, CN2ParamsArray):
+def printParamsFile(outFile, exonMetrics, metricsNames, exp_loc, exp_scale, exons):
     try:
         if outFile.endswith(".gz"):
             outFH = gzip.open(outFile, "xt", compresslevel=6)
@@ -73,15 +69,17 @@ def printParamsFile(outFile, clust2samps, expectedColNames, exp_loc, exp_scale, 
 
     ### header definitions
     toPrint = "CHR\tSTART\tEND\tEXON_ID\t"
-    for i in clust2samps.keys():
-        for j in range(len(expectedColNames)):
-            toPrint += f"{i}_{expectedColNames[j]}" + "\t"
+
+    listClustID = sorted(list(exonMetrics.keys()))
+    for i in listClustID:
+        for j in range(len(metricsNames)):
+            toPrint += f"{i}_{metricsNames[j]}" + "\t"
     toPrint += "\n"
     outFH.write(toPrint)
 
     #### print first row (exponential parameters)
-    toPrint = "" + "\t" + "" + "\t" + "" + "\t" + "exponential parameters"+ "\t"
-    expLine = "\t".join(["{:0.4e}\t{:0.4e}\t-1".format(exp_loc, exp_scale)] * len(clust2samps.keys()))
+    toPrint = "" + "\t" + "" + "\t" + "" + "\t" + "exponential parameters" + "\t"
+    expLine = "\t".join(["{:0.4e}\t{:0.4e}\t-1".format(exp_loc, exp_scale)] * len(exonMetrics.keys()))
     toPrint += expLine
     toPrint += "\n"
     outFH.write(toPrint)
@@ -89,7 +87,8 @@ def printParamsFile(outFile, clust2samps, expectedColNames, exp_loc, exp_scale, 
     #### fill results
     for i in range(len(exons)):
         toPrint = exons[i][0] + "\t" + str(exons[i][1]) + "\t" + str(exons[i][2]) + "\t" + exons[i][3]
-        toPrint += calls2str(CN2ParamsArray, i)
+        for clust in listClustID:
+            toPrint += calls2str(exonMetrics[clust], i)
         toPrint += "\n"
         outFH.write(toPrint)
 
@@ -125,17 +124,20 @@ def parseExonParamsPrivate(exonParamsFile):
     # Read the first line of the file and split it into header titles
     header = callsFH.readline().rstrip().split("\t")
     del header[0:4]  # Remove the first four columns
-    headerTitles = [item.split('_')[-1] for item in header]  # Extract the last part after "_"
 
-    # Use a temporary list to maintain the order of appearance
-    paramsTitles_set = set()
-    temp_paramsTitles = []
-    for title in headerTitles:
-        if title not in paramsTitles_set:
-            paramsTitles_set.add(title)
-            temp_paramsTitles.append(title)
+    # Initialize sets to store unique parts
+    clusterIDs = set()
+    paramsTitles = set()
 
-    paramsTitles = temp_paramsTitles
+    # Extract unique parts after the second "_" and store them in sets
+    for item in header:
+        parts = item.split('_', 2)  # Split at most 2 times
+        clusterIDs.add(parts[0])
+        paramsTitles.add(parts[1])
+
+    # Convert sets to lists
+    clusterIDs = list(clusterIDs)
+    paramsTitles = list(paramsTitles)
 
     # grab parameters of the exponential distribution common for all clusters
     expLine = callsFH.readline().rstrip().split("\t")
@@ -154,34 +156,7 @@ def parseExonParamsPrivate(exonParamsFile):
         paramsList.append(params)
     callsFH.close()
 
-    return (paramsList, exp_loc, exp_scale, paramsTitles)
-
-
-##############################################################
-# allocateParamsArray:
-# Args:
-# - numExons, numClusters, numCol
-#
-# Returns an float array with -1, adapted for storing the Gaussian
-# parameters [loc = mean, scale = stdev] and exon filtering status [int]
-# for each cluster
-# dim= NbOfExons * (NbOfClusters * NbOfCol)
-def allocateParamsArray(numExons, numClusters, numCol):
-    # order=F should improve performance
-    return np.full((numExons, (numClusters * numCol)), -1, dtype=np.float64, order='F')
-
-
-#################################################
-# callsVec2array
-# fill callsArray[exonIndex] with calls from callsVector (same order)
-# Args:
-#   - callsArray (np.ndarray[int])
-#   - exonIndex (int): is the index of the current exon
-#   - callsVector (np.ndarray[float]): contains the probabilities for an exon
-@numba.njit
-def callsVec2array(callsArray, exonIndex, callsVector):
-    for i in numba.prange(len(callsVector)):
-        callsArray[exonIndex, i] = callsVector[i]
+    return (clusterIDs, paramsTitles, paramsList, exp_loc, exp_scale)
 
 
 #############################################################
