@@ -125,8 +125,7 @@ def printClustsFile(clust2samps, fitWith, clustIsValid, outFile):
     toPrint = "CLUSTER_ID\tSAMPLES\tFIT_WITH\tVALID\n"
     outFH.write(toPrint)
 
-    # sort clusterIDs by TYPE, don't worry about NUMBERs (eg A_10 will come
-    # before A_3 but we don't care)
+    # sort clusterIDs - will be number-sorted if numbers were left-padded with zeroes
     for clusterID in sorted(clust2samps.keys()):
         toPrint = clusterID + "\t"
         toPrint += ','.join(sorted(clust2samps[clusterID])) + "\t"

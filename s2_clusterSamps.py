@@ -45,14 +45,14 @@ def parseArgs(argv):
 
     usage = "NAME:\n" + scriptName + """\n
 DESCRIPTION:
-Given a TSV of exon fragment counts, form the reference clusters for the call.
-The default command execution pertains to exons and involves the separation of autosomes ('A')
-and gonosomes ('G') for clustering to prevent bias. The accepted sex chromosomes are X, Y, Z, and W.
-Results are printed to stdout in TSV format: 5 columns
-[CLUSTER_ID, SAMPLES, CONTROLLED_BY, VALIDITY, SPECIFICS]
+Given a TSV of exon fragment counts, build clusters of "comparable" samples that
+will be used as controls for one another.
+Clusters are built independantly for exons on autosomes ('A') and  on gonosomes ('G').
+The accepted sex chromosomes are X, Y, Z, and W.
+Results are printed to stdout in TSV format: 4 columns
+[CLUSTER_ID, SAMPLES, FIT_WITH, VALID]
 In addition, all graphical support (quality control histogram for each sample and
-dendrogram from clustering) are printed in pdf files created in plotDir.
-Optionally a prediction of the sexes per sample can be made empirically.
+dendrogram from clustering) are produced as pdf files in plotDir.
 
 ARGUMENTS:
    --counts [str]: TSV file of fragment counts, possibly gzipped, produced by s1_countFrags.py
