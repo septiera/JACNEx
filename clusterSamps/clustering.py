@@ -56,7 +56,7 @@ def buildClusters(FPMarray, chromType, samples, startDist, maxDist, minSamps, pl
     # reduce dimensionality with PCA
     # we don't really want the smallest possible number of dimensions, try arbitrary
     # smallish dims (must be < nbExons and < nbSamples)
-    dim = min(100, FPMarray.shape[0], FPMarray.shape[1])
+    dim = min(10, FPMarray.shape[0], FPMarray.shape[1])
     samplesInPCAspace = sklearn.decomposition.PCA(n_components=dim).fit_transform(FPMarray.transpose())
 
     # hierarchical clustering of the samples projected in the PCA space:

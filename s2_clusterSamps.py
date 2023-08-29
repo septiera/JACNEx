@@ -49,7 +49,7 @@ Given a TSV of exon fragment counts, build clusters of "comparable" samples that
 will be used as controls for one another.
 Clusters are built independantly for exons on autosomes ('A') and  on gonosomes ('G').
 The accepted sex chromosomes are X, Y, Z, and W.
-Results are printed to stdout in TSV format: 4 columns
+Results are printed to --out in TSV format: 4 columns
 [CLUSTER_ID, SAMPLES, FIT_WITH, VALID]
 In addition, all graphical support (quality control histogram for each sample and
 dendrogram from clustering) are produced as pdf files in plotDir.
@@ -272,7 +272,7 @@ def main(argv):
     ###################
     # print clustering results
     try:
-        clusterSamps.clustFile.printClustsFile(clusters, outFile)
+        clusterSamps.clustFile.printClustsFile(clust2samps, fitWith, clustIsValid, outFile)
     except Exception as e:
         logger.error("printing clusters failed : %s", repr(e))
         raise Exception("printClustsFile failed")
