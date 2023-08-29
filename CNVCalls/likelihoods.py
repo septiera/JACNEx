@@ -24,8 +24,8 @@ logger = logging.getLogger(__name__)
 # individual and copy number combination for each exons.
 # dim = nbOfExons * (nbOfSamps * nbOfCN)
 def allocateLikelihoodsArray(numSamps, numExons, numCN):
-    # order=F should improve performance
-    return np.full((numExons, (numSamps * numCN)), -1, dtype=np.float64, order='F')
+    # order=C should improve performance
+    return np.full((numExons, (numSamps * numCN)), -1, dtype=np.float64, order='C')
 
 
 ######################################
@@ -58,89 +58,69 @@ def allocateLikelihoodsArray(numSamps, numExons, numCN):
 #
 # Args:
 # - clusterID [str]
-# - samples (list[strs]): sample identifiers
-# - counts (np.ndarray[floats]): normalized fragment counts (FPMs)
+# - samp2Index (dict): keys == sampleIDs, values == exonsFPM samples column indexes
+# - exonsFPM (np.ndarray[floats]): normalized fragment counts (FPMs)
 # - clust2samps (dict): mapping clusterID to a list of sampleIDs
 # - exp_loc[float], exp_scale[float]: parameters of the exponential distribution
-# - exonCN2Params (np.ndarray): contains CN2 parameters (gaussian distribution loc=mean, scale=stdev)
-#                               and exon filtering status for each cluster.
-#                               Dim: nbOfExons * (nbOfClusters * ["loc", "scale", "filterStatus"]).
+# - exMetrics (dict): keys == clusterIDs, values == np.ndarray [floats]
+#                     Dim = nbOfExons * ["loc", "scale", "filterStatus"].
 # - numCNs [int]: 4 copy number status: ["CN0", "CN1", "CN2", "CN3"]
-# - numParamsCols [int]: ["loc", "scale", "filterStatus"]
+# - chromType [str]: type of chromosome where exons are analysed :"A" for autosomes,
+#                    "G" for gonosomes.
 #
-# Returns a tupple (clusterID, relevantCols, relevantRows, likelihoodArray):
+# Returns a tupple (clusterID, likelihoodArray):
 # - clusterID [str]
-# - relevantCols (list[ints]): column indexes in the larger array of all analyzed samples,
-#                              where each column corresponds to a specific copy number type (CN0, CN1, CN2, CN3)
-#                              for the given clusterID and samples.
-#                              These column indexes are used to store the likelihoods in the appropriate
-#                              positions of the larger array outside the function.
-# - relevantRows (list[ints]): exon indexes in the likelihoodArray corresponding to exons
-#                              with filtering status 4 ("Calls") for the given clusterID.
-#                              These rows represent the exons for which likelihoods are calculated.
 # - likelihoodsArray (np.ndarray[floats]): precomputed likelihoods for each sample and copy number type.
 #                                         dim = nbOfRelevantRows * nbOfRelevantCols
-def counts2likelihoods(clusterID, samples, counts, clust2samps, exp_loc, exp_scale,
-                       exonCN2Params, numCNs, numParamsCols):
-    # Fixed parameter:
-    # Empirical definition of the alpha parameter based on available data.
-    # Achieves a gradual ascending phase of the distribution, ensuring consideration of
-    # duplications approximately around gauss_loc*1.5.
-    gamma_alpha = 8
+# - chromType [str]
+def counts2likelihoods(clusterID, samp2Index, exonsFPM, clust2samps, exp_loc, exp_scale,
+                       exMetrics, numCNs, chromType):
+    try:
+        logger.debug("process cluster %s", clusterID)
+        # IDs and indexes (in "samples" and "counts" columns) of samples from current cluster
+        sampsIDs = []
+        sampsIndexes = []
+        for samp in clust2samps[clusterID]:
+            sampsIDs.append(samp)
+            sampsIndexes.append(samp2Index[samp])
 
-    # Convert the dictionary keys to a list and find the index of the clusterID
-    clusterIDs = list(clust2samps.keys())
-    clusterIndex = clusterIDs.index(clusterID)
+        # np.array 2D dim = (NbExons * [loc[float], scale[float], filterStatus[int]])
+        clusterMetrics = exMetrics[clusterID]
 
-    # Get the samples belonging to the specified cluster
-    sampsIDs = clust2samps[clusterID]
-    sampsIndexes = np.where(np.isin(samples, sampsIDs))[0]
+        likelihoods = {}
+        for samp in sampsIDs:
+            likelihoods[samp] = np.full((exonsFPM.shape[0], numCNs), -1, dtype=np.float32, order='C')
 
-    numSamps = len(sampsIndexes)
+        for exonIndex in range(len(clusterMetrics)):
+            if clusterMetrics[exonIndex, 2] != 4:
+                continue
+            gauss_loc = clusterMetrics[exonIndex, 0]
+            gauss_scale = clusterMetrics[exonIndex, 1]
+            # Get the distribution parameters for this exon
+            distribution_functions = getDistributionObjects(exp_loc, exp_scale, gauss_loc, gauss_scale)
 
-    # Extract the relevant columns from exonCN2Params for the specified cluster
-    CN2paramsClust = exonCN2Params[:, clusterIndex * numParamsCols:(clusterIndex + 1) * numParamsCols]
+            for ci in range(numCNs):
+                pdf_function = distribution_functions[ci]
+                exFPM = exonsFPM[exonIndex, sampsIndexes]
+                # np.ndarray 1D float: set of pdfs for all samples
+                # scipy execution speed up
+                res = pdf_function(exFPM)
 
-    # Create an array of column indexes for each sample,
-    relevantCols = np.zeros(len(sampsIndexes) * numCNs, dtype=np.int)
+                for si in range(len(sampsIndexes)):
+                    likelihoods[sampsIDs[si]][exonIndex, ci] = res[si]
 
-    for sampsIndex in range(len(sampsIndexes)):
-        for ci in range(numCNs):
-            relevantCols[sampsIndex * numCNs + ci] = sampsIndexes[sampsIndex] * numCNs + ci
+        return (clusterID, likelihoods, chromType)
 
-    # Find the row indexes where the third column of CN2paramsCluster is equal to 4 ("Calls")
-    relevantRows = np.where(CN2paramsClust[:, 2] == 4)[0]
-
-    likelihoodsArray = allocateLikelihoodsArray(numSamps, len(relevantRows), numCNs)
-
-    for rowIndex, exonIndex in enumerate(relevantRows):
-        FPMs = counts[exonIndex, sampsIndexes]
-        # Get the distribution parameters for this exon
-        CN_params = getDistributionParams(exp_loc, exp_scale, CN2paramsClust[exonIndex, 0], CN2paramsClust[exonIndex, 1])
-
-        for ci in range(numCNs):
-            distribution, loc, scale = CN_params[ci]
-
-            # Compute the likelihoods for the current CNStatus
-            if distribution != scipy.stats.gamma:
-                CNLikelihoods = distribution.pdf(FPMs, loc=loc, scale=scale)
-            else:
-                CNLikelihoods = distribution.pdf(FPMs, a=gamma_alpha, loc=loc, scale=scale)
-
-            # Compute the column indexes
-            colIndexes = np.arange(ci, numSamps * numCNs, numCNs)
-
-            # Assign values to likelihoodArray using correct indexes
-            likelihoodsArray[rowIndex, colIndexes] = CNLikelihoods
-
-    return (clusterID, relevantCols, relevantRows, likelihoodsArray)
+    except Exception as e:
+        logger.error("Likelihoods failed for cluster %s - %s", clusterID, repr(e))
+        raise Exception(str(clusterID))
 
 
 ###############################################################################
 ############################ PRIVATE FUNCTIONS ################################
 ###############################################################################
 ######################################
-# getDistributionParams
+# getDistributionObjects
 # Defines parameters for four types of distributions (CN0, CN1, CN2, CN3+),
 # involving exponential, normal, and gamma distributions.
 # For CN3+, the parameters are empriricaly adjusted to ensure compatibility between
@@ -152,21 +132,34 @@ def counts2likelihoods(clusterID, samples, counts, clust2samps, exp_loc, exp_sca
 # - gauss_loc [float]: Mean parameter for the Gaussian distribution (CN2).
 # - gauss_scale [float]: Standard deviation parameter for the Gaussian distribution (CN2).
 # Returns:
-# - CN_params (list of tuples): contains the distribution function (Scipy library),
-#                               location parameter[float], and scale parameter[float]
-#                               for a specific copy number type.
-def getDistributionParams(exp_loc, exp_scale, gauss_loc, gauss_scale):
+# - CN_params(list): contains distribution objects from Scipy representing
+#                     different copy number types (CN0, CN1, CN2, CN3+).
+#                     Parameters vary based on distribution type.
+def getDistributionObjects(exp_loc, exp_scale, gauss_loc, gauss_scale):
+
+    # shifting Gaussian mean for CN1
+    gaussShiftLoc = gauss_loc * 0.5
+
+    # CN3+ dependent on a gamma distribution:
+    #  - 'a': Empirical definition of the alpha parameter based on available data.
+    # Achieves a gradual ascending phase of the distribution, ensuring consideration of
+    # duplications approximately around gauss_loc*1.5.
+    #  - 'loc' = gauss_loc_plus_scale to account for the standard deviation.
+    # Prevents overlap of the gamma distribution when the primary Gaussian has
+    # a substantial standard deviation, avoiding blending between CN2 and CN3+.
+    #  - 'scale' = log_gauss_loc_plus_1 adapts to the data by scaling the distribution.
+    # "+1" prevents division by zero issues for means <= 1, and using log encloses
+    # the scale around 1, creating a distribution similar to a Gaussian.
+    gamma_shape = 8
+    # Calculate the sum of gauss_loc and gauss_scale once
+    gauss_locAddScale = gauss_loc + gauss_scale
+    # Calculate the logarithm of gauss_loc_plus_scale + 1 once
+    gauss_logLocAdd1 = np.log10(gauss_locAddScale + 1)
+
     CN_params = [
-        (scipy.stats.expon, exp_loc, exp_scale),  # CN0
-        (scipy.stats.norm, gauss_loc * 0.5, gauss_scale),  # CN1
-        (scipy.stats.norm, gauss_loc, gauss_scale),  # CN2
-        # CN3+ dependent on a gamma distribution:
-        #  - 'loc' = gauss_loc + gauss_scale to account for the standard deviation.
-        # Prevents overlap of the gamma distribution when the primary Gaussian has
-        # a substantial standard deviation, avoiding blending between CN2 and CN3+.
-        # - 'scale' = np.log(gauss_loc) to achieve a suitably small theta value
-        # for compressing the distribution (normal distribution like), particularly
-        # when there is significant spread.
-        (scipy.stats.gamma, gauss_loc + gauss_scale, np.log10(gauss_loc)),
+        lambda x: scipy.stats.expon.pdf(x, loc=exp_loc, scale=exp_scale),  # CN0
+        lambda x: scipy.stats.norm.pdf(x, loc=gaussShiftLoc, scale=gauss_scale),  # CN1
+        lambda x: scipy.stats.norm.pdf(x, loc=gauss_loc, scale=gauss_scale),  # CN2
+        lambda x: scipy.stats.gamma.pdf(x, a=gamma_shape, loc=gauss_locAddScale, scale=gauss_logLocAdd1),  # CN3+
     ]
     return CN_params
