@@ -27,8 +27,8 @@ logger = logging.getLogger(__name__)
 # Args:
 # - FPMarray (np.ndarray[float]): normalised fragment counts for exons on the
 #   chromosome type indicated by chromType, for all samples
-# - chromType (string): one of 'A', 'XZ', 'YW' indicating that FPMarray holds counts
-#   for exons on autosomes, X (or Z) chromosome, or Y (or W) chromosome, respectively
+# - chromType (string): one of 'A', 'G' indicating that FPMarray holds counts
+#   for exons on autosomes or gonosomes
 # - samples: list of sampleIDs, same order as the columns of FPMarray
 # - startDist: smallest distance at which we start trying to build clusters
 # - maxDist: max distance up to which we can build clusters / populate FIT_WITH
@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 #
 # Returns (clust2samps, fitWith, clustIsValid, linkageMatrix):
 # (clust2samps, fitWith, clustIsValid) are as defined in clustFile.py parseClustsFile(), ie
-# clusterIDs are formatted as TYPE_NUMBER, where TYPE is 'A', 'XZ' or 'YW', and:
+# clusterIDs are formatted as TYPE_NUMBER where TYPE is 'A' or 'G', and:
 # - clust2samps: dict, key==clusterID, value == list of sampleIDs
 # - fitWith: dict, key==clusterID, value == list of clusterIDs
 # - clustIsValid: dict, key==clusterID, value == Boolean

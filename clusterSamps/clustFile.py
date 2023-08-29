@@ -16,9 +16,9 @@ logger = logging.getLogger(__name__)
 # - clustsFile (str): a clustersFile produced by printClustsFile(), possibly gzipped
 #
 # A clustersFile is a TSV with columns CLUSTER_ID SAMPLES FIT_WITH VALID.
-# The CLUSTER_IDs must be strings formatted as TYPE_NUMBER, where TYPE is 'A', 'XZ'
-#    or 'YW' when the clustering was performed using counts from exons on autosomes,
-#    X (or Z) chromosome, and Y (or W) chromosome, respectively;
+# The CLUSTER_IDs must be strings formatted as TYPE_NUMBER, where TYPE is 'A' or 'G'
+#    depending on whether the clustering was performed using counts from exons on
+#    autosomes or gonosomes (==sex chromosomes)
 # SAMPLES is a comma-separated list of sampleIDs;
 # FIT_WITH is a comma-separated list of clusterIDs;
 # VALID is 0 or 1, 0==invalid means the cluster fails some QC and should be ignored.
@@ -50,7 +50,7 @@ def parseClustsFile(clustsFile):
     clustIsValid = {}
 
     # regular expression for sanity-checking clusterIDs
-    clustPattern = re.compile(r'^(A|G|XZ|YW)_\d+$')
+    clustPattern = re.compile(r'^(A|G)_\d+$')
 
     # skip header
     clustsFH.readline()
