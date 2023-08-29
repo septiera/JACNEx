@@ -205,68 +205,54 @@ def main(argv):
 
     ###################
     # Clustering:
-    # build groups of samples with similar count profiles, independantly for:
-    # - autosomes (gender-agnostic)
-    # - sex chromosomes for Females
-    # - sex chromosomes for Males
-    # NOTE: clustering on gonosomes must be done separately for each gender, because we
-    # use the Pearson Correlation Coefficient to identify similar samples... A man and
-    # a woman can have PCC==1 on the X chromosome if the FPM counts are just doubled in
-    # the woman, so these samples will be clustered together, but later we will call CNVs
-    # everywhere on chrX
-
-    exonOnSexChr = clusterSamps.genderPrediction.exonOnSexChr(exons)
-    sample2gender = clusterSamps.genderPrediction.assignGender(exonsFPM, exonOnSexChr, intergenicsFPM, samples)
-
-    thisTime = time.time()
-    logger.debug("Done assigning genders to samples, in %.2fs", thisTime - startTime)
-    startTime = thisTime
-
-    logger.error("EARLY EXIT, working on assignGender for now")
-    return()
+    # build clusters of samples with "similar" count profiles, independantly for exons
+    # located on autosomes and on sex chromosomes (==gonosomes).
+    # As a side benefit this also allows to identify same-gender samples, since samples
+    # that cluster together for the gonosomal exons always have the same gonosomal
+    # karyotype (predominantly on the X: in our hands XXY samples always cluster with XX
+    # samples, not with XY ones)
 
     # subarrays of counts
+    exonOnSexChr = clusterSamps.genderPrediction.exonOnSexChr(exons)
     autosomesFPM = exonsFPM[exonOnSexChr == 0]
-    gonosomesFemalesFPM = exonsFPM[exonOnSexChr != 0][:, sample2gender == 1]
-    gonosomesMalesFPM = exonsFPM[exonOnSexChr != 0][:, sample2gender == 2]
+    gonosomesFPM = exonsFPM[exonOnSexChr != 0]
 
     # autosomes
     try:
         plotFile = os.path.join(plotDir, "clusters_autosomes.pdf")
-        clusters = clusterSamps.clustering.buildClusters(autosomesFPM, samples, maxCorr, minCorr, minSamps, plotFile)
+        startDist = 500
+        maxDist = 1500
+        # NOTE: in some tests, buildClusters() normalizes each sample in the PCA space before
+        # the hierarchical clustering. Goal was to be able to use the same startDist/maxDist
+        # for autosomes and gonosomes, because currently the distances are very differently scaled...
+        # I used startDist = 0.2, maxDist = 1 in a test, have to dig deeper...
+
+        (clust2samps, fitWith, clustIsValid, linkageMatrix) = clusterSamps.clustering.buildClusters(
+            autosomesFPM, "A", samples, startDist, maxDist, minSamps, plotFile)
     except Exception as e:
         logger.error("buildClusters failed for autosomes: %s", repr(e))
         raise Exception("buildClusters failed")
 
     thisTime = time.time()
-    logger.debug("Done samples clustering for autosomes : in %.2fs", thisTime - startTime)
+    logger.debug("Done clustering samples for autosomes : in %.2fs", thisTime - startTime)
     startTime = thisTime
 
-    # gonosomes, only if we have at least one gonosomal exon and one Female/Male sample
-    if gonosomesFemalesFPM.shape[0] != 0:
-        try:
-            plotFile = os.path.join(plotDir, "clusters_gonosomesFemale.pdf")
-            clusters.extend(clusterSamps.clustering.buildClusters(gonosomesFemalesFPM, samples[sample2gender == 1],
-                                                                  maxCorr, minCorr, minSamps, plotFile))
-        except Exception as e:
-            logger.error("buildClusters failed for gonosomes for Females: %s", repr(e))
-            raise Exception("buildClusters failed")
+    # sex chromosomes
+    try:
+        plotFile = os.path.join(plotDir, "clusters_gonosomes.pdf")
+        startDist = 100
+        maxDist = 300
+        (clust2sampsSex, fitWithSex, clustIsValidSex, linkageMatrixSex) = clusterSamps.clustering.buildClusters(
+            gonosomesFPM, "G", samples, startDist, maxDist, minSamps, plotFile)
+    except Exception as e:
+        logger.error("buildClusters failed for gonosomes: %s", repr(e))
+        raise Exception("buildClusters failed")
+    clust2samps.update(clust2sampsSex)
+    fitWith.update(fitWithSex)
+    clustIsValid.update(clustIsValidSex)
 
     thisTime = time.time()
-    logger.debug("Done samples clustering for gonosomes - Females, in %.2fs", thisTime - startTime)
-    startTime = thisTime
-
-    if gonosomesMalesFPM.shape[0] != 0:
-        try:
-            plotFile = os.path.join(plotDir, "clusters_gonosomesMale.pdf")
-            clusters.extend(clusterSamps.clustering.buildClusters(gonosomesMalesFPM, samples[sample2gender == 2],
-                                                                  maxCorr, minCorr, minSamps, plotFile))
-        except Exception as e:
-            logger.error("buildClusters failed for gonosomes for Males: %s", repr(e))
-            raise Exception("buildClusters failed")
-
-    thisTime = time.time()
-    logger.debug("Done samples clustering for gonosomes - Males, in %.2fs", thisTime - startTime)
+    logger.debug("Done clustering samples for gonosomes : in %.2fs", thisTime - startTime)
     startTime = thisTime
 
     ###################
@@ -280,6 +266,21 @@ def main(argv):
     thisTime = time.time()
     logger.debug("Done printing clusters, in %.2fs", thisTime - startTime)
     startTime = thisTime
+
+    ###################
+    # Code for studying gender predictions, based on sums of FPMs for exons on X or Y.
+    # Based on these tests, gender prediction should be easy since we could clearly
+    # distinguish the karyotypes on simple 1D plots... For example XXY samples were
+    # in Female groups on the X and in Male groups on the Y. Also we have a single
+    # patient with an XYY karyotype, and even that was quite apparent.
+    # However this is no longer necessary, clustering now works for gonosomes thanks
+    # to the PCC -> euclidean move.
+    # sample2gender = clusterSamps.genderPrediction.assignGender(exonsFPM, exonOnSexChr, intergenicsFPM, samples)
+    # gonosomesFemalesFPM = exonsFPM[exonOnSexChr != 0][:, sample2gender == 1]
+    # gonosomesMalesFPM = exonsFPM[exonOnSexChr != 0][:, sample2gender == 2]
+    # thisTime = time.time()
+    # logger.debug("Done assigning genders to samples, in %.2fs", thisTime - startTime)
+    # startTime = thisTime
 
     logger.info("ALL DONE")
 
