@@ -50,7 +50,7 @@ def parseClustsFile(clustsFile):
     clustIsValid = {}
 
     # regular expression for sanity-checking clusterIDs
-    clustPattern = re.compile(r'^(A|XZ|YW)_\d+$')
+    clustPattern = re.compile(r'^(A|G|XZ|YW)_\d+$')
 
     # skip header
     clustsFH.readline()
