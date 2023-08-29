@@ -24,57 +24,52 @@ logger = logging.getLogger(__name__)
 # Also generates a bar plot of copy number counts by samples (only if logger debug mode).
 #
 # Args:
-# - CNCallsArray (np.ndarray[floats]): likelihoods for each CN, each exon, each sample from a cluster
-#                                      dim = [nbExons, (nbSamps * nbCNStates)]
+# - likelihoods(dict): keys= sampID, values= np.ndarray of likelihoods[floats]
+#                         dim= nbOfExons * NbOfCNStates
 # - priors (np.ndarray[floats]): prior probabilities for each copy number status.
-# - samples (list[strs]): sample names
-# - CNStatus (list[strs]): Names of copy number types.
+# - CNStates (list[strs]): Names of copy number types.
 # - outFile [str] : path to save the graphical representation.
 #
 # Returns:
 # - transMatVoid (np.ndarray[floats]): transition matrix used for the hidden Markov model,
 #                                      including the "void" state.
 #                                      dim = [nbStates+1, nbStates+1]
-def getTransMatrix(CNCallsArray, priors, samples, CNStatus, outFile):
-    nbSamps = len(samples)
-    nbStates = len(CNStatus)
+def getTransMatrix(likelihoods, priors, CNStates, plotFile):
+
+    nbSamps = len(likelihoods.keys())
+    nbStates = len(CNStates)
 
     # initialize arrays:
     # 2D array, each row represents a sample and each value is the count for a specific copy number type
     sampCnCounts = np.zeros((nbSamps, nbStates), dtype=int)
+    sampToIncrement = 0
     # 2D array, expected format for a transition matrix [i; j]
     # contains all prediction counts of states, taking into account
     # the preceding states for the entire sampling.
     transitions = np.zeros((nbStates, nbStates), dtype=int)
 
-    for sampIndex in range(len(samples)):
-        sampProbsArray = CNCallsArray[:, sampIndex * nbStates:sampIndex * nbStates + nbStates]
-
-        # filter columns associated with no-call samples, same as those non-clusterable
-        if np.all(sampProbsArray == -1):
-            logger.debug("Filtered sample: %s", samples[sampIndex])
-            continue
+    for sampID in likelihoods.keys():
+        tmpArray = likelihoods[sampID]
 
         # filter row with -1 values, corresponding to filtered non-callable exons
-        exonCall = np.where(np.any(sampProbsArray != -1, axis=1))[0]
+        exonCall = np.where(np.any(tmpArray != -1, axis=1))[0]
 
         # calculate the most probable copy number state for each exon based on the
         # combined probabilities of the exon call likelihood and the prior probabilities
-        callProbsArray = sampProbsArray[exonCall, :]
+        callProbsArray = tmpArray[exonCall, :]
         odds = callProbsArray * priors
         maxCN = np.argmax(odds, axis=1)
 
         # updates arrays
-        # count of each predicted copy number type for the sample
-        unique_maxCN, counts = np.unique(maxCN, return_counts=True)
-        sampCnCounts[sampIndex, unique_maxCN] += counts
-        # Incrementing the overall count of the sample's
         # The initial previous state is set to CN2.
         prevCN = np.argmax(priors)
         for indexExon in range(len(maxCN)):
             currCN = maxCN[indexExon]
             transitions[prevCN, currCN] += 1
             prevCN = currCN
+            sampCnCounts[sampToIncrement, currCN] += 1
+
+        sampToIncrement += 1
 
     # normalize each row to ensure sum equals 1
     # not require normalization with the total number of samples
@@ -94,7 +89,7 @@ def getTransMatrix(CNCallsArray, priors, samples, CNStatus, outFile):
 
     if logging.getLogger().getEffectiveLevel() <= logging.DEBUG:
         try:
-            figures.plots.barPlot(sampCnCounts, CNStatus, outFile)
+            figures.plots.barPlot(sampCnCounts, CNStates, plotFile)
         except Exception as e:
             logger.error("barPlot failed: %s", repr(e))
             raise
