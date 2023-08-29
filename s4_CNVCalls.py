@@ -174,6 +174,49 @@ ARGUMENTS:
 
 
 ###############################################################################
+############################ PRIVATE FUNCTIONS #################################
+###############################################################################
+# merge_likelihoods
+# Note: Samples processed for autosomes and gonosomes.
+# Some samples may lack valid clusters for one chromosome type, causing missing PDF data.
+# Merge likelihood arrays if it's possible while excluding -1 values.
+# If values are different at the same positions, a ValueError is raised.
+#
+# Args:
+# - autosomesDict (dict): keys= sampID, values= np.ndarray of likelihoods[floats]
+#                         dim= nbOfExons * NbOfCNStates
+# - gonosomesDict (dict): same as autosomesDict but for gonosomes
+#
+# returns a dictionary with the merged likelihood array for each sample
+def merge_likelihoods(autosomesDict, gonosomesDict):
+    # output dictionary initialisation
+    likelihoodsDict = {}
+
+    mergedSampList = list(set(list(autosomesDict.keys()) + list(gonosomesDict.keys())))
+
+    for sampID in mergedSampList:
+        ### merged likelihoods arrays
+        if sampID in autosomesDict and sampID not in gonosomesDict:
+            sampArray = autosomesDict[sampID]
+        elif sampID not in autosomesDict and sampID in gonosomesDict:
+            sampArray = gonosomesDict[sampID]
+        else:
+            # Create a mask for positions where both arrays have -1
+            mask = (autosomesDict[sampID] == -1) & (gonosomesDict[sampID] == -1)
+
+            # If the mask contains True (different values of -1 at the same positions), raise an error
+            if np.any(mask):
+                raise ValueError("Erreur : Arrays have different non-(-1) values at the same positions.")
+
+            # Merge floating-point elements while excluding -1
+            sampArray = np.where(autosomesDict[sampID] != -1, autosomesDict[sampID], gonosomesDict[sampID])
+
+        likelihoodsDict[sampID] = sampArray
+
+    return likelihoodsDict
+
+
+###############################################################################
 ############################ PUBLIC FUNCTIONS #################################
 ###############################################################################
 
@@ -216,9 +259,10 @@ def main(argv):
     startTime = thisTime
 
     ####################
-    # parse params clusters (parameters of continuous distributions fitted on CN0, CN2 coverage profil)
+    # parse exon metrics for each valid cluster
+    # extracts parameters of continuous distributions fitted on CN0, CN2 coverage profil
     try:
-        (exParams, exp_loc, exp_scale, paramsTitles) = exonCalls.exonCallsFile.parseExonParamsFile(paramsFile, len(exons), len(clust2samps))
+        (exMetrics, exp_loc, exp_scale, paramsTitles) = exonCalls.exonCallsFile.parseExonParamsFile(paramsFile)
     except Exception as e:
         raise Exception("parseParamsFile failed for %s : %s", paramsFile, repr(e))
 
@@ -241,15 +285,24 @@ def main(argv):
 
     #########
     # Likelihood calculation,
-    # given count data (observation data in the HMM) and parameters of continuous distributions
-    # computed for each cluster.
-    # These likelihoods are computed for each hidden state(CNStates) and serve as a pseudo-emission
+    # given count data (observation data in the HMM) and parameters of
+    # continuous distributions computed for each cluster.
+    # Concerns each hidden state(CNStates) and serve as a pseudo-emission
     # table(likelihoodsArray).
-    # Cannot be performed within the Viterbi process itself, as it's necessary for the generation
-    # of a transition matrix derived from the data, which serves as one of the HMM parameters.
+    # Cannot be performed within the Viterbi process itself, as it's
+    # necessary for the generation of a transition matrix derived from
+    # the data, which serves as one of the HMM parameters.
 
-    # np.ndarray 2D, dim = NbOfExons * (NbOfSamples * NbOfCNStates), initialized with -1.
-    emissionArray = CNVCalls.likelihoods.allocateLikelihoodsArray(len(samples), len(exons), len(CNStates))
+    # Allocates dictionaries to store likelihood results specific to the
+    # chromosome of origin for each cluster
+    likelihoods_A = {}
+    likelihoods_G = {}
+
+    # dictionary for easier retrieval of samplesID (key) and indexes in
+    # the count table (values).
+    samp2Index = {}
+    for si in range(len(samples)):
+        samp2Index[samples[si]] = si
 
     # This step is parallelized across clusters,
     paraClusters = min(math.ceil(jobs), len(clust2samps))
@@ -265,12 +318,17 @@ def main(argv):
     def mergeEmission(futurecounts2emission):
         e = futurecounts2emission.exception()
         if e is not None:
-            logger.warning("Failed counts2likelihoods for cluster n° %s, skipping it", str(e))
+            logger.warning("Failed counts2likelihoods for cluster %s, skipping it", e)
         else:
             counts2emissionRes = futurecounts2emission.result()
-            for exonIndex in range(len(counts2emissionRes[2])):
-                emissionArray[counts2emissionRes[2][exonIndex], counts2emissionRes[1]] = counts2emissionRes[3][exonIndex]
-            logger.debug("Likelihoods calculated for cluster n°%s, NbOfSampsFilled %i, NbOfExonCalls %i/%i",
+            chromType = counts2emissionRes[2]
+            if chromType == "A":
+                likelihoods_A.update(counts2emissionRes[1])
+            elif chromType == "G":
+                likelihoods_G.update(counts2emissionRes[1])
+            else:
+                raise
+            logger.debug("Likelihoods calculated for cluster %s, NbOfSampsFilled %i, NbOfExonCalls %i/%i",
                          counts2emissionRes[0], len(counts2emissionRes[1]) // len(CNStates),
                          len(counts2emissionRes[2]), len(exons))
 
@@ -282,13 +340,32 @@ def main(argv):
                 logger.warning("Cluster %s is invalid, low sample number %i", clusterID, len(clust2samps[clusterID]))
                 continue
 
-            futureRes = pool.submit(CNVCalls.likelihoods.counts2likelihoods, clusterID, samples, exonsFPM,
-                                    clust2samps, exp_loc, exp_scale, exParams, len(CNStates), len(paramsTitles))
+            ### chromType attribution
+            if clusterID.startswith("A"):
+                chromType = "A"
+            elif clusterID.startswith("XZ") or clusterID.startswith("YW"):
+                chromType = "G"
+            else:
+                raise
 
+            futureRes = pool.submit(CNVCalls.likelihoods.counts2likelihoods, clusterID, samp2Index, exonsFPM,
+                                    clust2samps, exp_loc, exp_scale, exMetrics, len(CNStates), chromType)
             futureRes.add_done_callback(mergeEmission)
 
     thisTime = time.time()
     logger.debug("Done calculate likelihoods, in %.2fs", thisTime - startTime)
+    startTime = thisTime
+
+    #########
+    # merged likelihoods results
+    try:
+        likelihoods = merge_likelihoods(likelihoods_A, likelihoods_G)
+    except Exception as e:
+        logger.error("merge_likelihoods failed : %s", repr(e))
+        raise Exception("merge_likelihoods failed")
+
+    thisTime = time.time()
+    logger.debug("Done merge_likelihoods, in %.2fs", thisTime - startTime)
     startTime = thisTime
 
     #########
@@ -299,7 +376,7 @@ def main(argv):
     # np.ndarray 2D, dim = (nbOfCNStates + void) * (nbOfCNStates + void)
     try:
         plotFile = os.path.join(plotDir, "CN_Frequencies_Likelihoods_Plot.pdf")
-        transMatrix = CNVCalls.transitions.getTransMatrix(emissionArray, priors, samples, CNStates, plotFile)
+        transMatrix = CNVCalls.transitions.getTransMatrix(likelihoods, priors, CNStates, plotFile)
     except Exception as e:
         logger.error("getTransMatrix failed : %s", repr(e))
         raise Exception("getTransMatrix failed")
@@ -337,15 +414,15 @@ def main(argv):
 
     # To be parallelised => browse samples
     with ProcessPoolExecutor(paraSample) as pool:
-        for si in range(len(samples)):
+        for sampID in likelihoods.keys():
             # Extract the likelihoods for the current sample
-            CNcallOneSamp = emissionArray[:, si * len(CNStates): si * len(CNStates) + len(CNStates)]
+            CNcallOneSamp = likelihoods[sampID]
 
             if np.all(CNcallOneSamp == -1):
-                logger.warning("sample %s is invalid for CNV calling", samples[si])
+                logger.warning("sample %s is invalid for CNV calling", sampID)
                 continue
 
-            futureRes = pool.submit(CNVCalls.HMM.viterbi, CNcallOneSamp, transMatrix, samples[si])
+            futureRes = pool.submit(CNVCalls.HMM.viterbi, CNcallOneSamp, transMatrix, sampID)
 
             futureRes.add_done_callback(concatCNVs)
 
