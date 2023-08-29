@@ -54,7 +54,7 @@ def buildClusters(FPMarray, chromType, samples, startDist, maxDist, minSamps, pl
         plotFile = ""
 
     # reduce dimensionality with PCA
-    # we don't really want the smallest possible number of dimensions, try arbitrary
+    # we don't really want the smallest possible number of dimensions, try
     # smallish dims (must be < nbExons and < nbSamples)
     dim = min(10, FPMarray.shape[0], FPMarray.shape[1])
     samplesInPCAspace = sklearn.decomposition.PCA(n_components=dim).fit_transform(FPMarray.transpose())
@@ -75,8 +75,9 @@ def buildClusters(FPMarray, chromType, samples, startDist, maxDist, minSamps, pl
                                                             startDist, maxDist, minSamps)
 
     # produce and plot dendrogram
-    if (plotFile != ""):
-        makeDendrogram(linkageMatrix, clust2samps, fitWith, clustIsValid, startDist, plotFile)
+    # NOT YET, I haven't coded makeDendrogram() yet
+    # if (plotFile != ""):
+    #    makeDendrogram(linkageMatrix, clust2samps, fitWith, clustIsValid, startDist, plotFile)
 
     # sort samples in clust2samps and clusters in fitWith (for cosmetics)
     for clust in clust2samps:
