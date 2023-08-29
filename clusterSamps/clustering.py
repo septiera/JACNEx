@@ -36,6 +36,7 @@ logger = logging.getLogger(__name__)
 #   the cluster VALID
 # - plotFile (str): filename (including path) for saving the dendrogram representing
 #   the resulting hierarchical clustering, use "" if you don't want a plot
+# - normalize (Boolean): if True, normalize each sample in the PCA space before clustering
 #
 # Returns (clust2samps, fitWith, clustIsValid, linkageMatrix):
 # (clust2samps, fitWith, clustIsValid) are as defined in clustFile.py parseClustsFile(), ie
@@ -47,7 +48,7 @@ logger = logging.getLogger(__name__)
 #   encoding the hierarchical clustering as returned by scipy.cluster.hierarchy.linkage,
 #   ie each row corresponds to one merging step of 2 cluster (c1, c2) and holds
 #   [c1, c2, dist(c1,c2), size(c1) + size(c2)]
-def buildClusters(FPMarray, chromType, samples, startDist, maxDist, minSamps, plotFile):
+def buildClusters(FPMarray, chromType, samples, startDist, maxDist, minSamps, plotFile, normalize):
     if (plotFile != "") and os.path.isfile(plotFile):
         logger.warning("buildClusters can't produce a dendrogram: plotFile %s already exists",
                        plotFile)
@@ -57,16 +58,21 @@ def buildClusters(FPMarray, chromType, samples, startDist, maxDist, minSamps, pl
     # we don't really want the smallest possible number of dimensions, try
     # smallish dims (must be < nbExons and < nbSamples)
     dim = min(10, FPMarray.shape[0], FPMarray.shape[1])
-    samplesInPCAspace = sklearn.decomposition.PCA(n_components=dim).fit_transform(FPMarray.transpose())
+    samplesInPCAspace = sklearn.decomposition.PCA(n_components=dim).fit_transform(FPMarray.T)
 
-    # hierarchical clustering of the samples projected in the PCA space:
+    if normalize:
+        # normalize each sample in the PCA space
+        samplesInPCAspaceNorms = np.sqrt(np.sum(samplesInPCAspace**2, axis=1))
+        samplesInPCAspace = np.divide(samplesInPCAspace.T, samplesInPCAspaceNorms).T
+
+    # hierarchical clustering of the samples projected in the PCA space (and
+    # possibly normalized):
     # - use 'average' method to define the distance between clusters (== UPGMA),
     #   not sure why but AS did a lot of testing and says it is the best choice
     #   when there are different-sized groups;
     # - use 'euclidean' metric to define initial distances between samples;
     # - reorder the linkage matrix so the distance between successive leaves is
-    #   minimal [NOT sure about this one, documentation says it slows down things a lot
-    #   and we can do some sorting within dendrogram()].
+    #   minimal
     linkageMatrix = scipy.cluster.hierarchy.linkage(samplesInPCAspace, method='average',
                                                     metric='euclidean', optimal_ordering=True)
 

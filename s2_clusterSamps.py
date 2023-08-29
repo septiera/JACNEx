@@ -217,18 +217,27 @@ def main(argv):
     autosomesFPM = exonsFPM[exonOnSexChr == 0]
     gonosomesFPM = exonsFPM[exonOnSexChr != 0]
 
+    # NOTE: in some tests, buildClusters() normalizes each sample in the PCA space before
+    # the hierarchical clustering. Goal was to be able to use the same startDist/maxDist
+    # for autosomes and gonosomes, because currently the distances are very differently
+    # scaled... Results look good but I am using 500-1500 for autosomes, vs 100-300 for
+    # gonosomes.
+    # In the normalized approach, startDist and maxDist are the same for autosomes
+    # and gonosomes, and should be robust
+    normalize = True
+    # defaults for startDist and maxDist, if normalize==False they will be changed
+    # before calling buildClusters()
+    startDist = 0.4
+    maxDist = 1.0
+
     # autosomes
     try:
+        if not normalize:
+            startDist = 500
+            maxDist = 1500
         plotFile = os.path.join(plotDir, "clusters_autosomes.pdf")
-        startDist = 500
-        maxDist = 1500
-        # NOTE: in some tests, buildClusters() normalizes each sample in the PCA space before
-        # the hierarchical clustering. Goal was to be able to use the same startDist/maxDist
-        # for autosomes and gonosomes, because currently the distances are very differently scaled...
-        # I used startDist = 0.2, maxDist = 1 in a test, have to dig deeper...
-
         (clust2samps, fitWith, clustIsValid, linkageMatrix) = clusterSamps.clustering.buildClusters(
-            autosomesFPM, "A", samples, startDist, maxDist, minSamps, plotFile)
+            autosomesFPM, "A", samples, startDist, maxDist, minSamps, plotFile, normalize)
     except Exception as e:
         logger.error("buildClusters failed for autosomes: %s", repr(e))
         raise Exception("buildClusters failed")
@@ -239,11 +248,12 @@ def main(argv):
 
     # sex chromosomes
     try:
+        if not normalize:
+            startDist = 100
+            maxDist = 300
         plotFile = os.path.join(plotDir, "clusters_gonosomes.pdf")
-        startDist = 100
-        maxDist = 300
         (clust2sampsSex, fitWithSex, clustIsValidSex, linkageMatrixSex) = clusterSamps.clustering.buildClusters(
-            gonosomesFPM, "G", samples, startDist, maxDist, minSamps, plotFile)
+            gonosomesFPM, "G", samples, startDist, maxDist, minSamps, plotFile, normalize)
     except Exception as e:
         logger.error("buildClusters failed for gonosomes: %s", repr(e))
         raise Exception("buildClusters failed")
