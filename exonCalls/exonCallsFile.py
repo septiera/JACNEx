@@ -30,18 +30,18 @@ def parseExonParamsFile(exonParamsFile):
     # Call the parseExonParamsPrivate function to obtain the necessary data.
     (clusterIDs, metricsNames, paramsList, exp_loc, exp_scale) = parseExonParamsPrivate(exonParamsFile)
 
-    numMetrics = len(paramsList)
+    numMetrics = len(metricsNames)
 
     # Create the output dictionary
     exonMetrics = {}
     for clust in clusterIDs:
         # Initialize the dictionary value with a 2D array of -1's using np.full().
-        exonMetrics[clust] = np.full((paramsList.shape[0], len(metricsNames)), -1, dtype=np.float64, order='C')
+        exonMetrics[clust] = np.full((len(paramsList), len(metricsNames)), -1, dtype=np.float64, order='C')
 
     # Fill the exonMetrics dictionary by iterating over exons and clusters.
-    for ei in range(paramsList.shape[0]):
+    for ei in range(len(paramsList)):
         for ci in range(len(clusterIDs)):
-            exonMetrics[clusterIDs[ci]][ei, :] = paramsList[ei, ci * numMetrics: ci * numMetrics + numMetrics]
+            exonMetrics[clusterIDs[ci]][ei, :] = paramsList[ei][ci * numMetrics: ci * numMetrics + numMetrics]
 
     return (exonMetrics, exp_loc, exp_scale, metricsNames)
 
@@ -105,7 +105,7 @@ def printParamsFile(outFile, exonMetrics, metricsNames, exp_loc, exp_scale, exon
 #                       produces by s3_exonFilteringAndParams.py.
 #
 # Returns a tuple (paramsList, exp_loc, exp_scale, paramsTitles), each is created here
-#   - paramsList (list of list[float]]): dim = nbOfExons * (nbOfClusters * ["loc", "scale", "filterStatus"])
+#   - paramsList (list of list[floats]]): dim = nbOfExons * (nbOfClusters * ["loc", "scale", "filterStatus"])
 #                                        contains mean, stdev parameters from gaussian distribution and
 #                                        exon filter status index from
 #                                        ["notCaptured", "cannotFitRG", "RGClose2LowThreshold", "fewSampsInRG", "call"].
@@ -125,15 +125,19 @@ def parseExonParamsPrivate(exonParamsFile):
     header = callsFH.readline().rstrip().split("\t")
     del header[0:4]  # Remove the first four columns
 
-    # Initialize sets to store unique parts
-    clusterIDs = set()
-    paramsTitles = set()
+    # Initialize lists to store unique parts
+    clusterIDs = []
+    paramsTitles = []
 
     # Extract unique parts after the second "_" and store them in sets
     for item in header:
         parts = item.split('_', 2)  # Split at most 2 times
-        clusterIDs.add(parts[0])
-        paramsTitles.add(parts[1])
+        clust = parts[0] + "_" + parts[1]
+        metric = parts[2]
+        if clust not in clusterIDs:
+            clusterIDs.append(clust)
+        if metric not in paramsTitles:
+            paramsTitles.append(metric)
 
     # Convert sets to lists
     clusterIDs = list(clusterIDs)
