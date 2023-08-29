@@ -96,8 +96,16 @@ ARGUMENTS:
 def main(argv):
     (clusterFile, metadataFile) = parseArgs(argv)
 
-    (samp2sex, samp2batch) = parseMetadata(metadataFile)
-    (clust2samps, samp2clusts, fitWith, clustIsValid) = clusterSamps.clustFile.parseClustsFile(clusterFile)
+    try:
+        (samp2sex, samp2batch) = parseMetadata(metadataFile)
+    except Exception as e:
+        logger.error("error parsing metadata file file: %s", repr(e))
+        raise
+    try:
+        (clust2samps, samp2clusts, fitWith, clustIsValid) = clusterSamps.clustFile.parseClustsFile(clusterFile)
+    except Exception as e:
+        logger.error("error parsing clusterFile: %s", repr(e))
+        raise
 
     toPrint = "CLUSTER_ID\tSAMPLES\tFIT_WITH\tVALID"
     # new columns, see USAGE for their content
