@@ -49,11 +49,6 @@ logger = logging.getLogger(__name__)
 #   ie each row corresponds to one merging step of 2 cluster (c1, c2) and holds
 #   [c1, c2, dist(c1,c2), size(c1) + size(c2)]
 def buildClusters(FPMarray, chromType, samples, startDist, maxDist, minSamps, plotFile, normalize):
-    if (plotFile != "") and os.path.isfile(plotFile):
-        logger.warning("buildClusters can't produce a dendrogram: plotFile %s already exists",
-                       plotFile)
-        plotFile = ""
-
     # reduce dimensionality with PCA
     # we don't really want the smallest possible number of dimensions, try
     # smallish dims (must be < nbExons and < nbSamples)
@@ -80,15 +75,21 @@ def buildClusters(FPMarray, chromType, samples, startDist, maxDist, minSamps, pl
     (clust2samps, fitWith, clustIsValid) = linkage2clusters(linkageMatrix, chromType, samples,
                                                             startDist, maxDist, minSamps)
 
-    # produce and plot dendrogram
-    # NOT YET, I haven't coded makeDendrogram() yet
-    # if (plotFile != ""):
-    #    makeDendrogram(linkageMatrix, clust2samps, fitWith, clustIsValid, startDist, plotFile)
-
     # sort samples in clust2samps and clusters in fitWith (for cosmetics)
     for clust in clust2samps:
         clust2samps[clust].sort()
         fitWith[clust].sort()
+
+    # produce and plot dendrogram
+    if (plotFile != "") and os.path.isfile(plotFile):
+        logger.warning("buildClusters can't produce a dendrogram: plotFile %s already exists",
+                       plotFile)
+    elif (plotFile != ""):
+        title = "chromType=" + chromType + "  dim=" + str(dim)
+        title += "  normalize=" + str(normalize) + "  maxDist=" + str(maxDist)
+        figures.plots.plotDendrogram(linkageMatrix, samples, clust2samps,
+                                     startDist, title, plotFile)
+
     return(clust2samps, fitWith, clustIsValid, linkageMatrix)
 
 

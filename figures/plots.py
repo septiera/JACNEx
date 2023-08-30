@@ -93,7 +93,7 @@ def plotDendrogram(linkageMatrix, samples, clust2samps, startDist, title, plotFi
                                        leaf_label_func=llf,
                                        count_sort='descending')
 
-    matplotlib.pyplot.xlabel("Distance")
+    matplotlib.pyplot.ylabel("Distance")
     fig.subplots_adjust(bottom=0.3)
     pdf.savefig(fig)
     matplotlib.pyplot.close()
