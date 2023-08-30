@@ -195,7 +195,7 @@ def main(argv):
 # 12 Strasbourg
 # 6 Versailles 04/2017
 # 23 Versailles 03/2018 (diff kit vs Versailles 2017)
-# 5 Versailles 10/2018 (same kit & seq as Versailles 2017 BUT NOT 2018)!
+# 5 Versailles 10/2018 (same kit & seq as Versailles 2017 BUT NOT 03/2018)!
 # 25 BGI
 # 17 Macrogen 06/2021
 # 1 Macrogen 08/2023 (solo sample, twist)
