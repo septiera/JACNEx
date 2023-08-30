@@ -66,32 +66,34 @@ def plotDensities(title, dataRanges, densities, legends, line1, line2, line1lege
 
 
 #############################
-# visualisation of clustering results by a dendrogram
-# the labels below the figure correspond from bottom to top
-# to the clusters formation in decreasing order of correlation
-# label types:
-# " ": sample does not contribute to the cluster
-# "x": sample contributes to the cluster
-# "-": sample controls the cluster
-# "O": sample is not successfully clustered
-#
-# Args:
-# - linksMatrix (np.ndarray[float])
-# - labelsGp (list[str]): labels for each sample within each cluster, dim=NbSOIs*NbClusters
-# - minDist (float): is the distance to start cluster construction
-# - title: string to use as plot title (with eg parameters of the clustering method)
-# - plotFile: name of pdf file where the plot will be saved
-#
-# Returns nothing.
-def plotDendrogram(linksMatrix, labelsGp, minDist, title, plotFile):
+# visualize clustering results with a dendrogram
+# Args: see calling code in buildClusters()
+# Returns nothing
+def plotDendrogram(linkageMatrix, samples, clust2samps, startDist, title, plotFile):
+    # leaf label function, for leaf labeling: the first sample of each cluster gets
+    # labeled with the clusterID
+    samp2label = {}
+    for clust in clust2samps.keys():
+        samp2label[clust2samps[clust][0]] = clust
+
+    def llf(id):
+        if samples[id] in samp2label:
+            return samp2label[samples[id]]
+        else:
+            return('')
+
     # create matplotlib PDF object
     pdf = matplotlib.backends.backend_pdf.PdfPages(plotFile)
     # Disable interactive mode
     matplotlib.pyplot.ioff()
-    fig = matplotlib.pyplot.figure(figsize=(15, 5), facecolor="white")
+    fig = matplotlib.pyplot.figure(figsize=(25, 10))
     matplotlib.pyplot.title(title)
-    dn1 = scipy.cluster.hierarchy.dendrogram(linksMatrix, labels=labelsGp, color_threshold=minDist)
-    matplotlib.pyplot.ylabel("Distance")
+    scipy.cluster.hierarchy.dendrogram(linkageMatrix,
+                                       color_threshold=startDist,
+                                       leaf_label_func=llf,
+                                       count_sort='descending')
+
+    matplotlib.pyplot.xlabel("Distance")
     fig.subplots_adjust(bottom=0.3)
     pdf.savefig(fig)
     matplotlib.pyplot.close()
