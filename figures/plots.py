@@ -70,15 +70,34 @@ def plotDensities(title, dataRanges, densities, legends, line1, line2, line1lege
 # Args: see calling code in buildClusters()
 # Returns nothing
 def plotDendrogram(linkageMatrix, samples, clust2samps, startDist, title, plotFile):
-    # leaf label function, for leaf labeling: the first sample of each cluster gets
-    # labeled with the clusterID
-    samp2label = {}
-    for clust in clust2samps.keys():
-        samp2label[clust2samps[clust][0]] = clust
+    # leaf labeling: we want to label the "middle" sample (visually in the dendrogram) of
+    # each cluster with the clusterID, other samples don't get labeled
+    sampi2label = {}
+    # produce a first virtual dendrogram to get the order of samples/leaves
+    R = scipy.cluster.hierarchy.dendrogram(linkageMatrix, get_leaves=True, count_sort='descending', no_plot=True)
+    pos2si = R['leaves']
+    # pos2si[pos] == si  <=> the leave at position pos (left-to-right, < len(samples)) is sample index si
 
-    def llf(id):
-        if samples[id] in samp2label:
-            return samp2label[samples[id]]
+    # build samp2clust for efficiency: key==sampleID, value==clusterID
+    samp2clust = {}
+    for clust in clust2samps.keys():
+        for samp in clust2samps[clust]:
+            samp2clust[samp] = clust
+
+    nextPos = 0
+    while nextPos < len(samples):
+        nextSample = samples[pos2si[nextPos]]
+        nextClust = samp2clust[nextSample]
+        # leaves from nextPos to nextPos+len(clust2samps[nextClust])-1 belong to cluster nextClust, label
+        # the leaf in the middle
+        posToLabel = nextPos + (len(clust2samps[nextClust]) - 1) // 2
+        sampi2label[pos2si[posToLabel]] = nextClust
+        nextPos += len(clust2samps[nextClust])
+
+    # leaf label function
+    def llf(sampi):
+        if sampi in sampi2label:
+            return sampi2label[sampi]
         else:
             return('')
 
@@ -94,7 +113,6 @@ def plotDendrogram(linkageMatrix, samples, clust2samps, startDist, title, plotFi
                                        count_sort='descending')
 
     matplotlib.pyplot.ylabel("Distance")
-    fig.subplots_adjust(bottom=0.3)
     pdf.savefig(fig)
     matplotlib.pyplot.close()
     pdf.close()
