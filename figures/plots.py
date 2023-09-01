@@ -69,9 +69,13 @@ def plotDensities(title, dataRanges, densities, legends, line1, line2, line1lege
 # visualize clustering results with a dendrogram
 # Args: see calling code in buildClusters()
 # Returns nothing
-def plotDendrogram(linkageMatrix, samples, clust2samps, startDist, title, plotFile):
-    # leaf labeling: we want to label the "middle" sample (visually in the dendrogram) of
-    # each cluster with the clusterID, other samples don't get labeled
+def plotDendrogram(linkageMatrix, samples, clust2samps, fitWith, clustIsValid, startDist, title, plotFile):
+    ##################
+    # most of the work here is defining the leaf labels, which appear below the dendrogram:
+    # we want to label the "middle" sample (visually in the dendrogram) of each cluster with
+    # the clusterID eg 'A_02', other samples don't get labeled;
+    # furthermore: if the cluster needs friends for fitting it gets lowercased eg 'a_02', and if it
+    # is invalid it is lowercased and parenthesized eg '(a_02)'
     sampi2label = {}
     # produce a first virtual dendrogram to get the order of samples/leaves
     R = scipy.cluster.hierarchy.dendrogram(linkageMatrix, get_leaves=True, count_sort='descending', no_plot=True)
@@ -91,17 +95,28 @@ def plotDendrogram(linkageMatrix, samples, clust2samps, startDist, title, plotFi
         # leaves from nextPos to nextPos+len(clust2samps[nextClust])-1 belong to cluster nextClust, label
         # the leaf in the middle
         posToLabel = nextPos + (len(clust2samps[nextClust]) - 1) // 2
-        sampi2label[pos2si[posToLabel]] = nextClust
+
+        # create label for this cluster, "decorated" if it needs friends / is invalid
+        label = ""
+        if not clustIsValid[nextClust]:
+            label = '(' + nextClust.lower() + ')'
+        elif len(fitWith[nextClust]) > 0:
+            label = nextClust.lower()
+        else:
+            label = nextClust
+
+        sampi2label[pos2si[posToLabel]] = label
         nextPos += len(clust2samps[nextClust])
 
-    # leaf label function
+    # finally we can define the leaf label function
     def llf(sampi):
         if sampi in sampi2label:
             return sampi2label[sampi]
         else:
             return('')
 
-    # create matplotlib PDF object
+    ##################
+    # make the plot
     pdf = matplotlib.backends.backend_pdf.PdfPages(plotFile)
     # Disable interactive mode
     matplotlib.pyplot.ioff()
@@ -109,6 +124,7 @@ def plotDendrogram(linkageMatrix, samples, clust2samps, startDist, title, plotFi
     matplotlib.pyplot.title(title)
     scipy.cluster.hierarchy.dendrogram(linkageMatrix,
                                        color_threshold=startDist,
+                                       leaf_rotation=30,
                                        leaf_label_func=llf,
                                        count_sort='descending')
 

@@ -87,7 +87,7 @@ def buildClusters(FPMarray, chromType, samples, startDist, maxDist, minSamps, pl
     elif (plotFile != ""):
         title = "chromType=" + chromType + "  dim=" + str(dim)
         title += "  normalize=" + str(normalize) + "  maxDist=" + str(maxDist)
-        figures.plots.plotDendrogram(linkageMatrix, samples, clust2samps,
+        figures.plots.plotDendrogram(linkageMatrix, samples, clust2samps, fitWith, clustIsValid,
                                      startDist, title, plotFile)
 
     return(clust2samps, fitWith, clustIsValid, linkageMatrix)
