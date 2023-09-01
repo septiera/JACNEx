@@ -228,14 +228,17 @@ def main(argv):
     # defaults for startDist and maxDist, if normalize==False they will be changed
     # before calling buildClusters()
     startDist = 0.4
-    maxDist = 1.0
+    maxDist = 0.8
 
     # autosomes
     try:
         if not normalize:
             startDist = 500
-            maxDist = 1500
-        plotFile = os.path.join(plotDir, "clusters_autosomes.pdf")
+            maxDist = 1000
+        plotFile = os.path.join(plotDir, "clusters_autosomes_")
+        if normalize:
+            plotFile += "norm_"
+        plotFile += str(startDist) + "_" + str(maxDist) + ".pdf"
         (clust2samps, fitWith, clustIsValid, linkageMatrix) = clusterSamps.clustering.buildClusters(
             autosomesFPM, "A", samples, startDist, maxDist, minSamps, plotFile, normalize)
     except Exception as e:
@@ -250,8 +253,11 @@ def main(argv):
     try:
         if not normalize:
             startDist = 100
-            maxDist = 300
-        plotFile = os.path.join(plotDir, "clusters_gonosomes.pdf")
+            maxDist = 200
+        plotFile = os.path.join(plotDir, "clusters_gonosomes_")
+        if normalize:
+            plotFile += "norm_"
+        plotFile += str(startDist) + "_" + str(maxDist) + ".pdf"
         (clust2sampsSex, fitWithSex, clustIsValidSex, linkageMatrixSex) = clusterSamps.clustering.buildClusters(
             gonosomesFPM, "G", samples, startDist, maxDist, minSamps, plotFile, normalize)
     except Exception as e:
