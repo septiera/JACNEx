@@ -27,10 +27,11 @@ logger = logging.getLogger(__name__)
 # - transMatrix (np.ndarray[floats]): transition probabilities between states + void status
 #                                     dim = [NbStates +1, NbStates + 1]
 # - sampleName [str]
+# - chrID [str]
 #
 # Returns:
 # - CNVs (list of lists[int,int,int]): [CNType, startExon, endExon] to complete
-def viterbi(CNCallOneSamp, transMatrix, sampleName):
+def viterbi(CNCallOneSamp, transMatrix, sampleName, chrID):
     try:
         # list of lists to return
         # First filled with [Cntype, startExonCalledIndex, endExonCalledIndex],
@@ -116,11 +117,11 @@ def viterbi(CNCallOneSamp, transMatrix, sampleName):
                 ((probsCurrent[4] == 0) or (path[4, exonIndex] == 3))):
 
                 try:
-                    toto = backtrack_aggregateCalls(path, exonIndex - 1, 3)
-                    CNVs.extend(toto)
+                    tmpList = backtrack_aggregateCalls(path, exonIndex - 1, 3)
+                    CNVs.extend(tmpList)
                     # logger.info("successfully backtrack from %i exInd", exonIndex - 1)
                 except Exception as e:
-                    logger.error("exon %i", exonIndex - 1)
+                    logger.error("sample %s, %s, exon %i, exon -1 %i", sampleName, chrID,  exIndexCalled[exonIndex], exIndexCalled[exonIndex - 1])
                     logger.error("%f, %f, %f, %f, %f", probsCurrent[0], probsCurrent[1],
                                  probsCurrent[2], probsCurrent[3], probsCurrent[4])
                     return (sampleName, CNVs)
