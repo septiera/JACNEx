@@ -93,10 +93,18 @@ def CN0ParamsAndFPMLimit(intergenicsFPM, plotDir):
 #
 # Raises an exception: If an error occurs during execution.
 def adjustExonMetricsWithFilters(clusterID, counts, samples, clust2samps, fitWith, exonOnSexChr,
-                                 unCaptFPMLimit, metricsNames, filterStates, exonChrState):
+                                 unCaptFPMLimit, metricsNames, filterStates):
     try:
         # Initialize an array to store metrics with -1 as default value
         clustExMetrics = np.full((counts.shape[0], len(metricsNames)), -1, dtype=np.float64, order='C')
+
+        ### chromType attribution
+        if clusterID.startswith("A"):
+            exonChrState = 0
+        elif clusterID.startswith("G"):
+            exonChrState = 1
+        else:
+            raise
 
         try:
             # Get sample indexes for the current cluster
@@ -105,13 +113,14 @@ def adjustExonMetricsWithFilters(clusterID, counts, samples, clust2samps, fitWit
             logger.error("getClusterSamps failed for cluster %i : %s", clusterID, repr(e))
             raise
 
-        logger.debug("cluster %s, clustSamps=%i", clusterID, len(sampsInd))
+        logger.debug("cluster %s, nbSamps=%i", clusterID, len(sampsInd))
 
         # Iterate through each exon
         for ei in range(counts.shape[0]):
             # Skip exons not on the specified chromosome state
             if exonOnSexChr[ei] != exonChrState:
-                continue
+                if exonOnSexChr[ei] != 2:  # NOTE: to change hardcode
+                    continue
 
             # Extract exon FPMs for target and control samples
             exFPMs = counts[ei, sampsInd]
