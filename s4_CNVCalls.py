@@ -17,6 +17,7 @@ from concurrent.futures import ProcessPoolExecutor
 ####### JACNEx modules
 import countFrags.countsFile
 import clusterSamps.clustFile
+import clusterSamps.genderPrediction
 import exonCalls.exonCallsFile
 import CNVCalls.likelihoods
 import CNVCalls.transitions
@@ -176,44 +177,36 @@ ARGUMENTS:
 ###############################################################################
 ############################ PRIVATE FUNCTIONS #################################
 ###############################################################################
-# merge_likelihoods
-# Note: Samples processed for autosomes and gonosomes.
-# Some samples may lack valid clusters for one chromosome type, causing missing PDF data.
-# Merge likelihood arrays if it's possible while excluding -1 values.
-# If values are different at the same positions, a ValueError is raised.
+# exonOnChr:
+# identifies the start and end indexes of "exons" for each chromosome.
 #
-# Args:
-# - autosomesDict (dict): keys= sampID, values= np.ndarray of likelihoods[floats]
-#                         dim= nbOfExons * NbOfCNStates
-# - gonosomesDict (dict): same as autosomesDict but for gonosomes
+# Arg:
+# - exons (list of list[str, int, int, str]): containing CHR,START,END,EXON_ID
 #
-# returns a dictionary with the merged likelihood array for each sample
-def merge_likelihoods(autosomesDict, gonosomesDict):
-    # output dictionary initialisation
-    likelihoodsDict = {}
+# Returns:
+# - exonOnChrDict (dict): keys == chromosome identifiers, values == int list,
+#                         ie [startChrExIndex, endChrExIndex]
+#
+def exonOnChr(exons):
+    # Initialize an empty dictionary to store exons grouped by chromosome
+    exonOnChrDict = {}
 
-    mergedSampList = list(set(list(autosomesDict.keys()) + list(gonosomesDict.keys())))
-
-    for sampID in mergedSampList:
-        ### merged likelihoods arrays
-        if sampID in autosomesDict and sampID not in gonosomesDict:
-            sampArray = autosomesDict[sampID]
-        elif sampID not in autosomesDict and sampID in gonosomesDict:
-            sampArray = gonosomesDict[sampID]
+    prevChr = None
+    for ei in range(len(exons)):
+        currentChr = exons[ei][0]
+        if currentChr == prevChr:
+            continue
         else:
-            # Create a mask for positions where both arrays have -1
-            mask = (autosomesDict[sampID] == -1) & (gonosomesDict[sampID] == -1)
+            exonOnChrDict[currentChr] = [ei]
+            if prevChr is not None:
+                exonOnChrDict[prevChr].append(ei - 1)
 
-            # If the mask contains True (different values of -1 at the same positions), raise an error
-            if np.any(mask):
-                raise ValueError("Erreur : Arrays have different non-(-1) values at the same positions.")
+        prevChr = currentChr
 
-            # Merge floating-point elements while excluding -1
-            sampArray = np.where(autosomesDict[sampID] != -1, autosomesDict[sampID], gonosomesDict[sampID])
+    # For the last iteration, update the end index of the current chromosome
+    exonOnChrDict[currentChr].append(ei)
 
-        likelihoodsDict[sampID] = sampArray
-
-    return likelihoodsDict
+    return exonOnChrDict
 
 
 ###############################################################################
@@ -322,15 +315,15 @@ def main(argv):
         else:
             counts2emissionRes = futurecounts2emission.result()
             chromType = counts2emissionRes[2]
+
             if chromType == "A":
                 likelihoods_A.update(counts2emissionRes[1])
             elif chromType == "G":
                 likelihoods_G.update(counts2emissionRes[1])
             else:
                 raise
-            logger.debug("Likelihoods calculated for cluster %s, NbOfSampsFilled %i, NbOfExonCalls %i/%i",
-                         counts2emissionRes[0], len(counts2emissionRes[1]) // len(CNStates),
-                         len(counts2emissionRes[2]), len(exons))
+
+            logger.debug("Likelihoods calculated for cluster %s", counts2emissionRes[0])
 
     # To be parallelised => browse clusters
     with ProcessPoolExecutor(paraClusters) as pool:
@@ -343,7 +336,7 @@ def main(argv):
             ### chromType attribution
             if clusterID.startswith("A"):
                 chromType = "A"
-            elif clusterID.startswith("XZ") or clusterID.startswith("YW"):
+            elif clusterID.startswith("G"):
                 chromType = "G"
             else:
                 raise
@@ -356,17 +349,8 @@ def main(argv):
     logger.debug("Done calculate likelihoods, in %.2fs", thisTime - startTime)
     startTime = thisTime
 
-    #########
-    # merged likelihoods results
-    try:
-        likelihoods = merge_likelihoods(likelihoods_A, likelihoods_G)
-    except Exception as e:
-        logger.error("merge_likelihoods failed : %s", repr(e))
-        raise Exception("merge_likelihoods failed")
-
-    thisTime = time.time()
-    logger.debug("Done merge_likelihoods, in %.2fs", thisTime - startTime)
-    startTime = thisTime
+    exonOnSexChr = clusterSamps.genderPrediction.exonOnSexChr(exons)
+    chr2Exons = exonOnChr(exons)
 
     #########
     # Transition matrix generated from likelihood data, based on the overall sampling.
@@ -376,7 +360,8 @@ def main(argv):
     # np.ndarray 2D, dim = (nbOfCNStates + void) * (nbOfCNStates + void)
     try:
         plotFile = os.path.join(plotDir, "CN_Frequencies_Likelihoods_Plot.pdf")
-        transMatrix = CNVCalls.transitions.getTransMatrix(likelihoods, priors, CNStates, plotFile)
+        transMatrix = CNVCalls.transitions.getTransMatrix(likelihoods_A, likelihoods_G, exonOnSexChr,
+                                                          chr2Exons, priors, CNStates, samp2clusts, plotFile)
     except Exception as e:
         logger.error("getTransMatrix failed : %s", repr(e))
         raise Exception("getTransMatrix failed")
@@ -410,25 +395,55 @@ def main(argv):
             for sublist in viterbiRes[1]:
                 sublist.append(viterbiRes[0])
             CNVs.extend(viterbiRes[1])
-            logger.debug("Calling %i CNVs for sample %s", len(viterbiRes[1]), viterbiRes[0])
 
     # To be parallelised => browse samples
     with ProcessPoolExecutor(paraSample) as pool:
-        for sampID in likelihoods.keys():
-            # Extract the likelihoods for the current sample
-            CNcallOneSamp = likelihoods[sampID]
+        for sampID in likelihoods_A.keys():
 
-            if np.all(CNcallOneSamp == -1):
-                logger.warning("sample %s is invalid for CNV calling", sampID)
-                continue
+            for chrID in chr2Exons.keys():
+                startChrExIndex = chr2Exons[chrID][0]
+                endChrExIndex = chr2Exons[chrID][1]
 
-            futureRes = pool.submit(CNVCalls.HMM.viterbi, CNcallOneSamp, transMatrix, sampID)
+                if exonOnSexChr[startChrExIndex] == 0:
+                    if sampID in likelihoods_A:
+                        CNcallOneSamp = likelihoods_A[sampID][startChrExIndex:endChrExIndex, :]
+                    else:
+                        continue
+                else:
+                    if sampID in likelihoods_G:
+                        CNcallOneSamp = likelihoods_G[sampID][startChrExIndex:endChrExIndex, :]
+                    else:
+                        continue
 
-            futureRes.add_done_callback(concatCNVs)
+                if np.all(CNcallOneSamp == -1):
+                    continue
+
+                futureRes = pool.submit(CNVCalls.HMM.viterbi, CNcallOneSamp, transMatrix, sampID, chrID)
+
+                futureRes.add_done_callback(concatCNVs)
 
     thisTime = time.time()
     logger.debug("Done CNVs calls, in %.2fs", thisTime - startTime)
     startTime = thisTime
+
+    ##########
+    # DEBUG PART
+    # Create a dictionary to count CNtypes per sampleName
+    count_dict = {}
+
+    # Iterate through the data list
+    for item in CNVs:
+        # Destructure the elements of the list
+        cn_type, _, _, sample_name = item
+        if sample_name not in count_dict:
+            # Initialize the counter for sampleName
+            count_dict[sample_name] = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0}  
+        count_dict[sample_name][cn_type] += 1 
+
+    # Log the dictionary using logger.debug()
+    for sample_name, counts in count_dict.items():
+        # Format and log each row with keys and values aligned in columns
+        logger.debug("%s: %d, %d, %d, %d, %d", sample_name, counts[0], counts[1], counts[2], counts[3], counts[4])
 
     ############
     # vcf format
