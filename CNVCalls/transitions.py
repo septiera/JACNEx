@@ -34,9 +34,11 @@ logger = logging.getLogger(__name__)
 # - transMatVoid (np.ndarray[floats]): transition matrix used for the hidden Markov model,
 #                                      including the "void" state.
 #                                      dim = [nbStates+1, nbStates+1]
-def getTransMatrix(likelihoods, priors, CNStates, plotFile):
+def getTransMatrix(likelihoods_A, likelihoods_G, exonOnSexChr, exonOnChr, priors, CNStates, samp2clusts, plotFile):
 
-    nbSamps = len(likelihoods.keys())
+    unique_keys_set = set(likelihoods_A.keys()).union(likelihoods_G.keys())
+    unique_keys_list = list(unique_keys_set)
+    nbSamps = len(unique_keys_list)
     nbStates = len(CNStates)
 
     # initialize arrays:
@@ -48,27 +50,42 @@ def getTransMatrix(likelihoods, priors, CNStates, plotFile):
     # the preceding states for the entire sampling.
     transitions = np.zeros((nbStates, nbStates), dtype=int)
 
-    for sampID in likelihoods.keys():
-        tmpArray = likelihoods[sampID]
+    for sampID in unique_keys_list:
+        for chrID in exonOnChr:
+            startChrExIndex = exonOnChr[chrID][0]
+            endChrExIndex = exonOnChr[chrID][1]
 
-        # filter row with -1 values, corresponding to filtered non-callable exons
-        exonCall = np.where(np.any(tmpArray != -1, axis=1))[0]
+            if exonOnSexChr[startChrExIndex] == 0:
+                if sampID in likelihoods_A:
+                    tmpArray = likelihoods_A[sampID][startChrExIndex:endChrExIndex, :]
+                else:
+                    continue
+            else:
+                if sampID in likelihoods_G:
+                    tmpArray = likelihoods_G[sampID][startChrExIndex:endChrExIndex, :]
+                else:
+                    continue
 
-        # calculate the most probable copy number state for each exon based on the
-        # combined probabilities of the exon call likelihood and the prior probabilities
-        callProbsArray = tmpArray[exonCall, :]
-        odds = callProbsArray * priors
-        maxCN = np.argmax(odds, axis=1)
+            # filter row with -1 values, corresponding to filtered non-callable exons
+            exonCall = np.where(np.any(tmpArray != -1, axis=1))[0]
 
-        # updates arrays
-        # The initial previous state is set to CN2.
-        prevCN = np.argmax(priors)
-        for indexExon in range(len(maxCN)):
-            currCN = maxCN[indexExon]
-            transitions[prevCN, currCN] += 1
-            prevCN = currCN
-            sampCnCounts[sampToIncrement, currCN] += 1
+            # calculate the most probable copy number state for each exon based on the
+            # combined probabilities of the exon call likelihood and the prior probabilities
+            callProbsArray = tmpArray[exonCall, :]
+            odds = callProbsArray * priors
+            maxCN = np.argmax(odds, axis=1)
 
+            # updates arrays
+            # The initial previous state is set to CN2.
+            prevCN = np.argmax(priors)
+            for indexExon in range(len(maxCN)):
+                currCN = maxCN[indexExon]
+                transitions[prevCN, currCN] += 1
+                prevCN = currCN
+                sampCnCounts[sampToIncrement, currCN] += 1
+
+        row_str = (sampID + ' ' + ' '.join(samp2clusts[sampID]) + ' ' + ' '.join("{:d}".format(num) for num in sampCnCounts[sampToIncrement, :]))
+        logger.debug(row_str)
         sampToIncrement += 1
 
     # normalize each row to ensure sum equals 1
