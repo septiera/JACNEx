@@ -222,10 +222,7 @@ def main(argv):
 
     # selects cluster-specific exons on autosomes, chrXZ or chrYW.
     exonOnSexChr = clusterSamps.genderPrediction.exonOnSexChr(exons)
-    # Create a mapping dictionary to associate sex chromosomes with numeric indexes.
-    # Used to associate cluster-specific exons with the chromosomes they are analyzed on.
-    # NOTE: to change
-    chrMap = {"A": 0, "XZ": 1, "YW": 2}
+
 
     # generates a PDF file containing pie charts summarizing the filters
     # applied to exons in each cluster.
@@ -249,7 +246,7 @@ def main(argv):
     def updateMetricsDictionary(futurecounts2ParamsRes):
         e = futurecounts2ParamsRes.exception()
         if e is not None:
-            logger.warning("Failed to ExonFilterAndCN2Params for cluster %s, skipping it", str(e))
+            logger.warning("Failed to adjustExonMetricsWithFilters for cluster %s, skipping it", str(e))
         else:
             counts2ParamsRes = futurecounts2ParamsRes.result()
             exonMetrics[counts2ParamsRes[0]] = counts2ParamsRes[1]
@@ -263,7 +260,7 @@ def main(argv):
                 logger.error("plotPieChart failed for cluster %s : %s", clusterID, repr(e))
                 raise
 
-            logger.info("Done copy number calls for cluster %s", counts2ParamsRes[0])
+            logger.info("Done adjustExonMetricsWithFilters for cluster %s", counts2ParamsRes[0])
 
     # To be parallelised => browse clusters
     with ProcessPoolExecutor(paraClusters) as pool:
@@ -273,15 +270,10 @@ def main(argv):
                 logger.warning("cluster %s is invalid, low sample number", clusterID)
                 continue
 
-            #### chromosome sanity check
-            clustChr = clusterID.split("_")[0]
-            if clustChr not in chrMap:
-                raise Exception("cluster identifier not expected: ", clusterID)
-
             ##### run prediction for current cluster
             futureRes = pool.submit(exonCalls.exonProcessing.adjustExonMetricsWithFilters,
                                     clusterID, exonsFPM, samples, clust2samps, fitWith, exonOnSexChr,
-                                    unCaptFPMLimit, metricsNames, filterStates, chrMap[clustChr])
+                                    unCaptFPMLimit, metricsNames, filterStates)
 
             futureRes.add_done_callback(updateMetricsDictionary)
 
@@ -289,11 +281,11 @@ def main(argv):
     matplotOpenFile.close()
 
     #####################################################
-    # Print exon defs + calls to outFile
+    # Print exon defs + metrics to outFile
     exonCalls.exonCallsFile.printParamsFile(outFile, exonMetrics, metricsNames, exp_loc, exp_scale, exons)
 
     thisTime = time.time()
-    logger.debug("Done printing calls for all (non-failed) clusters, in %.2fs", thisTime - startTime)
+    logger.debug("Done printing exon metrics for all (non-failed) clusters, in %.2fs", thisTime - startTime)
     logger.info("ALL DONE")
 
 
