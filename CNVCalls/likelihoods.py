@@ -78,11 +78,8 @@ def counts2likelihoods(clusterID, samp2Index, exonsFPM, clust2samps, exp_loc, ex
     try:
         logger.debug("process cluster %s", clusterID)
         # IDs and indexes (in "samples" and "counts" columns) of samples from current cluster
-        sampsIDs = []
-        sampsIndexes = []
-        for samp in clust2samps[clusterID]:
-            sampsIDs.append(samp)
-            sampsIndexes.append(samp2Index[samp])
+        sampsIDs = list(clust2samps[clusterID])
+        sampsIndexes = [samp2Index[samp] for samp in sampsIDs]
 
         # np.array 2D dim = (NbExons * [loc[float], scale[float], filterStatus[int]])
         clusterMetrics = exMetrics[clusterID]
@@ -96,15 +93,18 @@ def counts2likelihoods(clusterID, samp2Index, exonsFPM, clust2samps, exp_loc, ex
                 continue
             gauss_loc = clusterMetrics[exonIndex, 0]
             gauss_scale = clusterMetrics[exonIndex, 1]
-            # Get the distribution parameters for this exon
+            
             distribution_functions = getDistributionObjects(exp_loc, exp_scale, gauss_loc, gauss_scale)
 
             for ci in range(numCNs):
-                pdf_function = distribution_functions[ci]
+                pdf_function, loc, scale, shape = distribution_functions[ci]
                 exFPM = exonsFPM[exonIndex, sampsIndexes]
                 # np.ndarray 1D float: set of pdfs for all samples
                 # scipy execution speed up
-                res = pdf_function(exFPM)
+                if shape is not None:
+                    res = pdf_function(exFPM, loc=loc, scale=scale, a=shape)
+                else:
+                    res = pdf_function(exFPM, loc=loc, scale=scale)
 
                 for si in range(len(sampsIndexes)):
                     likelihoods[sampsIDs[si]][exonIndex, ci] = res[si]
@@ -132,7 +132,7 @@ def counts2likelihoods(clusterID, samp2Index, exonsFPM, clust2samps, exp_loc, ex
 # - gauss_loc [float]: Mean parameter for the Gaussian distribution (CN2).
 # - gauss_scale [float]: Standard deviation parameter for the Gaussian distribution (CN2).
 # Returns:
-# - CN_params(list): contains distribution objects from Scipy representing
+# - CN_params(list of list): contains distribution objects from Scipy representing
 #                     different copy number types (CN0, CN1, CN2, CN3+).
 #                     Parameters vary based on distribution type.
 def getDistributionObjects(exp_loc, exp_scale, gauss_loc, gauss_scale):
@@ -157,9 +157,9 @@ def getDistributionObjects(exp_loc, exp_scale, gauss_loc, gauss_scale):
     gauss_logLocAdd1 = np.log10(gauss_locAddScale + 1)
 
     CN_params = [
-        lambda x: scipy.stats.expon.pdf(x, loc=exp_loc, scale=exp_scale),  # CN0
-        lambda x: scipy.stats.norm.pdf(x, loc=gaussShiftLoc, scale=gauss_scale),  # CN1
-        lambda x: scipy.stats.norm.pdf(x, loc=gauss_loc, scale=gauss_scale),  # CN2
-        lambda x: scipy.stats.gamma.pdf(x, a=gamma_shape, loc=gauss_locAddScale, scale=gauss_logLocAdd1),  # CN3+
-    ]
+        (scipy.stats.expon.pdf, exp_loc, exp_scale, None),  # CN0
+        (scipy.stats.norm.pdf, gaussShiftLoc, gauss_scale, None),  # CN1
+        (scipy.stats.norm.pdf, gauss_loc, gauss_scale, None),  # CN2
+        (scipy.stats.gamma.pdf, gauss_locAddScale, gauss_logLocAdd1, gamma_shape),  # CN3+
+        ]
     return CN_params
