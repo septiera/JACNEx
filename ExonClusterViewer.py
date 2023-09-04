@@ -24,6 +24,7 @@ import clusterSamps.clustFile
 import clusterSamps.genderPrediction
 import exonCalls.exonCallsFile
 import exonCalls.exonProcessing
+import CNVCalls.likelihoods
 import figures.plots
 
 # prevent matplotlib flooding the logs when we are in DEBUG loglevel
@@ -217,36 +218,34 @@ def get_distribution_parameters():
 def parsePlotExon(sampleName, exonIndex, exonOnSexChr, samp2clusts, clust2samps, samples,
                   fitWith, exonsFPM, exParams, paramsTitles, exons, exp_loc, exp_scale,
                   matplotOpenFile):
-    gammaA = 2
 
     # Get cluster ID based on exon's location
     if exonOnSexChr[exonIndex] == 0:
         clusterID = samp2clusts[sampleName][0]
     else:
-        clusterID = samp2clusts[sampleName][1]  # aneuploidy case not included
-
-    clusterIndex = list(clust2samps.keys()).index(clusterID)
+        clusterID = samp2clusts[sampleName][1]
 
     # Get sample indexes for target and control clusters
     try:
-        (targetSampIndexes, ctrlSampIndexes) = exonCalls.exonProcessing.getSampIndex(clusterID, clust2samps,
-                                                                                     samples, fitWith)
+        # Get sample indexes for the current cluster
+        sampsInd = exonCalls.exonProcessing.getSampIndexes(clusterID, clust2samps, samples, fitWith)
     except Exception as e:
         logger.error("getClusterSamps failed for cluster %i : %s", clusterID, repr(e))
         raise
 
     # Extract FPM values for relevant samples
-    exonFPM = exonsFPM[exonIndex, (targetSampIndexes + ctrlSampIndexes)]
+    exonFPM = exonsFPM[exonIndex, sampsInd]
     sampFPM = exonsFPM[exonIndex, samples.index(sampleName)]
-    exonFilterState = exParams[exonIndex, clusterIndex * len(paramsTitles) + paramsTitles.index("filterStatus")]
-
+    
+    exonFilterState = exParams[clusterID][exonIndex, paramsTitles.index("filterStates")]
+    logger.info(exonFilterState)
     ##### init graphic parameters
     # definition of a range of values that is sufficiently narrow to have
     # a clean representation of the adjusted distributions.
-    xi = np.linspace(0, np.max(exonFPM), len(targetSampIndexes + ctrlSampIndexes) * 3)
+    xi = np.linspace(0, np.max(exonFPM), len(sampsInd) * 3)
 
     exonInfo = '_'.join(map(str, exons[exonIndex]))
-    plotTitle = f"Cluster:{clusterID}, NbSamps:{len(targetSampIndexes) + len(ctrlSampIndexes)}, exonInd:{exonIndex}\nexonInfos:{exonInfo}, filteringState:{exonFilterState}"
+    plotTitle = f"Cluster:{clusterID}, NbSamps:{len(sampsInd)}, exonInd:{exonIndex}\nexonInfos:{exonInfo}, filteringState:{exonFilterState}"
 
     yLists = [scipy.stats.expon.pdf(xi, exp_loc, exp_scale)]
     plotLegs = [f"CN0 exponential [loc={exp_loc:.2f}, scale={exp_scale:.2f}]"]
@@ -255,8 +254,8 @@ def parsePlotExon(sampleName, exonIndex, exonOnSexChr, samp2clusts, clust2samps,
     ylim = np.max(yLists[0]) / 10
 
     # get gauss_loc and gauss_scale from exParams
-    gaussLoc = exParams[exonIndex, clusterIndex * len(paramsTitles) + paramsTitles.index("loc")]
-    gaussScale = exParams[exonIndex, clusterIndex * len(paramsTitles) + paramsTitles.index("scale")]
+    gaussLoc = exParams[clusterID][exonIndex, paramsTitles.index("loc")]
+    gaussScale = exParams[clusterID][exonIndex, paramsTitles.index("scale")]
 
     # if all the distributions can be represented,
     # otherwise a simple histogram and the fit of the exponential will be plotted.
@@ -266,17 +265,24 @@ def parsePlotExon(sampleName, exonIndex, exonOnSexChr, samp2clusts, clust2samps,
         exponLikelihood = scipy.stats.expon.pdf(sampFPM, exp_loc, exp_scale)
         plotTitle += f"{exponLikelihood:.3e}"
 
-        for param, distLabel in get_distribution_parameters():
-            # Calculate and append likelihood values for different distributions
-            if distLabel.startswith("CN3"):
-                PDFRanges = scipy.stats.gamma.pdf(xi, a=gammaA, loc=gaussLoc * param, scale=gaussScale)
-                sampLikelihood = scipy.stats.gamma.pdf(sampFPM, a=gammaA, loc=gaussLoc * param, scale=gaussScale)
+        distribution_functions = CNVCalls.likelihoods.getDistributionObjects(exp_loc, exp_scale, gaussLoc, gaussScale)
+                
+        for ci in range(len(distribution_functions)):
+            pdf_function, loc, scale, shape = distribution_functions[ci]
+            # np.ndarray 1D float: set of pdfs for all samples
+            # scipy execution speed up
+            if shape is not None:
+                # Si shape est défini (non None), utilisez-le dans l'appel de la fonction PDF
+                PDFRanges = pdf_function(xi, loc=loc, scale=scale, a=shape)
+                sampLikelihood = pdf_function(sampFPM, loc=loc, scale=scale, a=shape)
+                plotLegs.append(f"CN{ci} [loc={loc:.2f}, scale={scale:.2f}, shape={shape:.2f}]")
             else:
-                PDFRanges = scipy.stats.norm.pdf(xi, loc=gaussLoc * param, scale=gaussScale)
-                sampLikelihood = scipy.stats.norm.pdf(sampFPM, loc=gaussLoc * param, scale=gaussScale)
+                # Si shape est None, n'incluez pas l'argument a dans l'appel de la fonction PDF
+                PDFRanges = pdf_function(xi, loc=loc, scale=scale)
+                sampLikelihood = pdf_function(sampFPM, loc=loc, scale=scale)
+                plotLegs.append(f"CN{ci} [loc={loc:.2f}, scale={scale:.2f}]")
 
             yLists.append(PDFRanges)
-            plotLegs.append(f"{distLabel} [loc={gaussLoc * param:.2f}, scale={gaussScale:.2f}]")
             plotTitle += f", {sampLikelihood:.3e}"
 
         ylim = 2 * np.max(yLists[2])
@@ -328,7 +334,7 @@ def main(argv):
     ####################
     # parse params clusters (parameters of continuous distributions fitted on CN0, CN2 coverage profil)
     try:
-        (exParams, exp_loc, exp_scale, paramsTitles) = exonCalls.exonCallsFile.parseExonParamsFile(paramsFile, len(exons), len(clust2samps))
+        (exParams, exp_loc, exp_scale, paramsTitles) = exonCalls.exonCallsFile.parseExonParamsFile(paramsFile)
     except Exception as e:
         raise Exception("parseParamsFile failed for %s : %s", paramsFile, repr(e))
 
