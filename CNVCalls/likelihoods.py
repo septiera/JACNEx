@@ -65,18 +65,23 @@ def allocateLikelihoodsArray(numSamps, numExons, numCN):
 # - exMetrics (dict): keys == clusterIDs, values == np.ndarray [floats]
 #                     Dim = nbOfExons * ["loc", "scale", "filterStatus"].
 # - numCNs [int]: 4 copy number status: ["CN0", "CN1", "CN2", "CN3"]
-# - chromType [str]: type of chromosome where exons are analysed :"A" for autosomes,
-#                    "G" for gonosomes.
 #
 # Returns a tupple (clusterID, likelihoodArray):
 # - clusterID [str]
-# - likelihoodsArray (np.ndarray[floats]): precomputed likelihoods for each sample and copy number type.
-#                                         dim = nbOfRelevantRows * nbOfRelevantCols
-# - chromType [str]
+# - likelihoodsArray (dict): keys == sampleID, values == np.ndarray(nbExons * nbCNStates)
+# - chromType [str]: type of chromosome where exons are analysed :"A" for autosomes,
+#                    "G" for gonosomes.
 def counts2likelihoods(clusterID, samp2Index, exonsFPM, clust2samps, exp_loc, exp_scale,
-                       exMetrics, numCNs, chromType):
+                       exMetrics, numCNs):
     try:
         logger.debug("process cluster %s", clusterID)
+
+        ### chromType attribution
+        if clusterID.startswith("A"):
+            chromType = "A"
+        else:
+            chromType = "G"
+
         # IDs and indexes (in "samples" and "counts" columns) of samples from current cluster
         sampsIDs = list(clust2samps[clusterID])
         sampsIndexes = [samp2Index[samp] for samp in sampsIDs]
@@ -86,14 +91,14 @@ def counts2likelihoods(clusterID, samp2Index, exonsFPM, clust2samps, exp_loc, ex
 
         likelihoods = {}
         for samp in sampsIDs:
-            likelihoods[samp] = np.full((exonsFPM.shape[0], numCNs), -1, dtype=np.float32, order='C')
+            likelihoods[samp] = np.full((exonsFPM.shape[0], numCNs), -1, dtype=np.float128, order='C')
 
         for exonIndex in range(len(clusterMetrics)):
             if clusterMetrics[exonIndex, 2] != 4:
                 continue
             gauss_loc = clusterMetrics[exonIndex, 0]
             gauss_scale = clusterMetrics[exonIndex, 1]
-            
+
             distribution_functions = getDistributionObjects(exp_loc, exp_scale, gauss_loc, gauss_scale)
 
             for ci in range(numCNs):
@@ -113,7 +118,7 @@ def counts2likelihoods(clusterID, samp2Index, exonsFPM, clust2samps, exp_loc, ex
 
     except Exception as e:
         logger.error("Likelihoods failed for cluster %s - %s", clusterID, repr(e))
-        raise Exception(str(clusterID))
+        raise Exception(clusterID)
 
 
 ###############################################################################
@@ -134,7 +139,7 @@ def counts2likelihoods(clusterID, samp2Index, exonsFPM, clust2samps, exp_loc, ex
 # Returns:
 # - CN_params(list of list): contains distribution objects from Scipy representing
 #                     different copy number types (CN0, CN1, CN2, CN3+).
-#                     Parameters vary based on distribution type.
+#                     Parameters vary based on distribution type (ordering: loc, scale, shape).
 def getDistributionObjects(exp_loc, exp_scale, gauss_loc, gauss_scale):
 
     # shifting Gaussian mean for CN1
@@ -156,10 +161,8 @@ def getDistributionObjects(exp_loc, exp_scale, gauss_loc, gauss_scale):
     # Calculate the logarithm of gauss_loc_plus_scale + 1 once
     gauss_logLocAdd1 = np.log10(gauss_locAddScale + 1)
 
-    CN_params = [
-        (scipy.stats.expon.pdf, exp_loc, exp_scale, None),  # CN0
-        (scipy.stats.norm.pdf, gaussShiftLoc, gauss_scale, None),  # CN1
-        (scipy.stats.norm.pdf, gauss_loc, gauss_scale, None),  # CN2
-        (scipy.stats.gamma.pdf, gauss_locAddScale, gauss_logLocAdd1, gamma_shape),  # CN3+
-        ]
+    CN_params = [(scipy.stats.expon.pdf, exp_loc, exp_scale, None),  # CN0
+                 (scipy.stats.norm.pdf, gaussShiftLoc, gauss_scale, None),  # CN1
+                 (scipy.stats.norm.pdf, gauss_loc, gauss_scale, None),  # CN2
+                 (scipy.stats.gamma.pdf, gauss_locAddScale, gauss_logLocAdd1, gamma_shape)]  # CN3+
     return CN_params

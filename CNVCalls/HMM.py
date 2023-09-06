@@ -91,12 +91,12 @@ def viterbi(CNCallOneSamp, transMatrix, sampleName, chrID):
                                 transMatrix[prevState, currentState] *
                                 CNCallOneSamp[currentState - 1, exIndexCalled[exonIndex]])
                         # currentState - 1 because CNCallOneSamp doesn't have values for void state
-                        # if exonIndex >= 114751:
+                        # if exonIndex >= 5615:
                         #     logger.error("exonID %i,currentState= %i, prob = %f, prevState = %i, probsPrev= %f, trans= %f, emi= %f",
                         #                  exonIndex, currentState, prob,
                         #                  prevState, probsPrev[prevState], transMatrix[prevState, currentState],
                         #                  CNCallOneSamp[currentState - 1, exIndexCalled[exonIndex]])
-                        #     logger.error("XXX %i",exIndexCalled[exonIndex])
+                        #     logger.error("XXX %i", exIndexCalled[exonIndex])
 
                         # Find the previous state with the maximum probability
                         # Store the index of the previous state with the maximum probability in the "path" matrix
@@ -121,7 +121,7 @@ def viterbi(CNCallOneSamp, transMatrix, sampleName, chrID):
                     CNVs.extend(tmpList)
                     # logger.info("successfully backtrack from %i exInd", exonIndex - 1)
                 except Exception as e:
-                    logger.error("sample %s, %s, exon %i, exon -1 %i", sampleName, chrID,  exIndexCalled[exonIndex], exIndexCalled[exonIndex - 1])
+                    logger.error("sample %s, %s, exon %i, exon -1 %i", sampleName, chrID, exIndexCalled[exonIndex], exIndexCalled[exonIndex - 1])
                     logger.error("%f, %f, %f, %f, %f", probsCurrent[0], probsCurrent[1],
                                  probsCurrent[2], probsCurrent[3], probsCurrent[4])
                     return (sampleName, CNVs)

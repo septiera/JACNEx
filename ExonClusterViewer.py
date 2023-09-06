@@ -236,7 +236,7 @@ def parsePlotExon(sampleName, exonIndex, exonOnSexChr, samp2clusts, clust2samps,
     # Extract FPM values for relevant samples
     exonFPM = exonsFPM[exonIndex, sampsInd]
     sampFPM = exonsFPM[exonIndex, samples.index(sampleName)]
-    
+
     exonFilterState = exParams[clusterID][exonIndex, paramsTitles.index("filterStates")]
     logger.info(exonFilterState)
     ##### init graphic parameters
@@ -247,11 +247,10 @@ def parsePlotExon(sampleName, exonIndex, exonOnSexChr, samp2clusts, clust2samps,
     exonInfo = '_'.join(map(str, exons[exonIndex]))
     plotTitle = f"Cluster:{clusterID}, NbSamps:{len(sampsInd)}, exonInd:{exonIndex}\nexonInfos:{exonInfo}, filteringState:{exonFilterState}"
 
-    yLists = [scipy.stats.expon.pdf(xi, exp_loc, exp_scale)]
-    plotLegs = [f"CN0 exponential [loc={exp_loc:.2f}, scale={exp_scale:.2f}]"]
+    yLists = []
+    plotLegs = []
     verticalLines = [sampFPM]
     vertLinesLegs = f"{sampleName} FPM={sampFPM:.3f}"
-    ylim = np.max(yLists[0]) / 10
 
     # get gauss_loc and gauss_scale from exParams
     gaussLoc = exParams[clusterID][exonIndex, paramsTitles.index("loc")]
@@ -262,11 +261,9 @@ def parsePlotExon(sampleName, exonIndex, exonOnSexChr, samp2clusts, clust2samps,
     if exonFilterState > 1:
         # Update plot title with likelihood information
         plotTitle += f"\n{sampleName} likelihoods:\n"
-        exponLikelihood = scipy.stats.expon.pdf(sampFPM, exp_loc, exp_scale)
-        plotTitle += f"{exponLikelihood:.3e}"
 
         distribution_functions = CNVCalls.likelihoods.getDistributionObjects(exp_loc, exp_scale, gaussLoc, gaussScale)
-                
+
         for ci in range(len(distribution_functions)):
             pdf_function, loc, scale, shape = distribution_functions[ci]
             # np.ndarray 1D float: set of pdfs for all samples
@@ -283,10 +280,13 @@ def parsePlotExon(sampleName, exonIndex, exonOnSexChr, samp2clusts, clust2samps,
                 plotLegs.append(f"CN{ci} [loc={loc:.2f}, scale={scale:.2f}]")
 
             yLists.append(PDFRanges)
-            plotTitle += f", {sampLikelihood:.3e}"
+            plotTitle += f"CN{ci}:{sampLikelihood:.3e} "
 
         ylim = 2 * np.max(yLists[2])
-
+    else:
+        logger.info("the exon analysed is not covered, so no call")
+        return
+        
     figures.plots.plotExonProfile(exonFPM, xi, yLists, plotLegs, verticalLines, vertLinesLegs, plotTitle, ylim, matplotOpenFile)
 
 

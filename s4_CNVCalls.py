@@ -12,7 +12,7 @@ import math
 import time
 import logging
 import numpy as np
-from concurrent.futures import ProcessPoolExecutor
+import concurrent.futures
 
 ####### JACNEx modules
 import countFrags.countsFile
@@ -298,9 +298,9 @@ def main(argv):
         samp2Index[samples[si]] = si
 
     # This step is parallelized across clusters,
-    paraClusters = min(math.ceil(jobs), len(clust2samps))
+    paraClusters = min(math.ceil(jobs)//3, len(clust2samps))
     logger.info("%i new clusters => will process %i in parallel", len(clust2samps), paraClusters)
-
+    
     ##
     # mergeEmission:
     # arg: a Future object returned by ProcessPoolExecutor.submit(CNVCalls.likelihoods.counts2Likelihoods).
@@ -311,9 +311,11 @@ def main(argv):
     def mergeEmission(futurecounts2emission):
         e = futurecounts2emission.exception()
         if e is not None:
-            logger.warning("Failed counts2likelihoods for cluster %s, skipping it", e)
+            clusterID = str(e)
+            logger.warning("Failed counts2likelihoods for cluster %s, skipping it", clusterID)
         else:
             counts2emissionRes = futurecounts2emission.result()
+            clusterID = counts2emissionRes[0]
             chromType = counts2emissionRes[2]
 
             if chromType == "A":
@@ -321,28 +323,21 @@ def main(argv):
             elif chromType == "G":
                 likelihoods_G.update(counts2emissionRes[1])
             else:
+                logger.error("chromType %s not implemented in mergeEmission", chromType)
                 raise
 
-            logger.debug("Likelihoods calculated for cluster %s", counts2emissionRes[0])
+            logger.debug("Likelihoods calculated for cluster %s", clusterID)
 
     # To be parallelised => browse clusters
-    with ProcessPoolExecutor(paraClusters) as pool:
+    with concurrent.futures.ProcessPoolExecutor(paraClusters) as pool:
         for clusterID in clust2samps.keys():
             #### validity sanity check
             if not clustIsValid[clusterID]:
                 logger.warning("Cluster %s is invalid, low sample number %i", clusterID, len(clust2samps[clusterID]))
                 continue
 
-            ### chromType attribution
-            if clusterID.startswith("A"):
-                chromType = "A"
-            elif clusterID.startswith("G"):
-                chromType = "G"
-            else:
-                raise
-
             futureRes = pool.submit(CNVCalls.likelihoods.counts2likelihoods, clusterID, samp2Index, exonsFPM,
-                                    clust2samps, exp_loc, exp_scale, exMetrics, len(CNStates), chromType)
+                                    clust2samps, exp_loc, exp_scale, exMetrics, len(CNStates))
             futureRes.add_done_callback(mergeEmission)
 
     thisTime = time.time()
@@ -376,7 +371,7 @@ def main(argv):
     CNVs = []
 
     # this step is parallelized across samples.
-    paraSample = min(math.ceil(jobs), len(samples))
+    paraSample = min(math.ceil(jobs)//3, len(samples))
     logger.info("%i samples => will process %i in parallel", len(samples), paraSample)
 
     ##
@@ -397,8 +392,8 @@ def main(argv):
             CNVs.extend(viterbiRes[1])
 
     # To be parallelised => browse samples
-    with ProcessPoolExecutor(paraSample) as pool:
-        for sampID in likelihoods_A.keys():
+    with concurrent.futures.ProcessPoolExecutor(paraSample) as pool:
+        for sampID in samples:
 
             for chrID in chr2Exons.keys():
                 startChrExIndex = chr2Exons[chrID][0]
@@ -437,8 +432,8 @@ def main(argv):
         cn_type, _, _, sample_name = item
         if sample_name not in count_dict:
             # Initialize the counter for sampleName
-            count_dict[sample_name] = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0}  
-        count_dict[sample_name][cn_type] += 1 
+            count_dict[sample_name] = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0}
+        count_dict[sample_name][cn_type] += 1
 
     # Log the dictionary using logger.debug()
     for sample_name, counts in count_dict.items():
