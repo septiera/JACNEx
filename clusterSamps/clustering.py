@@ -1,9 +1,10 @@
 import logging
 import os
 
+import numpy as np
+
 # modules for hierachical clustering
 import scipy.cluster.hierarchy
-import scipy.spatial.distance
 # module for PCA
 import sklearn.decomposition
 
@@ -48,10 +49,30 @@ logger = logging.getLogger(__name__)
 #   [c1, c2, dist(c1,c2), size(c1) + size(c2)]
 def buildClusters(FPMarray, chromType, samples, startDist, maxDist, minSamps, plotFile):
     # reduce dimensionality with PCA
-    # we don't really want the smallest possible number of dimensions, try
-    # smallish dims (must be < nbExons and < nbSamples)
-    dim = min(10, FPMarray.shape[0], FPMarray.shape[1])
-    samplesInPCAspace = sklearn.decomposition.PCA(n_components=dim).fit_transform(FPMarray.T)
+    # choosing the optimal number of dimensions is difficult, but should't matter
+    # much as long as we're in the right ballpark -> our heuristic:
+    # only keep dimensions that explain > minExplainedVar variance ratio
+    minExplainedVar = 0.015
+
+    # we want at most maxDims dimensions (should be more than enough for any dataset)
+    maxDims = 20
+    maxDims = min(maxDims, FPMarray.shape[0] - 1, FPMarray.shape[1] - 1)
+    pca = sklearn.decomposition.PCA(n_components=maxDims, svd_solver='full').fit(FPMarray.T)
+    logMess = "in buildClusters while choosing the PCA dimension, explained variance ratio:"
+    logger.info(logMess)
+    logMess = np.array_str(pca.explained_variance_ratio_, max_line_width=200, precision=4)
+    logger.info(logMess)
+
+    dim = 0
+    while (pca.explained_variance_ratio_[dim] > minExplainedVar):
+        dim += 1
+    if dim == 0:
+        logger.warning("in buildClusters: no informative PCA dimensions, very unusual... arbitrarily setting dim=10")
+        dim = 10
+    logMess = "in buildClusters, chosen number of PCA dimensions = " + str(dim)
+    logger.info(logMess)
+    # now fit again with only dim dimensions, and project samples
+    samplesInPCAspace = sklearn.decomposition.PCA(n_components=dim, svd_solver='full').fit_transform(FPMarray.T)
 
     # hierarchical clustering of the samples projected in the PCA space:
     # - use 'average' method to define the distance between clusters (== UPGMA),

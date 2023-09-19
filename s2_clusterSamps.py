@@ -219,7 +219,7 @@ def main(argv):
 
     # autosomes
     try:
-        startDist = 500
+        startDist = 600
         maxDist = 1000
         plotFile = os.path.join(plotDir, "clusters_autosomes_")
         plotFile += str(startDist) + "_" + str(maxDist) + ".pdf"
@@ -236,7 +236,7 @@ def main(argv):
     # sex chromosomes
     try:
         startDist = 100
-        maxDist = 200
+        maxDist = 300
         plotFile = os.path.join(plotDir, "clusters_gonosomes_")
         plotFile += str(startDist) + "_" + str(maxDist) + ".pdf"
         (clust2sampsSex, fitWithSex, clustIsValidSex, linkageMatrixSex) = clusterSamps.clustering.buildClusters(
