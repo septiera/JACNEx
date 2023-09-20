@@ -69,18 +69,19 @@ def plotDensities(title, dataRanges, densities, legends, line1, line2, line1lege
 # visualize clustering results with a dendrogram
 # Args: see calling code in buildClusters()
 # Returns nothing
-def plotDendrogram(linkageMatrix, samples, clust2samps, fitWith, clustIsValid, startDist, title, plotFile):
+def plotDendrogram(linkageMatrix, samples, clust2samps, fitWith, clustIsValid, title, plotFile):
     ##################
     # most of the work here is defining the leaf labels, which appear below the dendrogram:
     # we want to label the "middle" sample (visually in the dendrogram) of each cluster with
     # the clusterID eg 'A_02', other samples don't get labeled;
     # furthermore: if the cluster needs friends for fitting it gets lowercased eg 'a_02', and if it
     # is invalid it is lowercased and parenthesized eg '(a_02)'
+    numSamples = len(samples)
     sampi2label = {}
     # produce a first virtual dendrogram to get the order of samples/leaves
     R = scipy.cluster.hierarchy.dendrogram(linkageMatrix, get_leaves=True, count_sort='descending', no_plot=True)
     pos2si = R['leaves']
-    # pos2si[pos] == si  <=> the leave at position pos (left-to-right, < len(samples)) is sample index si
+    # pos2si[pos] == si  <=> the leave at position pos (left-to-right, < numSamples) is sample index si
 
     # build samp2clust for efficiency: key==sampleID, value==clusterID
     samp2clust = {}
@@ -89,7 +90,7 @@ def plotDendrogram(linkageMatrix, samples, clust2samps, fitWith, clustIsValid, s
             samp2clust[samp] = clust
 
     nextPos = 0
-    while nextPos < len(samples):
+    while nextPos < numSamples:
         nextSample = samples[pos2si[nextPos]]
         nextClust = samp2clust[nextSample]
         # leaves from nextPos to nextPos+len(clust2samps[nextClust])-1 belong to cluster nextClust, label
@@ -109,11 +110,49 @@ def plotDendrogram(linkageMatrix, samples, clust2samps, fitWith, clustIsValid, s
         nextPos += len(clust2samps[nextClust])
 
     # finally we can define the leaf label function
-    def llf(sampi):
+    def leafLabelFunc(sampi):
         if sampi in sampi2label:
             return sampi2label[sampi]
         else:
             return('')
+
+    ##################
+    # we also want to define the link colors: one color for each clusterID
+    # for each non-singleton node i (== row index in linkageMatrix), populate node2clust:
+    # node2clust[i] == the clusterID that node i belongs to (if it belongs to a cluster, stays False otherwise)
+    node2clust = [None] * linkageMatrix.shape[0]
+    for node in range(linkageMatrix.shape[0]):
+        (c1, c2, dist, size) = linkageMatrix[node]
+        c1 = int(c1)
+        c2 = int(c2)
+        if c1 < numSamples:
+            clust1 = samp2clust[samples[c1]]
+        else:
+            clust1 = node2clust[c1 - numSamples]
+        if c2 < numSamples:
+            clust2 = samp2clust[samples[c2]]
+        else:
+            clust2 = node2clust[c2 - numSamples]
+        if clust1 and (clust1 == clust2):
+            node2clust[node] = clust1
+    # pick a color for each cluster: key==clusterID, value==matplotlib color string code
+    clust2color = {}
+    allColors = list(matplotlib.colors.TABLEAU_COLORS.keys())
+    coli = 0
+    for clust in clust2samps.keys():
+        clust2color[clust] = allColors[coli]
+        coli += 1
+        if coli >= len(allColors):
+            coli = 0
+
+    # finally we can define the node/link color function
+    def linkColorFunc(node):
+        node -= numSamples
+        if node2clust[node]:
+            return(clust2color[node2clust[node]])
+        else:
+            # node isn't in any cluster, default to black
+            return('k')
 
     ##################
     # make the plot
@@ -123,9 +162,9 @@ def plotDendrogram(linkageMatrix, samples, clust2samps, fitWith, clustIsValid, s
     fig = matplotlib.pyplot.figure(figsize=(25, 10))
     matplotlib.pyplot.title(title)
     scipy.cluster.hierarchy.dendrogram(linkageMatrix,
-                                       color_threshold=startDist,
                                        leaf_rotation=30,
-                                       leaf_label_func=llf,
+                                       leaf_label_func=leafLabelFunc,
+                                       link_color_func=linkColorFunc,
                                        count_sort='descending')
 
     matplotlib.pyplot.ylabel("Distance")

@@ -59,9 +59,9 @@ def buildClusters(FPMarray, chromType, samples, startDist, maxDist, minSamps, pl
     maxDims = min(maxDims, FPMarray.shape[0] - 1, FPMarray.shape[1] - 1)
     pca = sklearn.decomposition.PCA(n_components=maxDims, svd_solver='full').fit(FPMarray.T)
     logMess = "in buildClusters while choosing the PCA dimension, explained variance ratio:"
-    logger.info(logMess)
+    logger.debug(logMess)
     logMess = np.array_str(pca.explained_variance_ratio_, max_line_width=200, precision=4)
-    logger.info(logMess)
+    logger.debug(logMess)
 
     dim = 0
     while (pca.explained_variance_ratio_[dim] > minExplainedVar):
@@ -99,7 +99,7 @@ def buildClusters(FPMarray, chromType, samples, startDist, maxDist, minSamps, pl
     elif (plotFile != ""):
         title = "chromType=" + chromType + "  dim=" + str(dim) + "  maxDist=" + str(maxDist)
         figures.plots.plotDendrogram(linkageMatrix, samples, clust2samps, fitWith, clustIsValid,
-                                     startDist, title, plotFile)
+                                     title, plotFile)
 
     return(clust2samps, fitWith, clustIsValid, linkageMatrix)
 
