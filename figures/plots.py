@@ -66,33 +66,47 @@ def plotDensities(title, dataRanges, densities, legends, line1, line2, line1lege
 
 
 #############################
-# visualize clustering results with a dendrogram
+# visualize clustering results with a dendrogram.
+# Most of the work is defining the leaf labels, which appear below the dendrogram,
+# and the link colors, which should represent the constructed clusters.
 # Args: see calling code in buildClusters()
-# Returns nothing
+# Produces plotFile (pdf format), returns nothing
 def plotDendrogram(linkageMatrix, samples, clust2samps, fitWith, clustIsValid, title, plotFile):
-    ##################
-    # most of the work here is defining the leaf labels, which appear below the dendrogram:
-    # we want to label the "middle" sample (visually in the dendrogram) of each cluster with
-    # the clusterID eg 'A_02', other samples don't get labeled;
-    # furthermore: if the cluster needs friends for fitting it gets lowercased eg 'a_02', and if it
-    # is invalid it is lowercased and parenthesized eg '(a_02)'
     numSamples = len(samples)
-    sampi2label = {}
-    # produce a first virtual dendrogram to get the order of samples/leaves
-    R = scipy.cluster.hierarchy.dendrogram(linkageMatrix, get_leaves=True, count_sort='descending', no_plot=True)
-    pos2si = R['leaves']
-    # pos2si[pos] == si  <=> the leave at position pos (left-to-right, < numSamples) is sample index si
-
     # build samp2clust for efficiency: key==sampleID, value==clusterID
     samp2clust = {}
     for clust in clust2samps.keys():
         for samp in clust2samps[clust]:
             samp2clust[samp] = clust
 
+    ##################
+    # leaf labels: we want to label the "middle" sample (visually in the dendrogram) of each
+    # cluster with the clusterID eg 'A_02', other samples don't get labeled;
+    # furthermore: if the cluster needs friends for fitting it gets lowercased eg 'a_02', and if it
+    # is invalid it is lowercased and parenthesized eg '(a_02)'
+    # key == sample index in samples (only defined for samples that get labeled), value == label
+    sampi2label = {}
+    # Also populate clust2color: key==clusterID, value == matplotlib color string code, we want to
+    # cycle over a palette in the visual dendrogram order
+    clust2color = {}
+    allColors = list(matplotlib.colors.TABLEAU_COLORS.keys())
+    # next color index (in allColors)
+    nextColi = 0
+
+    # produce a first virtual dendrogram to get the order of samples/leaves
+    R = scipy.cluster.hierarchy.dendrogram(linkageMatrix, get_leaves=True, count_sort='descending', no_plot=True)
+    pos2si = R['leaves']
+    # pos2si[pos] == si  <=> the leave at position pos (left-to-right, < numSamples) is sample index si
+
     nextPos = 0
     while nextPos < numSamples:
         nextSample = samples[pos2si[nextPos]]
         nextClust = samp2clust[nextSample]
+        # color for nextClust
+        clust2color[nextClust] = allColors[nextColi]
+        nextColi += 1
+        if nextColi == len(allColors):
+            nextColi = 0
         # leaves from nextPos to nextPos+len(clust2samps[nextClust])-1 belong to cluster nextClust, label
         # the leaf in the middle
         posToLabel = nextPos + (len(clust2samps[nextClust]) - 1) // 2
@@ -117,7 +131,7 @@ def plotDendrogram(linkageMatrix, samples, clust2samps, fitWith, clustIsValid, t
             return('')
 
     ##################
-    # we also want to define the link colors: one color for each clusterID
+    # link colors: one color for each clusterID
     # for each non-singleton node i (== row index in linkageMatrix), populate node2clust:
     # node2clust[i] == the clusterID that node i belongs to (if it belongs to a cluster, stays False otherwise)
     node2clust = [None] * linkageMatrix.shape[0]
@@ -133,17 +147,14 @@ def plotDendrogram(linkageMatrix, samples, clust2samps, fitWith, clustIsValid, t
             clust2 = samp2clust[samples[c2]]
         else:
             clust2 = node2clust[c2 - numSamples]
-        if clust1 and (clust1 == clust2):
-            node2clust[node] = clust1
-    # pick a color for each cluster: key==clusterID, value==matplotlib color string code
-    clust2color = {}
-    allColors = list(matplotlib.colors.TABLEAU_COLORS.keys())
-    coli = 0
-    for clust in clust2samps.keys():
-        clust2color[clust] = allColors[coli]
-        coli += 1
-        if coli >= len(allColors):
-            coli = 0
+        if clust1 and clust2:
+            if (clust1 == clust2):
+                node2clust[node] = clust1
+            elif (clust2 in fitWith[clust1]):
+                node2clust[node] = clust1
+            elif (clust1 in fitWith[clust2]):
+                node2clust[node] = clust2
+            # else node2clust remains None
 
     # finally we can define the node/link color function
     def linkColorFunc(node):
