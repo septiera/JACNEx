@@ -43,7 +43,7 @@ def getTransMatrix(likelihoods_A, likelihoods_G, exonOnSexChr, exonOnChr, priors
 
     # initialize arrays:
     # 2D array, each row represents a sample and each value is the count for a specific copy number type
-    sampCnCounts = np.zeros((nbSamps, nbStates), dtype=int)
+    sampCnCounts = np.zeros((nbSamps, nbStates * 2), dtype=int)
     sampToIncrement = 0
     # 2D array, expected format for a transition matrix [i; j]
     # contains all prediction counts of states, taking into account
@@ -82,9 +82,15 @@ def getTransMatrix(likelihoods_A, likelihoods_G, exonOnSexChr, exonOnChr, priors
                 currCN = maxCN[indexExon]
                 transitions[prevCN, currCN] += 1
                 prevCN = currCN
-                sampCnCounts[sampToIncrement, currCN] += 1
 
-        row_str = (sampID + ' ' + ' '.join(samp2clusts[sampID]) + ' ' + ' '.join("{:d}".format(num) for num in sampCnCounts[sampToIncrement, :]))
+                if chrID != "chrX" or chrID != "chrY":
+                    sampCnCounts[sampToIncrement, currCN] += 1
+                else:
+                    sampCnCounts[sampToIncrement, currCN + 4] += 1
+
+        row_str = (sampID + ' ' +
+                   ' '.join(samp2clusts[sampID]) + ' ' +
+                   ' '.join("{:d}".format(num) for num in sampCnCounts[sampToIncrement, :]))
         logger.debug(row_str)
         sampToIncrement += 1
 
