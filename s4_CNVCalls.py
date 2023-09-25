@@ -421,24 +421,24 @@ def main(argv):
     logger.debug("Done CNVs calls, in %.2fs", thisTime - startTime)
     startTime = thisTime
 
-    ##########
-    # DEBUG PART
-    # Create a dictionary to count CNtypes per sampleName
-    count_dict = {}
+    # ##########
+    # # DEBUG PART
+    # # Create a dictionary to count CNtypes per sampleName
+    # count_dict = {}
 
-    # Iterate through the data list
-    for item in CNVs:
-        # Destructure the elements of the list
-        cn_type, _, _, sample_name = item
-        if sample_name not in count_dict:
-            # Initialize the counter for sampleName
-            count_dict[sample_name] = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0}
-        count_dict[sample_name][cn_type] += 1
+    # # Iterate through the data list
+    # for item in CNVs:
+    #     # Destructure the elements of the list
+    #     cn_type, _, _, sample_name = item
+    #     if sample_name not in count_dict:
+    #         # Initialize the counter for sampleName
+    #         count_dict[sample_name] = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0}
+    #     count_dict[sample_name][cn_type] += 1
 
-    # Log the dictionary using logger.debug()
-    for sample_name, counts in count_dict.items():
-        # Format and log each row with keys and values aligned in columns
-        logger.debug("%s: %d, %d, %d, %d, %d", sample_name, counts[0], counts[1], counts[2], counts[3], counts[4])
+    # # Log the dictionary using logger.debug()
+    # for sample_name, counts in count_dict.items():
+    #     # Format and log each row with keys and values aligned in columns
+    #     logger.debug("%s: %d, %d, %d, %d, %d", sample_name, counts[0], counts[1], counts[2], counts[3], counts[4])
 
     ############
     # vcf format
