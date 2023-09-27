@@ -133,8 +133,21 @@ def plotDendrogram(linkageMatrix, samples, clust2samps, fitWith, clustIsValid, t
     ##################
     # link colors: one color for each clusterID
     # for each non-singleton node i (== row index in linkageMatrix), populate node2clust:
-    # node2clust[i] == the clusterID that node i belongs to (if it belongs to a cluster, stays False otherwise)
+    # node2clust[i] == the clusterID that node i belongs to if it belongs to a cluster,
+    # or "V:clusterID" if node i is a "virtual merger" of several (unmerged) clusters including
+    # clusterID (the choice of the clusterID to use is arbitrary and doesn't matter)
     node2clust = [None] * linkageMatrix.shape[0]
+
+    # set n2c[c] = clust for non-singleton nodei and all its non-singleton descendants
+    # whose pre-existing n2c value starts with 'V:'
+    def setVirtualsToClust(n2c, nodei, clust):
+        if n2c[nodei].startswith('V:'):
+            n2c[nodei] = clust
+            for ci in range(2):
+                child = int(linkageMatrix[nodei][ci])
+                if child >= numSamples:
+                    setVirtualsToClust(n2c, child - numSamples, clust)
+
     for node in range(linkageMatrix.shape[0]):
         (c1, c2, dist, size) = linkageMatrix[node]
         c1 = int(c1)
@@ -147,23 +160,46 @@ def plotDendrogram(linkageMatrix, samples, clust2samps, fitWith, clustIsValid, t
             clust2 = samp2clust[samples[c2]]
         else:
             clust2 = node2clust[c2 - numSamples]
-        if clust1 and clust2:
+
+        if clust1.startswith('V:') and clust2.startswith('V:'):
+            # both are virtual mergers, arbitrarily use the first
+            node2clust[node] = clust1
+        elif clust1.startswith('V:') or clust2.startswith('V:'):
+            # switch if needed so c1 is the virtual
+            if clust2.startswith('V:'):
+                ctmp = c2
+                c2 = c1
+                c1 = ctmp
+                ctmp = clust2
+                clust2 = clust1
+                clust1 = ctmp
+            virtClust = clust1.removeprefix('V:')
+            if virtClust in fitWith[clust2]:
+                # node and all its 'V:' descendants are "given" to clust2 (for coloring)
+                node2clust[node] = clust2
+                setVirtualsToClust(node2clust, c1 - numSamples, clust2)
+            else:
+                # define node as Virtual
+                node2clust[node] = clust1
+        else:
+            # c1 and c2 are both non-virtual
             if (clust1 == clust2):
                 node2clust[node] = clust1
             elif (clust2 in fitWith[clust1]):
                 node2clust[node] = clust1
             elif (clust1 in fitWith[clust2]):
                 node2clust[node] = clust2
-            # else node2clust remains None
+            else:
+                node2clust[node] = 'V:' + clust1
 
     # finally we can define the node/link color function
     def linkColorFunc(node):
         node -= numSamples
-        if node2clust[node]:
-            return(clust2color[node2clust[node]])
-        else:
-            # node isn't in any cluster, default to black
+        if node2clust[node].startswith('V:'):
+            # node doesn't belong to a non-virtual cluster, default to black
             return('k')
+        else:
+            return(clust2color[node2clust[node]])
 
     ##################
     # make the plot
