@@ -30,7 +30,6 @@ logger = logging.getLogger(__name__)
 # - chromType (string): one of 'A', 'G' indicating that FPMarray holds counts
 #   for exons on autosomes or gonosomes
 # - samples: list of sampleIDs, same order as the columns of FPMarray
-# - startDist: smallest distance at which we start trying to build clusters
 # - maxDist: max distance up to which we can build clusters / populate FIT_WITH
 # - minSamps: min number of samples (in a cluster + its FIT_WITH friends) to declare
 #   the cluster VALID
@@ -47,7 +46,7 @@ logger = logging.getLogger(__name__)
 #   encoding the hierarchical clustering as returned by scipy.cluster.hierarchy.linkage,
 #   ie each row corresponds to one merging step of 2 cluster (c1, c2) and holds
 #   [c1, c2, dist(c1,c2), size(c1) + size(c2)]
-def buildClusters(FPMarray, chromType, samples, startDist, maxDist, minSamps, plotFile):
+def buildClusters(FPMarray, chromType, samples, maxDist, minSamps, plotFile):
     # reduce dimensionality with PCA
     # choosing the optimal number of dimensions is difficult, but should't matter
     # much as long as we're in the right ballpark -> our heuristic:
@@ -85,7 +84,7 @@ def buildClusters(FPMarray, chromType, samples, startDist, maxDist, minSamps, pl
 
     # build clusters from the linkage matrix
     (clust2samps, fitWith, clustIsValid) = linkage2clusters(linkageMatrix, chromType, samples,
-                                                            startDist, maxDist, minSamps)
+                                                            maxDist, minSamps)
 
     # sort samples in clust2samps and clusters in fitWith (for cosmetics)
     for clust in clust2samps:
@@ -116,18 +115,17 @@ def buildClusters(FPMarray, chromType, samples, startDist, maxDist, minSamps, pl
 # - linkageMatrix: as returned by scipy.cluster.hierarchy.linkage
 # - chromType, samples: same args as buildClusters(), used for formatting/populating
 #   the returned data structures
-# - startDist, maxDist, minSamps: same args as buildClusters(), used for constructing
-#   the clusters
+# - maxDist, minSamps: same args as buildClusters(), used for constructing the clusters
 #
 # Returns (clust2samps, fitWith, clustIsValid) as specified in the header of buildClusters()
-def linkage2clusters(linkageMatrix, chromType, samples, startDist, maxDist, minSamps):
+def linkage2clusters(linkageMatrix, chromType, samples, maxDist, minSamps):
     numSamples = len(samples)
     ################
     # step 1:
     # - populate clustersTmp, a list of lists of ints:
     #   clustersTmp[i] is the list of sample indexes that belong to cluster i (at this step),
     #   this will be cleared at a later step if i is merged with another cluster
-    # NOTE I need to preallocate so I can use clustersTmp[i] = "toto"
+    # NOTE preallocate so we can use clustersTmp[i] = "toto"
     clustersTmp = [None] * (numSamples + linkageMatrix.shape[0])
     # - also populate fitWithTmp, a list of lists of ints, fitWithTmp[i] is the list
     #   of (self-sufficient) cluster indexes that can be used for fitting CN2 in cluster i
@@ -212,7 +210,7 @@ def linkage2clusters(linkageMatrix, chromType, samples, startDist, maxDist, minS
             break
 
     ################
-    # step 2:
+    # step 3:
     # populate the clustering data structures from the Tmp lists, with proper formatting
     clust2samps = {}
     fitWith = {}
@@ -224,7 +222,7 @@ def linkage2clusters(linkageMatrix, chromType, samples, startDist, maxDist, minS
     for thisClust in range(len(clustersTmp)):
         if clustersTmp[thisClust]:
             # left-pad with leading zeroes if less than 2 digits (for pretty-sorting, won't
-            # sort correctly if more than 100 clusters but it's just cosmetic
+            # sort correctly if more than 100 clusters but it's just cosmetic)
             clustID = chromType + '_' + f"{nextClustNb:02}"
             clustIndex2ID[thisClust] = clustID
             nextClustNb += 1

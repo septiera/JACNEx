@@ -219,12 +219,11 @@ def main(argv):
 
     # autosomes
     try:
-        startDist = 600
         maxDist = 1000
         plotFile = os.path.join(plotDir, "clusters_autosomes_")
-        plotFile += str(startDist) + "_" + str(maxDist) + ".pdf"
+        plotFile += str(maxDist) + ".pdf"
         (clust2samps, fitWith, clustIsValid, linkageMatrix) = clusterSamps.clustering.buildClusters(
-            autosomesFPM, "A", samples, startDist, maxDist, minSamps, plotFile)
+            autosomesFPM, "A", samples, maxDist, minSamps, plotFile)
     except Exception as e:
         logger.error("buildClusters failed for autosomes: %s", repr(e))
         raise Exception("buildClusters failed")
@@ -235,12 +234,11 @@ def main(argv):
 
     # sex chromosomes
     try:
-        startDist = 100
         maxDist = 300
         plotFile = os.path.join(plotDir, "clusters_gonosomes_")
-        plotFile += str(startDist) + "_" + str(maxDist) + ".pdf"
+        plotFile += str(maxDist) + ".pdf"
         (clust2sampsSex, fitWithSex, clustIsValidSex, linkageMatrixSex) = clusterSamps.clustering.buildClusters(
-            gonosomesFPM, "G", samples, startDist, maxDist, minSamps, plotFile)
+            gonosomesFPM, "G", samples, maxDist, minSamps, plotFile)
     except Exception as e:
         logger.error("buildClusters failed for gonosomes: %s", repr(e))
         raise Exception("buildClusters failed")
