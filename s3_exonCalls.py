@@ -54,16 +54,16 @@ def parseArgs(argv):
     jobs = round(0.8 * len(os.sched_getaffinity(0)))
 
     usage = "NAME:\n" + scriptName + """\n
-
 DESCRIPTION:
 Given two TSV files: one containing exon fragment counts and another with samples clusters.
 It filters out non-callable exons (with no coverage) and computes parameters for two distributions:
-an exponential distribution (loc=0, scale=lambda) for CN0 and a Gaussian distribution
+an exponential distribution (loc=0, scale= 1\lambda) for CN0 and a Gaussian distribution
 (loc=mean, scale=stdev) for CN2.
 The results are displayed in TSV format on the standard output (stdout).
-The first row represents the parameters of the exponential distribution, while the subsequent rows
-contain the exon definitions along with the corresponding 'loc' and 'scale' parameters for the
-Gaussian distribution.
+The first row (excluding the header) represents the parameters of the exponential distribution,
+while the subsequent rows contain exon definitions along with their corresponding 'loc' and
+'scale' parameters for the Gaussian distribution, as well as an exon filtering status for
+each analyzed cluster.
 In addition, all the graphics (exponential fit on count data and pie charts summarising the
 proportions of filtered and unfiltered exons) are printed in pdf files created in plotDir.
 
@@ -75,7 +75,7 @@ ARGUMENTS:
             File obtained from 2_clusterSamps.py.
     --out [str]: file where results will be saved, must not pre-exist, will be gzipped if it ends
             with '.gz', can have a path component but the subdir must exist
-    --plotDir[str]: sub-directory in which the graphical PDFs will be produced, default:  """ + plotDir + """
+    --plotDir [str]: sub-directory in which the graphical PDFs will be produced, default:  """ + plotDir + """
     --jobs [int] : cores that we can use, defaults to 80% of available cores ie """ + str(jobs) + "\n" + """
     -h , --help: display this help and exit\n"""
 
@@ -201,6 +201,12 @@ def main(argv):
     ####################
     # Exon Metrics Processing and Filtering
     ####################
+    # list[str] of output metric names:
+    # 'loc': the mean of the Gaussian distribution
+    # 'scale': the standard deviation of the Gaussian distribution
+    # 'filterStatus': filtering state indexes
+    metricsNames = ["loc", "scale", "filterStates"]
+
     # output dictionary: keys == clusterID and values == np.ndarray[float],
     # dim = NbOfExons * NbOfMetrics, contains the fitting results
     # of the Gaussian distribution and filters for all exons and clusters.
@@ -214,15 +220,8 @@ def main(argv):
     # represents exons that are not used for cluster parameter calculation.
     filterStates = ["notCaptured", "cannotFitRG", "RGClose2LowThreshold", "fewSampsInRG", "call"]
 
-    # list[str] of output metric names:
-    # 'loc': the mean of the Gaussian distribution
-    # 'scale': the standard deviation of the Gaussian distribution
-    # 'filterStatus': filtering state indexes
-    metricsNames = ["loc", "scale", "filterStates"]
-
     # selects cluster-specific exons on autosomes, chrXZ or chrYW.
     exonOnSexChr = clusterSamps.genderPrediction.exonOnSexChr(exons)
-
 
     # generates a PDF file containing pie charts summarizing the filters
     # applied to exons in each cluster.
