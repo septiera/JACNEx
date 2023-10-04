@@ -36,13 +36,10 @@ def allocateLikelihoodsArray(numSamps, numExons, numCN):
 # For each Fragment Per Million (FPM) of an exon within a sample:
 #   - CN0: Calculate the Probability Density Function (PDF) using parameters from an
 #   exponential distribution fitted to intergenic data (loc = 0, scale = 1 / lambda).
-#   These parameters remain constant for all samples in the cohort.
 #   - CN2: Compute the PDF based on parameters from a robustly fitted Gaussian
 #   distribution, capturing the dominant coverage signal(loc = mean, scale = stdev).
-#   These parameters are consistent across all samples in a cluster.
 #   - CN1: use the parameters from CN2 while shifting the mean (loc) by
-#   a factor of 0.5.
-#   This establishes the PDF for CN1, with the same parameters for all samples in a cluster.
+#   a factor of 0.5..
 #   - CN3+: Addressing scenarios where copy numbers exceed 2, parameters from
 #   the CN2 Gaussian distribution are leveraged to empirically establish the parameters for
 #   a distribution with a heavy tail.
@@ -66,11 +63,12 @@ def allocateLikelihoodsArray(numSamps, numExons, numCN):
 #                     Dim = nbOfExons * ["loc", "scale", "filterStatus"].
 # - numCNs [int]: 4 copy number status: ["CN0", "CN1", "CN2", "CN3"]
 #
-# Returns a tupple (clusterID, likelihoodArray):
+# Returns a tupple (clusterID, likelihoodArray, chromType):
 # - clusterID [str]
-# - likelihoodsArray (dict): keys == sampleID, values == np.ndarray(nbExons * nbCNStates)
 # - chromType [str]: type of chromosome where exons are analysed :"A" for autosomes,
 #                    "G" for gonosomes.
+# - likelihoodClustDict : keys == sampleID, values == np.ndarray(nbExons * nbCNStates)
+
 def counts2likelihoods(clusterID, samp2Index, exonsFPM, clust2samps, exp_loc, exp_scale,
                        exMetrics, numCNs):
     try:
@@ -89,9 +87,9 @@ def counts2likelihoods(clusterID, samp2Index, exonsFPM, clust2samps, exp_loc, ex
         # np.array 2D dim = (NbExons * [loc[float], scale[float], filterStatus[int]])
         clusterMetrics = exMetrics[clusterID]
 
-        likelihoods = {}
+        likelihoodClustDict = {}
         for samp in sampsIDs:
-            likelihoods[samp] = np.full((exonsFPM.shape[0], numCNs), -1, dtype=np.float128, order='C')
+            likelihoodClustDict[samp] = np.full((exonsFPM.shape[0], numCNs), -1, dtype=np.float128, order='C')
 
         for exonIndex in range(len(clusterMetrics)):
             if clusterMetrics[exonIndex, 2] != 4:
@@ -112,9 +110,9 @@ def counts2likelihoods(clusterID, samp2Index, exonsFPM, clust2samps, exp_loc, ex
                     res = pdf_function(exFPM, loc=loc, scale=scale)
 
                 for si in range(len(sampsIndexes)):
-                    likelihoods[sampsIDs[si]][exonIndex, ci] = res[si]
+                    likelihoodClustDict[sampsIDs[si]][exonIndex, ci] = res[si]
 
-        return (clusterID, likelihoods, chromType)
+        return (clusterID, chromType, likelihoodClustDict)
 
     except Exception as e:
         logger.error("Likelihoods failed for cluster %s - %s", clusterID, repr(e))
@@ -149,7 +147,7 @@ def getDistributionObjects(exp_loc, exp_scale, gauss_loc, gauss_scale):
     #  - 'a': Empirical definition of the alpha parameter based on available data.
     # Achieves a gradual ascending phase of the distribution, ensuring consideration of
     # duplications approximately around gauss_loc*1.5.
-    #  - 'loc' = gauss_loc_plus_scale to account for the standard deviation.
+    #  - 'loc' = gauss_loc_plus_scale take into account the standard deviation.
     # Prevents overlap of the gamma distribution when the primary Gaussian has
     # a substantial standard deviation, avoiding blending between CN2 and CN3+.
     #  - 'scale' = log_gauss_loc_plus_1 adapts to the data by scaling the distribution.
