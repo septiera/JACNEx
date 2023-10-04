@@ -2,7 +2,8 @@
 ################################ JACNEx  step 4:  CNV calling #################################
 ###############################################################################################
 # Given three TSV files containing fragment counts, sample clusters, and distribution parameters
-# for fitting the copy number profile, obtain a VCF file of copy number variations for all samples.
+# for fitting the copy number profile.
+# Generate a TSV file containing all the called CNVs for all samples.
 # See usage for more details.
 ###############################################################################################
 import sys
@@ -22,7 +23,6 @@ import exonCalls.exonCallsFile
 import CNVCalls.likelihoods
 import CNVCalls.transitions
 import CNVCalls.HMM
-import CNVCalls.vcfFile
 
 # set up logger, using inherited config, in case we get called as a module
 logger = logging.getLogger(__name__)
@@ -49,8 +49,6 @@ def parseArgs(argv):
     # optionnal args with default values
     jobs = round(0.8 * len(os.sched_getaffinity(0)))
     plotDir = "./plotDir/"
-    padding = 10
-    BPDir = ""
 
     usage = "NAME:\n" + scriptName + """\n
 
@@ -58,9 +56,8 @@ DESCRIPTION:
 Given three TSV files containing fragment counts, sample clusters, and distribution parameters
 for fitting the copy number profile:
 It calculates likelihoods for each sample and copy number, performs a hidden Markov chain
-to obtain the best predictions, groups exons to form copy number variants (CNVs),
-and deduces exact breakpoints if possible.
-Finally, it generates a VCF (Variant Call Format) file for all analyzed samples.
+to obtain the best predictions, groups exons to form copy number variants (CNVs).
+Generate a TSV file containing all the called CNVs for all samples.
 
 ARGUMENTS:
     --counts [str]: TSV file, first 4 columns hold the exon definitions, subsequent columns
@@ -77,14 +74,11 @@ ARGUMENTS:
                  with '.gz', can have a path component but the subdir must exist
     --jobs [int] : cores that we can use, defaults to 80% of available cores ie """ + str(jobs) + "\n" + """
     --plotDir[str]: sub-directory in which the graphical PDFs will be produced, default:  """ + plotDir + """
-    --padding [int] : number of bps used to pad the exon coordinates, default : """ + str(padding) + """
-    --BPDir [str]: folder containing gzipped or ungzipped TSV for all samples analysed.
-                   Files obtained from s1_countFrags.py
     -h , --help: display this help and exit\n"""
 
     try:
         opts, args = getopt.gnu_getopt(sys.argv[1:], 'h', ["help", "counts=", "clusts=", "params=", "out=",
-                                                           "jobs=", "plotDir=", "padding=", "BPDir="])
+                                                           "jobs=", "plotDir="])
     except getopt.GetoptError as e:
         raise Exception(e.msg + ". Try " + scriptName + " --help")
     if len(args) != 0:
@@ -106,10 +100,6 @@ ARGUMENTS:
             jobs = value
         elif (opt in ("--plotDir")):
             plotDir = value
-        elif opt in ("--padding"):
-            padding = value
-        elif (opt in ("--BPDir")):
-            BPDir = value
         else:
             raise Exception("unhandled option " + opt)
 
@@ -153,16 +143,6 @@ ARGUMENTS:
     except Exception:
         raise Exception("jobs must be a positive integer, not " + str(jobs))
 
-    if os.path.isdir(BPDir):
-        print("TODO dev BPFolder treatments")
-
-    try:
-        padding = int(padding)
-        if (padding < 0):
-            raise Exception()
-    except Exception:
-        raise Exception("padding must be a non-negative integer, not " + str(padding))
-
     # test plotdir last so we don't mkdir unless all other args are OK
     if not os.path.isdir(plotDir):
         try:
@@ -171,7 +151,7 @@ ARGUMENTS:
             raise Exception("plotDir " + plotDir + " doesn't exist and can't be mkdir'd: " + str(e))
 
     # AOK, return everything that's needed
-    return(countsFile, clustsFile, paramsFile, outFile, jobs, plotDir, padding, BPDir)
+    return(countsFile, clustsFile, paramsFile, outFile, jobs, plotDir)
 
 
 ###############################################################################
@@ -221,7 +201,7 @@ def exonOnChr(exons):
 def main(argv):
 
     # parse, check and preprocess arguments
-    (countsFile, clustsFile, paramsFile, outFile, jobs, plotDir, padding, BPDir) = parseArgs(argv)
+    (countsFile, clustsFile, paramsFile, outFile, jobs, plotDir) = parseArgs(argv)
 
     # args seem OK, start working
     logger.debug("called with: " + " ".join(argv[1:]))
@@ -286,8 +266,10 @@ def main(argv):
     # necessary for the generation of a transition matrix derived from
     # the data, which serves as one of the HMM parameters.
 
-    # Allocates dictionaries to store likelihood results specific to the
-    # chromosome of origin for each cluster
+    # Allocates likelihoods dictionaries to store likelihood results specific to the
+    # chromosome associated to each cluster.
+    # keys= sampleID[str], values= likelihoodArray dim=[NBExons, [CN0;CN1,CN2,CN3+]]
+    # "A"= autosomes, "G"=gonosomes
     likelihoods_A = {}
     likelihoods_G = {}
 
@@ -298,16 +280,18 @@ def main(argv):
         samp2Index[samples[si]] = si
 
     # This step is parallelized across clusters,
-    paraClusters = min(math.ceil(jobs)//3, len(clust2samps))
+    paraClusters = min(math.ceil(jobs) // 3, len(clust2samps))
     logger.info("%i new clusters => will process %i in parallel", len(clust2samps), paraClusters)
-    
+
     ##
     # mergeEmission:
     # arg: a Future object returned by ProcessPoolExecutor.submit(CNVCalls.likelihoods.counts2Likelihoods).
-    # counts2Likelihoods returns a 4-element tuple (clusterID, relevantCols, relevantRows, likelihoodsArray).
+    # counts2Likelihoods returns a 3-element tuple (clusterID, chromType, likelihoodClustDict).
     # If something went wrong, raise error in log;
-    # otherwise fill column at index relevantCols and row at index relevantRows in emissionArray
-    # with likelihoods stored in likelihoodsArray
+    # For each cluster, the chromType helps select the likelihoods dictionary to populate with the corresponding samples
+    # and it's likelihoods arrays.
+    # Some samples may be processed with autosomes and not with gonosomes (unvalid cluster), and vice versa.
+    # The sampleIDs (keys) composition of the final dictionaries may not be identical.
     def mergeEmission(futurecounts2emission):
         e = futurecounts2emission.exception()
         if e is not None:
@@ -316,12 +300,12 @@ def main(argv):
         else:
             counts2emissionRes = futurecounts2emission.result()
             clusterID = counts2emissionRes[0]
-            chromType = counts2emissionRes[2]
+            chromType = counts2emissionRes[1]
 
             if chromType == "A":
-                likelihoods_A.update(counts2emissionRes[1])
+                likelihoods_A.update(counts2emissionRes[2])
             elif chromType == "G":
-                likelihoods_G.update(counts2emissionRes[1])
+                likelihoods_G.update(counts2emissionRes[2])
             else:
                 logger.error("chromType %s not implemented in mergeEmission", chromType)
                 raise
@@ -344,7 +328,11 @@ def main(argv):
     logger.debug("Done calculate likelihoods, in %.2fs", thisTime - startTime)
     startTime = thisTime
 
+    # uint8 numpy.ndarray of the same size as exons
+    # 0=autosomes, 1=chrXZ, 2=chrYW
     exonOnSexChr = clusterSamps.genderPrediction.exonOnSexChr(exons)
+    
+    # dict: keys=chromosome identifiers[str], values=[startChrExIndex, endChrExIndex][int]
     chr2Exons = exonOnChr(exons)
 
     #########
@@ -355,8 +343,8 @@ def main(argv):
     # np.ndarray 2D, dim = (nbOfCNStates + void) * (nbOfCNStates + void)
     try:
         plotFile = os.path.join(plotDir, "CN_Frequencies_Likelihoods_Plot.pdf")
-        transMatrix = CNVCalls.transitions.getTransMatrix(likelihoods_A, likelihoods_G, exonOnSexChr,
-                                                          chr2Exons, priors, CNStates, samp2clusts, plotFile)
+        transMatrix = CNVCalls.transitions.getTransMatrix(likelihoods_A, likelihoods_G, chr2Exons,
+                                                          priors, CNStates, samp2clusts, plotFile)
     except Exception as e:
         logger.error("getTransMatrix failed : %s", repr(e))
         raise Exception("getTransMatrix failed")
@@ -371,7 +359,7 @@ def main(argv):
     CNVs = []
 
     # this step is parallelized across samples.
-    paraSample = min(math.ceil(jobs)//3, len(samples))
+    paraSample = min(math.ceil(jobs) // 3, len(samples))
     logger.info("%i samples => will process %i in parallel", len(samples), paraSample)
 
     ##
