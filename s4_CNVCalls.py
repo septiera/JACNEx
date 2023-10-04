@@ -353,6 +353,10 @@ def main(argv):
     logger.debug("Done getTransMatrix, in %.2fs", thisTime - startTime)
     startTime = thisTime
 
+    ############
+    logger.info("Clean stop for testing purposes.")
+    sys.exit(0)  # Exit with a return code of 0 (success)
+
     #########
     # Application of the HMM using the Viterbi algorithm.
     # returns a list of lists [CNtype, exonStart, exonEnd, sampleName].
