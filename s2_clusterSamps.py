@@ -5,11 +5,12 @@
 # build samples clusters that will be used as controls for one another.
 # See usage for details.
 ###############################################################################################
-import sys
 import getopt
-import os
-import time
 import logging
+import os
+import sys
+import time
+import traceback
 
 ####### MAGE-CNV modules
 import countFrags.countsFile
@@ -219,13 +220,12 @@ def main(argv):
 
     # autosomes
     try:
-        maxDist = 1000
-        plotFile = os.path.join(plotDir, "clusters_autosomes_")
-        plotFile += str(maxDist) + ".pdf"
-        (clust2samps, fitWith, clustIsValid, linkageMatrix) = clusterSamps.clustering.buildClusters(
-            autosomesFPM, "A", samples, maxDist, minSamps, plotFile)
+        plotFile = os.path.join(plotDir, "clusters_autosomes.pdf")
+        (clust2samps, fitWith, clustIsValid) = clusterSamps.clustering.buildClusters(
+            autosomesFPM, "A", samples, minSamps, plotFile)
     except Exception as e:
         logger.error("buildClusters failed for autosomes: %s", repr(e))
+        traceback.print_exc()
         raise Exception("buildClusters failed")
 
     thisTime = time.time()
@@ -234,13 +234,12 @@ def main(argv):
 
     # sex chromosomes
     try:
-        maxDist = 300
-        plotFile = os.path.join(plotDir, "clusters_gonosomes_")
-        plotFile += str(maxDist) + ".pdf"
-        (clust2sampsSex, fitWithSex, clustIsValidSex, linkageMatrixSex) = clusterSamps.clustering.buildClusters(
-            gonosomesFPM, "G", samples, maxDist, minSamps, plotFile)
+        plotFile = os.path.join(plotDir, "clusters_gonosomes.pdf")
+        (clust2sampsSex, fitWithSex, clustIsValidSex) = clusterSamps.clustering.buildClusters(
+            gonosomesFPM, "G", samples, minSamps, plotFile)
     except Exception as e:
         logger.error("buildClusters failed for gonosomes: %s", repr(e))
+        traceback.print_exc()
         raise Exception("buildClusters failed")
     clust2samps.update(clust2sampsSex)
     fitWith.update(fitWithSex)
