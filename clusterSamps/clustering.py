@@ -115,125 +115,181 @@ def buildClusters(FPMarray, chromType, samples, maxDist, minSamps, plotFile):
 # - linkageMatrix: as returned by scipy.cluster.hierarchy.linkage
 # - chromType, samples: same args as buildClusters(), used for formatting/populating
 #   the returned data structures
-# - maxDist, minSamps: same args as buildClusters(), used for constructing the clusters
 #
-# Returns (clust2samps, fitWith, clustIsValid) as specified in the header of buildClusters()
-def linkage2clusters(linkageMatrix, chromType, samples, maxDist, minSamps):
-    numSamples = len(samples)
+# Returns (clust2samps, fitWith) as specified in the header of buildClusters()
+def linkage2clusters(linkageMatrix, chromType, samples):
+    numNodes = linkageMatrix.shape[0]
+    numSamples = numNodes + 1
+
+    # max depth for calculating branch-length zscores
+    maxDepth = 10
+    BLzscores = calcBLzscores(linkageMatrix, maxDepth)
+
+    # merge heuristic: a child wants to merge with its brother if it doesn't have any
+    # fitWith clusters (otherwise the dendrogram can show non-contiguous clusters, this
+    # doesn't make sense), and:
+    # - parent's distance (ie height) is <= startDist, or
+    # - parent isn't "too far" relative to the child's intra-cluster branch lengths,
+    #   ie BLzscore <= maxZscoreToMerge
+    # current startDist heurisitic: 10% of highest node
+    startDist = linkageMatrix[-1][2] * 0.1
+    maxZscoreToMerge = 3
+    logger.debug("in buildClusters, using startDist = %.2f and maxZscoreToMerge = %f", startDist, maxZscoreToMerge)
+
     ################
-    # step 1:
-    # - populate clustersTmp, a list of lists of ints:
-    #   clustersTmp[i] is the list of sample indexes that belong to cluster i (at this step),
-    #   this will be cleared at a later step if i is merged with another cluster
-    # NOTE preallocate so we can use clustersTmp[i] = "toto"
-    clustersTmp = [None] * (numSamples + linkageMatrix.shape[0])
-    # - also populate fitWithTmp, a list of lists of ints, fitWithTmp[i] is the list
-    #   of (self-sufficient) cluster indexes that can be used for fitting CN2 in cluster i
-    fitWithTmp = [None] * (numSamples + linkageMatrix.shape[0])
-    # - also populate clustSizeTmp, clustSizeTmp[i] is the total number of samples in
-    #   cluster i PLUS all clusters listed in fitWithTmp[i]
-    clustSizeTmp = [0] * (numSamples + linkageMatrix.shape[0])
+    # a (potential) cluster, identified by its clusterIndex i (0 <= i < numSamples + numNodes), is:
+    # - a list of sample indexes, stored in clustSamples[i]
+    # - a list of cluster indexes to use as fitWith, in clustFitWith[i]
+    clustSamples = [None] * (numSamples + numNodes)
+    clustFitWith = [None] * (numSamples + numNodes)
 
-    # initialize structures: first numSamples "clusters" are singletons with just the
-    # corresponding sample
-    for sample in range(numSamples):
-        clustersTmp[sample] = [sample]
-        clustSizeTmp[sample] = 1
-        fitWithTmp[sample] = []
+    # When examining internal node i:
+    # - if both children want to merge: they are both cleared and node i is created
+    # - if only child c1 wants to merge: c1 will use c2 + clustFitWith[c2] as fitWith,
+    #   c2 is left as-is, node i is created with no samples and full fitWith
+    # - if no child wants to merge: they both stay as-is, and node i is created with
+    #   no samples and full fitWith
+    # At the end, the only clusters to create are those with clustSamples != None.
 
-    # parse linkageMatrix
-    for thisClust in range(linkageMatrix.shape[0]):
-        (c1, c2, dist, size) = linkageMatrix[thisClust]
+    ################
+    # leaves, ie singleton samples
+    for i in range(numSamples):
+        clustSamples[i] = [i]
+        clustFitWith[i] = []
+
+    # internal nodes
+    for ni in range(numNodes):
+        (c1, c2, dist, size) = linkageMatrix[ni]
         c1 = int(c1)
         c2 = int(c2)
-        size = int(size)
-        thisClust += numSamples
+        children = [c1, c2]
+        thisClust = ni + numSamples
+        # wantsToMerge: list of 2 Bools, one for each child in the order (c1,c2)
+        wantsToMerge = [False, False]
+        for ci in range(2):
+            if dist <= startDist:
+                wantsToMerge[ci] = True
+            elif (not clustFitWith[children[ci]]) and (BLzscores[ni][ci] <= maxZscoreToMerge):
+                wantsToMerge[ci] = True
+            # else ci doesn't want to merge with his brother
 
-        if dist <= startDist:
-            clustersTmp[thisClust] = clustersTmp[c1] + clustersTmp[c2]
-            clustSizeTmp[thisClust] = size
-            fitWithTmp[thisClust] = []
-            for childClust in (c1, c2):
-                clustersTmp[childClust] = None
-                clustSizeTmp[childClust] = 0
-                fitWithTmp[childClust] = None
-
-        elif dist <= maxDist:
-            # between startDist and maxDist: only merge / add to fitWithTmp if a cluster
-            # needs more friends, ie it is too small (counting the fitWith samples)
-            if (clustSizeTmp[c1] < minSamps) and (clustSizeTmp[c2] < minSamps):
-                # c1 and c2 both still needs friends => merge them
-                clustersTmp[thisClust] = clustersTmp[c1] + clustersTmp[c2]
-                clustSizeTmp[thisClust] = size
-                fitWithTmp[thisClust] = fitWithTmp[c1] + fitWithTmp[c2]
-                for childClust in (c1, c2):
-                    clustersTmp[childClust] = None
-                    clustSizeTmp[childClust] = 0
-                    fitWithTmp[childClust] = None
-            else:
-                # at least one of (c1,c2) is self-sufficient, find which one it is and switch
-                # them if needed so that c2 is always self-sufficient
-                if (clustSizeTmp[c2] < minSamps):
-                    # c2 not self-sufficient, switch with c1
-                    cTmp = c1
-                    c1 = c2
-                    c2 = cTmp
-                if (clustSizeTmp[c1] < minSamps):
-                    # c2 is (now) self-sufficient but c1 isn't =>
-                    # don't touch c2 but use it for fitting thisClust == ex-c1
-                    clustersTmp[thisClust] = clustersTmp[c1]
-                    clustSizeTmp[thisClust] = size
-                    fitWithTmp[thisClust] = fitWithTmp[c1] + fitWithTmp[c2]
-                    if clustersTmp[c2]:
-                        # c2 is an actual cluster, not a virtual merger of 2 self-sufficient sub-clusters
-                        fitWithTmp[thisClust].append(c2)
-                    clustersTmp[c1] = None
-                    clustSizeTmp[c1] = 0
-                    fitWithTmp[c1] = None
-                else:
-                    # both c1 and c2 are self-sufficient, need to create a virtual merger of c1+c2 so that
-                    # if later thisClust is used as fitWith for another cluster, we can do the right thing...
-                    # A "virtual merger" has correct clustSize (so we'll know it's not a candidate for merging),
-                    # and fitWithTmp contains the list of its non-virtual sub-clusters / components,
-                    # but clustersTmp == None (the mark of a virtual merger)
-                    clustSizeTmp[thisClust] = size
-                    fitWithTmp[thisClust] = fitWithTmp[c1] + fitWithTmp[c2]
-                    if clustersTmp[c1]:
-                        fitWithTmp[thisClust].append(c1)
-                    if clustersTmp[c2]:
-                        fitWithTmp[thisClust].append(c2)
+        if wantsToMerge[0] and wantsToMerge[1]:
+            clustSamples[thisClust] = clustSamples[c1] + clustSamples[c2]
+            clustFitWith[thisClust] = []
+            # clear nodes c1 and c2
+            clustSamples[c1] = None
+            clustSamples[c2] = None
         else:
-            # dist > maxDist, nothing more to do, just truncate the Tmp lists
-            del clustersTmp[thisClust:]
-            del clustSizeTmp[thisClust:]
-            del fitWithTmp[thisClust:]
-            break
+            # at most one child wants to merge
+            # in all cases thisClust will be a virtual no-sample cluster (will be useful
+            # later if thisClust is used as fitWith for another cluster)
+            clustSamples[thisClust] = None
+            clustFitWith[thisClust] = clustFitWith[c1] + clustFitWith[c2]
+            if clustSamples[c1]:
+                clustFitWith[thisClust].append(c1)
+            if clustSamples[c2]:
+                clustFitWith[thisClust].append(c2)
+
+            if wantsToMerge[0]:
+                # c1 wants to merge but not c2
+                clustFitWith[c1] += clustFitWith[c2]
+                if clustSamples[c2]:
+                    # c2 is a real cluster with samples, not a virtual "fitWith" cluster
+                    clustFitWith[c1].append(c2)
+            elif wantsToMerge[1]:
+                clustFitWith[c2] += clustFitWith[c1]
+                if clustSamples[c1]:
+                    clustFitWith[c2].append(c1)
+            # else c1 and c2 don't change
+
+            # DEBUGGING CODE
+            if clustFitWith[thisClust]:
+                logger.debug("clust %i, non-empty fitWith: %s", thisClust,
+                             str(clustFitWith[thisClust]))
+                logger.debug("children are %i (fitWith = %s) and %i (fitWith = %s)",
+                             c1, clustFitWith[c1], c2, clustFitWith[c2])
 
     ################
-    # step 3:
     # populate the clustering data structures from the Tmp lists, with proper formatting
     clust2samps = {}
     fitWith = {}
-    clustIsValid = {}
 
     # populate clustIndex2ID with correctly constructed clusterIDs for each non-virtual cluster index
-    clustIndex2ID = [None] * len(clustersTmp)
-    nextClustNb = 1
-    for thisClust in range(len(clustersTmp)):
-        if clustersTmp[thisClust]:
-            # left-pad with leading zeroes if less than 2 digits (for pretty-sorting, won't
-            # sort correctly if more than 100 clusters but it's just cosmetic)
-            clustID = chromType + '_' + f"{nextClustNb:02}"
-            clustIndex2ID[thisClust] = clustID
-            nextClustNb += 1
-            clust2samps[clustID] = [samples[i] for i in clustersTmp[thisClust]]
-            if fitWithTmp[thisClust]:
-                fitWith[clustID] = [clustIndex2ID[i] for i in fitWithTmp[thisClust]]
-            else:
-                fitWith[clustID] = []
-            if (clustSizeTmp[thisClust] >= minSamps):
-                clustIsValid[clustID] = True
-            else:
-                clustIsValid[clustID] = False
+    clustIndex2ID = [None] * len(clustSamples)
 
-    return (clust2samps, fitWith, clustIsValid)
+    # we want clusters to be numbered increasingly by decreasing numbers of samples
+    clustIndexes = []
+    # find all non-virtual cluster indexes
+    for thisClust in range(len(clustSamples)):
+        if clustSamples[thisClust]:
+            clustIndexes.append(thisClust)
+    # sort them by decreasing numbers of samples
+    clustIndexes.sort(key=lambda ci: len(clustSamples[ci]), reverse=True)
+
+    nextClustNb = 1
+    for thisClust in clustIndexes:
+        # left-pad with leading zeroes if less than 2 digits (for pretty-sorting, won't
+        # sort correctly if more than 100 clusters but it's just cosmetic)
+        clustID = chromType + '_' + f"{nextClustNb:02}"
+        clustIndex2ID[thisClust] = clustID
+        nextClustNb += 1
+        clust2samps[clustID] = [samples[i] for i in clustSamples[thisClust]]
+        clust2samps[clustID].sort()
+        fitWith[clustID] = []
+
+    for thisClust in clustIndexes:
+        if clustFitWith[thisClust]:
+            clustID = clustIndex2ID[thisClust]
+            fitWith[clustID] = [clustIndex2ID[i] for i in clustFitWith[thisClust]]
+            fitWith[clustID].sort()
+
+    return (clust2samps, fitWith)
+
+
+#############################
+# Given a hierarchical clustering (linkage matrix), calculate branch-length pseudo-Zscores:
+# for each internal node ni (row index in linkageMatrix), BLzscores[ni] is a list of 2
+# floats, one for each child cj (j==0 or 1, same order as they appear in linkageMatrix):
+# BLzscores[ni][j] = [d(ni, cj) - mean(BLs[cj])] / (stddev(BLs[cj]) + 1)
+# [convention: BLzscores[clusti][cj] == 0 if cj is a leaf]
+# Note: divisor is stddev+1 to avoid divByZero and/or inflated zscores when BLs are equal
+# or very close.
+#
+# Args:
+# - linkageMatrix: as returned by scipy.cluster.hierarchy.linkage
+# - maxDepth: max depth of branches below each child cj that are taken into account to
+#   calculate mean and stddev
+#
+# Returns BLzscores, a list (size == number of rows in linkageMatrix) of lists of 2 floats,
+# as defined above.
+def calcBLzscores(linkageMatrix, maxDepth):
+    numNodes = linkageMatrix.shape[0]
+    numSamples = numNodes + 1
+    BLzscores = [None] * numNodes
+    # for each internal node index ni, BLs[ni] will be a list (index D < maxDepth) of
+    # lists of floats: the lengths of branches between depths D and D+1 below the node.
+    BLs = [None] * numNodes
+    for ni in range(numNodes):
+        (c1, c2, dist, size) = linkageMatrix[ni]
+        c1 = int(c1)
+        c2 = int(c2)
+        BLzscores[ni] = []
+        BLs[ni] = [None] * maxDepth
+        for d in range(maxDepth):
+            BLs[ni][d] = []
+        for child in (c1, c2):
+            if child < numSamples:
+                # leaf
+                BLzscores[ni].append(0)
+                BLs[ni][0].append(dist)
+            else:
+                child -= numSamples
+                thisBL = dist - linkageMatrix[child][2]
+                childBLs = np.concatenate(BLs[child])
+                thisZscore = (thisBL - np.mean(childBLs)) / (np.std(childBLs) + 1)
+                BLzscores[ni].append(thisZscore)
+                BLs[ni][0].append(thisBL)
+                for depth in range(1, maxDepth):
+                    if len(BLs[child]) >= depth:
+                        BLs[ni][depth].extend(BLs[child][depth - 1])
+    return(BLzscores)
