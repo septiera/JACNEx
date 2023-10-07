@@ -30,23 +30,17 @@ logger = logging.getLogger(__name__)
 # - chromType (string): one of 'A', 'G' indicating that FPMarray holds counts
 #   for exons on autosomes or gonosomes
 # - samples: list of sampleIDs, same order as the columns of FPMarray
-# - maxDist: max distance up to which we can build clusters / populate FIT_WITH
 # - minSamps: min number of samples (in a cluster + its FIT_WITH friends) to declare
 #   the cluster VALID
-# - plotFile (str): filename (including path) for saving the dendrogram representing
-#   the resulting hierarchical clustering, use "" if you don't want a plot
+# - plotFile (str): filename (including path) for saving a dendrogram representing
+#   the resulting hierarchical clustering
 #
-# Returns (clust2samps, fitWith, clustIsValid, linkageMatrix):
-# (clust2samps, fitWith, clustIsValid) are as defined in clustFile.py parseClustsFile(), ie
-# clusterIDs are formatted as TYPE_NUMBER where TYPE is 'A' or 'G', and:
+# Returns (clust2samps, fitWith, clustIsValid): as defined in clustFile.py parseClustsFile(),
+# ie clusterIDs are formatted as TYPE_NUMBER where TYPE is 'A' or 'G', and:
 # - clust2samps: dict, key==clusterID, value == list of sampleIDs
 # - fitWith: dict, key==clusterID, value == list of clusterIDs
 # - clustIsValid: dict, key==clusterID, value == Boolean
-# - linkageMatrix (provided only for testing and debugging) is the linkage matrix
-#   encoding the hierarchical clustering as returned by scipy.cluster.hierarchy.linkage,
-#   ie each row corresponds to one merging step of 2 cluster (c1, c2) and holds
-#   [c1, c2, dist(c1,c2), size(c1) + size(c2)]
-def buildClusters(FPMarray, chromType, samples, maxDist, minSamps, plotFile):
+def buildClusters(FPMarray, chromType, samples, minSamps, plotFile):
     # reduce dimensionality with PCA
     # choosing the optimal number of dimensions is difficult, but should't matter
     # much as long as we're in the right ballpark -> our heuristic:
@@ -59,7 +53,7 @@ def buildClusters(FPMarray, chromType, samples, maxDist, minSamps, plotFile):
     pca = sklearn.decomposition.PCA(n_components=maxDims, svd_solver='full').fit(FPMarray.T)
     logMess = "in buildClusters while choosing the PCA dimension, explained variance ratio:"
     logger.debug(logMess)
-    logMess = np.array_str(pca.explained_variance_ratio_, max_line_width=200, precision=4)
+    logMess = np.array_str(pca.explained_variance_ratio_, max_line_width=200, precision=3)
     logger.debug(logMess)
 
     dim = 0
@@ -83,24 +77,29 @@ def buildClusters(FPMarray, chromType, samples, maxDist, minSamps, plotFile):
                                                     metric='euclidean', optimal_ordering=True)
 
     # build clusters from the linkage matrix
-    (clust2samps, fitWith, clustIsValid) = linkage2clusters(linkageMatrix, chromType, samples,
-                                                            maxDist, minSamps)
+    (clust2samps, fitWith) = linkage2clusters(linkageMatrix, chromType, samples)
 
-    # sort samples in clust2samps and clusters in fitWith (for cosmetics)
+    # define valid clusters, ie size (including FIT_WITH) >= minSamps
+    clustSizeNoFW = {}
+    clustIsValid = {}
     for clust in clust2samps:
-        clust2samps[clust].sort()
-        fitWith[clust].sort()
+        clustSizeNoFW[clust] = len(clust2samps[clust])
+    for clust in clust2samps:
+        size = clustSizeNoFW[clust]
+        for fw in fitWith[clust]:
+            size += clustSizeNoFW[fw]
+        if size >= minSamps:
+            clustIsValid[clust] = True
+        else:
+            clustIsValid[clust] = False
 
     # produce and plot dendrogram
-    if (plotFile != "") and os.path.isfile(plotFile):
-        logger.warning("buildClusters can't produce a dendrogram: plotFile %s already exists",
-                       plotFile)
-    elif (plotFile != ""):
-        title = "chromType=" + chromType + "  dim=" + str(dim) + "  maxDist=" + str(maxDist)
-        figures.plots.plotDendrogram(linkageMatrix, samples, clust2samps, fitWith, clustIsValid,
-                                     title, plotFile)
+    if os.path.isfile(plotFile):
+        logger.info("pre-existing dendrogram plotFile %s will be squashed", plotFile)
+    title = "chromType=" + chromType + "  dim=" + str(dim)
+    figures.plots.plotDendrogram(linkageMatrix, samples, clust2samps, fitWith, clustIsValid, title, plotFile)
 
-    return(clust2samps, fitWith, clustIsValid, linkageMatrix)
+    return(clust2samps, fitWith, clustIsValid)
 
 
 ###############################################################################
