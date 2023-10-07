@@ -120,12 +120,10 @@ def main(argv):
     # clust2batchesFW: same but includes samples belonging to FITWITH clusters
     clust2batchesFW = {}
 
-    for clusterID in sorted(clust2samps.keys()):
+    for clusterID in clust2samps.keys():
         # batches: key is a batchID, value is the number of samples belonging to
         # this batch in this cluster
         batches = {}
-        # batchesFitWith: same but also includes samples from FIT_WITH clusters
-        batchesFitWith = {}
         for samp in clust2samps[clusterID]:
             batchID = ""
             if clusterID.startswith("A_"):
@@ -137,7 +135,11 @@ def main(argv):
             else:
                 batches[batchID] = 1
         clust2batches[clusterID] = batches
-        batchesFitWith = batches.copy()
+
+    for clusterID in clust2samps.keys():
+        # batchesFitWith: same as batches above but also includes samples from FIT_WITH clusters
+        batchesFitWith = {}
+        batchesFitWith = clust2batches[clusterID].copy()
         for fw in fitWith[clusterID]:
             for batchFW in clust2batches[fw].keys():
                 if batchFW in batchesFitWith:
