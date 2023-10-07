@@ -1,11 +1,10 @@
 import logging
+import numpy as np
 import os
 
-import numpy as np
-
-# modules for hierachical clustering
+# hierachical clustering
 import scipy.cluster.hierarchy
-# module for PCA
+# PCA
 import sklearn.decomposition
 
 import figures.plots
