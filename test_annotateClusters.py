@@ -7,6 +7,7 @@ import getopt
 import logging
 import os
 import sys
+import traceback
 
 ####### MAGE-CNV modules
 import clusterSamps.clustFile
@@ -260,5 +261,6 @@ if __name__ == '__main__':
         main(sys.argv)
     except Exception as e:
         # details on the issue should be in the exception name, print it to stderr and die
-        sys.stderr.write("ERROR in " + scriptName + " : " + str(e) + "\n")
+        sys.stderr.write("ERROR in " + scriptName + " : " + repr(e) + "\n")
+        traceback.print_exc()
         sys.exit(1)
