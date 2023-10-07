@@ -77,7 +77,7 @@ def buildClusters(FPMarray, chromType, samples, minSamps, plotFile):
                                                     metric='euclidean', optimal_ordering=True)
 
     # build clusters from the linkage matrix
-    (clust2samps, fitWith) = linkage2clusters(linkageMatrix, chromType, samples)
+    (clust2samps, fitWith) = linkage2clusters(linkageMatrix, chromType, samples, minSamps)
 
     # define valid clusters, ie size (including FIT_WITH) >= minSamps
     clustSizeNoFW = {}
@@ -114,15 +114,17 @@ def buildClusters(FPMarray, chromType, samples, minSamps, plotFile):
 # - linkageMatrix: as returned by scipy.cluster.hierarchy.linkage
 # - chromType, samples: same args as buildClusters(), used for formatting/populating
 #   the returned data structures
+# - minSamps: min number of smaples for a cluster to be valid, used in the heuristic that
+#   decides whether children want to merge (smaller clusters have increased desire to merge)
 #
 # Returns (clust2samps, fitWith) as specified in the header of buildClusters()
-def linkage2clusters(linkageMatrix, chromType, samples):
+def linkage2clusters(linkageMatrix, chromType, samples, minSamps):
     numNodes = linkageMatrix.shape[0]
     numSamples = numNodes + 1
 
     # max depth for calculating branch-length zscores
     maxDepth = 10
-    BLzscores = calcBLzscores(linkageMatrix, maxDepth)
+    BLzscores = calcBLzscores(linkageMatrix, maxDepth, minSamps)
 
     # merge heuristic: a child wants to merge with its brother if it doesn't have any
     # fitWith clusters (otherwise the dendrogram can show non-contiguous clusters, this
@@ -249,8 +251,10 @@ def linkage2clusters(linkageMatrix, chromType, samples):
 # Given a hierarchical clustering (linkage matrix), calculate branch-length pseudo-Zscores:
 # for each internal node ni (row index in linkageMatrix), BLzscores[ni] is a list of 2
 # floats, one for each child cj (j==0 or 1, same order as they appear in linkageMatrix):
-# BLzscores[ni][j] = [d(ni, cj) - mean(BLs[cj])] / (stddev(BLs[cj]) + 1)
+# BLzscores[ni][j] = [d(ni, cj) - W * mean(BLs[cj])] / (stddev(BLs[cj]) + 1)
 # [convention: BLzscores[clusti][cj] == 0 if cj is a leaf]
+# W == max(minSize / size(cj) , 1) is a weight that decreases the BLzscore for small children,
+# ie children smaller than minSize have inflated desire to merge with their brother.
 # Note: divisor is stddev+1 to avoid divByZero and/or inflated zscores when BLs are equal
 # or very close.
 #
@@ -258,15 +262,16 @@ def linkage2clusters(linkageMatrix, chromType, samples):
 # - linkageMatrix: as returned by scipy.cluster.hierarchy.linkage
 # - maxDepth: max depth of branches below each child cj that are taken into account to
 #   calculate mean and stddev
+# - minSize: min number of samples for a cluster to be valid, used for the weight
 #
 # Returns BLzscores, a list (size == number of rows in linkageMatrix) of lists of 2 floats,
 # as defined above.
-def calcBLzscores(linkageMatrix, maxDepth):
+def calcBLzscores(linkageMatrix, maxDepth, minSize):
     numNodes = linkageMatrix.shape[0]
     numSamples = numNodes + 1
     BLzscores = [None] * numNodes
-    # for each internal node index ni, BLs[ni] will be a list (index D < maxDepth) of
-    # lists of floats: the lengths of branches between depths D and D+1 below the node.
+    # for each internal node index ni, BLs[ni] will be a list (indexed by the depth D < maxDepth)
+    # of lists of floats: the lengths of branches between depths D and D+1 below the node.
     BLs = [None] * numNodes
     for ni in range(numNodes):
         (c1, c2, dist, size) = linkageMatrix[ni]
@@ -285,7 +290,8 @@ def calcBLzscores(linkageMatrix, maxDepth):
                 child -= numSamples
                 thisBL = dist - linkageMatrix[child][2]
                 childBLs = np.concatenate(BLs[child])
-                thisZscore = (thisBL - np.mean(childBLs)) / (np.std(childBLs) + 1)
+                weight = max(minSize / linkageMatrix[child][3], 1)
+                thisZscore = (thisBL - weight * np.mean(childBLs)) / (np.std(childBLs) + 1)
                 BLzscores[ni].append(thisZscore)
                 BLs[ni][0].append(thisBL)
                 for depth in range(1, maxDepth):
