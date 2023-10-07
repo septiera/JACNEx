@@ -2,7 +2,7 @@
 ######################################## MAGE-CNV step 2: Sample clustering  ##################
 ###############################################################################################
 # Given a TSV of fragment counts as produced by 1_countFrags.py:
-# build samples clusters that will be used as controls for one another.
+# build clusters of samples that will be used as controls for one another.
 # See usage for details.
 ###############################################################################################
 import getopt

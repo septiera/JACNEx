@@ -135,7 +135,8 @@ def linkage2clusters(linkageMatrix, chromType, samples, minSamps):
     # current startDist heurisitic: 10% of highest node
     startDist = linkageMatrix[-1][2] * 0.1
     maxZscoreToMerge = 3
-    logger.debug("in buildClusters, using startDist = %.2f and maxZscoreToMerge = %f", startDist, maxZscoreToMerge)
+    logger.debug("in buildClusters, using startDist = %.2f and maxZscoreToMerge = %f",
+                 startDist, maxZscoreToMerge)
 
     ################
     # a (potential) cluster, identified by its clusterIndex i (0 <= i < numSamples + numNodes), is:
@@ -202,13 +203,6 @@ def linkage2clusters(linkageMatrix, chromType, samples, minSamps):
                 if clustSamples[c1]:
                     clustFitWith[c2].append(c1)
             # else c1 and c2 don't change
-
-            # DEBUGGING CODE
-            if clustFitWith[thisClust]:
-                logger.debug("clust %i, non-empty fitWith: %s", thisClust,
-                             str(clustFitWith[thisClust]))
-                logger.debug("children are %i (fitWith = %s) and %i (fitWith = %s)",
-                             c1, clustFitWith[c1], c2, clustFitWith[c2])
 
     ################
     # populate the clustering data structures from the Tmp lists, with proper formatting
