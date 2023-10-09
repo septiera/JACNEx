@@ -5,7 +5,7 @@ import logging
 import sklearn.cluster
 
 import matplotlib.backends.backend_pdf
-import clusterSamps.smoothing
+import qc_FPMdensities
 import figures.plots
 
 # set up logger, using inherited config
@@ -39,7 +39,7 @@ def assignGender(exonsFPM, exonOnSexChr, intergenicsFPM, samples):
     # FPM cut-off to roughly characterize exons that aren't captured, using intergenic pseudo-exons,
     # hard-coded 99%-quantile over all samples and all intergenic pseudo-exons
     maxFPMuncaptured = np.quantile(intergenicsFPM, 0.99)
-    
+
     # For each sex chromosome and each sample, calculate the sum of FPMs of "accepted" exons:
     # "accepted" == every exon for YW, but for XZ we only count exons that are "captured"
     # (FPM > maxFPMuncaptured) in "most" samples (at least 90%, hard-coded as 0.1 below).
@@ -77,12 +77,10 @@ def assignGender(exonsFPM, exonOnSexChr, intergenicsFPM, samples):
     # all (non-suspect) M have FPM(Y) >= 536, nice bell-curve up to 1695 (N=558), a second smaller
     #   one between 2603 and 3303 (N=34), and a single outlier grexome0711 at 5608
 
+    (drX, densX, bwValue) = qc_FPMdensities.smoothData(sumOfFPMsXZ, maxData=1000000)
+    (drY, densY, bwValue) = qc_FPMdensities.smoothData(sumOfFPMsYW, maxData=1000000)
+    figures.plots.plotDensities("sumOfFPMs", [drX, drY], [densX, densY], ["sumOfFPMsXZ", "sumOfFPMsYW"], 0, 0, "", "", 1, pdf)
 
-    
-    # (drX, densX, bwValue) = clusterSamps.smoothing.smoothData(sumOfFPMsXZ, maxData=1000000)
-    # (drY, densY, bwValue) = clusterSamps.smoothing.smoothData(sumOfFPMsYW, maxData=1000000)
-    # figures.plots.plotDensities("sumOfFPMs", [drX, drY], [densX, densY], ["sumOfFPMsXZ", "sumOfFPMsYW"], 0, 0, "", "", 1, pdf)
-    
     # if predictGenderFailed:
     #     logger.warning("gender assignment failed. This is fine for single-gender cohorts,")
     #     logger.warning("but otherwise expect low-confidence CNV calls on gonosomes.")
