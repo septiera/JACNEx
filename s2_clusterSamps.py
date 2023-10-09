@@ -142,36 +142,6 @@ def main(argv):
     logger.info("done parseAndNormalizeCounts, in %.2fs", thisTime - startTime)
     startTime = thisTime
 
-    # ##########################################
-    # # data quality control
-    # COMMENTED OUT FOR NOW - RE-ENABLE/ADAPT IF NEEDED, REMOVE CODE OTHERWISE
-    # reason 1: Ignoring too many samples is bad, we should be able to make some
-    # calls even for samples with lower-quality data
-    # reason 2: with the new intergenic pseudo-exons, it should be possible to fit
-    # a distribution for uncaptured exons, even for samples with an ugly FPM density plot.
-    # However, it will be necessary to study the calling results for patients with
-    # suspicious coverage density profiles before deleting this part.
-    # ###################
-    # # plot exon FPM densities for all samples; use this to identify QC-failing samples,
-    # # and exons with decent coverage in at least one sample (other exons can be ignored)
-    # # should density plots compare several different KDE bandwidth algorithms and values?
-    # # hard-coded here rather than set via parseArgs because this should only be set
-    # # to True for dev & testing
-    # testSmoothingBWs = False
-    #
-    # plotFilePass = plotDir + "/coverageProfile_PASS.pdf"
-    # plotFileFail = plotDir + "/coverageProfile_FAIL.pdf"
-    # try:
-    #     (sampsQCfailed, capturedExons) = clusterSamps.qualityControl.SampsQC(countsFPM, samples, plotFilePass,
-    #                                                                          plotFileFail, testBW=testSmoothingBWs)
-    # except Exception as e:
-    #     logger.error("SampsQC failed for %s : %s", countsFile, repr(e))
-    #     raise Exception("SampsQC failed")
-    #
-    # thisTime = time.time()
-    # logger.debug("Done samples quality control, in %.2fs", thisTime - startTime)
-    # startTime = thisTime
-
     ###################
     # Clustering:
     # build clusters of samples with "similar" count profiles, independently for exons
@@ -233,21 +203,6 @@ def main(argv):
     except Exception as e:
         logger.error("printing clusters failed : %s", repr(e))
         raise Exception("printClustsFile failed")
-
-    ###################
-    # Code for studying gender predictions, based on sums of FPMs for exons on X or Y.
-    # Based on these tests, gender prediction should be easy since we could clearly
-    # distinguish the karyotypes on simple 1D plots... For example XXY samples were
-    # in Female groups on the X and in Male groups on the Y. Also we have a single
-    # patient with an XYY karyotype, and even that was quite apparent.
-    # However this is no longer necessary, clustering now works for gonosomes thanks
-    # to the PCC -> euclidean move.
-    # sample2gender = clusterSamps.genderPrediction.assignGender(exonsFPM, exonOnSexChr, intergenicsFPM, samples)
-    # gonosomesFemalesFPM = exonsFPM[exonOnSexChr != 0][:, sample2gender == 1]
-    # gonosomesMalesFPM = exonsFPM[exonOnSexChr != 0][:, sample2gender == 2]
-    # thisTime = time.time()
-    # logger.debug("Done assigning genders to samples, in %.2fs", thisTime - startTime)
-    # startTime = thisTime
 
     logger.info("ALL DONE")
 
