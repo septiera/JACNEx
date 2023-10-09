@@ -234,9 +234,15 @@ def SampsQC(counts, samples, plotFilePass, plotFileFail, minLow2high=0.2, testBW
     pdfPass.close()
     pdfFail.close()
 
-    if len(sampsQCfailed) > 0:
-        logger.warning("%s/%s samples fail exon-density QC (see QC plots), these samples may get random CNV calls",
+    if len(sampsQCfailed) == len(samples):
+        logger.warning("all samples FAIL the FPM density QC test, the test may be inappropriate for your data?")
+        os.unlink(plotFilePass)
+    elif len(sampsQCfailed) > 0:
+        logger.warning("%s/%s samples fail FPM density QC (check the plots), these samples may get unreliable CNV calls",
                        len(sampsQCfailed), len(samples))
+    else:
+        logger.info("all %s samples pass FPM density QC, great!", len(samples))
+        os.unlink(plotFileFail)
 
     return(sampsQCfailed)
 
