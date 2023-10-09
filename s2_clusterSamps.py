@@ -13,10 +13,10 @@ import time
 import traceback
 
 ####### MAGE-CNV modules
-import countFrags.countsFile
 import clusterSamps.clustering
 import clusterSamps.clustFile
-import clusterSamps.genderPrediction
+import countFrags.bed
+import countFrags.countsFile
 
 # set up logger, using inherited config, in case we get called as a module
 logger = logging.getLogger(__name__)
@@ -152,7 +152,7 @@ def main(argv):
     # samples, not with XY ones)
 
     # subarrays of counts
-    exonOnSexChr = clusterSamps.genderPrediction.exonOnSexChr(exons)
+    exonOnSexChr = countFrags.bed.exonOnSexChr(exons)
     autosomesFPM = exonsFPM[exonOnSexChr == 0]
     gonosomesFPM = exonsFPM[exonOnSexChr != 0]
 

@@ -17,38 +17,6 @@ logger = logging.getLogger(__name__)
 ###############################################################################
 
 ###############################################################################
-# exonOnSexChr: identify exons located on a sex chromosome, ie currently one of
-# (X, Y, Z, W). This covers most species including mammals, birds, fish, reptiles.
-#
-# Arg:
-#  - a list of exons, each exon is a list of 4 scalars (types: str,int,int,str)
-# containing CHR,START,END,EXON_ID
-#
-# Returns an uint8 numpy.ndarray of the same size as exons, value is:
-# - 0 if the exon is on an autosome;
-# - 1 if the exon is on the X or Z chromosome;
-# - 2 if the exon is on the Y or W chromosome.
-#
-# Note that X or Z is present in one or two copies in each individual, and is
-# (usually?) the larger of the two sex chromosomes; while Y or W is present
-# in 0 or 1 copy and is smaller.
-# However interpretation of "having two copies of X|Z" differs: in XY species
-# (eg humans) XX is the Female, while in ZW species (eg birds) ZZ is the Male.
-def exonOnSexChr(exons):
-    # accepted sex chromosomes as keys, value==1 for X|Z and 2 for Y|W
-    sexChroms = {"X": 1, "Y": 2, "W": 2, "Z": 1}
-    # also accept the same chroms prepended with 'chr'
-    for sc in list(sexChroms.keys()):
-        sexChroms["chr" + sc] = sexChroms[sc]
-
-    exonOnSexChr = np.zeros(len(exons), dtype=np.uint8)
-    for ei in range(len(exons)):
-        if exons[ei][0] in sexChroms:
-            exonOnSexChr[ei] = sexChroms[exons[ei][0]]
-    return(exonOnSexChr)
-
-
-###############################################################################
 # Assign a gender for each sample (ie column of exonsFPM)
 #
 # Args:
