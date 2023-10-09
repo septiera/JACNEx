@@ -130,7 +130,8 @@ def linkage2clusters(linkageMatrix, chromType, samples, minSamps):
     # doesn't make sense), and:
     # - parent's distance (ie height) is <= startDist, or
     # - parent isn't "too far" relative to the child's intra-cluster branch lengths,
-    #   ie BLzscore <= maxZscoreToMerge
+    #   ie BLzscore <= maxZscoreToMerge, or
+    # - child is small (< minSamps) and child's brother wants to merge.
     # current startDist heurisitic: 10% of highest node
     startDist = linkageMatrix[-1][2] * 0.1
     maxZscoreToMerge = 3
@@ -172,7 +173,15 @@ def linkage2clusters(linkageMatrix, chromType, samples, minSamps):
                 wantsToMerge[ci] = True
             elif (not clustFitWith[children[ci]]) and (BLzscores[ni][ci] <= maxZscoreToMerge):
                 wantsToMerge[ci] = True
-            # else ci doesn't want to merge with his brother
+        for ci in range(2):
+            if wantsToMerge[1 - ci] and (not wantsToMerge[ci]):
+                # ci's brother wants to merge but ci doesn't: if ci is small
+                # it can change its mind
+                sizeCi = 1
+                if children[ci] >= numSamples:
+                    sizeCi = linkageMatrix[children[ci] - numSamples][3]
+                if (not clustFitWith[children[ci]]) and (sizeCi < minSamps):
+                    wantsToMerge[ci] = True
 
         if wantsToMerge[0] and wantsToMerge[1]:
             clustSamples[thisClust] = clustSamples[c1] + clustSamples[c2]
