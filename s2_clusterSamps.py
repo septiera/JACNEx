@@ -40,8 +40,6 @@ def parseArgs(argv):
     outFile = ""
     # optional args with default values
     minSamps = 20
-    maxCorr = 0.95
-    minCorr = 0.85
     plotDir = "./plotDir/"
 
     usage = "NAME:\n" + scriptName + """\n
@@ -52,30 +50,18 @@ Clusters are built independantly for exons on autosomes ('A') and  on gonosomes 
 The accepted sex chromosomes are X, Y, Z, and W.
 Results are printed to --out in TSV format: 4 columns
 [CLUSTER_ID, SAMPLES, FIT_WITH, VALID]
-In addition, all graphical support (quality control histogram for each sample and
-dendrogram from clustering) are produced as pdf files in plotDir.
+In addition, dendrograms of the clustering results are produced as pdf files in plotDir.
 
 ARGUMENTS:
    --counts [str]: TSV file of fragment counts, possibly gzipped, produced by s1_countFrags.py
-   --out [str] : file where results will be saved, must not pre-exist, will be gzipped if it ends
+   --out [str] : file where clusters will be saved, must not pre-exist, will be gzipped if it ends
                  with '.gz', can have a path component but the subdir must exist
-   --minSamps [int]: minimum number of samples to validate the creation of a cluster,
-                     default : """ + str(minSamps) + """
-   --maxCorr [float]: allows to define a Pearson correlation threshold according to which
-                      the formation of clusters can start. Beware that a too small threshold
-                      will lead to the formation of too small preliminary clusters, while a
-                      too large threshold will lead to the formation of few but large clusters.
-                      default: """ + str(maxCorr) + """
-   --minCorr [float]: same principle as maxCorr but aims to complete the clustering.
-                      Be careful, a low threshold will allow all the samples to be integrated
-                      into clusters even if they are significantly different from the rest of
-                      the clusters. A too high threshold will lead to a massive elimination of
-                      non-clustered samples. default: """ + str(minCorr) + """
-   --plotDir[str]: subdir (created if needed) where QC plot files will be produced, default:  """ + plotDir + """
+   --minSamps [int]: minimum number of samples for a cluster to be declared valid, default : """ + str(minSamps) + """
+   --plotDir [str]: subdir (created if needed) where plot files will be produced, default:  """ + plotDir + """
    -h , --help  : display this help and exit\n"""
 
     try:
-        opts, args = getopt.gnu_getopt(argv[1:], 'h', ["help", "counts=", "out=", "minSamps=", "maxCorr=", "minCorr=", "plotDir="])
+        opts, args = getopt.gnu_getopt(argv[1:], 'h', ["help", "counts=", "out=", "minSamps=", "plotDir="])
     except getopt.GetoptError as e:
         raise Exception(e.msg + ". Try " + scriptName + " --help")
     if len(args) != 0:
@@ -91,10 +77,6 @@ ARGUMENTS:
             outFile = value
         elif (opt in ("--minSamps")):
             minSamps = value
-        elif (opt in ("--maxCorr")):
-            maxCorr = value
-        elif (opt in ("--minCorr")):
-            minCorr = value
         elif (opt in ("--plotDir")):
             plotDir = value
         else:
@@ -123,20 +105,6 @@ ARGUMENTS:
     except Exception:
         raise Exception("minSamps must be a positive integer, not " + str(minSamps))
 
-    try:
-        maxCorr = float(maxCorr)
-        if (maxCorr > 1) or (maxCorr < 0):
-            raise Exception()
-    except Exception:
-        raise Exception("maxCorr must be a float between 0 and 1, not " + str(maxCorr))
-
-    try:
-        minCorr = float(minCorr)
-        if (minCorr > maxCorr) or (minCorr < 0):
-            raise Exception()
-    except Exception:
-        raise Exception("minCorr must be a float between 0 and maxCorr, not " + str(minCorr))
-
     # test plotdir last so we don't mkdir unless all other args are OK
     if not os.path.isdir(plotDir):
         try:
@@ -145,7 +113,7 @@ ARGUMENTS:
             raise Exception("plotDir " + plotDir + " doesn't exist and can't be mkdir'd: " + str(e))
 
     # AOK, return everything that's needed
-    return(countsFile, outFile, minSamps, maxCorr, minCorr, plotDir)
+    return(countsFile, outFile, minSamps, plotDir)
 
 
 ####################################################
@@ -155,7 +123,7 @@ ARGUMENTS:
 # may be available in the log
 def main(argv):
     # parse, check and preprocess arguments
-    (countsFile, outFile, minSamps, maxCorr, minCorr, plotDir) = parseArgs(argv)
+    (countsFile, outFile, minSamps, plotDir) = parseArgs(argv)
 
     # args seem OK, start working
     logger.debug("called with: " + " ".join(argv[1:]))
@@ -171,7 +139,7 @@ def main(argv):
         raise Exception("parseAndNormalizeCounts failed")
 
     thisTime = time.time()
-    logger.debug("Done parseAndNormalizeCounts, in %.2fs", thisTime - startTime)
+    logger.info("done parseAndNormalizeCounts, in %.2fs", thisTime - startTime)
     startTime = thisTime
 
     # ##########################################
@@ -206,7 +174,7 @@ def main(argv):
 
     ###################
     # Clustering:
-    # build clusters of samples with "similar" count profiles, independantly for exons
+    # build clusters of samples with "similar" count profiles, independently for exons
     # located on autosomes and on sex chromosomes (==gonosomes).
     # As a side benefit this also allows to identify same-gender samples, since samples
     # that cluster together for the gonosomal exons always have the same gonosomal
@@ -218,9 +186,18 @@ def main(argv):
     autosomesFPM = exonsFPM[exonOnSexChr == 0]
     gonosomesFPM = exonsFPM[exonOnSexChr != 0]
 
+    # build root name for dendrograms, will just need to append autosomes.pdf or gonosomes.pdf
+    dendroFileRoot = os.path.basename(outFile)
+    # remove file extension (.tsv probably), and also .gz if present
+    if dendroFileRoot.endswith(".gz"):
+        dendroFileRoot = os.path.splitext(dendroFileRoot)[0]
+    dendroFileRoot = os.path.splitext(dendroFileRoot)[0]
+    dendroFileRoot = "dendrogram_" + dendroFileRoot
+    dendroFileRoot = os.path.join(plotDir, dendroFileRoot)
+
     # autosomes
     try:
-        plotFile = os.path.join(plotDir, "clusters_autosomes.pdf")
+        plotFile = dendroFileRoot + "_autosomes.pdf"
         (clust2samps, fitWith, clustIsValid) = clusterSamps.clustering.buildClusters(
             autosomesFPM, "A", samples, minSamps, plotFile)
     except Exception as e:
@@ -229,24 +206,24 @@ def main(argv):
         raise Exception("buildClusters failed")
 
     thisTime = time.time()
-    logger.debug("Done clustering samples for autosomes : in %.2fs", thisTime - startTime)
+    logger.info("done clustering samples for autosomes, in %.2fs", thisTime - startTime)
     startTime = thisTime
 
     # sex chromosomes
     try:
-        plotFile = os.path.join(plotDir, "clusters_gonosomes.pdf")
-        (clust2sampsSex, fitWithSex, clustIsValidSex) = clusterSamps.clustering.buildClusters(
+        plotFile = dendroFileRoot + "_gonosomes.pdf"
+        (clust2sampsGono, fitWithGono, clustIsValidGono) = clusterSamps.clustering.buildClusters(
             gonosomesFPM, "G", samples, minSamps, plotFile)
     except Exception as e:
         logger.error("buildClusters failed for gonosomes: %s", repr(e))
         traceback.print_exc()
         raise Exception("buildClusters failed")
-    clust2samps.update(clust2sampsSex)
-    fitWith.update(fitWithSex)
-    clustIsValid.update(clustIsValidSex)
+    clust2samps.update(clust2sampsGono)
+    fitWith.update(fitWithGono)
+    clustIsValid.update(clustIsValidGono)
 
     thisTime = time.time()
-    logger.debug("Done clustering samples for gonosomes : in %.2fs", thisTime - startTime)
+    logger.info("done clustering samples for gonosomes, in %.2fs", thisTime - startTime)
     startTime = thisTime
 
     ###################
@@ -256,10 +233,6 @@ def main(argv):
     except Exception as e:
         logger.error("printing clusters failed : %s", repr(e))
         raise Exception("printClustsFile failed")
-
-    thisTime = time.time()
-    logger.debug("Done printing clusters, in %.2fs", thisTime - startTime)
-    startTime = thisTime
 
     ###################
     # Code for studying gender predictions, based on sums of FPMs for exons on X or Y.
@@ -294,6 +267,6 @@ if __name__ == '__main__':
     try:
         main(sys.argv)
     except Exception as e:
-        # details on the issue should be in the exception name, print it to stderr and die
-        sys.stderr.write("ERROR in " + scriptName + " : " + str(e) + "\n")
+        sys.stderr.write("ERROR in " + scriptName + " : " + repr(e) + "\n")
+        traceback.print_exc()
         sys.exit(1)
