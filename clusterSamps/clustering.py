@@ -61,8 +61,7 @@ def buildClusters(FPMarray, chromType, samples, minSamps, plotFile):
     if dim == 0:
         logger.warning("in buildClusters: no informative PCA dimensions, very unusual... arbitrarily setting dim=10")
         dim = 10
-    logMess = "in buildClusters, chosen number of PCA dimensions = " + str(dim)
-    logger.info(logMess)
+    logger.debug("in buildClusters with chromType=%s, chosen number of PCA dimensions = %i", chromType, dim)
     # now fit again with only dim dimensions, and project samples
     samplesInPCAspace = sklearn.decomposition.PCA(n_components=dim, svd_solver='full').fit_transform(FPMarray.T)
 
@@ -95,7 +94,7 @@ def buildClusters(FPMarray, chromType, samples, minSamps, plotFile):
     # produce and plot dendrogram
     if os.path.isfile(plotFile):
         logger.info("pre-existing dendrogram plotFile %s will be squashed", plotFile)
-    title = "chromType=" + chromType + "  dim=" + str(dim)
+    title = "chromType = " + chromType + " ,  PCA dimensions = " + str(dim)
     figures.plots.plotDendrogram(linkageMatrix, samples, clust2samps, fitWith, clustIsValid, title, plotFile)
 
     return(clust2samps, fitWith, clustIsValid)
@@ -135,8 +134,7 @@ def linkage2clusters(linkageMatrix, chromType, samples, minSamps):
     # current startDist heurisitic: 10% of highest node
     startDist = linkageMatrix[-1][2] * 0.1
     maxZscoreToMerge = 3
-    logger.debug("in buildClusters, using startDist = %.2f and maxZscoreToMerge = %f",
-                 startDist, maxZscoreToMerge)
+    logger.debug("in buildClusters, using startDist = %.2f", startDist)
 
     ################
     # a (potential) cluster, identified by its clusterIndex i (0 <= i < numSamples + numNodes), is:
