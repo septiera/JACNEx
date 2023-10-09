@@ -10,18 +10,19 @@ import sys
 import numpy as np
 import sklearn.decomposition
 import matplotlib.pyplot
-from mpl_toolkits.mplot3d import Axes3D
+# from mpl_toolkits.mplot3d import Axes3D
 
 ####### MAGE-CNV modules
-import countFrags.countsFile
-import clusterSamps.genderPrediction
 import clusterSamps.clustFile
+import countFrags.countsFile
+import countFrags.bed
 
 # set up logger, using inherited config, in case we get called as a module
 logger = logging.getLogger(__name__)
 
 # prevent matplotlib flooding the logs when we are in DEBUG loglevel
 logging.getLogger('matplotlib').setLevel(logging.WARNING)
+
 
 ###############################################################################
 ############################ PUBLIC FUNCTIONS #################################
@@ -120,7 +121,7 @@ def main(argv):
         raise
 
     # selects cluster-specific exons on autosomes, chrXZ or chrYW.
-    exonOnSexChr = clusterSamps.genderPrediction.exonOnSexChr(exons)
+    exonOnSexChr = countFrags.bed.exonOnSexChr(exons)
     autosomesFPM = exonsFPM[exonOnSexChr == 0]
     gonosomesFPM = exonsFPM[exonOnSexChr != 0]
 
@@ -206,7 +207,7 @@ def ACP2D(samplesInPCAspace, Dim1Index, Dim2Index, sampColorList, cluster_colors
             matplotlib.pyplot.text(samplesInPCAspace[samples.index(annot), Dim1Index],
                                    samplesInPCAspace[samples.index(annot), Dim2Index],
                                    annot)
-    
+
     matplotlib.pyplot.legend(custom_lines, [lt for lt in cluster_colors.keys()], loc='best')
     matplotlib.pyplot.xlabel("component " + str(Dim1Index))
     matplotlib.pyplot.ylabel("component " + str(Dim2Index))
@@ -233,24 +234,24 @@ def ACP2D(samplesInPCAspace, Dim1Index, Dim2Index, sampColorList, cluster_colors
 def ACP3Danimation(samplesInPCAspace, compToView, sampColorList, cluster_colors, samples, annotations, toSave):
     fig = matplotlib.pyplot.figure(figsize=(10, 10))
     ax = fig.add_subplot(111, projection='3d')
-    
+
     scatter = ax.scatter(samplesInPCAspace[:, compToView[0]],
                          samplesInPCAspace[:, compToView[1]],
                          samplesInPCAspace[:, compToView[2]],
                          zdir='z',
                          s=15,
                          c=sampColorList)
-    
+
     custom_lines = [matplotlib.pyplot.Line2D([], [], ls="", marker='.', mec='k', mfc=c,
-                               mew=.1, ms=20) for c in cluster_colors.values()]
-    
+                                             mew=.1, ms=20) for c in cluster_colors.values()]
+
     legend_labels = [lt for lt in cluster_colors.keys()]
 
     # Divide the legends and lines into parts
     num_parts = 4
     part_size = len(custom_lines) // num_parts
-    legend_parts = [custom_lines[i:i+part_size] for i in range(0, len(custom_lines), part_size)]
-    label_parts = [legend_labels[i:i+part_size] for i in range(0, len(legend_labels), part_size)]
+    legend_parts = [custom_lines[i:i + part_size] for i in range(0, len(custom_lines), part_size)]
+    label_parts = [legend_labels[i:i + part_size] for i in range(0, len(legend_labels), part_size)]
 
     # Handle the case where the last part is odd-sized
     if len(legend_parts[-1]) < part_size:
@@ -264,10 +265,10 @@ def ACP3Danimation(samplesInPCAspace, compToView, sampColorList, cluster_colors,
 
     # Create subplots for the legend parts
     for i, (lines, labels) in enumerate(zip(legend_parts, label_parts)):
-        ax_sub = fig.add_subplot(1, num_parts, i+1)
+        ax_sub = fig.add_subplot(1, num_parts, i + 1)
         ax_sub.legend(lines, labels, loc='lower center', bbox_to_anchor=(0.5, -0.1))
         ax_sub.axis('off')
-    
+
     ax.set_xlabel("component " + str(compToView[0]))
     ax.set_ylabel("component " + str(compToView[1]))
     ax.set_zlabel("component " + str(compToView[2]))
@@ -281,11 +282,12 @@ def ACP3Danimation(samplesInPCAspace, compToView, sampColorList, cluster_colors,
                       zdir='z')
 
     ani = matplotlib.animation.FuncAnimation(fig, animate, fargs=(ax, scatter), frames=range(0, 360, 10),
-                                  interval=100, blit=True)
-    
-    #ani.save(toSave + '_animation.gif', writer='pillow')
+                                             interval=100, blit=True)
+
+    # ani.save(toSave + '_animation.gif', writer='pillow')
     ani.save(toSave + '_animation.mp4', writer='ffmpeg')
-    
+
+
 def animate(angle, ax, scatter):
     ax.view_init(20, angle)
     return scatter,
