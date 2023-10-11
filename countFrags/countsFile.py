@@ -77,64 +77,88 @@ def extractCountsFromPrev(genomicWindows, SOIs, prevCountsFile):
 
 #############################################################
 # parseAndNormalizeCounts:
-# Parse the counts data in countsFile, normalize it as fragments per million (FPM),
-# and return the results separately for exons and intergenic pseudo-exons.
-# NOTE: FPM normalization is performed on exon and intergenic counts combined,
-# otherwise intergenic FPMs become huge and meaningless.
+# Parse the counts data in countsFile, normalize (see NOTE) as fragments per
+# million (FPM), and return the results separately for exons and intergenic
+# pseudo-exons.
+# NOTE: for exons on sex chromosomes and intergenic pseudo-exons, FPM normalization
+# is performed on all exonic and intergenic counts combined; but for autosome exons
+# it is performed taking into account ONLY these autosome exon counts. This
+# strategy avoids skewing autosome FPMs in men vs women (due to more reads on chrX
+# in women), while preserving ~2x more FPMs in women vs men for chrX exons and
+# avoiding huge and meaningless intergenic FPMs (if normalized alone).
 #
 # Arg:
 #   - a countsFile produced by 1_countFrags.py, possibly gzipped
 #
-# Returns a tuple (samples, exons, intergenics, exonCountsFPM, intergenicCountsFPM),
+# Returns a tuple (samples, autosomeExons, gonosomeExons, intergenics,
+#                  autosomeFPMs, gonosomeFPMs, intergenicFPMs),
 # each is created here and populated by parsing countsFile:
 # -> 'samples' is the list of sampleIDs (strings) copied from countsFile's header
-# -> 'exons' and 'intergenics' are lists of (pseudo-)exons as produced by processBed,
-#    copied from the first 4 columns of countsFile; EXON_ID is used to decide whether
-#    each window is an exon or an intergenic pseudo-exon
-# -> 'exonCountsFPM' and 'intergenicCountsFPM' are numpy 2D-arrays of floats, of sizes
-#    len(exons) x len(samples) and len(intergenics) x len(samples), holding the
-#    FPM-normalized counts for exons and intergenic pseudo-exons
+# -> 'autosomeExons', 'gonosomeExons' and 'intergenics' are lists of autosome/gonosome/intergenic
+#    (pseudo-)exons as produced by processBed, copied from the first 4 columns of countsFile;
+#    EXON_ID is used to decide whether each window is an exon or an intergenic pseudo-exon
+# -> 'autosomeFPMs', 'gonosomeFPMs' and 'intergenicFPMs' are numpy 2D-arrays of floats,
+#    of sizes [len(autosomeExons) | len(gonosomeExons) | len(intergenics)] x len(samples), holding the
+#    FPM-normalized counts for autosome | gonosome exons and intergenic pseudo-exons
 def parseAndNormalizeCounts(countsFile):
     (genomicWindows, samples, countsList) = parseCountsFile(countsFile)
 
-    # First pass: identify exons vs intergenic pseudo-exons, populate exons and intergenics,
-    # and calculate sum of counts for each sample
-    exons = []
+    # First pass: identify autosoome/gonosome exons vs intergenic pseudo-exons, populate
+    # exons* and intergenics, and calculate sum of autosome/total counts for each sample
+    autosomeExons = []
+    gonosomeExons = []
     intergenics = []
-    isExon = np.zeros(len(genomicWindows), dtype=bool)
-    sumOfCounts = np.zeros(len(samples), dtype=np.uint32)
+    # windowType==0 for intergenic pseudo-exons, 1 for gonosome exons, 2 for autosome exons
+    windowType = np.zeros(len(genomicWindows), dtype=np.uint8)
+    sumOfCountsAuto = np.zeros(len(samples), dtype=np.uint32)
+    sumOfCountsTotal = np.zeros(len(samples), dtype=np.uint32)
+    sexChroms = sexChromosomes()
 
     for i in range(len(genomicWindows)):
         if genomicWindows[i][3].startswith("intergenic_"):
             intergenics.append(genomicWindows[i])
+            windowType[i] = 0
+            sumOfCountsTotal += countsList[i]
+        elif genomicWindows[i][0] in sexChroms:
+            gonosomeExons.append(genomicWindows[i])
+            windowType[i] = 1
+            sumOfCountsTotal += countsList[i]
         else:
-            exons.append(genomicWindows[i])
-            isExon[i] = True
-        sumOfCounts += countsList[i]
-    # if any sample has sumOfCounts==0, replace by 1 to avoid dividing by zero
-    sumOfCounts[sumOfCounts == 0] = 1
+            autosomeExons.append(genomicWindows[i])
+            windowType[i] = 2
+            sumOfCountsAuto += countsList[i]
 
-    # Second pass: populate exonCountsFPM and intergenicCountsFPM, normalizing
-    # the counts on the fly
-    exonCountsFPM = np.zeros((len(exons), len(samples)), dtype=np.float32)
-    intergenicCountsFPM = np.zeros((len(intergenics), len(samples)), dtype=np.float32)
-    # indexes of next exon / intergenic window to populate
-    nextExonIndex = 0
+    sumOfCountsTotal += sumOfCountsAuto
+    # if any sample has sumOfCounts*==0, replace by 1 to avoid dividing by zero
+    sumOfCountsAuto[sumOfCountsAuto == 0] = 1
+    sumOfCountsTotal[sumOfCountsTotal == 0] = 1
+
+    # Second pass: populate *FPMs, normalizing the counts on the fly
+    autosomeFPMs = np.zeros((len(autosomeExons), len(samples)), dtype=np.float32)
+    gonosomeFPMs = np.zeros((len(gonosomeExons), len(samples)), dtype=np.float32)
+    intergenicFPMs = np.zeros((len(intergenics), len(samples)), dtype=np.float32)
+    # indexes of next auto / gono / intergenic window to populate
+    nextAutoIndex = 0
+    nextGonoIndex = 0
     nextIntergenicIndex = 0
 
     for i in range(len(genomicWindows)):
-        if isExon[i]:
-            exonCountsFPM[nextExonIndex] = countsList[i] / sumOfCounts
-            nextExonIndex += 1
+        if windowType[i] == 2:
+            autosomeFPMs[nextAutoIndex] = countsList[i] / sumOfCountsAuto
+            nextAutoIndex += 1
+        elif windowType[i] == 1:
+            gonosomeFPMs[nextGonoIndex] = countsList[i] / sumOfCountsTotal
+            nextGonoIndex += 1
         else:
-            intergenicCountsFPM[nextIntergenicIndex] = countsList[i] / sumOfCounts
+            intergenicFPMs[nextIntergenicIndex] = countsList[i] / sumOfCountsTotal
             nextIntergenicIndex += 1
 
     # scale to FPMs
-    exonCountsFPM *= 1e6
-    intergenicCountsFPM *= 1e6
+    autosomeFPMs *= 1e6
+    gonosomeFPMs *= 1e6
+    intergenicFPMs *= 1e6
 
-    return(samples, exons, intergenics, exonCountsFPM, intergenicCountsFPM)
+    return(samples, autosomeExons, gonosomeExons, intergenics, autosomeFPMs, gonosomeFPMs, intergenicFPMs)
 
 
 #############################################################
@@ -261,3 +285,20 @@ def counts2str(countsArray, exonIndex):
     for i in range(countsArray.shape[1]):
         toPrint += "\t" + str(countsArray[exonIndex, i])
     return(toPrint)
+
+
+###############################################################################
+# sexChromosomes: return a dict whose keys are accepted sex chromosome names,
+# and values are 1 for X|Z and 2 for Y|W.
+# This covers most species including mammals, birds, fish, reptiles.
+# Note that X or Z is present in one or two copies in each individual, and is
+# (usually?) the larger of the two sex chromosomes; while Y or W is present
+# in 0 or 1 copy and is smaller.
+# However interpretation of "having two copies of X|Z" differs: in XY species
+# (eg humans) XX is the Female, while in ZW species (eg birds) ZZ is the Male.
+def sexChromosomes():
+    sexChroms = {"X": 1, "Y": 2, "W": 2, "Z": 1}
+    # also accept the same chroms prepended with 'chr'
+    for sc in list(sexChroms.keys()):
+        sexChroms["chr" + sc] = sexChroms[sc]
+    return(sexChroms)

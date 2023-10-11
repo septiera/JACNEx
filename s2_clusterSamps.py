@@ -133,7 +133,8 @@ def main(argv):
     ###################
     # parse and FPM-normalize the counts, distinguishing between exons and intergenic pseudo-exons
     try:
-        (samples, exons, intergenics, exonsFPM, intergenicsFPM) = countFrags.countsFile.parseAndNormalizeCounts(countsFile)
+        (samples, autosomeExons, gonosomeExons, intergenics, autosomeFPMs, gonosomeFPMs,
+         intergenicFPMs) = countFrags.countsFile.parseAndNormalizeCounts(countsFile)
     except Exception as e:
         logger.error("parseAndNormalizeCounts failed for %s : %s", countsFile, repr(e))
         raise Exception("parseAndNormalizeCounts failed")
@@ -151,11 +152,6 @@ def main(argv):
     # karyotype (predominantly on the X: in our hands XXY samples always cluster with XX
     # samples, not with XY ones)
 
-    # subarrays of counts
-    exonOnSexChr = countFrags.bed.exonOnSexChr(exons)
-    autosomesFPM = exonsFPM[exonOnSexChr == 0]
-    gonosomesFPM = exonsFPM[exonOnSexChr != 0]
-
     # build root name for dendrograms, will just need to append autosomes.pdf or gonosomes.pdf
     dendroFileRoot = os.path.basename(outFile)
     # remove file extension (.tsv probably), and also .gz if present
@@ -169,7 +165,7 @@ def main(argv):
     try:
         plotFile = dendroFileRoot + "_autosomes.pdf"
         (clust2samps, fitWith, clustIsValid) = clusterSamps.clustering.buildClusters(
-            autosomesFPM, "A", samples, minSamps, plotFile)
+            autosomeFPMs, "A", samples, minSamps, plotFile)
     except Exception as e:
         logger.error("buildClusters failed for autosomes: %s", repr(e))
         traceback.print_exc()
@@ -183,7 +179,7 @@ def main(argv):
     try:
         plotFile = dendroFileRoot + "_gonosomes.pdf"
         (clust2sampsGono, fitWithGono, clustIsValidGono) = clusterSamps.clustering.buildClusters(
-            gonosomesFPM, "G", samples, minSamps, plotFile)
+            gonosomeFPMs, "G", samples, minSamps, plotFile)
     except Exception as e:
         logger.error("buildClusters failed for gonosomes: %s", repr(e))
         traceback.print_exc()

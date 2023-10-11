@@ -102,7 +102,8 @@ def main(argv):
     ###################
     # parse and FPM-normalize the counts, distinguishing between exons and intergenic pseudo-exons
     try:
-        (samples, exons, intergenics, exonsFPM, intergenicsFPM) = countFrags.countsFile.parseAndNormalizeCounts(countsFile)
+        (samples, autosomeExons, gonosomeExons, intergenics, autosomeFPMs, gonosomeFPMs,
+         intergenicFPMs) = countFrags.countsFile.parseAndNormalizeCounts(countsFile)
     except Exception as e:
         logger.error("parseAndNormalizeCounts failed for %s : %s", countsFile, repr(e))
         raise Exception("parseAndNormalizeCounts failed")
@@ -120,7 +121,7 @@ def main(argv):
     plotFilePass = plotDir + "/QC_FPMs_PASS.pdf"
     plotFileFail = plotDir + "/QC_FPMs_FAIL.pdf"
     try:
-        SampsQC(exonsFPM, samples, plotFilePass, plotFileFail, testBW=testSmoothingBWs)
+        SampsQC(autosomeFPMs, samples, plotFilePass, plotFileFail, testBW=testSmoothingBWs)
     except Exception as e:
         logger.error("SampsQC failed for %s : %s", countsFile, repr(e))
         raise Exception("SampsQC failed")

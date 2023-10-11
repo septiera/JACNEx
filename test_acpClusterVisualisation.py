@@ -109,7 +109,8 @@ def main(argv):
     (countsFile, clusterFile, plotDir, acpTitle) = parseArgs(argv)
 
     try:
-        (samples, exons, intergenics, exonsFPM, intergenicsFPM) = countFrags.countsFile.parseAndNormalizeCounts(countsFile)
+        (samples, autosomeExons, gonosomeExons, intergenics, autosomeFPMs, gonosomeFPMs,
+         intergenicFPMs) = countFrags.countsFile.parseAndNormalizeCounts(countsFile)
     except Exception as e:
         logger.error("parseAndNormalizeCounts failed for %s : %s", countsFile, repr(e))
         raise Exception("parseAndNormalizeCounts failed")
@@ -120,34 +121,23 @@ def main(argv):
         logger.error("error parsing clusterFile: %s", repr(e))
         raise
 
-    # selects cluster-specific exons on autosomes, chrXZ or chrYW.
-    exonOnSexChr = countFrags.bed.exonOnSexChr(exons)
-    autosomesFPM = exonsFPM[exonOnSexChr == 0]
-    gonosomesFPM = exonsFPM[exonOnSexChr != 0]
-
     ### user test variables
     CHRtype = ["A", "G"]
     numComp = 10
-    normalize = True
     compToView = [0, 1, 2]
     annotations = ["grexome0555", "grexome0529"]
 
     for chr in range(len(CHRtype)):
         if CHRtype[chr] == "A":
-            FPMtoProcess = autosomesFPM
+            FPMtoProcess = autosomeFPMs
         elif CHRtype[chr] == "G":
-            FPMtoProcess = gonosomesFPM
+            FPMtoProcess = gonosomeFPMs
 
-        # PCA calculating
+        # PCA
         # we don't really want the smallest possible number of dimensions, try
         # smallish dims (must be < nbExons and < nbSamples)
         dim = min(numComp, FPMtoProcess.shape[0], FPMtoProcess.shape[1])
         samplesInPCAspace = sklearn.decomposition.PCA(n_components=dim).fit_transform(FPMtoProcess.T)
-        if normalize:
-            # normalize each sample in the PCA space
-            samplesInPCAspaceNorms = np.sqrt(np.sum(samplesInPCAspace**2, axis=1))
-            samplesInPCAspace = np.divide(samplesInPCAspace.T, samplesInPCAspaceNorms).T
-
         # create a cluster IDs list
         clusters = list(clust2samps.keys())
         # Replace with our actual cluster IDs
