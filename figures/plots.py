@@ -131,6 +131,14 @@ def plotDendrogram(linkageMatrix, samples, clust2samps, fitWith, clustIsValid, t
             return('')
 
     ##################
+    # for trouble-shooting: log sampleIDs + clusterIDs from left to right in the dendrogram
+    logger.debug("dendrogram leaves from left to right:")
+    for pos in range(numSamples):
+        sample = samples[pos2si[pos]]
+        clust = samp2clust[sample]
+        logger.debug("%s - %s", clust, sample)
+
+    ##################
     # link colors: one color for each clusterID
     # for each non-singleton node i (== row index in linkageMatrix), populate node2clust:
     # node2clust[i] == the clusterID that node i belongs to if it belongs to a cluster,
