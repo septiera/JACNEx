@@ -295,6 +295,5 @@ def calcBLzscores(linkageMatrix, maxDepth, minSize):
                 BLzscores[ni].append(thisZscore)
                 BLs[ni][0].append(thisBL)
                 for depth in range(1, maxDepth):
-                    if len(BLs[child]) >= depth:
-                        BLs[ni][depth].extend(BLs[child][depth - 1])
+                    BLs[ni][depth].extend(BLs[child][depth - 1])
     return(BLzscores)
