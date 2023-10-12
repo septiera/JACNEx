@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 # - chromType (string): one of 'A', 'G' indicating that FPMarray holds counts
 #   for exons on autosomes or gonosomes
 # - samples: list of sampleIDs, same order as the columns of FPMarray
-# - minSamps: min number of samples (in a cluster + its FIT_WITH friends) to declare
+# - minSize: min number of samples (in a cluster + its FIT_WITH friends) to declare
 #   the cluster VALID
 # - plotFile (str): filename (including path) for saving a dendrogram representing
 #   the resulting hierarchical clustering
@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 # - clust2samps: dict, key==clusterID, value == list of sampleIDs
 # - fitWith: dict, key==clusterID, value == list of clusterIDs
 # - clustIsValid: dict, key==clusterID, value == Boolean
-def buildClusters(FPMarray, chromType, samples, minSamps, plotFile):
+def buildClusters(FPMarray, chromType, samples, minSize, plotFile):
     # reduce dimensionality with PCA
     # choosing the optimal number of dimensions is difficult, but should't matter
     # much as long as we're in the right ballpark -> our heuristic:
@@ -75,9 +75,9 @@ def buildClusters(FPMarray, chromType, samples, minSamps, plotFile):
                                                     metric='euclidean', optimal_ordering=True)
 
     # build clusters from the linkage matrix
-    (clust2samps, fitWith) = linkage2clusters(linkageMatrix, chromType, samples, minSamps)
+    (clust2samps, fitWith) = linkage2clusters(linkageMatrix, chromType, samples, minSize)
 
-    # define valid clusters, ie size (including FIT_WITH) >= minSamps
+    # define valid clusters, ie size (including FIT_WITH) >= minSize
     clustSizeNoFW = {}
     clustIsValid = {}
     for clust in clust2samps:
@@ -86,7 +86,7 @@ def buildClusters(FPMarray, chromType, samples, minSamps, plotFile):
         size = clustSizeNoFW[clust]
         for fw in fitWith[clust]:
             size += clustSizeNoFW[fw]
-        if size >= minSamps:
+        if size >= minSize:
             clustIsValid[clust] = True
         else:
             clustIsValid[clust] = False
@@ -112,17 +112,17 @@ def buildClusters(FPMarray, chromType, samples, minSamps, plotFile):
 # - linkageMatrix: as returned by scipy.cluster.hierarchy.linkage
 # - chromType, samples: same args as buildClusters(), used for formatting/populating
 #   the returned data structures
-# - minSamps: min number of smaples for a cluster to be valid, used in the heuristic that
+# - minSize: min number of smaples for a cluster to be valid, used in the heuristic that
 #   decides whether children want to merge (smaller clusters have increased desire to merge)
 #
 # Returns (clust2samps, fitWith) as specified in the header of buildClusters()
-def linkage2clusters(linkageMatrix, chromType, samples, minSamps):
+def linkage2clusters(linkageMatrix, chromType, samples, minSize):
     numNodes = linkageMatrix.shape[0]
     numSamples = numNodes + 1
 
     # max depth for calculating branch-length zscores
     maxDepth = 10
-    BLzscores = calcBLzscores(linkageMatrix, maxDepth, minSamps)
+    BLzscores = calcBLzscores(linkageMatrix, maxDepth, minSize)
 
     # merge heuristic: a child wants to merge with its brother if it doesn't have any
     # fitWith clusters (otherwise the dendrogram can show non-contiguous clusters, this
@@ -130,7 +130,7 @@ def linkage2clusters(linkageMatrix, chromType, samples, minSamps):
     # - parent's distance (ie height) is <= startDist, or
     # - parent isn't "too far" relative to the child's intra-cluster branch lengths,
     #   ie BLzscore <= maxZscoreToMerge, or
-    # - child is small (< minSamps) and child's brother wants to merge.
+    # - child is small (< minSize) and child's brother wants to merge.
     # current startDist heurisitic: 10% of highest node
     startDist = linkageMatrix[-1][2] * 0.1
     maxZscoreToMerge = 3
@@ -178,7 +178,7 @@ def linkage2clusters(linkageMatrix, chromType, samples, minSamps):
                 sizeCi = 1
                 if children[ci] >= numSamples:
                     sizeCi = linkageMatrix[children[ci] - numSamples][3]
-                if (not clustFitWith[children[ci]]) and (sizeCi < minSamps):
+                if (not clustFitWith[children[ci]]) and (sizeCi < minSize):
                     wantsToMerge[ci] = True
 
         if wantsToMerge[0] and wantsToMerge[1]:
