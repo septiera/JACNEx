@@ -1,16 +1,14 @@
 import logging
 import numpy as np
+import statistics
 import os
-import matplotlib.backends.backend_pdf
 
-# different scipy submodules are used for the application of hierachical clustering
+# hierachical clustering
 import scipy.cluster.hierarchy
-import scipy.spatial.distance
+# PCA
+import sklearn.decomposition
 
 import figures.plots
-
-# prevent matplotlib flooding the logs when we are in DEBUG loglevel
-logging.getLogger('matplotlib').setLevel(logging.WARNING)
 
 # set up logger, using inherited config
 logger = logging.getLogger(__name__)
@@ -21,232 +19,275 @@ logger = logging.getLogger(__name__)
 ###############################################################################
 
 #############################
-# clustersBuilds
-# Groups the samples according to their distance obtained with a hierarchical clustering.
-# Transforms the correlation thresholds (maxCorr, minCorr = ρ) passed as arguments into
-# distance (√(1-ρ)).
-# Compute distances between samples with the equation √(1-ρ) where ρ is
-# the Pearson correlation.
-# Calculate matrix links with hierarchical clustering using the 'average'
-# method on the distance data.
-# Parsing this links matrix and obtaining the clusters.
-# Formats the results by checking their validity
-# Produces a dendogram in plotDir
+# buildClusters:
+# find subsets of "similar" samples. Samples within a cluster will be used
+# to fit the CN2 (ie wildtype) distribution, which in turn will allow
+# to calculate likelihoods of each exon-level CN state.
 #
 # Args:
-#  - FPMarray (np.ndarray[float]): normalised fragment counts for samples,
-#  dim = NbCapturedExons x NbSOIs
-#  - maxCorr (float): maximal Pearson correlation score tolerated by the user to start
-#   build clusters
-#  - minCorr (float): minimal Pearson correlation score tolerated by the user to end
-#   build clusters
-#  - minSamps (int): minimal sample number to validate a cluster
-#  - plotFile (str): full path (+ file name) for saving a dendogram
+# - FPMarray (np.ndarray[float]): normalised fragment counts for exons on the
+#   chromosome type indicated by chromType, for all samples
+# - chromType (string): one of 'A', 'G' indicating that FPMarray holds counts
+#   for exons on autosomes or gonosomes
+# - samples: list of sampleIDs, same order as the columns of FPMarray
+# - minSize: min number of samples (in a cluster + its FIT_WITH friends) to declare
+#   the cluster VALID
+# - plotFile (str): filename (including path) for saving a dendrogram representing
+#   the resulting hierarchical clustering
 #
-# Returns (clusters, linksMatrix):
-#  - clusters (list of list[int, list[int], list[int], int]): cluster definitions
-# dim = nbClust * ["CLUSTER_ID","SAMPLES","CONTROLLED_BY","VALIDITY"]
-#  - linksMatrix (np.ndarray[float]): the hierarchical clustering encoded as a linkage
-#  matrix, dim = (NbSamples-1)*[clusterID1,clusterID2,distValue,NbSamplesInClust]
-# this output is only used for testing and debugging
-def clustersBuilds(FPMarray, maxCorr, minCorr, minSamps, plotFile):
+# Returns (clust2samps, fitWith, clustIsValid): as defined in clustFile.py parseClustsFile(),
+# ie clusterIDs are formatted as TYPE_NUMBER where TYPE is 'A' or 'G', and:
+# - clust2samps: dict, key==clusterID, value == list of sampleIDs
+# - fitWith: dict, key==clusterID, value == list of clusterIDs
+# - clustIsValid: dict, key==clusterID, value == Boolean
+def buildClusters(FPMarray, chromType, samples, minSize, plotFile):
+    # reduce dimensionality with PCA
+    # choosing the optimal number of dimensions is difficult, but should't matter
+    # much as long as we're in the right ballpark -> our heuristic:
+    # only keep dimensions that explain > minExplainedVar variance ratio
+    minExplainedVar = 0.015
+
+    # we want at most maxDims dimensions (should be more than enough for any dataset)
+    maxDims = 20
+    maxDims = min(maxDims, FPMarray.shape[0] - 1, FPMarray.shape[1] - 1)
+    pca = sklearn.decomposition.PCA(n_components=maxDims, svd_solver='full').fit(FPMarray.T)
+    logMess = "in buildClusters while choosing the PCA dimension, explained variance ratio:"
+    logger.debug(logMess)
+    logMess = np.array_str(pca.explained_variance_ratio_, max_line_width=200, precision=3)
+    logger.debug(logMess)
+
+    dim = 0
+    while (pca.explained_variance_ratio_[dim] > minExplainedVar):
+        dim += 1
+    if dim == 0:
+        logger.warning("in buildClusters: no informative PCA dimensions, very unusual... arbitrarily setting dim=10")
+        dim = 10
+    logger.debug("in buildClusters with chromType=%s, chosen number of PCA dimensions = %i", chromType, dim)
+    # now fit again with only dim dimensions, and project samples
+    samplesInPCAspace = sklearn.decomposition.PCA(n_components=dim, svd_solver='full').fit_transform(FPMarray.T)
+
+    # hierarchical clustering of the samples projected in the PCA space:
+    # - use 'average' method to define the distance between clusters (== UPGMA),
+    #   not sure why but AS did a lot of testing and says it is the best choice
+    #   when there are different-sized groups;
+    # - use 'euclidean' metric to define initial distances between samples;
+    # - reorder the linkage matrix so the distance between successive leaves is minimal
+    linkageMatrix = scipy.cluster.hierarchy.linkage(samplesInPCAspace, method='average',
+                                                    metric='euclidean', optimal_ordering=True)
+
+    # build clusters from the linkage matrix
+    (clust2samps, fitWith) = linkage2clusters(linkageMatrix, chromType, samples, minSize)
+
+    # define valid clusters, ie size (including FIT_WITH) >= minSize
+    clustSizeNoFW = {}
+    clustIsValid = {}
+    for clust in clust2samps:
+        clustSizeNoFW[clust] = len(clust2samps[clust])
+    for clust in clust2samps:
+        size = clustSizeNoFW[clust]
+        for fw in fitWith[clust]:
+            size += clustSizeNoFW[fw]
+        if size >= minSize:
+            clustIsValid[clust] = True
+        else:
+            clustIsValid[clust] = False
+
+    # produce and plot dendrogram
     if os.path.isfile(plotFile):
-        logger.error('clustering dendogramm : plotFile %s already exist', plotFile)
-        raise Exception("plotFile already exist")
+        logger.info("pre-existing dendrogram plotFile %s will be squashed", plotFile)
+    title = "chromType = " + chromType + " ,  PCA dimensions = " + str(dim)
+    figures.plots.plotDendrogram(linkageMatrix, samples, clust2samps, fitWith, clustIsValid, title, plotFile)
 
-    # create matplotlib PDF objects
-    pdf = matplotlib.backends.backend_pdf.PdfPages(plotFile)
-
-    # clustering method
-    CM = "average"
-    
-    # To Fill and returns
-    clusters = []
-
-    # - minDist (float): is the distance to start cluster construction
-    minDist = (1 - maxCorr)**0.5
-    # - maxDist (float): is the distance to finalise the cluster construction
-    maxDist = (1 - minCorr)**0.5
-
-    # hierarchical clustering
-    linksMatrix = computeSampsLinks(FPMarray, CM)
-
-    samps2Clusters, trgt2Ctrls = links2Clusters(linksMatrix, minDist, maxDist, minSamps)
-    clustsList = np.unique(samps2Clusters)
-
-    # To Fill not returns
-    # labelArray (np.ndarray[str]): labels for each sample within each cluster, dim=NbSOIs*NbClusters
-    labelArray = np.empty([len(samps2Clusters), len(clustsList)], dtype="U1")
-    labelArray.fill("")
-    # labelsGp (list[str]): labels for each sample list to be passed when plotting the dendogram
-    labelsGp = []
-
-    # labels definitions for dendogram
-    label1 = "x"  # sample contributes to the cluster
-    label2 = "-"  # sample controls the cluster
-    label3 = "O"  # sample is not successfully clustered
-
-    #######
-    # results formatting and preparation of the graphic representation
-    # replacement of cluster identifiers by decreasing correlation order
-    # validity check based on counts and if all samples were clustered (0 invalid, 1 valid)
-    for i in range(len(clustsList)):
-        validityStatus = 1
-
-        # keep samples indexes for current cluster
-        sampsClustIndex = list(np.where(samps2Clusters == clustsList[i])[0])
-
-        # associate the label to the sample index(column) and the cluster index position(row)
-        labelArray[sampsClustIndex, i] = label1
-
-        # list to store new control clusterID
-        ctrlList = []
-        CTRLsampsIndex = []
-        # controlled cluster replacement of controls clusterID
-        if clustsList[i] in trgt2Ctrls:
-            for ctrl in trgt2Ctrls[clustsList[i]]:
-                ctrlList.extend(list(np.where(clustsList == ctrl))[0])
-                CTRLsampsIndex.extend(list(np.where(samps2Clusters == ctrl)[0]))
-
-        labelArray[CTRLsampsIndex, i] = label2
-
-        # check validity
-        if ((len(sampsClustIndex) + len(CTRLsampsIndex)) < minSamps) or (clustsList[i] == 0):
-            validityStatus = 0
-            labelArray[sampsClustIndex, i] = label3
-
-        listToFill = [i, sampsClustIndex, ctrlList, validityStatus]
-        clusters.append(listToFill)
-
-    # browse the np array of labels to build the str list (need for plot dendogram)
-    for i in labelArray:
-        # separation of labels for readability
-        strToBind = "  ".join(i)
-        labelsGp.append(strToBind)
-
-    figures.plots.plotDendogram(linksMatrix, labelsGp, minDist, CM, pdf)
-    pdf.close()
-
-    return (clusters, linksMatrix)
+    return(clust2samps, fitWith, clustIsValid)
 
 
 ###############################################################################
 ############################ PRIVATE FUNCTIONS ################################
 ###############################################################################
-#############################
-# computeSampsLinks
-# Pearson correlation distance (sqrt(1-r)) is unlikely to be a sensible
-# distance when clustering samples.
-# (sqrt(1-r)) is a true distance respecting symmetry, separation and triangular
-# inequality
-# average linkage method is the best choice when there are different-sized groups
-#
-# Args:
-# - FPMarray (np.ndarray[float]): normalised fragment counts, dim = NbCapturedExons x NbSamples
-# - CM [str]: clustering method
-# Returns:
-# - linksMatrix (np.ndarray[float]): the hierarchical clustering encoded as a linkage
-#  matrix, dim = (NbSamples-1)*[clusterID1,clusterID2,distValue,NbSamplesInClust]
-def computeSampsLinks(FPMarray, CM):
-
-    correlation = np.round(np.corrcoef(FPMarray, rowvar=False), 2)
-    dissimilarity = (1 - correlation)**0.5
-
-    # "squareform" transform squared distance matrix in a triangular matrix
-    # "optimal_ordering": linkage matrix will be reordered so that the distance between
-    # successive leaves is minimal.
-    linksMatrix = scipy.cluster.hierarchy.linkage(scipy.spatial.distance.squareform(dissimilarity), CM, optimal_ordering=True)
-    return(linksMatrix)
 
 
 #############################
-# links2Clusters
-# parse the linkage matrix produced by computeSampLinks,
-# goals: construct the clusters in descending order of correlations
-# Conditions for building a cluster:
-# 1- The distance between samples in the cluster must be less than maxDist.
-# 2- The number of samples in the cluster must be above a threshold,
-# specified by the minSamps parameter.
-# addition of a feature allowing the creation of target clusters that come
-# from clusters with enough samples for short distances (called cluster controls)
+# Build clusters from the linkage matrix.
 #
 # Args:
-# - linksMatrix (np.ndarray[float]): the hierarchical clustering encoded as a linkage
-#  matrix, dim = (NbSamples-1)*[clusterID1,clusterID2,distValue,NbSOIsInClust]
-# - minDist (float): is the distance allowing to start the clusters controls creation
-# - maxDist (float): is the distance to stop cluster construction
-# - minSamps (int): minimal sample number to validate a cluster
+# - linkageMatrix: as returned by scipy.cluster.hierarchy.linkage
+# - chromType, samples: same args as buildClusters(), used for formatting/populating
+#   the returned data structures
+# - minSize: min number of smaples for a cluster to be valid, used in the heuristic that
+#   decides whether children want to merge (smaller clusters have increased desire to merge)
 #
-# Returns a tupple (samps2Clusters, trgt2Ctrls), each is created here:
-# - samps2Clusters (np.ndarray[int]): clusterID for each sample indexe
-# - trgt2Ctrls (dict(int : list[int])): target and controls clusters correspondance,
-#   key = target clusterID, value = list of controls clusterID
-def links2Clusters(linksMatrix, minDist, maxDist, minSamps):
-    # To fill and returns
-    samps2Clusters = np.zeros(len(linksMatrix) + 1, dtype=int)
-    trgt2Ctrls = {}
+# Returns (clust2samps, fitWith) as specified in the header of buildClusters()
+def linkage2clusters(linkageMatrix, chromType, samples, minSize):
+    numNodes = linkageMatrix.shape[0]
+    numSamples = numNodes + 1
 
-    # To increment
-    # e.g first formed samples cluster => NbRow from linksMatrix +1 (e.q samplesNB)
-    clusterID = len(linksMatrix)
+    BLzscores = calcBLzscores(linkageMatrix, minSize)
 
-    # parse linkage matrix rows => formation of clusters from each sample in increasing
-    # order of distances (decreasing for correlations)
-    for currentCluster in linksMatrix:
-        clusterID += 1
+    # merge heuristic: a child wants to merge with its brother if it doesn't have any
+    # fitWith clusters (otherwise the dendrogram can show non-contiguous clusters, this
+    # doesn't make sense), and:
+    # - parent's distance (ie height) is <= startDist, or
+    # - parent isn't "too far" relative to the child's intra-cluster branch lengths,
+    #   ie BLzscore <= maxZscoreToMerge, or
+    # - child is small (< minSize) and child's brother wants to merge.
+    # current startDist heurisitic: 10% of highest node
+    startDist = linkageMatrix[-1][2] * 0.1
+    maxZscoreToMerge = 3
+    logger.debug("in buildClusters, using startDist = %.2f", startDist)
 
-        # storage list[int] for clusterID control if required
-        # used as value to fill trgt2Ctrls dictionary
-        controls = []
+    ################
+    # a (potential) cluster, identified by its clusterIndex i (0 <= i < numSamples + numNodes), is:
+    # - a list of sample indexes, stored in clustSamples[i]
+    # - a list of cluster indexes to use as fitWith, in clustFitWith[i]
+    clustSamples = [None] * (numSamples + numNodes)
+    clustFitWith = [None] * (numSamples + numNodes)
 
-        parentClust1 = np.int(currentCluster[0])
-        parentClust2 = np.int(currentCluster[1])
-        distValue = currentCluster[2]
+    # When examining internal node i:
+    # - if both children want to merge: they are both cleared and node i is created
+    # - if only child c1 wants to merge: c1 will use c2 + clustFitWith[c2] as fitWith,
+    #   c2 is left as-is, node i is created with no samples and full fitWith
+    # - if no child wants to merge: they both stay as-is, and node i is created with
+    #   no samples and full fitWith
+    # At the end, the only clusters to create are those with clustSamples != None.
 
-        # distance is too great, risk of integrating samples that are too far
-        # or merging clusters with too different coverage profiles
-        if (distValue > maxDist):
-            break
+    ################
+    # leaves, ie singleton samples
+    for i in range(numSamples):
+        clustSamples[i] = [i]
+        clustFitWith[i] = []
 
-        # applying different conditions for each parent to fill samps2Clusters
-        # and trgt2Ctrls
-        for parentID in [parentClust1, parentClust2]:
+    # internal nodes
+    for ni in range(numNodes):
+        (c1, c2, dist, size) = linkageMatrix[ni]
+        c1 = int(c1)
+        c2 = int(c2)
+        children = [c1, c2]
+        thisClust = ni + numSamples
+        # wantsToMerge: list of 2 Bools, one for each child in the order (c1,c2)
+        wantsToMerge = [False, False]
+        for ci in range(2):
+            if dist <= startDist:
+                wantsToMerge[ci] = True
+            elif (not clustFitWith[children[ci]]) and (BLzscores[ni][ci] <= maxZscoreToMerge):
+                wantsToMerge[ci] = True
+        for ci in range(2):
+            if wantsToMerge[1 - ci] and (not wantsToMerge[ci]):
+                # ci's brother wants to merge but ci doesn't: if ci is small
+                # it can change its mind
+                sizeCi = 1
+                if children[ci] >= numSamples:
+                    sizeCi = linkageMatrix[children[ci] - numSamples][3]
+                if (not clustFitWith[children[ci]]) and (sizeCi < minSize):
+                    wantsToMerge[ci] = True
 
-            # the parent cluster is a single sample
-            # => fill the clusterID to the sample index
-            # move to next parent or end of loop
-            if parentID < len(linksMatrix) + 1:
-                samps2Clusters[parentID] = clusterID
-                continue
+        if wantsToMerge[0] and wantsToMerge[1]:
+            clustSamples[thisClust] = clustSamples[c1] + clustSamples[c2]
+            clustFitWith[thisClust] = []
+            # clear nodes c1 and c2
+            clustSamples[c1] = None
+            clustSamples[c2] = None
+        else:
+            # at most one child wants to merge
+            # in all cases thisClust will be a virtual no-sample cluster (will be useful
+            # later if thisClust is used as fitWith for another cluster)
+            clustSamples[thisClust] = None
+            clustFitWith[thisClust] = clustFitWith[c1] + clustFitWith[c2]
+            if clustSamples[c1]:
+                clustFitWith[thisClust].append(c1)
+            if clustSamples[c2]:
+                clustFitWith[thisClust].append(c2)
 
-            # get indices from the samples of the parent cluster
-            sampsParentIndex = list(np.where(samps2Clusters == parentID)[0])
-            # the parent may already be controlled by another(s) cluster(s)
-            if parentID in trgt2Ctrls:
-                # the current cluster becomes a new control cluster
-                # don't forget it when creating the new list of controls
-                controls.extend(trgt2Ctrls[parentID])
+            if wantsToMerge[0]:
+                # c1 wants to merge but not c2
+                clustFitWith[c1] += clustFitWith[c2]
+                if clustSamples[c2]:
+                    # c2 is a real cluster with samples, not a virtual "fitWith" cluster
+                    clustFitWith[c1].append(c2)
+            elif wantsToMerge[1]:
+                clustFitWith[c2] += clustFitWith[c1]
+                if clustSamples[c1]:
+                    clustFitWith[c2].append(c1)
+            # else c1 and c2 don't change
 
-                # expand sample list with samples from controls
-                prevCtrl = trgt2Ctrls[parentID]
-                for ctrl in prevCtrl:
-                    sampsParentIndex.extend(list(np.where(samps2Clusters == ctrl)[0]))
+    ################
+    # populate the clustering data structures from the Tmp lists, with proper formatting
+    clust2samps = {}
+    fitWith = {}
 
-            # we don't want to create a cluster definitively but replace the clusterIDs
-            # for the samples indexes if the distance between the two parents is low
-            # or if the number of samples in the current cluster is too low
-            # move to next parent or end of loop
-            if (distValue < minDist) or (len(sampsParentIndex) < minSamps):
-                samps2Clusters[sampsParentIndex] = clusterID
-                continue
+    # populate clustIndex2ID with correctly constructed clusterIDs for each non-virtual cluster index
+    clustIndex2ID = [None] * len(clustSamples)
 
-            # the current parent cluster can be considered as a control,
-            # we don't want to modify the indexes of the associated samples
-            controls.extend([parentID])
+    # we want clusters to be numbered increasingly by decreasing numbers of samples
+    clustIndexes = []
+    # find all non-virtual cluster indexes
+    for thisClust in range(len(clustSamples)):
+        if clustSamples[thisClust]:
+            clustIndexes.append(thisClust)
+    # sort them by decreasing numbers of samples
+    clustIndexes.sort(key=lambda ci: len(clustSamples[ci]), reverse=True)
 
-        # filling of the dictionary if at least one of the two parents is
-        # a control and/or has controls
-        if len(controls) != 0:
-            trgt2Ctrls[clusterID] = controls
+    nextClustNb = 1
+    for thisClust in clustIndexes:
+        # left-pad with leading zeroes if less than 2 digits (for pretty-sorting, won't
+        # sort correctly if more than 100 clusters but it's just cosmetic)
+        clustID = chromType + '_' + f"{nextClustNb:02}"
+        clustIndex2ID[thisClust] = clustID
+        nextClustNb += 1
+        clust2samps[clustID] = [samples[i] for i in clustSamples[thisClust]]
+        clust2samps[clustID].sort()
+        fitWith[clustID] = []
 
-    return (samps2Clusters, trgt2Ctrls)
+    for thisClust in clustIndexes:
+        if clustFitWith[thisClust]:
+            clustID = clustIndex2ID[thisClust]
+            fitWith[clustID] = [clustIndex2ID[i] for i in clustFitWith[thisClust]]
+            fitWith[clustID].sort()
+
+    return (clust2samps, fitWith)
+
+
+#############################
+# Given a hierarchical clustering (linkage matrix), calculate branch-length pseudo-Zscores:
+# for each internal node ni (row index in linkageMatrix), BLzscores[ni] is a list of 2
+# floats, one for each child cj (j==0 or 1, same order as they appear in linkageMatrix):
+# BLzscores[ni][j] = [d(ni, cj) - W * mean(BLs[cj])] / (stddev(BLs[cj]) + 1)
+# [convention: BLzscores[clusti][cj] == 0 if cj is a leaf]
+# W == max(minSize / size(cj) , 1) is a weight that decreases the BLzscore for small children,
+# ie children smaller than minSize have inflated desire to merge with their brother.
+# Note: divisor is stddev+1 to avoid divByZero and/or inflated zscores when BLs are equal
+# or very close.
+#
+# Args:
+# - linkageMatrix: as returned by scipy.cluster.hierarchy.linkage
+# - minSize: min number of samples for a cluster to be valid, used for the weight
+#
+# Returns BLzscores, a list (size == number of rows in linkageMatrix) of lists of 2 floats,
+# as defined above.
+def calcBLzscores(linkageMatrix, minSize):
+    numNodes = linkageMatrix.shape[0]
+    numSamples = numNodes + 1
+    BLzscores = [None] * numNodes
+    # for each internal node index ni, BLs[ni] will be the list of branch lengths
+    # (floats) below the node
+    BLs = [None] * numNodes
+    for ni in range(numNodes):
+        (c1, c2, dist, size) = linkageMatrix[ni]
+        c1 = int(c1)
+        c2 = int(c2)
+        BLzscores[ni] = []
+        BLs[ni] = []
+        for child in (c1, c2):
+            if child < numSamples:
+                # leaf
+                BLzscores[ni].append(0)
+                BLs[ni].append(dist)
+            else:
+                child -= numSamples
+                thisBL = dist - linkageMatrix[child][2]
+                childBLs = BLs[child]
+                weight = max(minSize / linkageMatrix[child][3], 1)
+                thisZscore = (thisBL - weight * statistics.mean(childBLs)) / (statistics.stdev(childBLs) + 1)
+                BLzscores[ni].append(thisZscore)
+                BLs[ni].append(thisBL)
+                BLs[ni].extend(childBLs)
+    return(BLzscores)

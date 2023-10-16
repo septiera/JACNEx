@@ -57,12 +57,14 @@ def parseArgs(argv):
 
     usage = "NAME:\n" + scriptName + """\n
 DESCRIPTION:
-Given a BED of exons and one or more BAM files, count the number of sequenced fragments
-from each BAM that overlap each exon (+- padding).
-The "sample names" are the BAM filenames stripped of their path and .bam extension.
-Results are printed to --out in TSV format (possibly gzipped): first 4 columns hold the exon
-definitions after padding and sorting, subsequent columns (one per sample, sorted alphanumerically)
-hold the counts.
+Given a BED of exons and one or more BAM files:
+- pad the exons (+- padding), and create intergenic (or deep intronic) pseudo-exons in
+    the larger gaps between exons;
+- count the number of sequenced fragments from each BAM that overlap each (pseudo-)exon.
+Results are printed to --out in TSV format (possibly gzipped): first 4 columns hold the
+(pseudo-)exon definitions after padding and sorting, subsequent columns hold the counts.
+The "sample names" are the BAM filenames stripped of their path and .bam extension, they
+are sorted alphanumerically and listed in the header line.
 In addition, any support for putative breakpoints is printed to sample-specific TSV.gz files
 created in BPDir.
 If a pre-existing counts file produced by this program with the same BED is provided (with --counts),
