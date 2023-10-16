@@ -391,8 +391,8 @@ def barPlot(countArray, CNStatus, pdf):
 
     # Add labels for mean and standard deviation above each bar
     for i in range(len(CNStatus)):
-        matplotlib.pyplot.text(i, frequencies[i] + mean_offset, f'mean={frequencies[i]:.2e}', ha='center')
-        matplotlib.pyplot.text(i, frequencies[i] + std_offset, f'stdev={stds[i]/total_mean:.2e}', ha='center')
+        matplotlib.pyplot.text(i, frequencies[i] + mean_offset, f'μ={frequencies[i]:.1e}', ha='center')
+        matplotlib.pyplot.text(i, frequencies[i] + std_offset, f'σ={stds[i]/total_mean:.1e}', ha='center')
 
     # Set the labels and title
     matplotlib.pyplot.xlabel('Copy number States')
