@@ -14,6 +14,7 @@ import time
 import logging
 import numpy as np
 import concurrent.futures
+import gzip
 
 ####### JACNEx modules
 import countFrags.countsFile
@@ -210,6 +211,16 @@ def main(argv):
 
     ###################
     # parse counts, perform FPM normalization, distinguish between intergenic regions and exons
+    # try:
+    #     (samples, exons, intergenics, exonsFPM, intergenicsFPM) = countFrags.countsFile.parseAndNormalizeCounts(countsFile)
+    # except Exception as e:
+    #     logger.error("parseAndNormalizeCounts failed for %s : %s", countsFile, repr(e))
+    #     raise Exception("parseAndNormalizeCounts failed")
+
+    # thisTime = time.time()
+    # logger.debug("Done parseAndNormalizeCounts, in %.2fs", thisTime - startTime)
+    # startTime = thisTime
+
     try:
         (samples, exons, intergenics, exonsFPM, intergenicsFPM) = countFrags.countsFile.parseAndNormalizeCounts(countsFile)
     except Exception as e:
@@ -331,7 +342,7 @@ def main(argv):
     # uint8 numpy.ndarray of the same size as exons
     # 0=autosomes, 1=chrXZ, 2=chrYW
     exonOnSexChr = clusterSamps.genderPrediction.exonOnSexChr(exons)
-    
+
     # dict: keys=chromosome identifiers[str], values=[startChrExIndex, endChrExIndex][int]
     chr2Exons = exonOnChr(exons)
 
@@ -342,9 +353,9 @@ def main(argv):
     # The 'void' state does not appear among the emitted states.
     # np.ndarray 2D, dim = (nbOfCNStates + void) * (nbOfCNStates + void)
     try:
-        plotFile = os.path.join(plotDir, "CN_Frequencies_Likelihoods_Plot.pdf")
+
         transMatrix = CNVCalls.transitions.getTransMatrix(likelihoods_A, likelihoods_G, chr2Exons,
-                                                          priors, CNStates, samp2clusts, plotFile)
+                                                          priors, CNStates, samp2clusts, fitWith, plotDir)
     except Exception as e:
         logger.error("getTransMatrix failed : %s", repr(e))
         raise Exception("getTransMatrix failed")
@@ -353,9 +364,7 @@ def main(argv):
     logger.debug("Done getTransMatrix, in %.2fs", thisTime - startTime)
     startTime = thisTime
 
-    ############
-    logger.info("Clean stop for testing purposes.")
-    sys.exit(0)  # Exit with a return code of 0 (success)
+    sys.exit()
 
     #########
     # Application of the HMM using the Viterbi algorithm.
@@ -413,43 +422,63 @@ def main(argv):
     logger.debug("Done CNVs calls, in %.2fs", thisTime - startTime)
     startTime = thisTime
 
-    # ##########
-    # # DEBUG PART
-    # # Create a dictionary to count CNtypes per sampleName
-    # count_dict = {}
+    padding = 10
+    # Sort the list of lists based on multiple columns in a specific order
+    # filtering step:  START,END,CN
+    sorted_list = sorted(CNVs, key=lambda x: (x[1], x[2], x[0]))
+    # Dictionary key = "chrom_start_end_type", values = samples list
+    cnv_dict = {}
 
-    # # Iterate through the data list
-    # for item in CNVs:
-    #     # Destructure the elements of the list
-    #     cn_type, _, _, sample_name = item
-    #     if sample_name not in count_dict:
-    #         # Initialize the counter for sampleName
-    #         count_dict[sample_name] = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0}
-    #     count_dict[sample_name][cn_type] += 1
-
-    # # Log the dictionary using logger.debug()
-    # for sample_name, counts in count_dict.items():
-    #     # Format and log each row with keys and values aligned in columns
-    #     logger.debug("%s: %d, %d, %d, %d, %d", sample_name, counts[0], counts[1], counts[2], counts[3], counts[4])
-
-    ############
-    # vcf format
     try:
-        resVcf = CNVCalls.vcfFile.CNV2Vcf(CNVs, exons, samples, padding)
+        for cnvIndex in range(len(sorted_list)):
+            cnvInfo = sorted_list[cnvIndex]
+            chrom = exons[cnvInfo[1]][0]  # str
+            # remove padding
+            start = exons[cnvInfo[1]][1] + padding  # int
+            end = exons[cnvInfo[2]][2] - padding  # int
+            CNtype = cnvInfo[0]  # int
+            clusterIDs = samp2clusts[cnvInfo[3]]
+            currentCNV = chrom + "-" + str(start) + "-" + str(end) + "-" + str(CNtype)
+
+            if exonOnSexChr[cnvInfo[1]] == 0:
+                currentCNV += "-" + clusterIDs[0]
+            else:
+                currentCNV += "-" + clusterIDs[1]
+
+            # CNV with the same key already exists in the dictionary,
+            # update the corresponding sample's value in the VCF line
+            if currentCNV in cnv_dict.keys():
+                cnv_dict[currentCNV].append(cnvInfo[3])
+
+            # CNV location and type not seen before, create a new VCF line
+            else:
+                cnv_dict[currentCNV] = [cnvInfo[3]]
+
+        try:
+            if outFile.endswith(".gz"):
+                outFH = gzip.open(outFile, "xt", compresslevel=6)
+            else:
+                outFH = open(outFile, "x")
+        except Exception as e:
+            logger.error("Cannot (gzip-)open CNCallsFile %s: %s", outFile, e)
+            raise Exception('cannot (gzip-)open CNCallsFile')
+
+        toPrint = ('\t'.join(["CHR", "START", "END", "CN", "ClusterID", "samps", "NBsamps"]))
+        toPrint += "\n"
+        outFH.write(toPrint)
+
+        for i in cnv_dict.keys():
+            toPrint = "{}\t{}\t{}".format('\t'.join("{:s}".format(CNcount) for CNcount in i.split("-")),
+                                          ','.join("{:s}".format(CNcount) for CNcount in cnv_dict[i]),
+                                          len(cnv_dict[i]))
+            toPrint += "\n"
+            outFH.write(toPrint)
+
+        outFH.close()
+
     except Exception as e:
-        logger.error("CNV2Vcf failed : %s", repr(e))
-        raise Exception("CNV2Vcf failed")
+        logger.error(repr(e))
 
-    thisTime = time.time()
-    logger.debug("Done CNV2Vcf, in %.2fs", thisTime - startTime)
-    startTime = thisTime
-
-    ###########
-    # print results
-    CNVCalls.vcfFile.printVcf(resVcf, outFile, scriptName, samples)
-
-    thisTime = time.time()
-    logger.debug("Done printVcf, in %.2fs", thisTime - startTime)
     startTime = thisTime
     logger.info("ALL DONE")
 
