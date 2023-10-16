@@ -372,7 +372,7 @@ def plotPieChart(clustID, filterStatus, exStatusArray, matplotOpenFile):
 # - outFolder (str): Path to the output folder for saving the bar plot.
 def barPlot(countArray, CNStatus, pdf):
     matplotOpenFile = matplotlib.backends.backend_pdf.PdfPages(pdf)
-    fig = matplotlib.pyplot.figure(figsize=(8, 8))
+    fig = matplotlib.pyplot.figure(figsize=(10, 8))
 
     # Calculate the mean and standard deviation for each category
     means = np.mean(countArray, axis=0)
