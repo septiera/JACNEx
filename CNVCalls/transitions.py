@@ -31,21 +31,21 @@ logger = logging.getLogger(__name__)
 # Also generates a bar plot of copy number counts by samples (only if logger debug mode).
 #
 # Args:
-# - likelihoods(dict): keys= sampID, values= np.ndarray of likelihoods[floats]
-#                         dim= nbOfExons * NbOfCNStates
-# - exonOnChr
-
+# - likelihoods(dict): keys = sampID[str], values = np.ndarray of likelihoods[floats]
+#                         dim = nbOfExons * NbOfCNStates
+# - chr2Exons (dict): keys = chrID[str], values = startExonIndex[int]
 # - priors (np.ndarray[floats]): prior probabilities for each copy number status.
 # - CNStates (list[strs]): Names of copy number types.
-# - samp2clusts
-# - fitWith
+# - samp2clusts (dict): keys = sampID[str], values = [clustID_A, clustID_G][strs]
+# - fitWith (dict): keys = clusterID[str], values = clusterIDs list  
 # - plotDir[str] : directory to save the graphical representation.
 #
 # Returns:
 # - transMatVoid (np.ndarray[floats]): transition matrix used for the hidden Markov model,
 #                                      including the "void" state.
 #                                      dim = [nbStates+1, nbStates+1]
-def getTransMatrix(likelihoods_A, likelihoods_G, exonOnChr, priors, CNStates, samp2clusts, fitWith, plotDir):
+def getTransMatrix(likelihoods_A, likelihoods_G, chr2Exons_A, chr2Exons_G,
+                   priors, CNStates, samp2clusts, fitWith, plotDir):
     nbStates = len(CNStates)
     # 2D array, expected format for a transition matrix [i; j]
     # contains all prediction counts of states, taking into account
@@ -54,9 +54,11 @@ def getTransMatrix(likelihoods_A, likelihoods_G, exonOnChr, priors, CNStates, sa
 
     try:
         # Get counts for CN levels of autosomes and update the transition matrix
-        transitions, CNcounts_A, samp2CNEx_A = countsCNStates(likelihoods_A, nbStates, transitions, priors, exonOnChr)
+        transitions, CNcounts_A, samp2CNEx_A = countsCNStates(likelihoods_A, nbStates, transitions,
+                                                              priors, chr2Exons_A)
         # Get counts for CN levels of gonosomes and update the transition matrix
-        transitions, CNcounts_G, samp2CNEx_G = countsCNStates(likelihoods_G, nbStates, transitions, priors, exonOnChr)
+        transitions, CNcounts_G, samp2CNEx_G = countsCNStates(likelihoods_G, nbStates, transitions,
+                                                              priors, chr2Exons_G)
     except Exception as e:
         logger.error(repr(e))
         raise
@@ -108,36 +110,39 @@ def getTransMatrix(likelihoods_A, likelihoods_G, exonOnChr, priors, CNStates, sa
 #   values = 1D numpy arrays 1D (NbExons) representing CN states (0 to 3)
 #   and no call (-1)
 def countsCNStates(likelihoodDict, nbStates, transitions, priors, exonOnChr):
-      # Initialize dictionaries
+    # Initialize dictionaries
     samp2CNCounts = {}
     samp2CNEx = {}
-
+    
     # Get the exon indexes start positions of chromosomes as a set for faster look-up
-    chrStarts = set(value[0] for value in exonOnChr.values())
+    chrStarts = list(exonOnChr.values())
 
     for sampID, likelihoods in likelihoodDict.items():
         prevCN = np.argmax(priors)  # Normal CN status index = 2
         CNsVec = np.full(likelihoods.shape[0], -1, dtype=int)
-        
+        countsVec = np.zeros(nbStates, dtype=int)
+
         # Calculate the most probable CN state based on probabilities and priors
         odds = likelihoods * priors
         CNsList = np.argmax(odds, axis=1)
-        
+
         # Check for no interpretable data
         skip_exon = np.any(likelihoods == -1, axis=1)
-        
+
         for ei, is_skipped in enumerate(skip_exon):
+            currCN = CNsList[ei]
             if is_skipped:
                 continue
-            
+
             if ei in chrStarts:
                 prevCN = np.argmax(priors)
 
-            transitions[prevCN, CNsList[ei]] += 1
-            CNsVec[ei] = CNsList[ei]
-            prevCN = CNsList[ei]
+            transitions[prevCN, currCN] += 1
+            CNsVec[ei] = currCN
+            prevCN = currCN
+            countsVec[currCN] += 1
 
-        samp2CNCounts[sampID] = np.bincount(CNsList, minlength=nbStates)
+        samp2CNCounts[sampID] = countsVec
         samp2CNEx[sampID] = CNsVec
 
     return (transitions, samp2CNCounts, samp2CNEx)
@@ -191,7 +196,7 @@ def debug_process(transMatVoid, CNcounts_A, samp2CNEx_A, CNcounts_G, samp2CNEx_G
     try:
         with open(testFile, "x") as outFH:
             header = "\t".join(["SAMPID", "clustID_A", "CN0_A", "CN1_A", "CN2_A", "CN3_A",
-                    "clustID_G", "CN0_G", "CN1_G", "CN2_G", "CN3_G"])
+                                "clustID_G", "CN0_G", "CN1_G", "CN2_G", "CN3_G"])
             outFH.write(header + "\n")
 
             for sampID in sampIDsList:

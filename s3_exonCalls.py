@@ -5,7 +5,7 @@
 # and a TSV with clustering information produced by 2_clusterSamps.py:
 # It filters out non-callable exons and computes parameters for two distributions:
 # an exponential distribution (loc=0, scale=lambda) for CN0 and a Gaussian distribution
-# (loc=mean, scale=stdev) for CN2.
+# (loc=mean, scale=stdev) for CN2 distinguishing autosomes from gonosomes.
 # See usage for more details.
 ###############################################################################################
 import sys
@@ -161,16 +161,13 @@ def main(argv):
     startTime = time.time()
 
     ###################
-    # parse counts, perform FPM normalization, distinguish between intergenic regions and exons
+    # parse and FPM-normalize the counts, distinguishing between exons and intergenic pseudo-exons
     try:
-        (samples, exons, intergenics, exonsFPM, intergenicsFPM) = countFrags.countsFile.parseAndNormalizeCounts(countsFile)
+        (samples, autosomeExons, gonosomeExons, intergenics, autosomeFPMs, gonosomeFPMs,
+         intergenicFPMs) = countFrags.countsFile.parseAndNormalizeCounts(countsFile)
     except Exception as e:
         logger.error("parseAndNormalizeCounts failed for %s : %s", countsFile, repr(e))
         raise Exception("parseAndNormalizeCounts failed")
-
-    thisTime = time.time()
-    logger.debug("Done parseAndNormalizeCounts, in %.2fs", thisTime - startTime)
-    startTime = thisTime
 
     ###################
     # parse clusters informations
@@ -190,7 +187,7 @@ def main(argv):
     # FPM values representing non-captured exons(<unCaptFPMLimit)
     # from those indicating captured exons(>unCaptFPMLimit).
     try:
-        (exp_loc, exp_scale, unCaptFPMLimit) = exonCalls.exonProcessing.CN0ParamsAndFPMLimit(intergenicsFPM, plotDir)
+        (exp_loc, exp_scale, unCaptFPMLimit) = exonCalls.exonProcessing.CN0ParamsAndFPMLimit(intergenicFPMs, plotDir)
     except Exception as e:
         raise Exception("CN0ParamsAndFPMLimit failed: %s", repr(e))
 
@@ -207,10 +204,11 @@ def main(argv):
     # 'filterStatus': filtering state indexes
     metricsNames = ["loc", "scale", "filterStates"]
 
-    # output dictionary: keys == clusterID and values == np.ndarray[float],
+    # output dictionaries: keys == clusterID and values == np.ndarray[floats],
     # dim = NbOfExons * NbOfMetrics, contains the fitting results
     # of the Gaussian distribution and filters for all exons and clusters.
-    exonMetrics = {}
+    exonMetrics_A = {}
+    exonMetrics_G = {}
 
     # filterStates list [str] represents the set of filter names applied to the exons.
     # The indexes of this list will be used to map the filtered states of each
@@ -219,9 +217,6 @@ def main(argv):
     # while the index -1 (initialized during the output matrix allocation)
     # represents exons that are not used for cluster parameter calculation.
     filterStates = ["notCaptured", "cannotFitRG", "RGClose2LowThreshold", "fewSampsInRG", "call"]
-
-    # selects cluster-specific exons on autosomes, chrXZ or chrYW.
-    exonOnSexChr = clusterSamps.genderPrediction.exonOnSexChr(exons)
 
     # generates a PDF file containing pie charts summarizing the filters
     # applied to exons in each cluster.
@@ -238,9 +233,10 @@ def main(argv):
     ############
     # updateMetricsDictionary:
     # arg: a Future object returned by ProcessPoolExecutor.submit(exonCalls.exonProcessing.adjustExonMetricsWithFilters).
-    # returns a 2-element tupple (clusterID, clustExMetrics).
+    # returns a 3-element tupple (chromType, clusterID, clustExMetrics).
     # If something went wrong, raise error in log;
-    # otherwise fill exonMetrics key with clusterID and value with clustExMetrics np.ndarray dim=NbOfExons * NbOfMetrics
+    # Otherwise, fill the exonMetrics key with the clusterID and the corresponding chromType,
+    # and associate it with the clustExMetrics np.ndarray dim=NbOfExons * NbOfMetrics
     # In addition, plot a pie chart summarizing the performed filtering for the current cluster.
     def updateMetricsDictionary(futurecounts2ParamsRes):
         e = futurecounts2ParamsRes.exception()
@@ -248,18 +244,22 @@ def main(argv):
             logger.warning("Failed to adjustExonMetricsWithFilters for cluster %s, skipping it", str(e))
         else:
             counts2ParamsRes = futurecounts2ParamsRes.result()
-            exonMetrics[counts2ParamsRes[0]] = counts2ParamsRes[1]
+
+            if counts2ParamsRes[0] == "A":
+                exonMetrics_A[counts2ParamsRes[1]] = counts2ParamsRes[2]
+            else:
+                exonMetrics_G[counts2ParamsRes[1]] = counts2ParamsRes[2]
 
             # Generate pie chart for the cluster based on the filterStatus
             try:
-                figures.plots.plotPieChart(counts2ParamsRes[0], filterStates,
-                                           counts2ParamsRes[1][:, metricsNames.index("filterStates")],
+                figures.plots.plotPieChart(counts2ParamsRes[1], filterStates,
+                                           counts2ParamsRes[2][:, metricsNames.index("filterStates")],
                                            matplotOpenFile)
             except Exception as e:
-                logger.error("plotPieChart failed for cluster %s : %s", clusterID, repr(e))
+                logger.error("plotPieChart failed for cluster %s : %s", counts2ParamsRes[1], repr(e))
                 raise
 
-            logger.info("Done adjustExonMetricsWithFilters for cluster %s", counts2ParamsRes[0])
+            logger.info("Done adjustExonMetricsWithFilters for cluster %s", counts2ParamsRes[1])
 
     # To be parallelised => browse clusters
     with ProcessPoolExecutor(paraClusters) as pool:
@@ -269,10 +269,24 @@ def main(argv):
                 logger.warning("cluster %s is invalid, low sample number", clusterID)
                 continue
 
-            ##### run prediction for current cluster
-            futureRes = pool.submit(exonCalls.exonProcessing.adjustExonMetricsWithFilters,
-                                    clusterID, exonsFPM, samples, clust2samps, fitWith, exonOnSexChr,
-                                    unCaptFPMLimit, metricsNames, filterStates)
+            ### chromType [str]: variable distinguishes between analyses of
+            # sex chromosomes (gonosomes) and non-sex chromosomes (autosomes).
+            # autosomes
+            if clusterID.startswith("A"):
+                chromType = "A"
+                futureRes = pool.submit(exonCalls.exonProcessing.adjustExonMetricsWithFilters,
+                                        clusterID, chromType, autosomeFPMs, samples, clust2samps,
+                                        fitWith, unCaptFPMLimit, metricsNames, filterStates)
+            # gonosomes
+            elif clusterID.startswith("G"):
+                chromType = "G"
+                futureRes = pool.submit(exonCalls.exonProcessing.adjustExonMetricsWithFilters,
+                                        clusterID, chromType, gonosomeFPMs, samples, clust2samps,
+                                        fitWith, unCaptFPMLimit, metricsNames, filterStates)
+
+            else:
+                logger.error("Cluster %s doesn't distinguish gonosomal from autosomal analyses.", clusterID)
+                raise
 
             futureRes.add_done_callback(updateMetricsDictionary)
 
@@ -281,7 +295,14 @@ def main(argv):
 
     #####################################################
     # Print exon defs + metrics to outFile
-    exonCalls.exonCallsFile.printParamsFile(outFile, exonMetrics, metricsNames, exp_loc, exp_scale, exons)
+    # requires two independent outputs, one for the gonosomes and the other for the autosomes
+    outputName = os.path.splitext(outFile)[0]
+    # autosomes
+    exonCalls.exonCallsFile.printParamsFile(outputName + "_A.gz", exonMetrics_A, metricsNames,
+                                            exp_loc, exp_scale, autosomeExons)
+    # gonosomes
+    exonCalls.exonCallsFile.printParamsFile(outputName + "_G.gz", exonMetrics_G, metricsNames,
+                                            exp_loc, exp_scale, gonosomeExons)
 
     thisTime = time.time()
     logger.debug("Done printing exon metrics for all (non-failed) clusters, in %.2fs", thisTime - startTime)

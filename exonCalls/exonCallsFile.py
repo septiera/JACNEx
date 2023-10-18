@@ -1,6 +1,7 @@
 import logging
 import gzip
 import numpy as np
+import os
 
 # prevent numba flooding the logs when we are in DEBUG loglevel
 logging.getLogger('numba').setLevel(logging.WARNING)
@@ -17,33 +18,37 @@ logger = logging.getLogger(__name__)
 #
 # Arg:
 #  - exonParamsFile [str]: path to a TSV file containing exon parameters.
-#                          produces by s3_exonCalls.py.
+#                          input name of s3_exonCalls.py.
 #
 # Returns a tupple (exonParamsArray, exp_loc, exp_scale, paramsTitles):
-#  - exonMetrics [dict]: keys == clusterID and values == np.ndarray[floats]
-#                        dim  = NbOfExons * NbOfMetrics, contains the fitting
-#                        results of the Gaussian distribution and filters for
-#                        all exons.
+#  - exonMetrics_A [dict]: keys == clusterID and values == np.ndarray[floats]
+#                          dim  = NbOfExons * NbOfMetrics, contains the fitting
+#                          results of the Gaussian distribution and filters for
+#                          exons in autosomes.
+#  - exonMetrics_G [dict]: same as exonMetrics_A for gonosomes.
 #  - exp_loc [float], exp_scale [float: The exponential parameters.
 #  - metricsNames (list[strs]): ["loc","scale","filterStates"]
 def parseExonParamsFile(exonParamsFile):
-    # Call the parseExonParamsPrivate function to obtain the necessary data.
-    (clusterIDs, metricsNames, paramsList, exp_loc, exp_scale) = parseExonParamsPrivate(exonParamsFile)
+    # presence of two results files (gonsomes and autosomes)
+    paramsRootFile = os.path.splitext(exonParamsFile)[0]
+    paramsRootFile_A = paramsRootFile + "_A.gz"
+    paramsRootFile_G = paramsRootFile + "_G.gz"
 
-    numMetrics = len(metricsNames)
+    (clusterIDs_A, metricsNames_A, paramsList_A, exp_loc_A, exp_scale_A) = parseExonParamsPrivate(paramsRootFile_A)
+    (clusterIDs_G, metricsNames_G, paramsList_G, exp_loc_G, exp_scale_G) = parseExonParamsPrivate(paramsRootFile_G)
 
-    # Create the output dictionary
-    exonMetrics = {}
-    for clust in clusterIDs:
-        # Initialize the dictionary value with a 2D array of -1's using np.full().
-        exonMetrics[clust] = np.full((len(paramsList), len(metricsNames)), -1, dtype=np.float64, order='C')
+    # Check for parameter consistency between gonosomes and autosomes
+    if metricsNames_A != metricsNames_G:
+        raise ValueError("The measured parameters differ between gonosomes and autosomes.")
+    if exp_loc_A != exp_loc_G:
+        raise ValueError("The location exponential parameter differs between gonosomes and autosomes.")
+    if exp_scale_A != exp_scale_G:
+        raise ValueError("The scale exponential parameter differs between gonosomes and autosomes.")
 
-    # Fill the exonMetrics dictionary by iterating over exons and clusters.
-    for ei in range(len(paramsList)):
-        for ci in range(len(clusterIDs)):
-            exonMetrics[clusterIDs[ci]][ei, :] = paramsList[ei][ci * numMetrics: ci * numMetrics + numMetrics]
+    exonMetrics_A = fillParamsDict(clusterIDs_A, paramsList_A, metricsNames_A)
+    exonMetrics_G = fillParamsDict(clusterIDs_G, paramsList_G, metricsNames_G)
 
-    return (exonMetrics, exp_loc, exp_scale, metricsNames)
+    return (exonMetrics_A, exonMetrics_G, exp_loc_A, exp_scale_A, metricsNames_A)
 
 
 #############################
@@ -172,3 +177,30 @@ def calls2str(callsArray, exonIndex):
     for i in range(callsArray.shape[1]):
         formatted_values.append("{:0.2e}".format(callsArray[exonIndex, i]))
     return "\t" + "\t".join(formatted_values)
+
+
+############################
+# fillParamsDict
+# Fill a dictionary with exon metrics for each cluster.
+#
+# Args:
+# - clusterIDs (list[strs]): List of cluster IDs.
+# - paramsList (list of lists[floats]): List of exon parameters where each sublist represents
+#                                       a set of parameters for each exon.
+# - metricsNames (list[strs]): List of metric names.
+#
+# Returns:
+# - exonMetrics (dict): keys == cluster IDs; values == 2D NumPy arrays representing exon metrics.
+def fillParamsDict(clusterIDs, paramsList, metricsNames):
+    numMetrics = len(metricsNames)
+    exonMetrics = {}
+    for clust in clusterIDs:
+        # Initialize the dictionary value with a 2D array of -1's using np.full().
+        exonMetrics[clust] = np.full((len(paramsList), len(metricsNames)), -1, dtype=np.float64, order='C')
+
+    # Fill the exonMetrics dictionary by iterating over exons and clusters.
+    for ei, exon_params in enumerate(paramsList):
+        for ci, cluster_id in enumerate(clusterIDs):
+            exonMetrics[cluster_id][ei, :] = exon_params[ci * numMetrics: ci * numMetrics + numMetrics]
+
+    return(exonMetrics)

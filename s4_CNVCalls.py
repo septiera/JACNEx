@@ -118,8 +118,6 @@ ARGUMENTS:
 
     if paramsFile == "":
         raise Exception("you must provide a continuous distribution parameters file use --params. Try " + scriptName + " --help.")
-    elif (not os.path.isfile(paramsFile)):
-        raise Exception("paramsFile " + paramsFile + " doesn't exist.")
 
     if outFile == "":
         raise Exception("you must provide an outFile with --out. Try " + scriptName + " --help")
@@ -159,15 +157,13 @@ ARGUMENTS:
 ############################ PRIVATE FUNCTIONS #################################
 ###############################################################################
 # exonOnChr:
-# identifies the start and end indexes of "exons" for each chromosome.
+# identifies the start indexes of "exons" for each chromosome.
 #
 # Arg:
 # - exons (list of list[str, int, int, str]): containing CHR,START,END,EXON_ID
 #
 # Returns:
-# - exonOnChrDict (dict): keys == chromosome identifiers, values == int list,
-#                         ie [startChrExIndex, endChrExIndex]
-#
+# - exonOnChrDict (dict): keys == chromosome identifiers, values == startChrExIndex
 def exonOnChr(exons):
     # Initialize an empty dictionary to store exons grouped by chromosome
     exonOnChrDict = {}
@@ -179,13 +175,8 @@ def exonOnChr(exons):
             continue
         else:
             exonOnChrDict[currentChr] = [ei]
-            if prevChr is not None:
-                exonOnChrDict[prevChr].append(ei - 1)
 
         prevChr = currentChr
-
-    # For the last iteration, update the end index of the current chromosome
-    exonOnChrDict[currentChr].append(ei)
 
     return exonOnChrDict
 
@@ -210,26 +201,13 @@ def main(argv):
     startTime = time.time()
 
     ###################
-    # parse counts, perform FPM normalization, distinguish between intergenic regions and exons
-    # try:
-    #     (samples, exons, intergenics, exonsFPM, intergenicsFPM) = countFrags.countsFile.parseAndNormalizeCounts(countsFile)
-    # except Exception as e:
-    #     logger.error("parseAndNormalizeCounts failed for %s : %s", countsFile, repr(e))
-    #     raise Exception("parseAndNormalizeCounts failed")
-
-    # thisTime = time.time()
-    # logger.debug("Done parseAndNormalizeCounts, in %.2fs", thisTime - startTime)
-    # startTime = thisTime
-
+    # parse and FPM-normalize the counts, distinguishing between exons and intergenic pseudo-exons
     try:
-        (samples, exons, intergenics, exonsFPM, intergenicsFPM) = countFrags.countsFile.parseAndNormalizeCounts(countsFile)
+        (samples, autosomeExons, gonosomeExons, intergenics, autosomeFPMs, gonosomeFPMs,
+         intergenicFPMs) = countFrags.countsFile.parseAndNormalizeCounts(countsFile)
     except Exception as e:
         logger.error("parseAndNormalizeCounts failed for %s : %s", countsFile, repr(e))
         raise Exception("parseAndNormalizeCounts failed")
-
-    thisTime = time.time()
-    logger.debug("Done parseAndNormalizeCounts, in %.2fs", thisTime - startTime)
-    startTime = thisTime
 
     ###################
     # parse clusters informations
@@ -246,7 +224,7 @@ def main(argv):
     # parse exon metrics for each valid cluster
     # extracts parameters of continuous distributions fitted on CN0, CN2 coverage profil
     try:
-        (exMetrics, exp_loc, exp_scale, paramsTitles) = exonCalls.exonCallsFile.parseExonParamsFile(paramsFile)
+        (exonMetrics_A, exonMetrics_G, exp_loc, exp_scale, metricsNames) = exonCalls.exonCallsFile.parseExonParamsFile(paramsFile)
     except Exception as e:
         raise Exception("parseParamsFile failed for %s : %s", paramsFile, repr(e))
 
@@ -297,7 +275,7 @@ def main(argv):
     ##
     # mergeEmission:
     # arg: a Future object returned by ProcessPoolExecutor.submit(CNVCalls.likelihoods.counts2Likelihoods).
-    # counts2Likelihoods returns a 3-element tuple (clusterID, chromType, likelihoodClustDict).
+    # counts2Likelihoods returns a 3-element tuple (chromType, clusterID, likelihoodClustDict).
     # If something went wrong, raise error in log;
     # For each cluster, the chromType helps select the likelihoods dictionary to populate with the corresponding samples
     # and it's likelihoods arrays.
@@ -310,8 +288,8 @@ def main(argv):
             logger.warning("Failed counts2likelihoods for cluster %s, skipping it", clusterID)
         else:
             counts2emissionRes = futurecounts2emission.result()
-            clusterID = counts2emissionRes[0]
-            chromType = counts2emissionRes[1]
+            chromType = counts2emissionRes[0]
+            clusterID = counts2emissionRes[1]
 
             if chromType == "A":
                 likelihoods_A.update(counts2emissionRes[2])
@@ -330,21 +308,35 @@ def main(argv):
             if not clustIsValid[clusterID]:
                 logger.warning("Cluster %s is invalid, low sample number %i", clusterID, len(clust2samps[clusterID]))
                 continue
+            
+            ### chromType [str]: variable distinguishes between analyses of
+            # sex chromosomes (gonosomes) and non-sex chromosomes (autosomes).
+            # autosomes
+            if clusterID.startswith("A"):
+                chromType = "A"
+                futureRes = pool.submit(CNVCalls.likelihoods.counts2likelihoods, clusterID,
+                                        samp2Index, autosomeFPMs, clust2samps, exp_loc, exp_scale,
+                                        exonMetrics_A, len(CNStates), chromType)
+            # gonosomes
+            elif clusterID.startswith("G"):
+                chromType = "G"
+                futureRes = pool.submit(CNVCalls.likelihoods.counts2likelihoods, clusterID,
+                                        samp2Index, gonosomeFPMs, clust2samps, exp_loc, exp_scale,
+                                        exonMetrics_G, len(CNStates), chromType)
 
-            futureRes = pool.submit(CNVCalls.likelihoods.counts2likelihoods, clusterID, samp2Index, exonsFPM,
-                                    clust2samps, exp_loc, exp_scale, exMetrics, len(CNStates))
+            else:
+                logger.error("Cluster %s doesn't distinguish gonosomal from autosomal analyses.", clusterID)
+                raise
+
             futureRes.add_done_callback(mergeEmission)
 
     thisTime = time.time()
     logger.debug("Done calculate likelihoods, in %.2fs", thisTime - startTime)
     startTime = thisTime
 
-    # uint8 numpy.ndarray of the same size as exons
-    # 0=autosomes, 1=chrXZ, 2=chrYW
-    exonOnSexChr = clusterSamps.genderPrediction.exonOnSexChr(exons)
-
     # dict: keys=chromosome identifiers[str], values=[startChrExIndex, endChrExIndex][int]
-    chr2Exons = exonOnChr(exons)
+    chr2Exons_A = exonOnChr(autosomeExons)
+    chr2Exons_G = exonOnChr(autosomeExons)
 
     #########
     # Transition matrix generated from likelihood data, based on the overall sampling.
@@ -353,9 +345,9 @@ def main(argv):
     # The 'void' state does not appear among the emitted states.
     # np.ndarray 2D, dim = (nbOfCNStates + void) * (nbOfCNStates + void)
     try:
-
-        transMatrix = CNVCalls.transitions.getTransMatrix(likelihoods_A, likelihoods_G, chr2Exons,
-                                                          priors, CNStates, samp2clusts, fitWith, plotDir)
+        transMatrix = CNVCalls.transitions.getTransMatrix(likelihoods_A, likelihoods_G, chr2Exons_A,
+                                                          chr2Exons_G, priors, CNStates, samp2clusts,
+                                                          fitWith, plotDir)
     except Exception as e:
         logger.error("getTransMatrix failed : %s", repr(e))
         raise Exception("getTransMatrix failed")

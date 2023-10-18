@@ -73,38 +73,28 @@ def CN0ParamsAndFPMLimit(intergenicsFPM, plotDir):
 # filter states, are stored in a cluster-specific metrics array.
 #
 # Args:
-# -clusterID [str]
-# -counts (np.ndarray[floats]): normalised counts from exons
-# -samples (list[strs]): sample IDs in the same order as the columns of 'counts'.
-# -clust2samps (dict): mapping cluster IDs to lists of sample IDs.
-# -fitWith (dict): mapping cluster IDs to lists of control cluster IDs.
-# -exonOnSexChr (numpy.ndarray[ints]): chromosome category (autosomes=0 or gonosomes chrXZ=1, chrYW=2)
-#                                      for each exon.
-# -unCaptFPMLimit [float]: Upper limit for fragment count data, used in exon filtering.
-# -metricsNames (list[strs]): List of expected column names for the results array.
-# -filterStates (list[strs]): List of states labels used in filtering or calling exons.
-# -exonChrState [int]: chromosome category state assigned to exons, indicating their location
-#                      on different chromosome types. Same terminology as 'exonOnSexChr'.
+# - clusterID [str]
+# - chromType [str]: "A" for autosomes, "G" for gonosomes
+# - exonFPMs (np.ndarray[floats]): normalised counts from exons
+# - samples (list[strs]): sample IDs in the same order as the columns of 'exonFPMs'.
+# - clust2samps (dict): mapping cluster IDs to lists of sample IDs.
+# - fitWith (dict): mapping cluster IDs to lists of control cluster IDs.
+# - unCaptFPMLimit [float]: Upper limit for fragment count data, used in exon filtering.
+# - metricsNames (list[strs]): List of expected column names for the results array.
+# - filterStates (list[strs]): List of states labels used in filtering or calling exons.
 #
 # Returns a tuple (clusterID, clustExMetrics):
+# - chromType [str]
 # - clusterID [str]
 # - clustExMetrics (dict): key == clusterID, value == np.ndarray[floats]
 #                          dim = NbOfExons * NbOfExonsMetrics
 #
 # Raises an exception: If an error occurs during execution.
-def adjustExonMetricsWithFilters(clusterID, counts, samples, clust2samps, fitWith, exonOnSexChr,
-                                 unCaptFPMLimit, metricsNames, filterStates):
+def adjustExonMetricsWithFilters(clusterID, chromType, exonFPMs, samples, clust2samps,
+                                 fitWith, unCaptFPMLimit, metricsNames, filterStates):
     try:
         # Initialize an array to store metrics with -1 as default value
-        clustExMetrics = np.full((counts.shape[0], len(metricsNames)), -1, dtype=np.float64, order='C')
-
-        ### chromType attribution
-        if clusterID.startswith("A"):
-            exonChrState = 0
-        elif clusterID.startswith("G"):
-            exonChrState = 1
-        else:
-            raise
+        clustExMetrics = np.full((exonFPMs.shape[0], len(metricsNames)), -1, dtype=np.float64, order='C')
 
         try:
             # Get sample indexes for the current cluster
@@ -116,14 +106,9 @@ def adjustExonMetricsWithFilters(clusterID, counts, samples, clust2samps, fitWit
         logger.debug("cluster %s, nbSamps=%i", clusterID, len(sampsInd))
 
         # Iterate through each exon
-        for ei in range(counts.shape[0]):
-            # Skip exons not on the specified chromosome state
-            if exonOnSexChr[ei] != exonChrState:
-                if exonOnSexChr[ei] != 2:  # NOTE: to change hardcode
-                    continue
-
+        for ei in range(exonFPMs.shape[0]):
             # Extract exon FPMs for target and control samples
-            exFPMs = counts[ei, sampsInd]
+            exFPMs = exonFPMs[ei, sampsInd]
 
             try:
                 # Determine filter applied and update clustExMetrics
@@ -135,7 +120,7 @@ def adjustExonMetricsWithFilters(clusterID, counts, samples, clust2samps, fitWit
             # Update filter state in metrics array
             clustExMetrics[ei, metricsNames.index("filterStates")] = filterStates.index(filter)
 
-        return (clusterID, clustExMetrics)
+        return (chromType, clusterID, clustExMetrics)
 
     except Exception as e:
         logger.error("CNCalls failed for cluster %s - %s", clusterID, repr(e))
@@ -250,7 +235,7 @@ def getSampIndexes(clusterID, clust2samps, samples, fitWith):
             targetSampsInd.append(sampInd)
         elif not isTargetSamp and isCtrlSamp:
             ctrlSampsInd.append(sampInd)
-    
+
     listFinale = targetSampsInd + ctrlSampsInd
 
     return listFinale

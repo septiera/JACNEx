@@ -62,6 +62,7 @@ def allocateLikelihoodsArray(numSamps, numExons, numCN):
 # - exMetrics (dict): keys == clusterIDs, values == np.ndarray [floats]
 #                     Dim = nbOfExons * ["loc", "scale", "filterStatus"].
 # - numCNs [int]: 4 copy number status: ["CN0", "CN1", "CN2", "CN3"]
+# - chromType [str]
 #
 # Returns a tupple (clusterID, likelihoodArray, chromType):
 # - clusterID [str]
@@ -70,15 +71,10 @@ def allocateLikelihoodsArray(numSamps, numExons, numCN):
 # - likelihoodClustDict : keys == sampleID, values == np.ndarray(nbExons * nbCNStates)
 
 def counts2likelihoods(clusterID, samp2Index, exonsFPM, clust2samps, exp_loc, exp_scale,
-                       exMetrics, numCNs):
+                       exMetrics, numCNs, chromType):
+
     try:
         logger.debug("process cluster %s", clusterID)
-
-        ### chromType attribution
-        if clusterID.startswith("A"):
-            chromType = "A"
-        else:
-            chromType = "G"
 
         # IDs and indexes (in "samples" and "counts" columns) of samples from current cluster
         sampsIDs = list(clust2samps[clusterID])
@@ -112,7 +108,7 @@ def counts2likelihoods(clusterID, samp2Index, exonsFPM, clust2samps, exp_loc, ex
                 for si in range(len(sampsIndexes)):
                     likelihoodClustDict[sampsIDs[si]][exonIndex, ci] = res[si]
 
-        return (clusterID, chromType, likelihoodClustDict)
+        return (chromType, clusterID, likelihoodClustDict)
 
     except Exception as e:
         logger.error("Likelihoods failed for cluster %s - %s", clusterID, repr(e))
