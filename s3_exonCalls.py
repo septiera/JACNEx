@@ -5,7 +5,7 @@
 # and a TSV with clustering information produced by 2_clusterSamps.py:
 # It filters out non-callable exons and computes parameters for two distributions:
 # an exponential distribution (loc=0, scale=lambda) for CN0 and a Gaussian distribution
-# (loc=mean, scale=stdev) for CN2 distinguishing autosomes from gonosomes.
+# (loc=mean, scale=stdev) for CN2 distinguishing autosomes and gonosomes.
 # See usage for more details.
 ###############################################################################################
 import sys
@@ -20,7 +20,6 @@ from concurrent.futures import ProcessPoolExecutor
 ####### JACNEx modules
 import countFrags.countsFile
 import clusterSamps.clustFile
-import clusterSamps.genderPrediction
 import exonCalls.exonCallsFile
 import exonCalls.exonProcessing
 import figures.plots
@@ -55,28 +54,31 @@ def parseArgs(argv):
 
     usage = "NAME:\n" + scriptName + """\n
 DESCRIPTION:
-Given two TSV files: one containing exon fragment counts and another with samples clusters.
-It filters out non-callable exons (with no coverage) and computes parameters for two distributions:
-an exponential distribution (loc=0, scale= 1\lambda) for CN0 and a Gaussian distribution
-(loc=mean, scale=stdev) for CN2.
-The results are displayed in TSV format on the standard output (stdout).
-The first row (excluding the header) represents the parameters of the exponential distribution,
-while the subsequent rows contain exon definitions along with their corresponding 'loc' and
-'scale' parameters for the Gaussian distribution, as well as an exon filtering status for
-each analyzed cluster.
-In addition, all the graphics (exponential fit on count data and pie charts summarising the
-proportions of filtered and unfiltered exons) are printed in pdf files created in plotDir.
+Given two TSV files: one containing the number of exon fragments and the other the sample clusters,
+we filter out non-callable exons based on various criteria and compute parameters for two distributions:
+1)- An exponential distribution (loc=0, scale=1/λ) derived from the distribution of normally uncovered
+ intergenic regions to approximate the profile of homozygous deletions (CN0).
+2)- A Gaussian distribution (loc=mean, scale=stdev) based on specific counts for each cluster to deduce
+ a profile close to what is expected in the normal haploid state (CN2).
+The results are saved in TSV format on the standard output (stdout) for each cluster chromosome type.
+The first line (excluding the header) represents the parameters of the exponential distribution.
+Subsequent lines contain exon definitions [CHR, START, END, EXONID], along with the corresponding
+"loc" and "scale" parameters for the Gaussian distribution for each cluster.
+Additionally, all circular diagrams summarizing the proportions of filtered and unfiltered exons are
+generated and saved as PDF files in the plotDir.
 
 ARGUMENTS:
     --counts [str]: TSV file, first 4 columns hold the exon definitions, subsequent columns
-            hold the fragment counts. File obtained from 1_countFrags.py.
-    --clusts [str]: TSV file, contains 5 columns hold the sample cluster definitions.
-            [clusterID, sampsInCluster, controlledBy, validCluster, clusterStatus]
-            File obtained from 2_clusterSamps.py.
-    --out [str]: file where results will be saved, must not pre-exist, will be gzipped if it ends
-            with '.gz', can have a path component but the subdir must exist
+                    hold the fragment counts. File obtained from 1_countFrags.py.
+    --clusts [str]: TSV file, contains 4 columns hold the sample cluster definitions.
+                    [CLUSTER_ID, SAMPLES, FIT_WITH, VALID]. File obtained from 2_clusterSamps.py.
+    --out [str]: Specify the output file where results will be saved. If the filename ends with '.gz,'
+                 it will be compressed. You can include a path component, but ensure the specified
+                 directory already exists. The final filename will be determined based on the chromosomes
+                 used for cluster generation, potentially modifying the original filename in accordance
+                 with the data processing logic.
     --plotDir [str]: sub-directory in which the graphical PDFs will be produced, default:  """ + plotDir + """
-    --jobs [int] : cores that we can use, defaults to 80% of available cores ie """ + str(jobs) + "\n" + """
+    --jobs [int]: cores that we can use, defaults to 80% of available cores ie """ + str(jobs) + "\n" + """
     -h , --help: display this help and exit\n"""
 
     try:
@@ -181,36 +183,33 @@ def main(argv):
     startTime = thisTime
 
     ####################
-    # Exponential fitting = CN0
-    # Over the whole dataset of intergenic counts
-    # Extracts the distribution's parameters, and a threshold value distinguishing
-    # FPM values representing non-captured exons(<unCaptFPMLimit)
-    # from those indicating captured exons(>unCaptFPMLimit).
+    # Exponential fitting = CN0 on intergenic counts.
+    # Extracts distribution parameters and a threshold (uncaptThreshold)
     try:
-        (exp_loc, exp_scale, unCaptFPMLimit) = exonCalls.exonProcessing.CN0ParamsAndFPMLimit(intergenicFPMs, plotDir)
+        (expon_loc, expon_scale, meanIntergenicFPM, uncaptThreshold) = exonCalls.exonProcessing.computeCN0Params(intergenicFPMs)
     except Exception as e:
-        raise Exception("CN0ParamsAndFPMLimit failed: %s", repr(e))
+        raise Exception("computeCN0Params failed: %s", repr(e))
 
     thisTime = time.time()
-    logger.debug("Done CN0ParamsAndFPMLimit, loc=%.2f, scale=%.2f, in %.2f s", exp_loc, exp_scale, thisTime - startTime)
+    logger.debug("Done computeCN0Params, loc=%.2f, scale=%.2f, in %.2f s", expon_loc, expon_scale, thisTime - startTime)
     startTime = thisTime
 
     ####################
     # Exon Metrics Processing and Filtering
     ####################
-    # list[str] of output metric names:
+    # Initialized a list[strs] for output metric names:
     # 'loc': the mean of the Gaussian distribution
     # 'scale': the standard deviation of the Gaussian distribution
     # 'filterStatus': filtering state indexes
     metricsNames = ["loc", "scale", "filterStates"]
 
     # output dictionaries: keys == clusterID and values == np.ndarray[floats],
-    # dim = NbOfExons * NbOfMetrics, contains the fitting results
-    # of the Gaussian distribution and filters for all exons and clusters.
+    # dim = NBOfExons * NBOfMetrics, contains the fitting results of the Gaussian
+    # distribution and filters for all exons and clusters.
     exonMetrics_A = {}
     exonMetrics_G = {}
 
-    # filterStates list [str] represents the set of filter names applied to the exons.
+    # filterStates list[strs] represents the set of filter names applied to the exons.
     # The indexes of this list will be used to map the filtered states of each
     # exon in the output file.
     # e.g: index 0 corresponds to an exon filtered as 'notCaptured',
@@ -232,7 +231,7 @@ def main(argv):
 
     ############
     # updateMetricsDictionary:
-    # arg: a Future object returned by ProcessPoolExecutor.submit(exonCalls.exonProcessing.adjustExonMetricsWithFilters).
+    # arg: a Future object returned by ProcessPoolExecutor.submit(exonCalls.exonProcessing.processExonsAndComputeCN2Params).
     # returns a 3-element tupple (chromType, clusterID, clustExMetrics).
     # If something went wrong, raise error in log;
     # Otherwise, fill the exonMetrics key with the clusterID and the corresponding chromType,
@@ -241,7 +240,7 @@ def main(argv):
     def updateMetricsDictionary(futurecounts2ParamsRes):
         e = futurecounts2ParamsRes.exception()
         if e is not None:
-            logger.warning("Failed to adjustExonMetricsWithFilters for cluster %s, skipping it", str(e))
+            logger.warning("Failed to processExonsAndComputeCN2Params for cluster %s, skipping it", str(e))
         else:
             counts2ParamsRes = futurecounts2ParamsRes.result()
 
@@ -274,15 +273,15 @@ def main(argv):
             # autosomes
             if clusterID.startswith("A"):
                 chromType = "A"
-                futureRes = pool.submit(exonCalls.exonProcessing.adjustExonMetricsWithFilters,
+                futureRes = pool.submit(exonCalls.exonProcessing.processExonsAndComputeCN2Params,
                                         clusterID, chromType, autosomeFPMs, samples, clust2samps,
-                                        fitWith, unCaptFPMLimit, metricsNames, filterStates)
+                                        fitWith, uncaptThreshold, metricsNames, filterStates)
             # gonosomes
             elif clusterID.startswith("G"):
                 chromType = "G"
-                futureRes = pool.submit(exonCalls.exonProcessing.adjustExonMetricsWithFilters,
+                futureRes = pool.submit(exonCalls.exonProcessing.processExonsAndComputeCN2Params,
                                         clusterID, chromType, gonosomeFPMs, samples, clust2samps,
-                                        fitWith, unCaptFPMLimit, metricsNames, filterStates)
+                                        fitWith, uncaptThreshold, metricsNames, filterStates)
 
             else:
                 logger.error("Cluster %s doesn't distinguish gonosomal from autosomal analyses.", clusterID)
@@ -299,10 +298,10 @@ def main(argv):
     outputName = os.path.splitext(outFile)[0]
     # autosomes
     exonCalls.exonCallsFile.printParamsFile(outputName + "_A.gz", exonMetrics_A, metricsNames,
-                                            exp_loc, exp_scale, autosomeExons)
+                                            expon_loc, expon_scale, autosomeExons)
     # gonosomes
     exonCalls.exonCallsFile.printParamsFile(outputName + "_G.gz", exonMetrics_G, metricsNames,
-                                            exp_loc, exp_scale, gonosomeExons)
+                                            expon_loc, expon_scale, gonosomeExons)
 
     thisTime = time.time()
     logger.debug("Done printing exon metrics for all (non-failed) clusters, in %.2fs", thisTime - startTime)
