@@ -1,14 +1,9 @@
 import logging
-import os
 import numba
 import numpy as np
 import scipy.stats
 
-import clusterSamps.smoothing
-import figures.plots
-
-# prevent PIL and numba flooding the logs when we are in DEBUG loglevel
-logging.getLogger('PIL').setLevel(logging.WARNING)
+# prevent numba flooding the logs when we are in DEBUG loglevel
 logging.getLogger('numba').setLevel(logging.WARNING)
 
 # set up logger, using inherited config
@@ -19,58 +14,45 @@ logger = logging.getLogger(__name__)
 ############################ PUBLIC FUNCTIONS #################################
 ###############################################################################
 #############################################################
-# CN0ParamsAndFPMLimit
-# calculates the parameters "expon_loc" and "exp_scale" associated with the fitted exponential
-# distribution from the intergenic count data.
-# It also calculates the "unCaptFPMLimit," which is the FPM threshold equivalent to 99% of
-# the cumulative distribution function (CDF) of the exponential distribution.
-# Additionally, a PDF plot depicting the fitted exponential distribution is generated and saved
-# in the specified 'plotDir'.
+# computeCN0Params
+# Calculates the parameters "expon_loc" and "exp_scale" associated with the fitted exponential
+# distribution from the intergenic count data. It also calculates the "uncaptThreshold".
+# It is the FPM (Fragments Per Million) limit below which exons are considered "uncaptured"
+# due to insufficient sequencing or capture. It's derived from the intergenic fragment distribution
+# and set at the 99th percentile of the associated exponential distribution (CN0).
+# Exons with FPM values below the threshold are marked as "uncaptured."
 #
 # Args:
 # - intergenicsFPM (np.ndarray[floats]): count data from intergenic regions.
-# - plotDir [str]: Path to the directory where plots will be saved.
 #
 # Returns:
-# - expon_loc [float]: The location parameter of the fitted exponential distribution.
-# - exp_scale [float]: The scale parameter of the fitted exponential distribution.
-# - unCaptFPMLimit [float]: FPM threshold
-def CN0ParamsAndFPMLimit(intergenicsFPM, plotDir):
-    # fraction of the CDF of CNO exponential beyond which we truncate this distribution
+# - expon_loc [float]: location parameter of the fitted exponential distribution.
+# - expon_scale [float]: scale parameter of the fitted exponential distribution.
+# - meanIntergenicFPM (np.ndarray[floats]): average fragment counts per region,
+#                                           array needed for debug/test script
+# - uncaptThreshold [float]: FPM threshold
+def computeCN0Params(intergenicsFPM):
+    # Fraction of the CDF of CNO exponential beyond which we truncate this distribution
     fracCDFExp = 0.99
-
-    nbInterRegions = intergenicsFPM.shape[0]
-    nbSamps = intergenicsFPM.shape[1]
-
     try:
         # Fit an exponential distribution to the intergenic fragment per million (FPM) data
-        (meanIntergenicFPM, expon_loc, exp_scale) = fitExponential(intergenicsFPM)
+        (expon_loc, expon_scale, meanIntergenicFPM) = fitExponential(intergenicsFPM)
     except Exception as e:
         logger.error("fitExponential failed : %s", repr(e))
         raise
 
     # Calculate the FPM limit below which exons are considered "uncaptured"
-    unCaptFPMLimit = scipy.stats.expon.ppf(fracCDFExp, loc=expon_loc, scale=exp_scale)
+    uncaptThreshold = scipy.stats.expon.ppf(fracCDFExp, loc=expon_loc, scale=expon_scale)
 
-    try:
-        # Generate a plot to visualize the fitted exponential distribution
-        nameFile = "exponentialFittedOn_" + str(nbSamps) + "Samps_" + str(nbInterRegions) + "intergenicRegions.pdf"
-        pdfFile = os.path.join(plotDir, nameFile)
-        preprocessExponFitPlot(meanIntergenicFPM, expon_loc, exp_scale, pdfFile)
-    except Exception as e:
-        logger.error("preprocessExponFitPlot failed : %s", repr(e))
-        raise
-
-    return (expon_loc, exp_scale, unCaptFPMLimit)
+    return (expon_loc, expon_scale, meanIntergenicFPM, uncaptThreshold)
 
 
 #####################################
-# adjustExonMetricsWithFilters
-# Adjusts exon metrics using filters for a specific cluster and its controls.
-# This function processes exon metrics by applying filters or calls based on
-# fragment count data.
-# The resulting metrics, which include Gaussian distribution parameters and
-# filter states, are stored in a cluster-specific metrics array.
+# processExonsAndComputeCN2Params
+# Processes exon data, applies filters, and computes CN2 distribution parameters
+# for a cluster.
+# Metrics, including Gaussian distribution parameters and filter states,
+# are stored in a cluster-specific array.
 #
 # Args:
 # - clusterID [str]
@@ -83,38 +65,38 @@ def CN0ParamsAndFPMLimit(intergenicsFPM, plotDir):
 # - metricsNames (list[strs]): List of expected column names for the results array.
 # - filterStates (list[strs]): List of states labels used in filtering or calling exons.
 #
-# Returns a tuple (clusterID, clustExMetrics):
+# Returns a tuple (chromType, clusterID, clustExMetrics):
 # - chromType [str]
 # - clusterID [str]
 # - clustExMetrics (dict): key == clusterID, value == np.ndarray[floats]
 #                          dim = NbOfExons * NbOfExonsMetrics
 #
 # Raises an exception: If an error occurs during execution.
-def adjustExonMetricsWithFilters(clusterID, chromType, exonFPMs, samples, clust2samps,
-                                 fitWith, unCaptFPMLimit, metricsNames, filterStates):
+def processExonsAndComputeCN2Params(clusterID, chromType, exonFPMs, samples, clust2samps,
+                                    fitWith, unCaptFPMLimit, metricsNames, filterStates):
     try:
         # Initialize an array to store metrics with -1 as default value
         clustExMetrics = np.full((exonFPMs.shape[0], len(metricsNames)), -1, dtype=np.float64, order='C')
 
         try:
-            # Get sample indexes for the current cluster
+            # Get sample indexes for the current cluster and it's fitWith cluster(s)
             sampsInd = getSampIndexes(clusterID, clust2samps, samples, fitWith)
         except Exception as e:
-            logger.error("getClusterSamps failed for cluster %i : %s", clusterID, repr(e))
+            logger.error("getSampIndexes failed for cluster %i : %s", clusterID, repr(e))
             raise
 
         logger.debug("cluster %s, nbSamps=%i", clusterID, len(sampsInd))
 
         # Iterate through each exon
         for ei in range(exonFPMs.shape[0]):
-            # Extract exon FPMs for target and control samples
+            # Extract exon FPMs for target samples
             exFPMs = exonFPMs[ei, sampsInd]
 
             try:
                 # Determine filter applied and update clustExMetrics
                 filter = exonFilteredOrCalled(ei, exFPMs, unCaptFPMLimit, clustExMetrics, metricsNames)
             except Exception as e:
-                logger.error("exonFilteredOrCalled failed : %s", repr(e))
+                logger.error("exonFilteredOrCalled failed for exon index %i: %s", ei, repr(e))
                 raise
 
             # Update filter state in metrics array
@@ -132,16 +114,16 @@ def adjustExonMetricsWithFilters(clusterID, chromType, exonFPMs, samples, clust2
 ###############################################################################
 #############################
 # fitExponential
-# Given a count array (dim = nbOfExons*nbOfSamps), fits an exponential distribution,
-# setting location = 0.
+# Given a fragment count array (dim = NBOfGenomicWindows*NBOfSamps),
+# fits an exponential distribution, fixing location to 0.
 #
 # Args:
 # - intergenicsFPM (np.ndarray[floats]): count array (FPM normalized)
 #
 # Returns a tuple (meanIntergenicFPM, loc, scale):
 # - meanIntergenicFPM (np.ndarray[floats]): average count per exon, array needed for
-#                                           'preprocessExponFitPlot' function
-# - loc [float], scale[float]: parameters of the exponential distribution
+#                                           debug/test script
+# - expon_loc [float], expon_scale[float]: parameters of the exponential distribution
 def fitExponential(intergenicsFPM):
     # compute meanFPM for each intergenic region (speed up)
     meanIntergenicFPM = np.mean(intergenicsFPM, axis=1)
@@ -151,94 +133,33 @@ def fitExponential(intergenicsFPM):
     # to start at zero.
     # f(x, scale) = (1/scale)*exp(-x/scale)
     # scale = 1 / lambda
-    loc, invLambda = scipy.stats.expon.fit(meanIntergenicFPM, floc=0)
+    expon_loc, expon_scale = scipy.stats.expon.fit(meanIntergenicFPM, floc=0)
 
-    return (meanIntergenicFPM, loc, invLambda)
-
-
-###########################
-# preprocessExponFitPlot
-# Generates an exponential fit plot using the provided data and parameters.
-# It performs data smoothing, calculates the probability density function for the exponential
-# distribution, and plots the exponential fit.
-#
-# Args:
-# - meanIntergenicFPM (list[floats]): The list of mean intergenic FPM values.
-# - expon_loc[float], exp_scale[float]: parameters of the exponential distribution.
-# - file [str]: The path to the file where the plot should be saved.
-#
-# Return None
-def preprocessExponFitPlot(meanIntergenicFPM, expon_loc, exp_scale, file):
-    # initiate plots variables
-    yLists = []  # List to store the y-values for plotting
-    plotLegs = []  # List to store the plot legends
-
-    # Smooth the average coverage profile of intergenic regions using the specified bandwidth
-    try:
-        (dr, dens, bwValue) = clusterSamps.smoothing.smoothData(meanIntergenicFPM, maxData=max(meanIntergenicFPM))
-    except Exception as e:
-        logger.error('smoothing failed for %s : %s', str(bwValue), repr(e))
-        raise
-
-    plotLegs.append("coverage data smoothed \nbwValue={:0.2e}".format(bwValue))
-    yLists.append(dens)
-
-    # calculate the probability density function for the exponential distribution
-    yLists.append(scipy.stats.expon.pdf(dr, loc=expon_loc, scale=exp_scale))
-    plotLegs.append("expon={:.2f}, {:.2f}".format(expon_loc, exp_scale))
-
-    figures.plots.plotExponentialFit(dr, yLists, plotLegs, file)
+    return (expon_loc, expon_scale, meanIntergenicFPM)
 
 
 #############################################################
-# getSampleIndex
-# identifies the indices of 'samples' belonging to the target cluster and control clusters.
-# Control clusters consist of samples with coverage profiles similar to those in the target cluster.
-# also checks for potential errors where a sample could be present in both a control and
-# a target cluster, raising an error if such a case is detected.
+# getSampIndexes
+# identifies the 'samples' indexes belonging to the current cluster and 'fitWith' cluster(s).
 #
 # Args:
 # -clusterID [str]
 # -clust2samps (dict): key==clusterID, value == list of sampleIDs
-# -samples (list[strs]): sampleIDs, same order as the columns of FPMarray
+# -samples (list[strs]): sampleIDs, same order as the columns of "counts" array
 # -fitWith(dict): key==clusterID, value == list of clusterIDs
 #
-# Returns a list of samples indexes from 'counts' ordering for the current cluster
+# Returns a list of samples indexes from 'counts'
 def getSampIndexes(clusterID, clust2samps, samples, fitWith):
-    # Convert the list of samples for the current cluster (clusterID)
-    # into sets for faster membership checks
-    targetSamps = set(clust2samps[clusterID])
-    ctrlSamps = set()
+    clustSamps = clust2samps[clusterID]
+    fitWithSamps = set()
 
-    # controlClusters is not empty, extract the control 'samples' names
-    if len(fitWith[clusterID]) != 0:
-        for ctrlInd in fitWith[clusterID]:
-            ctrlSamps.update(clust2samps[ctrlInd])
+    for clustID in fitWith[clusterID]:
+        fitWithSamps.update(clust2samps[clustID])
 
-    # Lists to store the 'samples' indexes of target and control samples
-    targetSampsInd = []
-    ctrlSampsInd = []
+    clustSampsInd = [samples.index(sample) for sample in clustSamps if sample in samples]
+    fitWithSampsInd = [samples.index(sample) for sample in fitWithSamps if sample in samples]
 
-    for sampInd, sampName in enumerate(samples):
-        # sanity check
-        if sampName in targetSamps and sampName in ctrlSamps:
-            logger.error('%s is present in both the control cluster %s and the target cluster %s',
-                         sampName, clusterID, " ".join(fitWith[clusterID]))
-            raise
-
-        # Check if the current sample is in the target and/or control group
-        isTargetSamp = sampName in targetSamps
-        isCtrlSamp = sampName in ctrlSamps
-
-        # Append the sample index to the appropriate list based on its group membership
-        if isTargetSamp and not isCtrlSamp:
-            targetSampsInd.append(sampInd)
-        elif not isTargetSamp and isCtrlSamp:
-            ctrlSampsInd.append(sampInd)
-
-    listFinale = targetSampsInd + ctrlSampsInd
-
-    return listFinale
+    return clustSampsInd + fitWithSampsInd
 
 
 ##############################################
@@ -250,8 +171,8 @@ def getSampIndexes(clusterID, clust2samps, samples, fitWith):
 # 3) Check if the fitted Gaussian overlaps the threshold associated with the uncaptured exon profile.
 # 4) Check if the sample contribution rate to the Gaussian is too low (<50%).
 # 5) If any of the above filters is triggered, return the corresponding filter status.
-# 6) If the exon passes all filters, the clusterParamsArray is updated with the computed parameters
-# of the Gaussian distribution for the exon.
+# 6) If the exon passes 2 first filters, the clusterParamsArray is updated with the computed parameters
+#    of the Gaussian distribution for the exon.
 #
 # Args:
 # -exIndToProcess [int]
@@ -259,6 +180,7 @@ def getSampIndexes(clusterID, clust2samps, samples, fitWith):
 # -unCaptFPMLimit [float]: FPM threshold associated with the uncaptured exons.
 # -clusterParamsArray (numpy.ndarray[floats]): store the Gaussian parameters [loc, scale].
 # -expectedColNames (list[strs]): List of column names for the clusterParamsArray ["loc","scale","filterStatus"]
+#
 # Returns:
 # - str: exon filter status("notCaptured", "cannotFitRG", "RGClose2LowThreshold", "fewSampsInRG", or "call").
 # If the filter status is "call", it means the exon passes all filters and is callable.
