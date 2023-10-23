@@ -29,6 +29,8 @@ logger = logging.getLogger(__name__)
 #  - exp_loc [float], exp_scale [float: The exponential parameters.
 #  - metricsNames (list[strs]): ["loc","scale","filterStates"]
 def parseExonParamsFile(exonParamsFile):
+    exonMetrics_A = {}
+    exonMetrics_G = {}
     # presence of two results files (gonsomes and autosomes)
     paramsRootFile = os.path.splitext(exonParamsFile)[0]
     paramsRootFile_A = paramsRootFile + "_A.gz"
@@ -36,14 +38,6 @@ def parseExonParamsFile(exonParamsFile):
 
     (clusterIDs_A, metricsNames_A, paramsList_A, exp_loc_A, exp_scale_A) = parseExonParamsPrivate(paramsRootFile_A)
     (clusterIDs_G, metricsNames_G, paramsList_G, exp_loc_G, exp_scale_G) = parseExonParamsPrivate(paramsRootFile_G)
-
-    # Check for parameter consistency between gonosomes and autosomes
-    if metricsNames_A != metricsNames_G:
-        raise ValueError("The measured parameters differ between gonosomes and autosomes.")
-    if exp_loc_A != exp_loc_G:
-        raise ValueError("The location exponential parameter differs between gonosomes and autosomes.")
-    if exp_scale_A != exp_scale_G:
-        raise ValueError("The scale exponential parameter differs between gonosomes and autosomes.")
 
     exonMetrics_A = fillParamsDict(clusterIDs_A, paramsList_A, metricsNames_A)
     exonMetrics_G = fillParamsDict(clusterIDs_G, paramsList_G, metricsNames_G)
@@ -133,37 +127,42 @@ def parseExonParamsPrivate(exonParamsFile):
     # Initialize lists to store unique parts
     clusterIDs = []
     paramsTitles = []
+    paramsList = []
+    exp_loc = 0
+    exp_scale = 0
 
     # Extract unique parts after the second "_" and store them in sets
-    for item in header:
-        parts = item.split('_', 2)  # Split at most 2 times
-        clust = parts[0] + "_" + parts[1]
-        metric = parts[2]
-        if clust not in clusterIDs:
-            clusterIDs.append(clust)
-        if metric not in paramsTitles:
-            paramsTitles.append(metric)
+    if len(header) != 0:
+        # Extract unique parts after the second "_" and store them in sets
+        for item in header:
+            parts = item.split('_', 2)  # Split at most 2 times
+            clust = parts[0] + "_" + parts[1]
+            metric = parts[2]
+            if clust not in clusterIDs:
+                clusterIDs.append(clust)
+            if metric not in paramsTitles:
+                paramsTitles.append(metric)
 
-    # Convert sets to lists
-    clusterIDs = list(clusterIDs)
-    paramsTitles = list(paramsTitles)
+        # Convert sets to lists
+        clusterIDs = list(clusterIDs)
+        paramsTitles = list(paramsTitles)
 
-    # grab parameters of the exponential distribution common for all clusters
-    expLine = callsFH.readline().rstrip().split("\t")
-    exp_loc = np.float64(expLine[4])
-    exp_scale = np.float64(expLine[5])
+        # grab parameters of the exponential distribution common for all clusters
+        expLine = callsFH.readline().rstrip().split("\t")
+        exp_loc = np.float64(expLine[4])
+        exp_scale = np.float64(expLine[5])
 
-    paramsList = []
-    # populate paramsList from data lines
-    for line in callsFH:
-        # split into 4 exon definition strings + one string containing all the calls
-        splitLine = line.rstrip().split("\t", maxsplit=4)
-        # not retrieve exon information as it has already been extracted using
-        # the countsFile.
-        # convert params to 1D np array and save
-        params = np.fromstring(splitLine[4], dtype=np.float64, sep='\t')
-        paramsList.append(params)
-    callsFH.close()
+        paramsList = []
+        # populate paramsList from data lines
+        for line in callsFH:
+            # split into 4 exon definition strings + one string containing all the calls
+            splitLine = line.rstrip().split("\t", maxsplit=4)
+            # not retrieve exon information as it has already been extracted using
+            # the countsFile.
+            # convert params to 1D np array and save
+            params = np.fromstring(splitLine[4], dtype=np.float64, sep='\t')
+            paramsList.append(params)
+        callsFH.close()      
 
     return (clusterIDs, paramsTitles, paramsList, exp_loc, exp_scale)
 
@@ -194,13 +193,14 @@ def calls2str(callsArray, exonIndex):
 def fillParamsDict(clusterIDs, paramsList, metricsNames):
     numMetrics = len(metricsNames)
     exonMetrics = {}
-    for clust in clusterIDs:
-        # Initialize the dictionary value with a 2D array of -1's using np.full().
-        exonMetrics[clust] = np.full((len(paramsList), len(metricsNames)), -1, dtype=np.float64, order='C')
+    if len(paramsList) != 0:
+        for clust in clusterIDs:
+            # Initialize the dictionary value with a 2D array of -1's using np.full().
+            exonMetrics[clust] = np.full((len(paramsList), len(metricsNames)), -1, dtype=np.float64, order='C')
 
-    # Fill the exonMetrics dictionary by iterating over exons and clusters.
-    for ei, exon_params in enumerate(paramsList):
-        for ci, cluster_id in enumerate(clusterIDs):
-            exonMetrics[cluster_id][ei, :] = exon_params[ci * numMetrics: ci * numMetrics + numMetrics]
+        # Fill the exonMetrics dictionary by iterating over exons and clusters.
+        for ei, exon_params in enumerate(paramsList):
+            for ci, cluster_id in enumerate(clusterIDs):
+                exonMetrics[cluster_id][ei, :] = exon_params[ci * numMetrics: ci * numMetrics + numMetrics]
 
     return(exonMetrics)
