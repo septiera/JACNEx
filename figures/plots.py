@@ -3,6 +3,7 @@ import logging
 import matplotlib.pyplot
 import matplotlib.backends.backend_pdf
 import scipy.cluster.hierarchy
+import numpy as np
 
 # prevent matplotlib and PIL flooding the logs when we are in DEBUG loglevel
 logging.getLogger('matplotlib').setLevel(logging.WARNING)
