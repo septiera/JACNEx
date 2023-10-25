@@ -1,4 +1,3 @@
-import os
 import logging
 import matplotlib.pyplot
 import matplotlib.backends.backend_pdf
@@ -227,88 +226,6 @@ def plotDendrogram(linkageMatrix, samples, clust2samps, fitWith, clustIsValid, t
     pdf.savefig(fig)
     matplotlib.pyplot.close()
     pdf.close()
-
-
-#########################
-# plotExponentialFit
-# generates a plot to visualize the exponential fit for a given dataset.
-# It takes the plot title, x-axis data, y-axis data, plot legends, and the
-# output file path for saving the plot as input.
-#
-# Args:
-# - xi (np.ndarray[floats]): The x-axis data (FPM values).
-# - yLists (np.ndarray[floats]): A list of y-axis data for plotting.
-# - plotLegs (list[str]): A list of legends for each dataset.
-# - pdf [str]: The output file path for saving the plot as a PDF.
-#
-# save a plot in the output pdf
-def plotExponentialFit(dr, yLists, plotLegs, pdf):
-    # sanity
-    if (len(yLists[0]) != len(yLists[1])) or (len(yLists) != len(plotLegs)):
-        raise Exception('plotDensities bad args, length mismatch')
-
-    matplotOpenFile = matplotlib.backends.backend_pdf.PdfPages(pdf)
-    fig = matplotlib.pyplot.figure(figsize=(5, 5))
-
-    matplotlib.pyplot.plot(dr, yLists[0], label=plotLegs[0])
-    matplotlib.pyplot.plot(dr, yLists[1], label=plotLegs[1])
-    matplotlib.pyplot.legend()
-    matplotlib.pyplot.xlabel('FPM')
-    matplotlib.pyplot.ylabel('densities')
-    matplotlib.pyplot.ylim(0, max(yLists[0]) / 100)
-    matplotlib.pyplot.xlim(0, max(dr) / 3)
-    matplotOpenFile.savefig(fig)
-    matplotlib.pyplot.close()
-    matplotOpenFile.close()
-
-
-#########################
-# plotExonProfile
-# plots a density histogram for a raw data list, along with density or distribution
-# curves for a specified number of data lists. It can also plot vertical lines to mark
-# points of interest on the histogram. The graph is saved as a PDF file.
-#
-# Args:
-# - rawData (np.ndarray[float]): exon FPM counts
-# - xi (list[float]): x-axis values for the density or distribution curves, ranges
-# - yLists (list of lists[float]): y-axis values, probability density function values
-# - plotLegs (list[str]): labels for the density or distribution curves
-# - verticalLines (list[float]): vertical lines to be plotted, FPM tresholds
-# - vertLinesLegs (list[str]): labels for the vertical lines to be plotted
-# - plotTitle [str]: title of the plot
-# - pdf (matplotlib.backends object): a file object for save the plot
-def plotExonProfile(rawData, xi, yLists, plotLegs, verticalLines, vertLinesLegs, plotTitle, ylim, pdf):
-
-    # Define a list of colours based on the number of distributions to plot.
-    # The 'plasma' colormap is specifically designed for people with color vision deficiencies.
-    distColor = matplotlib.pyplot.cm.get_cmap('plasma', len(xi))
-
-    # Disable interactive mode to prevent display of the plot during execution
-    matplotlib.pyplot.ioff()
-    fig = matplotlib.pyplot.figure(figsize=(8, 8))
-    # Plot a density histogram of the raw data with a number of bins equal to half the number of data points
-    matplotlib.pyplot.hist(rawData, bins=int(len(rawData) / 2), density=True)
-
-    # Plot the density/distribution curves for each set of x- and y-values
-    if len(yLists) > 1:
-        for i in range(len(yLists)):
-            # Choose a color based on the position of the curve in the list
-            color = distColor(i / len(yLists))
-            matplotlib.pyplot.plot(xi, yLists[i], color=color, label=plotLegs[i])
-
-    # Plot vertical lines to mark points of interest on the histogram
-    if verticalLines:
-        matplotlib.pyplot.axvline(verticalLines, color="red", linestyle='dashdot', linewidth=1, label=vertLinesLegs)
-
-    # Set the x- and y-axis labels, y-axis limits, title, and legend
-    matplotlib.pyplot.xlabel("FPM")
-    matplotlib.pyplot.ylabel("probability density (=likelihoods)")
-    matplotlib.pyplot.ylim(0, ylim)
-    matplotlib.pyplot.title(plotTitle)
-    matplotlib.pyplot.legend(loc='upper right', fontsize='small')
-
-    pdf.savefig(fig)
-    matplotlib.pyplot.close()
 
 
 #############################################################
