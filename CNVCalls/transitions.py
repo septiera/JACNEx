@@ -5,8 +5,6 @@ import matplotlib.pyplot
 import matplotlib.backends.backend_pdf
 
 import figures.plots
-import clusterSamps.smoothing
-
 
 # prevent numba flooding the logs when we are in DEBUG loglevel
 logging.getLogger('numba').setLevel(logging.WARNING)
@@ -37,7 +35,7 @@ logger = logging.getLogger(__name__)
 # - priors (np.ndarray[floats]): prior probabilities for each copy number status.
 # - CNStates (list[strs]): Names of copy number types.
 # - samp2clusts (dict): keys = sampID[str], values = [clustID_A, clustID_G][strs]
-# - fitWith (dict): keys = clusterID[str], values = clusterIDs list  
+# - fitWith (dict): keys = clusterID[str], values = clusterIDs list
 # - plotDir[str] : directory to save the graphical representation.
 #
 # Returns:
@@ -113,7 +111,7 @@ def countsCNStates(likelihoodDict, nbStates, transitions, priors, exonOnChr):
     # Initialize dictionaries
     samp2CNCounts = {}
     samp2CNEx = {}
-    
+
     # Get the exon indexes start positions of chromosomes as a set for faster look-up
     chrStarts = list(exonOnChr.values())
 
@@ -151,13 +149,6 @@ def countsCNStates(likelihoodDict, nbStates, transitions, priors, exonOnChr):
 ############################################
 # debug_process
 # Debugging and data processing function for CN (Copy Number) analysis.
-# 1. Logs the transition matrix with formatting.
-# 2. Retrieves unique sample IDs from dictionaries.
-# 3. Logs a summary of CN levels for exons in autosomes and gonosomes.
-# 4. Prepares data for plotting.
-# 5. Creates a PDF file for curve plots.
-# 6. Iterates through clusters, processes data, and generates cluster-specific plots.
-# 7. Closes the PDF file.
 #
 # Args:
 # - transMatVoid (list of lists[floats]): transition matrix used for the hidden Markov model,
@@ -174,99 +165,36 @@ def countsCNStates(likelihoodDict, nbStates, transitions, priors, exonOnChr):
 # - None
 def debug_process(transMatVoid, CNcounts_A, samp2CNEx_A, CNcounts_G, samp2CNEx_G,
                   samp2clusts, fitWith, CNStates, plotDir):
+    #####
+    # dev control options
+    clusters2Process = ["A_01", "A_02", "A_03"]
+
     ##############
-    # Log the transition matrix with formatting
     logger.debug("#### Transition Matrix (Formatted) #####")
+    # enables observation of the transition matrix to monitor probabilities
     for row in transMatVoid:
         row2Print = ' '.join(format(num, ".3e") for num in row)
         logger.debug(row2Print)
 
     ##############
-    # Log the counting summary
-    logger.debug("#### Counting Summary of CN Levels for Exons in Autosomes and Gonosomes #####")
-
-    # Get all unique sample IDs from both dictionaries
-    sampIDsList = list(set(samp2CNEx_A.keys()) | set(samp2CNEx_G.keys()))
-
-    # Initialize lists for plotting and csluster data
-    countsList2Plot = []
-    clust2counts = {}
-
-    testFile = os.path.join(plotDir, "Event_countsBySamples.tsv")
+    logger.debug("#### Save counting CNs/exons in Autosomes and Gonosomes #####")
+    # initial CN predictions by exons, counting facilitating comparisons between samples and clusters
     try:
-        with open(testFile, "x") as outFH:
-            header = "\t".join(["SAMPID", "clustID_A", "CN0_A", "CN1_A", "CN2_A", "CN3_A",
-                                "clustID_G", "CN0_G", "CN1_G", "CN2_G", "CN3_G"])
-            outFH.write(header + "\n")
-
-            for sampID in sampIDsList:
-                CN_A = CNcounts_A.get(sampID, np.zeros(4, dtype=int))
-                CN_G = CNcounts_G.get(sampID, np.zeros(4, dtype=int))
-
-                log_elements = [
-                    sampID,
-                    samp2clusts[sampID][0],
-                    '\t'.join(map(str, CN_A)),
-                    samp2clusts[sampID][1],
-                    '\t'.join(map(str, CN_G))]
-
-                row = '\t'.join(map(str, log_elements))
-                outFH.write(row + "\n")
-
-                countsList2Plot.append(np.concatenate((CN_A, CN_G)).tolist())
-                if samp2clusts[sampID][0] not in clust2counts:
-                    clust2counts[samp2clusts[sampID][0]] = []
-                clust2counts[samp2clusts[sampID][0]].append(CN_A)
-                if samp2clusts[sampID][1] not in clust2counts:
-                    clust2counts[samp2clusts[sampID][1]] = []
-                clust2counts[samp2clusts[sampID][1]].append(CN_G)
-
+        countsList2Plot, clust2counts = saveCNCounts(samp2CNEx_A, samp2CNEx_G, CNcounts_A,
+                                                     CNcounts_G, samp2clusts, plotDir, CNStates)
     except Exception as e:
-        logger.error("Cannot open testFile %s: %s", testFile, e)
-        raise Exception('Cannot open outFile')
+        logger.error("Printing the event count summary failed due to: %s", repr(e))
 
-    ###############################
-    # print dans un fichier de debug des évenements spécifiques a un type de CN
-    # que pour CN0 autosomes pour l'instant
-    logger.debug("#### Evaluation of events and their recurrence #####")
+    ##############
+    logger.debug("#### Saving events by CN type excluding CN2 for the clusters to monitor #####")
+    # Extraction of events by target cluster, enabling fine downstream control with tools like IGV
+    try:
+        saveEventByCluster(clusters2Process, samp2clusts, CNStates, samp2CNEx_A, plotDir)
+    except Exception as e:
+        logger.error("Printing events by CN type failed due to: %s", repr(e))
 
-    clusterToProcess = "A_01"
-
-    for CNtype in range(len(CNStates)):
-        if CNtype == 2:
-            continue
-
-        clustEventInd = {}
-
-        for sampID, clust in samp2clusts.items():
-            if clust[0] != clusterToProcess:
-                continue
-
-            CNsPath = samp2CNEx_A.get(sampID)
-            if CNsPath is not None:
-                eventInd = np.where(CNsPath == CNtype)[0]
-                for event in eventInd:
-                    clustEventInd[event] = clustEventInd.get(event, np.zeros(len(sampIDsList), dtype=int))
-                    clustEventInd[event][sampIDsList.index(sampID)] = 1
-
-        testFile = os.path.join(plotDir, f"Event_CN{CNtype}.tsv")
-        try:
-            with open(testFile, "x") as outFH:
-                header = "exonIndex\t" + "\t".join(sampIDsList) + "\n"
-                outFH.write(header)
-
-                for i, counts in clustEventInd.items():
-                    row = f"{i}\t" + '\t'.join(map(str, counts)) + "\n"
-                    outFH.write(row)
-        except Exception as e:
-            logger.error(f"Cannot open testFile {testFile}: {e}")
-            raise Exception('cannot open outFile')
-
-    ##########################
-    #
-    logger.debug("#### Plotting data... #####")
-    # Plot counts distribution barplot
-    # represents the frequencies of events for the entire cohort (CN0_A, CN1_A,CN2_A,CN3_A, CN0_G, CN1_G,CN2_G,CN3_G)
+    ##############
+    logger.debug("#### Barplot showing event count distribution for autosomes and gonosomes #####")
     try:
         plotFile = os.path.join(plotDir, "CN_Frequencies_Likelihoods_Plot.pdf")
         figures.plots.barPlot(countsList2Plot, [term + "_A" for term in CNStates] + [term + "_G" for term in CNStates], plotFile)
@@ -274,41 +202,146 @@ def debug_process(transMatVoid, CNcounts_A, samp2CNEx_A, CNcounts_G, samp2CNEx_G
         logger.error("barPlot failed: %s", repr(e))
         raise
 
-    # plot for each cluster of event count profiles (by CNstates)
-    curvePlotFile = os.path.join(plotDir, "CN_Exons_Plot.pdf")
-    pdf = matplotlib.backends.backend_pdf.PdfPages(curvePlotFile)
-
+    ##############
+    logger.debug("#### Histogram plot per cluster representing counts of a specific CN type #####")
     try:
-        process_cluster(clust2counts, fitWith, CNStates, pdf)
+        curvePlotFile = os.path.join(plotDir, "CN_Exons_Plot.pdf")
+        pdf = matplotlib.backends.backend_pdf.PdfPages(curvePlotFile)
+        processCluster(clust2counts, fitWith, CNStates, pdf)
+        pdf.close()
     except Exception as e:
-        logger.debug(e)
+        logger.debug("Histogram failed due to: %s", repr(e))
 
-    pdf.close()
+
+################################
+# saveCNCounts
+# Prints counting summary data to an output file and collects data for plotting
+# and cluster-specific counts.
+#
+# Args:
+# - CNcounts_A (dict): autosomal CN state counts(values list[NBofCNStates])
+#                      for samples (keys).
+# - CNcounts_G (dict): gonosomal CN state counts for samples.
+# - samp2clusts (dict): mapping sample IDs to clusters.
+# - plotDir (str): Directory path for storing the output file.
+# - CNStates (list): List of CN states.
+#
+# Returns:
+# tuple: A tuple containing two elements:
+#     - countsList2Plot (list of list): CN state counts[ints] for plotting.
+#                                       1 list = NBofCNStates_autosomes + NBofCNStates_gonosomes
+#     - clust2counts (dict): keys = clusterID[str], values = list of lists[ints], each one containing
+#                            CN type counts for a cluster sample
+def saveCNCounts(CNcounts_A, CNcounts_G, samp2clusts, plotDir, CNStates):
+    # Initialize variables
+    countsList2Plot, clust2counts = [], {}
+
+    # Define the path for the output file
+    testFile = os.path.join(plotDir, "Event_countsBySamples.tsv")
+
+    # Open the output file for writing
+    with open(testFile, "w") as outFH:
+        # Define the header for the output file
+        header = "\t".join(["SAMPID", "clustID_A", "CN0_A", "CN1_A", "CN2_A", "CN3_A",
+                            "clustID_G", "CN0_G", "CN1_G", "CN2_G", "CN3_G"])
+        outFH.write(header + "\n")
+
+        # Iterate through sample IDs and their associated clusters
+        for sampID, (clust_A, clust_G) in samp2clusts.items():
+            # Retrieve CN counts for autosomes and gonosomes, defaulting to zeros if not found
+            CN_A = CNcounts_A.get(sampID, np.zeros(len(CNStates), dtype=int))
+            CN_G = CNcounts_G.get(sampID, np.zeros(len(CNStates), dtype=int))
+
+            # Create a list to represent the row to print
+            toPrint = [sampID, clust_A] + list(CN_A) + [clust_G] + list(CN_G)
+
+            # Convert the row to a tab-separated string and write it to the output file
+            row2Print = '\t'.join(map(str, toPrint))
+            outFH.write(row2Print + "\n")
+
+            # Store the CN counts in the cluster-specific data dictionaries
+            countsList2Plot.append(list(CN_A) + list(CN_G))
+            clust2counts.setdefault(clust_A, []).append(list(CN_A))
+            clust2counts.setdefault(clust_G, []).append(list(CN_G))
+
+    return countsList2Plot, clust2counts
+
+
+##################################
+# saveEventByCluster
+# Organizes and stores event data based on clusters and CN types in separate output files.
+# It goes through a list of cluster IDs, gathers the associated sample IDs, sorts them alphabetically,
+# and records events for different CN types within these samples.
+# The result is a series of output files, each containing event information for specific CN types
+# within distinct clusters.
+#
+# Args:
+# - clusterIDs (list[strs]): cluster IDs for which event data needs to be processed and saved.
+# - samp2clusts (dict): maps sample IDs to their associated clusters
+# - CNStates (list[strs]): CN types IDs
+# - samp2CNEx_A (dict): maps CN states exon path for each sample, especially focusing on autosomal events.
+# - plotDir (str): The directory where the output files will be saved.
+def saveEventByCluster(clusterIDs, samp2clusts, CNStates, samp2CNEx_A, plotDir):
+    for clusterID in clusterIDs:
+        # Create a list of sample IDs associated with the current cluster
+        sampList = [sampID for sampID, clust in samp2clusts.items() if clust[0] == clusterID]
+
+        # Sort the sample IDs alphabetically
+        sampList.sort()
+
+        if not sampList:
+            continue  # Skip empty clusters
+
+        for CNtype in range(len(CNStates)):
+            if CNtype == 2:  # Skip CNType 2
+                continue
+
+            # Initialize an empty dictionary to store cluster event information
+            # keys = exonIndex[int], values = np.ndarray[NBsampInClust][bool]
+            clustEventInd = {}
+
+            for sampID in sampList:
+                if sampID not in samp2CNEx_A:
+                    continue
+
+                # Get the CNsPath associated with the sample ID
+                CNsPath = samp2CNEx_A[sampID]
+                if CNsPath is not None:
+                    # Find the event indexes matching the current CNType
+                    eventInd = np.where(CNsPath == CNtype)[0]
+
+                    for event in eventInd:
+                        clustEventInd.setdefault(event, np.zeros(len(sampList), dtype=int))
+                        clustEventInd[event][sampList.index(sampID)] = 1
+
+            testFile = os.path.join(plotDir, f"Event_CN{CNtype}_{clusterID}.tsv")
+            with open(testFile, "x") as outFH:
+                header = "exonIndex\t" + "\t".join(sampList) + "\n"
+                outFH.write(header)
+                for i, counts in clustEventInd.items():
+                    toPrint = [i] + counts
+                    row2Print = '\t'.join(map(str, toPrint))
+                    outFH.write(row2Print + "\n")
 
 
 ############################################
-# process_cluster
-# This function processes and plots count data for a specific cluster, including:
-# - Plotting smoothed count curves.
-# - Showing mean and median lines.
-# - Configuring plot labels and legends.
-#
+# processCluster
+# Generate plots for clusters and CN states.
+
 # Args:
-# - clust2Counts (dict):
-# - fitWith (dict)
-# - CNStates (list[strs]):
-# - pdf (matplotlib.pyplot)
-def process_cluster(clust2Counts, fitWith, CNStates, pdf):
-    # Loop through the keys (clusterID) of the dictionary in alphabetical order
+# - clust2Counts (dict): keys = cluster IDs and values = CN count data as numpy arrays.
+# - CNStates (list[strs]): CN state labels (e.g., ["CN0", "CN1", "CN2", "CN3"]).
+# - pdf (PdfPages): A PDF object for saving the generated plots.
+def processCluster(clust2Counts, CNStates, pdf):
+    # Iterate through clusters in alphabetical order
     for cluster_id in sorted(clust2Counts.keys()):
         counts_list = np.array(clust2Counts[cluster_id])
 
         for CNstate in CNStates:
             CNcountsCurrent = counts_list[:, CNStates.index(CNstate)]
 
-            # logger.debug("cluster %s, CNstate %s shape  %i", cluster_id, CNstate, len(CNcounts))
             if np.all(CNcountsCurrent == 0):
-                logger.debug("%s invalid cluster contains no CN counts", cluster_id)
+                logger.debug(f"Cluster {cluster_id} contains no CN counts for {CNstate}")
                 continue
 
             # Calculate statistics
@@ -316,13 +349,13 @@ def process_cluster(clust2Counts, fitWith, CNStates, pdf):
             median = np.median(CNcountsCurrent)
             stdev = np.std(CNcountsCurrent)
 
-            # Create a new figure for each cluster and CNState
+            # Create a new figure
             fig, ax = matplotlib.pyplot.subplots()
 
             try:
-                plot_histogram_and_density(ax, CNcountsCurrent, f'{cluster_id} counts', 'skyblue')
+                histogramAndDensities(ax, CNcountsCurrent, f'{cluster_id} counts', 'skyblue')
             except Exception as e:
-                logger.error("%s", repr(e))
+                logger.error(repr(e))
 
             # Plot mean and median lines
             ax.axvline(mean, color='grey', label=f'mean={mean:.3f}')
@@ -333,16 +366,6 @@ def process_cluster(clust2Counts, fitWith, CNStates, pdf):
                 ax.axvline((mean + stdev), linestyle='--', color='grey', label=f'stdev=mean+{stdev:.3f}')
             else:
                 ax.axvline((mean - stdev), linestyle='--', color='grey', label=f'stdev=mean-{stdev:.3f}')
-
-            # counts_listFitWith = None
-            # if fitWith[cluster_id]:
-            #     for fitWithID in fitWith[cluster_id]:
-            #         counts_listFitWith = np.array(clust2Counts[fitWithID])
-            #         CNcountsFitWith = counts_listFitWith[:, CNStates.index(CNstate)]
-            #         meanFitWith = np.mean(CNcountsFitWith)
-            #         stdevFitWith = np.std(CNcountsFitWith)
-            #         plot_histogram_and_density(ax, CNcountsFitWith, f"{fitWithID} counts", 'red')
-            #         ax.axvline(meanFitWith, color='red', label=f'mean={meanFitWith:.3f}, stdev={stdevFitWith:.3f}')
 
             if CNStates.index(CNstate) == 2:
                 ax.set_xlim(max(CNcountsCurrent) / 1.1, max(CNcountsCurrent) * 1.1)
@@ -357,7 +380,16 @@ def process_cluster(clust2Counts, fitWith, CNStates, pdf):
             matplotlib.pyplot.close(fig)
 
 
-def plot_histogram_and_density(ax, data, label, color):
+##############################
+# histogramAndDensities
+# Plot a histogram and density curve on the same axis.
+#
+# Args:
+# - ax (matplotlib.axis): The matplotlib axis where the plot will be created.
+# - data (array-like): Data for which the histogram and density are computed and plotted.
+# - label (str): A label for the histogram and density curve.
+# - color (str): The color for the histogram bars and density curve.
+def histogramAndDensities(ax, data, label, color):
     # Calculate the interquartile range (IQR)
     # iqr = np.percentile(CNcountsCurrent, 75) - np.percentile(CNcountsCurrent, 25)
     # Freedman-Diaconis
