@@ -120,22 +120,17 @@ def processExonsAndComputeCN2Params(clusterID, chromType, exonFPMs, samples, clu
 # Args:
 # - intergenicsFPM (np.ndarray[floats]): count array (FPM normalized)
 #
-# Returns a tuple (meanIntergenicFPM, loc, scale):
-# - meanIntergenicFPM (np.ndarray[floats]): average count per exon, array needed for
-#                                           debug/test script
+# Returns a tuple (loc, scale):
 # - expon_loc [float], expon_scale[float]: parameters of the exponential distribution
 def fitExponential(intergenicsFPM):
-    # compute meanFPM for each intergenic region (speed up)
-    meanIntergenicFPM = np.mean(intergenicsFPM, axis=1)
-
     # Fit an exponential distribution,
     # enforces the "loc" parameter to be 0 because our model requires the distribution
     # to start at zero.
     # f(x, scale) = (1/scale)*exp(-x/scale)
     # scale = 1 / lambda
-    expon_loc, expon_scale = scipy.stats.expon.fit(meanIntergenicFPM, floc=0)
+    expon_loc, expon_scale = scipy.stats.expon.fit(intergenicsFPM, floc=0)
 
-    return (expon_loc, expon_scale, meanIntergenicFPM)
+    return (expon_loc, expon_scale)
 
 
 #############################################################
