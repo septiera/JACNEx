@@ -19,7 +19,6 @@ import gzip
 ####### JACNEx modules
 import countFrags.countsFile
 import clusterSamps.clustFile
-import clusterSamps.genderPrediction
 import exonCalls.exonCallsFile
 import CNVCalls.likelihoods
 import CNVCalls.transitions
@@ -308,7 +307,7 @@ def main(argv):
             if not clustIsValid[clusterID]:
                 logger.warning("Cluster %s is invalid, low sample number %i", clusterID, len(clust2samps[clusterID]))
                 continue
-            
+
             ### chromType [str]: variable distinguishes between analyses of
             # sex chromosomes (gonosomes) and non-sex chromosomes (autosomes).
             # autosomes
