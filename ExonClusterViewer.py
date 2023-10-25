@@ -1,5 +1,5 @@
 ###############################################################################################
-##################################### ExonClustViewer #########################################
+##################################### test_exonViewer #########################################
 ###############################################################################################
 # uses fragment count data, sample clustering information, and calculated parameters from
 # various continuous distributions to generate coverage profiles.
@@ -15,17 +15,16 @@ import gzip
 import numpy as np
 import time
 import logging
-import scipy
+import matplotlib.pyplot
+import matplotlib.cm
 import matplotlib.backends.backend_pdf
 
 ####### JACNEx modules
 import countFrags.countsFile
 import clusterSamps.clustFile
-import clusterSamps.genderPrediction
 import exonCalls.exonCallsFile
 import exonCalls.exonProcessing
 import CNVCalls.likelihoods
-import figures.plots
 
 # prevent matplotlib flooding the logs when we are in DEBUG loglevel
 logging.getLogger('matplotlib').setLevel(logging.WARNING)
@@ -122,9 +121,7 @@ ARGUMENTS:
 
     if paramsFile == "":
         raise Exception("you must provide a continuous distribution parameters file use --params. Try " + scriptName + " --help.")
-    elif (not os.path.isfile(paramsFile)):
-        raise Exception("paramsFile " + paramsFile + " doesn't exist.")
-
+   
     if tocheckFile == "":
         raise Exception("you must provide a user file use --tocheck. Try " + scriptName + " --help.")
     elif (not os.path.isfile(tocheckFile)):
@@ -146,54 +143,69 @@ ARGUMENTS:
 # Given a user-provided TSV file containing sample names and exon identifiers,
 # along with a list of sample names and a list of exon definitions.
 # It parses the TSV file to generate a list of exons to check for each sample.
-# The function returns a list where each index corresponds to a sample and contains
-# the indexes of matching exons from the exon definitions.
 #
 # Args:
 # - userTSV (str): Path to the user TSV file.
 # - samples (list[str]): List of sample names.
 # - exons (list of lists[str, int, int, str]): List of exon definitions [CHR, START, END, EXONID].
+# - autosomeExons (list of lists[str, int, int, str]): autosomal exon information [CHR, START, END, EXONID].
+# - gonosomeExons (list of lists[str, int, int, str]): gonosomal exon information.
 #
 # Returns:
-# - samps2Check (list of lists[int]): List of exons to check for each sample.
-#                                     Each sampleID corresponds to a list of matching "exons" indexes.
-def parseUserTSV(userTSV, samples, exons):
+# - samps2Check (dict): keys = sampleID, and values are sub-dictionaries categorized as follows:
+#                       - "A": List of exon indexes matching autosomal exons.
+#                       - "G": List of exon indexes matching gonosomal exons.
+def parseUserTSV(userTSV, samples, autosomeExons, gonosomeExons):
     try:
-        if userTSV.endswith(".gz"):
-            userTSVFH = gzip.open(userTSV, "rt")
-        else:
-            userTSVFH = open(userTSV, "r")
+        # Check if the file exists before opening it
+        if not os.path.exists(userTSV):
+            raise FileNotFoundError("User TSV file does not exist.")
+
+        # Open the file using 'with' to ensure proper file closure
+        with (gzip.open(userTSV, "rt") if userTSV.endswith(".gz") else open(userTSV, "r")) as userTSVFH:
+            samps2Check = {key: {"A": [], "G": []} for key in samples}
+
+            for line in userTSVFH:
+                splitLine = line.rstrip().split("\t", maxsplit=1)
+                sampID = splitLine[0]
+                exonENST = splitLine[1]
+
+                if sampID in samples:
+                    exonIDFound = False
+                    exonID_A = 0
+                    exonID_G = 0
+
+                    while not exonIDFound and exonID_A < len(autosomeExons):
+                        exonType = "A"  # Assume it's an autosome exon by default
+                        if autosomeExons[exonID_A][3] == exonENST:
+                            samps2Check[sampID][exonType].append(exonID_A)
+                            exonIDFound = True
+                        else:
+                            exonID_A += 1
+
+                    # If no match is found in autosomes and there are gonosome exons
+                    if not exonIDFound and gonosomeExons:
+                        while not exonIDFound and exonID_G < len(gonosomeExons):
+                            exonType = "G"  # Assume it's a gonosome exon
+                            if gonosomeExons[exonID_G][3] == exonENST:
+                                samps2Check[sampID][exonType].append(exonID_G)
+                                exonIDFound = True
+                            else:
+                                exonID_G += 1
+
+                    if not exonIDFound:
+                        logger.error("Exon identifier %s has no match with the bed file provided in step 1.", exonENST)
+                        raise Exception("Exon identifier not found.")
+                else:
+                    logger.error("Sample name %s has no match with the sample name list.", sampID)
+                    raise Exception("Sample name not found.")
+
     except Exception as e:
-        logger.error("Opening provided userTSV %s: %s", userTSV, e)
-        raise Exception('cannot open userTSV')
+        # Handle exceptions and log errors
+        logger.error("Error processing userTSV: %s", e)
+        raise e
 
-    samps2Check = {key: [] for key in samples}
-
-    for line in userTSVFH:
-        splitLine = line.rstrip().split("\t", maxsplit=1)
-        # Check if the sample name is in the provided sample name list
-        if splitLine[0] in samples:
-            exonIDFound = False
-            for exonID in range(len(exons)):
-                # Check if the exon identifier is present in "exons"
-                if exons[exonID][3] == splitLine[1]:
-                    samps2Check[splitLine[0]].append(exonID)
-                    exonIDFound = True
-
-            if not exonIDFound:
-                logger.error("Exon identifier %s has no match with the bed file provided in step 1.", splitLine[1])
-                raise Exception("Exon identifier not found.")
-        else:
-            logger.error("Sample name %s has no match with the sample name list.", splitLine[0])
-            raise Exception("Sample name not found.")
-
-    userTSVFH.close()
     return samps2Check
-
-
-# Define helper function to get distribution parameters
-def get_distribution_parameters():
-    return [(0.5, "CN1 Gaussian"), (1, "CN2 Gaussian"), (1.5, "CN3 gamma")]
 
 
 ######################################
@@ -201,29 +213,28 @@ def get_distribution_parameters():
 # Parses and plots exon-related data for a specific sample and exon.
 #
 # Args:
-# - sampleName (str)
-# - exonIndex (int)
-# - exonOnSexChr (list): List indicating whether exons are on sex chromosomes.
+# - sampID (str)
+# - exonType (str): "A" or "G"
+# - ei (int)
 # - samp2clusts (dict): Mapping of samples to clusters.
 # - clust2samps (dict): Mapping of clusters to samples.
 # - samples (list): List of sample names.
 # - fitWith (dict): Mapping of clusters to control cluster ID.
-# - exonsFPm (array): Exon-level FPM values.
-# - exParams (array): Exon parameters.
-# - paramsTitles (list): Titles of parameters.
-# - exons (array): Exon information.
+# - fpmData (array): Exon-level FPM values.
+# - exonMetrics (array): Exon parameters.
+# - metricsNames (list): Titles of parameters.
+# - exonsData (array): Exon information.
 # - exp_loc (float): Exponential distribution location parameter.
 # - exp_scale (float): Exponential distribution scale parameter.
 # - matplotOpenFile: Opened PDF file for plotting.
-def parsePlotExon(sampleName, exonIndex, exonOnSexChr, samp2clusts, clust2samps, samples,
-                  fitWith, exonsFPM, exParams, paramsTitles, exons, exp_loc, exp_scale,
-                  matplotOpenFile):
+def parsePlotExon(sampID, exonType, ei, samp2clusts, clust2samps, samples, fitWith, fpmData, exonMetrics,
+                  metricsNames, exonsData, exp_loc, exp_scale, matplotOpenFile):
 
     # Get cluster ID based on exon's location
-    if exonOnSexChr[exonIndex] == 0:
-        clusterID = samp2clusts[sampleName][0]
+    if exonType == "A":
+        clusterID = samp2clusts[sampID][0]
     else:
-        clusterID = samp2clusts[sampleName][1]
+        clusterID = samp2clusts[sampID][1]
 
     # Get sample indexes for target and control clusters
     try:
@@ -234,33 +245,33 @@ def parsePlotExon(sampleName, exonIndex, exonOnSexChr, samp2clusts, clust2samps,
         raise
 
     # Extract FPM values for relevant samples
-    exonFPM = exonsFPM[exonIndex, sampsInd]
-    sampFPM = exonsFPM[exonIndex, samples.index(sampleName)]
+    exonFPM = fpmData[ei, sampsInd]
+    sampFPM = fpmData[ei, samples.index(sampID)]
 
-    exonFilterState = exParams[clusterID][exonIndex, paramsTitles.index("filterStates")]
+    exonFilterState = exonMetrics[clusterID][ei, metricsNames.index("filterStates")]
     logger.info(exonFilterState)
     ##### init graphic parameters
     # definition of a range of values that is sufficiently narrow to have
     # a clean representation of the adjusted distributions.
     xi = np.linspace(0, np.max(exonFPM), len(sampsInd) * 3)
 
-    exonInfo = '_'.join(map(str, exons[exonIndex]))
-    plotTitle = f"Cluster:{clusterID}, NbSamps:{len(sampsInd)}, exonInd:{exonIndex}\nexonInfos:{exonInfo}, filteringState:{exonFilterState}"
+    exonInfo = '_'.join(map(str, exonsData[ei]))
+    plotTitle = f"Cluster:{clusterID}, NbSamps:{len(sampsInd)}, exonInd:{ei}\nexonInfos:{exonInfo}, filteringState:{exonFilterState}"
 
     yLists = []
     plotLegs = []
     verticalLines = [sampFPM]
-    vertLinesLegs = f"{sampleName} FPM={sampFPM:.3f}"
+    vertLinesLegs = f"{sampID} FPM={sampFPM:.3f}"
 
     # get gauss_loc and gauss_scale from exParams
-    gaussLoc = exParams[clusterID][exonIndex, paramsTitles.index("loc")]
-    gaussScale = exParams[clusterID][exonIndex, paramsTitles.index("scale")]
+    gaussLoc = exonMetrics[clusterID][ei, metricsNames.index("loc")]
+    gaussScale = exonMetrics[clusterID][ei, metricsNames.index("scale")]
 
     # if all the distributions can be represented,
     # otherwise a simple histogram and the fit of the exponential will be plotted.
     if exonFilterState > 1:
         # Update plot title with likelihood information
-        plotTitle += f"\n{sampleName} likelihoods:\n"
+        plotTitle += f"\n{sampID} likelihoods:\n"
 
         distribution_functions = CNVCalls.likelihoods.getDistributionObjects(exp_loc, exp_scale, gaussLoc, gaussScale)
 
@@ -284,10 +295,59 @@ def parsePlotExon(sampleName, exonIndex, exonOnSexChr, samp2clusts, clust2samps,
 
         ylim = 2 * np.max(yLists[2])
     else:
-        logger.info("the exon analysed is not covered, so no call")
+        logger.info("The analyzed exon is not covered, so no call is made.")
         return
-        
-    figures.plots.plotExonProfile(exonFPM, xi, yLists, plotLegs, verticalLines, vertLinesLegs, plotTitle, ylim, matplotOpenFile)
+
+    plotExonProfile(exonFPM, xi, yLists, plotLegs, verticalLines, vertLinesLegs, plotTitle, ylim, matplotOpenFile)
+
+
+#########################
+# plotExonProfile
+# plots a density histogram for a raw data list, along with density or distribution
+# curves for a specified number of data lists. It can also plot vertical lines to mark
+# points of interest on the histogram. The graph is saved as a PDF file.
+#
+# Args:
+# - rawData (np.ndarray[float]): exon FPM counts
+# - xi (list[float]): x-axis values for the density or distribution curves, ranges
+# - yLists (list of lists[float]): y-axis values, probability density function values
+# - plotLegs (list[str]): labels for the density or distribution curves
+# - verticalLines (list[float]): vertical lines to be plotted, FPM tresholds
+# - vertLinesLegs (list[str]): labels for the vertical lines to be plotted
+# - plotTitle [str]: title of the plot
+# - pdf (matplotlib.backends object): a file object for save the plot
+def plotExonProfile(rawData, xi, yLists, plotLegs, verticalLines, vertLinesLegs, plotTitle, ylim, pdf):
+
+    # Define a list of colours based on the number of distributions to plot.
+    # The 'plasma' colormap is specifically designed for people with color vision deficiencies.
+    distColor = matplotlib.cm.get_cmap('plasma', len(xi))
+
+    # Disable interactive mode to prevent display of the plot during execution
+    matplotlib.pyplot.ioff()
+    fig = matplotlib.pyplot.figure(figsize=(8, 8))
+    # Plot a density histogram of the raw data with a number of bins equal to half the number of data points
+    matplotlib.pyplot.hist(rawData, bins=int(len(rawData) / 2), density=True)
+
+    # Plot the density/distribution curves for each set of x- and y-values
+    if len(yLists) > 1:
+        for i in range(len(yLists)):
+            # Choose a color based on the position of the curve in the list
+            color = distColor(i / len(yLists))
+            matplotlib.pyplot.plot(xi, yLists[i], color=color, label=plotLegs[i])
+
+    # Plot vertical lines to mark points of interest on the histogram
+    if verticalLines:
+        matplotlib.pyplot.axvline(verticalLines, color="red", linestyle='dashdot', linewidth=1, label=vertLinesLegs)
+
+    # Set the x- and y-axis labels, y-axis limits, title, and legend
+    matplotlib.pyplot.xlabel("FPM")
+    matplotlib.pyplot.ylabel("probability density (=likelihoods)")
+    matplotlib.pyplot.ylim(0, ylim)
+    matplotlib.pyplot.title(plotTitle)
+    matplotlib.pyplot.legend(loc='upper right', fontsize='small')
+
+    pdf.savefig(fig)
+    matplotlib.pyplot.close()
 
 
 ###############################################################################
@@ -309,15 +369,16 @@ def main(argv):
     startTime = time.time()
 
     ###################
-    # parse counts, perform FPM normalization, distinguish between intergenic regions and exons
+    # parse and FPM-normalize the counts, distinguishing between exons and intergenic pseudo-exons
     try:
-        (samples, exons, intergenics, exonsFPM, intergenicsFPM) = countFrags.countsFile.parseAndNormalizeCounts(countsFile)
+        (samples, autosomeExons, gonosomeExons, intergenics, autosomeFPMs, gonosomeFPMs,
+         intergenicFPMs) = countFrags.countsFile.parseAndNormalizeCounts(countsFile)
     except Exception as e:
-        logger.error("parseAndNormalizeCounts failed for %s : %s", countsFile, repr(e))
-        raise Exception("parseAndNormalizeCounts failed")
+        logger.error("Failed to parse and normalize counts for %s: %s", countsFile, repr(e))
+        raise Exception("Failed to parse and normalize counts")
 
     thisTime = time.time()
-    logger.debug("Done parseAndNormalizeCounts, in %.2fs", thisTime - startTime)
+    logger.debug("Done parsing and normalizing counts file, in %.2f s", thisTime - startTime)
     startTime = thisTime
 
     ###################
@@ -332,9 +393,10 @@ def main(argv):
     startTime = thisTime
 
     ####################
-    # parse params clusters (parameters of continuous distributions fitted on CN0, CN2 coverage profil)
+    # parse exon metrics for each valid cluster
+    # extracts parameters of continuous distributions fitted on CN0, CN2 coverage profil
     try:
-        (exParams, exp_loc, exp_scale, paramsTitles) = exonCalls.exonCallsFile.parseExonParamsFile(paramsFile)
+        (exonMetrics_A, exonMetrics_G, exp_loc, exp_scale, metricsNames) = exonCalls.exonCallsFile.parseExonParamsFile(paramsFile)
     except Exception as e:
         raise Exception("parseParamsFile failed for %s : %s", paramsFile, repr(e))
 
@@ -345,24 +407,34 @@ def main(argv):
     ####################
     # parse user file
     try:
-        samps2Check = parseUserTSV(tocheckFile, samples, exons)
+        samps2Check = parseUserTSV(tocheckFile, samples, autosomeExons, gonosomeExons)
     except Exception as e:
         raise Exception("parseUserTSV failed for %s : %s", tocheckFile, repr(e))
 
     #####################
     # process
     matplotOpenFile = matplotlib.backends.backend_pdf.PdfPages(pdfFile)
-    # selects cluster-specific exons on autosomes, chrXZ or chrYW.
-    exonOnSexChr = clusterSamps.genderPrediction.exonOnSexChr(exons)
 
-    for sampleName in samps2Check.keys():
-        for exonIndex in samps2Check[sampleName]:
-            try:
-                parsePlotExon(sampleName, exonIndex, exonOnSexChr, samp2clusts, clust2samps, samples,
-                              fitWith, exonsFPM, exParams, paramsTitles, exons, exp_loc, exp_scale,
-                              matplotOpenFile)
-            except Exception as e:
-                raise Exception("parsePlotExon failed for exon index %s sample %s : %s", str(exonIndex), sampleName, repr(e))
+    for sampID in samps2Check.keys():
+        for exonType in ["A", "G"]:
+            exonIndexes = samps2Check[sampID][exonType]
+            if exonIndexes:  # Check if the list is not empty
+                exonMetrics = exonMetrics_A if exonType == "A" else exonMetrics_G
+                fpmData = autosomeFPMs if exonType == "A" else gonosomeFPMs
+                exonsData = autosomeExons if exonType == "A" else gonosomeExons
+
+                for ei in exonIndexes:
+                    try:
+                        parsePlotExon(sampID, exonType, ei, samp2clusts, clust2samps,
+                                      samples, fitWith, fpmData, exonMetrics,
+                                      metricsNames, exonsData, exp_loc, exp_scale,
+                                      matplotOpenFile)
+                    except Exception as e:
+                        if exonType == "A":
+                            error_message = f"Failed for exon index {ei} sample {sampID} from autosomes: {repr(e)}"
+                        else:
+                            error_message = f"Failed for exon index {ei} sample {sampID} from gonosomes: {repr(e)}"
+                        raise Exception(error_message)
 
     matplotOpenFile.close()
 
