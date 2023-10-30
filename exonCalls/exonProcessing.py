@@ -36,7 +36,7 @@ def computeCN0Params(intergenicsFPM):
     fracCDFExp = 0.99
     try:
         # Fit an exponential distribution to the intergenic fragment per million (FPM) data
-        (expon_loc, expon_scale, meanIntergenicFPM) = fitExponential(intergenicsFPM)
+        (expon_loc, expon_scale) = fitExponential(intergenicsFPM)
     except Exception as e:
         logger.error("fitExponential failed : %s", repr(e))
         raise
@@ -44,7 +44,7 @@ def computeCN0Params(intergenicsFPM):
     # Calculate the FPM limit below which exons are considered "uncaptured"
     uncaptThreshold = scipy.stats.expon.ppf(fracCDFExp, loc=expon_loc, scale=expon_scale)
 
-    return (expon_loc, expon_scale, meanIntergenicFPM, uncaptThreshold)
+    return (expon_loc, expon_scale, uncaptThreshold)
 
 
 #####################################

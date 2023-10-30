@@ -171,6 +171,10 @@ def main(argv):
         logger.error("parseAndNormalizeCounts failed for %s : %s", countsFile, repr(e))
         raise Exception("parseAndNormalizeCounts failed")
 
+    thisTime = time.time()
+    logger.debug("Done parsing and normalizing countsFile, in %.2f s", thisTime - startTime)
+    startTime = thisTime
+
     ###################
     # parse clusters informations
     try:
@@ -186,12 +190,13 @@ def main(argv):
     # Exponential fitting = CN0 on intergenic counts.
     # Extracts distribution parameters and a threshold (uncaptThreshold)
     try:
-        (expon_loc, expon_scale, meanIntergenicFPM, uncaptThreshold) = exonCalls.exonProcessing.computeCN0Params(intergenicFPMs)
+        (expon_loc, expon_scale, uncaptThreshold) = exonCalls.exonProcessing.computeCN0Params(intergenicFPMs)
     except Exception as e:
         raise Exception("computeCN0Params failed: %s", repr(e))
 
     thisTime = time.time()
-    logger.debug("Done computeCN0Params, loc=%.2f, scale=%.2f, in %.2f s", expon_loc, expon_scale, thisTime - startTime)
+    logger.debug("Done computeCN0Params, loc=%.2f, scale=%.2f, uncapThreshold=%.2f in %.2f s",
+                 expon_loc, expon_scale, uncaptThreshold, thisTime - startTime)
     startTime = thisTime
 
     ####################
