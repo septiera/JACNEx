@@ -48,9 +48,13 @@ def parseArgs(argv):
 
     usage = "NAME:\n" + scriptName + """\n
 DESCRIPTION:
-Given a TSV of intergenic fragment counts, identifies the best-fitting continuous distribution
-based on R².
-Finally, he provides a plot of the top 10 fits along with their associated parameters
+Given a TSV of intergenic fragment counts, fit this empirical data to various continuous
+probability distributions available in the "scipy.stats" library of Python.
+It adjusts continuous distributions to the input data and ranks the best-fitting distributions
+based on their coefficient of determination (sum squared error).
+The script can also generate plots to visualize both the actual data and the best-fitting
+distributions.
+Notably, the results of each fit are saved in the log file.
 
 ARGUMENTS:
     --counts [str]: TSV file, first 4 columns hold the exon definitions, subsequent columns
@@ -99,11 +103,9 @@ ARGUMENTS:
 ###############################################################################
 ############################
 # bestFitContinuousDistribs
-# allows from smoothed density data from observations to compute all continuous laws
-# available in the scipy _distn_names library.
-# Some laws have been suppressed because they do not work on the data used and other
-# laws behave in the same way (frechet_l = weibullmax, frechet_r = weibullmin)
-# the code is inspired by a discussion forum :
+# Given FPMs raw data, computes 106 continuous laws available in the
+# scipy _distn_names library (v.3.9).
+# Inspired by a discussion forum :
 # https://stackoverflow.com/questions/6620471/fitting-empirical-distribution-to-theoretical-ones-with-scipy-python
 # The continuous distributions with more than 3 parameters were also excluded
 # for user-friendliness simplification
@@ -114,8 +116,8 @@ ARGUMENTS:
 #
 # return:
 # - best_distributions (list of lists): list of lists containing
-#                                       [DISTRIBNAME,[PARAMS],[PDF], SSE, RSQUARED],
-#                                       ordered by rsquared
+#                                       [DISTRIBNAME,[PARAMS],[PDF], SSE],
+#                                       ordered by sse
 def bestFitContinuousDistribs(data, bins):
     # Get histogram of original data
     y, x = np.histogram(data, bins=bins, density=True)
@@ -125,8 +127,9 @@ def bestFitContinuousDistribs(data, bins):
     best_distributions = []
 
     # Estimate distribution parameters from data
-    for ii, distribution in enumerate([d for d in _distn_names if d not in ['levy_stable', 'studentized_range', 'frechet_l', 'frechet_r']]):
-        # Use getattr() to obtain the corresponding statistical distribution object from the scipy.stats module
+    for ii, distribution in enumerate(_distn_names):
+        # Use getattr() to obtain the corresponding statistical distribution
+        # object from the scipy.stats module
         distribution = getattr(scipy.stats, distribution)
 
         # Try to fit the current distribution
@@ -134,8 +137,8 @@ def bestFitContinuousDistribs(data, bins):
             # Ignore warnings from data that can't be fit
             with warnings.catch_warnings():
                 warnings.filterwarnings('ignore')
-                # Compute distribution parameters from raw data, usually containing loc and scale,
-                # but could have additional parameters
+                # Compute distribution parameters from raw data, usually containing
+                # loc and scale, but could have additional parameters
                 params = distribution.fit(data)
 
                 # Skip distributions with more than 3 parameters
@@ -152,27 +155,25 @@ def bestFitContinuousDistribs(data, bins):
                 pdf = distribution.pdf(x, loc=loc, scale=scale, *arg)
 
                 #######
-                # compute quality fitting scores
-                y_mean = np.mean(y)
-                ss_tot = np.sum((y - y_mean)**2)
-
                 # Calculate SSE (Sum of Squared Errors)
+                # its accuracy is limited as it heavily depends on user-defined bin choices
+                # in a histogram.
+                # It cannot substitute the user's visual assessment since variations in bins
+                # can lead to significant changes in SSE without necessarily reflecting the
+                # true quality of the fit.
                 sse = np.sum((y - pdf)**2)
 
-                # Calculate R-squared
-                r_squared = 1 - sse / ss_tot
-
-                if np.isnan(r_squared):
+                if np.isnan(sse):
                     logger.info("{:>3} / {:<3}: {} NOT FIT: nan r² score".format(ii + 1, len(_distn_names), distribution.name))
                 else:
-                    best_distributions.append((distribution, params, pdf, sse, r_squared))
-                    logger.info("{:>3} / {:<3}: {} params:{}; sse:{}; r²:{}".format(ii + 1, len(_distn_names), distribution.name, params, sse, r_squared))
+                    best_distributions.append((distribution, params, pdf, sse))
+                    logger.info("{:>3} / {:<3}: {} params:{}; sse:{}".format(ii + 1, len(_distn_names), distribution.name, params, sse))
 
         except Exception as e:
             logger.info("{:>3} / {:<3}: {} NOT FIT: {}".format(ii + 1, len(_distn_names), distribution.name, e))
             continue
 
-    return sorted(best_distributions, key=lambda x: x[4], reverse=True)
+    return sorted(best_distributions, key=lambda x: x[3], reverse=True)
 
 
 ########################
@@ -185,7 +186,8 @@ def bestFitContinuousDistribs(data, bins):
 # - distributions (list): best-fit distributions to be plotted.
 # - plotFile (str): Path to the output PDF file where the plot will be saved.
 # - NBBestFit (int): Number of top best-fit distributions to include in the plot.
-def plotDistrib(intergenicVec, userBins, distributions, plotFile, NBBestFit):
+# - ylim (int)
+def plotDistrib(intergenicVec, userBins, distributions, plotFile, NBBestFit, ylim):
     # Select the top NBBestFit distributions
     top = distributions[:NBBestFit]
 
@@ -209,6 +211,7 @@ def plotDistrib(intergenicVec, userBins, distributions, plotFile, NBBestFit):
                                linewidth=3.0,
                                linestyle='--')
 
+    matplotlib.pyplot.ylim(0, ylim)
     matplotlib.pyplot.legend()
     matplotlib.pyplot.ylabel("Densities")
     matplotlib.pyplot.xlabel("FPMs")
@@ -252,13 +255,13 @@ def main(argv):
     # Dev user params
     # limitation of samples number to be processed because the process is very long
     # aproximately 11min for 168,000 intergenic regions (= one sample from ensembl)
-    NBSampsToProcess = 1
+    NBSampsToProcess = 50
     userBins = 100
     NBBestFit = 10
     plotFile1 = os.path.join(plotDir, str(NBBestFit) + "_bestContinuousDistrib_" + str(userBins) + "bins_" + str(NBSampsToProcess) + "samps.pdf")
-    plotFile2 = os.path.join(plotDir, str(NBBestFit) + "_bestContinuousDistrib_" + str(userBins) + "bins_" + str(len(samples)) + "samps.pdf")
+    plotFile2 = os.path.join(plotDir, str(NBBestFit) + "_bestContinuousDistrib_" + str(userBins) + "bins_" + str(NBSampsToProcess) + "_" + str(len(samples)) + "samps.pdf")
     plotFile3 = os.path.join(plotDir, str(NBBestFit) + "_bestContinuousDistrib_Only2params_" + str(userBins) + "bins_" + str(NBSampsToProcess) + "samps.pdf")
-    plotFile4 = os.path.join(plotDir, str(NBBestFit) + "_bestContinuousDistrib_Only2params_" + str(userBins) + "bins_" + str(len(samples)) + "samps.pdf")
+    plotFile4 = os.path.join(plotDir, str(NBBestFit) + "_bestContinuousDistrib_Only2params_" + str(userBins) + "bins_" + str(NBSampsToProcess) + "_" + str(len(samples)) + "samps.pdf")
 
     # Generate random indexes for the columns
     randomSampInd = np.random.choice(intergenicFPMs.shape[1], NBSampsToProcess, replace=False)
@@ -277,12 +280,16 @@ def main(argv):
     fracDataForSmoothing = 0.99
     # corresponding max counts value
     maxData = np.quantile(vec, fracDataForSmoothing)
-    intergenicVec = vec[vec <= maxData]
+    subFPMsVec = vec[vec <= maxData]
+
+    interVec = intergenicFPMs.reshape(-1)
+    maxData = np.quantile(interVec, fracDataForSmoothing)
+    intergenicFPMsVec = interVec[interVec <= maxData]
 
     #####################
     # fitting continuous distributions
     try:
-        distributions = bestFitContinuousDistribs(intergenicVec, userBins)
+        distributions = bestFitContinuousDistribs(subFPMsVec, userBins)
     except Exception as e:
         raise Exception("bestFitContinuousDistribs failed: %s", repr(e))
 
@@ -291,30 +298,28 @@ def main(argv):
     startTime = thisTime
 
     #####################
-    # Plot 
+    # Plot
     # Define a list of data and corresponding plot files
-    data_files = [
-        (intergenicVec, plotFile1),
-        (intergenicFPMs.reshape(-1), plotFile2),
-        (intergenicVec, plotFile3),
-        (intergenicFPMs.reshape(-1), plotFile4)
-    ]
+    data_files = [(subFPMsVec, plotFile1),
+                  (intergenicFPMsVec, plotFile2),
+                  (subFPMsVec, plotFile3),
+                  (intergenicFPMsVec, plotFile4)]
 
     # Define the list of distributions to use
     topDistrib_2params = []
     for di in distributions:
-        if len(di[2]) <= 2:
+        if len(di[1]) <= 2:
             topDistrib_2params.append(di)
 
     distributions_to_use = [distributions, distributions, topDistrib_2params, topDistrib_2params]
+    ylim = [300, 50, 300, 50]
 
     # Iterate through the data files and distributions
     for i, (data, plot_file) in enumerate(data_files):
         try:
-            plotDistrib(data, userBins, distributions_to_use[i], plot_file, NBBestFit)
+            plotDistrib(data, userBins, distributions_to_use[i], plot_file, NBBestFit, ylim[i])
         except Exception as e:
             raise Exception(f"Failed to plot distributions for plotFile{i+1}: {repr(e)}")
-
 
     thisTime = time.time()
     logger.debug("Done plotting best distributions in %.2f s", thisTime - startTime)
