@@ -16,7 +16,6 @@ import numpy as np
 import time
 import logging
 import matplotlib.pyplot
-import matplotlib.cm
 import matplotlib.backends.backend_pdf
 
 ####### JACNEx modules
@@ -121,7 +120,7 @@ ARGUMENTS:
 
     if paramsFile == "":
         raise Exception("you must provide a continuous distribution parameters file use --params. Try " + scriptName + " --help.")
-   
+
     if tocheckFile == "":
         raise Exception("you must provide a user file use --tocheck. Try " + scriptName + " --help.")
     elif (not os.path.isfile(tocheckFile)):
@@ -317,11 +316,6 @@ def parsePlotExon(sampID, exonType, ei, samp2clusts, clust2samps, samples, fitWi
 # - plotTitle [str]: title of the plot
 # - pdf (matplotlib.backends object): a file object for save the plot
 def plotExonProfile(rawData, xi, yLists, plotLegs, verticalLines, vertLinesLegs, plotTitle, ylim, pdf):
-
-    # Define a list of colours based on the number of distributions to plot.
-    # The 'plasma' colormap is specifically designed for people with color vision deficiencies.
-    distColor = matplotlib.cm.get_cmap('plasma', len(xi))
-
     # Disable interactive mode to prevent display of the plot during execution
     matplotlib.pyplot.ioff()
     fig = matplotlib.pyplot.figure(figsize=(8, 8))
@@ -331,9 +325,7 @@ def plotExonProfile(rawData, xi, yLists, plotLegs, verticalLines, vertLinesLegs,
     # Plot the density/distribution curves for each set of x- and y-values
     if len(yLists) > 1:
         for i in range(len(yLists)):
-            # Choose a color based on the position of the curve in the list
-            color = distColor(i / len(yLists))
-            matplotlib.pyplot.plot(xi, yLists[i], color=color, label=plotLegs[i])
+            matplotlib.pyplot.plot(xi, yLists[i], label=plotLegs[i])
 
     # Plot vertical lines to mark points of interest on the histogram
     if verticalLines:
