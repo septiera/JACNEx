@@ -335,7 +335,7 @@ def main(argv):
 
     # dict: keys=chromosome identifiers[str], values=[startChrExIndex, endChrExIndex][int]
     chr2Exons_A = exonOnChr(autosomeExons)
-    chr2Exons_G = exonOnChr(autosomeExons)
+    chr2Exons_G = exonOnChr(gonosomeExons)
 
     #########
     # Transition matrix generated from likelihood data, based on the overall sampling.

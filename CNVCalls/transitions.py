@@ -180,8 +180,8 @@ def debug_process(transMatVoid, CNcounts_A, samp2CNEx_A, CNcounts_G, samp2CNEx_G
     logger.debug("#### Save counting CNs/exons in Autosomes and Gonosomes #####")
     # initial CN predictions by exons, counting facilitating comparisons between samples and clusters
     try:
-        countsList2Plot, clust2counts = saveCNCounts(samp2CNEx_A, samp2CNEx_G, CNcounts_A,
-                                                     CNcounts_G, samp2clusts, plotDir, CNStates)
+        countsList2Plot, clust2counts = saveCNCounts(CNcounts_A, CNcounts_G,
+                                                     samp2clusts, plotDir, CNStates)
     except Exception as e:
         logger.error("Printing the event count summary failed due to: %s", repr(e))
 
@@ -207,7 +207,7 @@ def debug_process(transMatVoid, CNcounts_A, samp2CNEx_A, CNcounts_G, samp2CNEx_G
     try:
         curvePlotFile = os.path.join(plotDir, "CN_Exons_Plot.pdf")
         pdf = matplotlib.backends.backend_pdf.PdfPages(curvePlotFile)
-        processCluster(clust2counts, fitWith, CNStates, pdf)
+        processCluster(clust2counts, CNStates, pdf)
         pdf.close()
     except Exception as e:
         logger.debug("Histogram failed due to: %s", repr(e))
@@ -311,15 +311,16 @@ def saveEventByCluster(clusterIDs, samp2clusts, CNStates, samp2CNEx_A, plotDir):
                     eventInd = np.where(CNsPath == CNtype)[0]
 
                     for event in eventInd:
-                        clustEventInd.setdefault(event, np.zeros(len(sampList), dtype=int))
+                        if event not in clustEventInd.keys():
+                            clustEventInd[event] = [0] * len(sampList)
                         clustEventInd[event][sampList.index(sampID)] = 1
 
             testFile = os.path.join(plotDir, f"Event_CN{CNtype}_{clusterID}.tsv")
-            with open(testFile, "x") as outFH:
+            with open(testFile, "w") as outFH:
                 header = "exonIndex\t" + "\t".join(sampList) + "\n"
                 outFH.write(header)
-                for i, counts in clustEventInd.items():
-                    toPrint = [i] + counts
+                for event in clustEventInd.keys():
+                    toPrint = [event] + clustEventInd[event]
                     row2Print = '\t'.join(map(str, toPrint))
                     outFH.write(row2Print + "\n")
 
@@ -332,10 +333,10 @@ def saveEventByCluster(clusterIDs, samp2clusts, CNStates, samp2CNEx_A, plotDir):
 # - clust2Counts (dict): keys = cluster IDs and values = CN count data as numpy arrays.
 # - CNStates (list[strs]): CN state labels (e.g., ["CN0", "CN1", "CN2", "CN3"]).
 # - pdf (PdfPages): A PDF object for saving the generated plots.
-def processCluster(clust2Counts, CNStates, pdf):
+def processCluster(clust2counts, CNStates, pdf):
     # Iterate through clusters in alphabetical order
-    for cluster_id in sorted(clust2Counts.keys()):
-        counts_list = np.array(clust2Counts[cluster_id])
+    for cluster_id in sorted(clust2counts.keys()):
+        counts_list = np.array(clust2counts[cluster_id])
 
         for CNstate in CNStates:
             CNcountsCurrent = counts_list[:, CNStates.index(CNstate)]
