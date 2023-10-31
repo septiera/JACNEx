@@ -1,8 +1,8 @@
-import os
 import logging
 import matplotlib.pyplot
 import matplotlib.backends.backend_pdf
 import scipy.cluster.hierarchy
+import numpy as np
 
 # prevent matplotlib and PIL flooding the logs when we are in DEBUG loglevel
 logging.getLogger('matplotlib').setLevel(logging.WARNING)
@@ -230,22 +230,27 @@ def plotDendrogram(linkageMatrix, samples, clust2samps, fitWith, clustIsValid, t
 
 #############################################################
 # plotPieChart:
-# generates a pie by cluster resuming the filtering of exons
+# Generate and save a pie chart representing the distribution of exon status
+# (filtered or called).
 #
 # Args:
 # - clustID [str]: cluster identifier
-# - filterCounters (dict[str:int]): dictionary of exon counters of different filtering
-# performed for the cluster
-# - pdf [str]: file path to save plot
-#
-# save a plot in the output pdf
-def plotPieChart(clustID, filterCounters, pdf):
-    
-    matplotOpenFile = matplotlib.backends.backend_pdf.PdfPages(pdf)
-    
+# - filterStatus (list[strs]): exon filter status names
+# - exStatusArray (numpy.ndarray[ints]): exon status indexes from "filterStatus"
+# - matplotOpenFile: File handle to save the generated plot
+def plotPieChart(clustID, filterStatus, exStatusArray, matplotOpenFile):
+    # Use numpy.unique() to obtain unique values and their occurrences
+    # with return_counts=True, unique_values will contain the sorted unique values
+    # in ascending order, and counts will correspond to the number of occurrences
+    # for each unique value in the same sorted order.
+    uniqueValues, counts = np.unique(exStatusArray[exStatusArray != -1], return_counts=True)
+
+    # Create the pie chart figure and subplot
     fig = matplotlib.pyplot.figure(figsize=(5, 5))
     ax11 = fig.add_subplot(111)
-    w, l, p = ax11.pie(filterCounters.values(),
+
+    # Plot the pie chart with customization
+    w, l, p = ax11.pie(counts,
                        labels=None,
                        autopct=lambda x: str(round(x, 2)) + '%',
                        textprops={'fontsize': 14},
@@ -254,9 +259,11 @@ def plotPieChart(clustID, filterCounters, pdf):
                        pctdistance=1,
                        labeldistance=None)
 
-    step = (0.8 - 0.2) / (len(filterCounters.keys()) - 1)
-    pctdists = [0.8 - i * step for i in range(len(filterCounters.keys()))]
+    # Calculate percentage distances for custom label positioning
+    step = (0.8 - 0.2) / (len(filterStatus) - 1)
+    pctdists = [0.8 - i * step for i in range(len(filterStatus))]
 
+    # Position the labels at custom percentage distances
     for t, d in zip(p, pctdists):
         xi, yi = t.get_position()
         ri = np.sqrt(xi**2 + yi**2)
@@ -267,94 +274,48 @@ def plotPieChart(clustID, filterCounters, pdf):
 
     matplotlib.pyplot.axis('equal')
     matplotlib.pyplot.title("Filtered and called exons from cluster " + str(clustID))
-    matplotlib.pyplot.legend(loc='upper right', fontsize='small', labels=filterCounters.keys())
+    matplotlib.pyplot.legend(loc='upper right', fontsize='small', labels=filterStatus)
     matplotOpenFile.savefig(fig)
     matplotlib.pyplot.close()
-    
-    matplotOpenFile.close()
 
 
-#########################
-# plotExponentialFit
-# generates a plot to visualize the exponential fit for a given dataset.
-# It takes the plot title, x-axis data, y-axis data, plot legends, and the
-# output file path for saving the plot as input.
-#
-# Args:     
-# - plotTitle [str]: The title of the plot.
-# - xi (np.ndarray[floats]): The x-axis data (FPM values).
-# - yLists (np.ndarray[floats]): A list of y-axis data for plotting.
-# - plotLegs (list[str]): A list of legends for each dataset.
-# - pdf [str]: The output file path for saving the plot as a PDF.
-#
-# save a plot in the output pdf
-def plotExponentialFit(plotTitle, dr, yLists, plotLegs, pdf):
-    # sanity
-    if (len(yLists[0]) != len(yLists[1])) or (len(yLists) != len(plotLegs)):
-        raise Exception('plotDensities bad args, length mismatch')
-    
-    matplotOpenFile = matplotlib.backends.backend_pdf.PdfPages(pdf)
-    fig = matplotlib.pyplot.figure(figsize=(5, 5))
-    
-    matplotlib.pyplot.plot(dr, yLists[0], label=plotLegs[0])
-    matplotlib.pyplot.plot(dr, yLists[1], label=plotLegs[1])
-    matplotlib.pyplot.legend()
-    matplotlib.pyplot.title(plotTitle)
-    matplotlib.pyplot.xlabel('FPM')
-    matplotlib.pyplot.ylabel('densities')
-    matplotlib.pyplot.ylim(0, max(yLists[0])/100)
-    matplotlib.pyplot.xlim(0, max(dr)/3)
-    matplotOpenFile.savefig(fig)
-    matplotlib.pyplot.close()
-    matplotOpenFile.close()
-    
-#########################
-# plotExonProfile
-# plots a density histogram for a raw data list, along with density or distribution
-# curves for a specified number of data lists. It can also plot vertical lines to mark
-# points of interest on the histogram. The graph is saved as a PDF file.
+#############################################################
+# barPlot
+# Creates a bar plot of copy number frequencies based on the count array.
+# The plot includes error bars representing the standard deviation.
 #
 # Args:
-# - rawData (np.ndarray[float]): exon FPM counts
-# - xi (list[float]): x-axis values for the density or distribution curves, ranges
-# - yLists (list of lists[float]): y-axis values, probability density function values
-# - plotLegs (list[str]): labels for the density or distribution curves
-# - verticalLines (list[float]): vertical lines to be plotted, FPM tresholds
-# - vertLinesLegs (list[str]): labels for the vertical lines to be plotted
-# - plotTitle [str]: title of the plot
-# - pdf (matplotlib.backends object): a file object for save the plot
-def plotExonProfile(rawData, xi, yLists, plotLegs, verticalLines, vertLinesLegs, plotTitle, ylim, pdf):
+# - countArray (np.ndarray[ints]): Count array representing copy number frequencies.
+# - CNStatus (list[str]): Names of copy number states.
+# - outFolder (str): Path to the output folder for saving the bar plot.
+def barPlot(countArray, CNStatus, pdf):
+    matplotOpenFile = matplotlib.backends.backend_pdf.PdfPages(pdf)
+    fig = matplotlib.pyplot.figure(figsize=(10, 8))
 
-    # Define a list of colours based on the number of distributions to plot.
-    # The 'plasma' colormap is specifically designed for people with color vision deficiencies.
-    distColor = matplotlib.pyplot.cm.get_cmap('plasma', len(xi))
-    vertColor = matplotlib.pyplot.cm.get_cmap('plasma', len(verticalLines))
+    # Calculate the mean and standard deviation for each category
+    means = np.mean(countArray, axis=0)
+    stds = np.std(countArray, axis=0)
 
-    # Disable interactive mode to prevent display of the plot during execution
-    matplotlib.pyplot.ioff()
-    fig = matplotlib.pyplot.figure(figsize=(8, 8))
-    # Plot a density histogram of the raw data with a number of bins equal to half the number of data points
-    matplotlib.pyplot.hist(rawData, bins=int(len(rawData) / 2), density=True)
+    # Normalize the means to get frequencies
+    total_mean = np.sum(means)
+    frequencies = means / total_mean
 
-    # Plot the density/distribution curves for each set of x- and y-values
-    if len(yLists) > 1:
-        for i in range(len(yLists)):
-            # Choose a color based on the position of the curve in the list
-            color = distColor(i / len(yLists))
-            matplotlib.pyplot.plot(xi, yLists[i], color=color, label=plotLegs[i])
+    # Plot the bar plot with error bars
+    matplotlib.pyplot.bar(CNStatus, frequencies, yerr=stds / total_mean, capsize=3)
 
-    # Plot vertical lines to mark points of interest on the histogram
-    if verticalLines:
-        for j in range(len(verticalLines)):
-            color = vertColor(j / len(verticalLines))
-            matplotlib.pyplot.axvline(verticalLines[j], color=color, linestyle='dashdot', linewidth=1, label=vertLinesLegs[j])
+    # Define the vertical offsets for the annotations dynamically based on standard deviation
+    mean_offset = np.max(frequencies) * 0.1
+    std_offset = np.max(frequencies) * 0.05
 
-    # Set the x- and y-axis labels, y-axis limits, title, and legend
-    matplotlib.pyplot.xlabel("FPM")
-    matplotlib.pyplot.ylabel("Density or PDF")
-    matplotlib.pyplot.ylim(0, ylim)
-    matplotlib.pyplot.title(plotTitle)
-    matplotlib.pyplot.legend(loc='upper right', fontsize='small')
+    # Add labels for mean and standard deviation above each bar
+    for i in range(len(CNStatus)):
+        matplotlib.pyplot.text(i, frequencies[i] + mean_offset, f'μ={frequencies[i]:.1e}', ha='center')
+        matplotlib.pyplot.text(i, frequencies[i] + std_offset, f'σ={stds[i]/total_mean:.1e}', ha='center')
 
-    pdf.savefig(fig)
+    # Set the labels and title
+    matplotlib.pyplot.xlabel('Copy number States')
+    matplotlib.pyplot.ylabel('Frequencies')
+    matplotlib.pyplot.title(f'CN frequencies Bar Plot for {len(countArray)} samps (Excluding Filtered)')
+    matplotOpenFile.savefig(fig)
     matplotlib.pyplot.close()
+    matplotOpenFile.close()
