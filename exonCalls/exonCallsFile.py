@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 #                          results of the Gaussian distribution and filters for
 #                          exons in autosomes.
 #  - exonMetrics_G [dict]: same as exonMetrics_A for gonosomes.
-#  - exp_loc [float], exp_scale [float: The exponential parameters.
+#  - exp_loc [float], exp_scale [float: The half normal parameters.
 #  - metricsNames (list[strs]): ["loc","scale","filterStates"]
 def parseExonParamsFile(exonParamsFile):
     exonMetrics_A = {}
@@ -52,7 +52,7 @@ def parseExonParamsFile(exonParamsFile):
 #   output will be gzipped if outFile ends with '.gz'
 # - exonMetrics (dict): A dictionary mapping cluster IDs to np.ndarray of exon metrics results.
 # - metricsNames (list[str])
-# - exp_loc[float], exp_scale[float]: parameters for the exponential distribution.
+# - exp_loc[float], exp_scale[float]: parameters for the half normal distribution.
 # - exons (list of lists[str,int,int,str]): information on exon, containing CHR,START,END,EXON_ID
 #
 # Print this data to outFile as a 'ParamsFile'
@@ -76,8 +76,8 @@ def printParamsFile(outFile, exonMetrics, metricsNames, exp_loc, exp_scale, exon
     toPrint += "\n"
     outFH.write(toPrint)
 
-    #### print first row (exponential parameters)
-    toPrint = "" + "\t" + "" + "\t" + "" + "\t" + "exponential parameters" + "\t"
+    #### print first row (half normal parameters)
+    toPrint = "" + "\t" + "" + "\t" + "" + "\t" + "half normal parameters" + "\t"
     expLine = "\t".join(["{:0.4e}\t{:0.4e}\t-1".format(exp_loc, exp_scale)] * len(exonMetrics.keys()))
     toPrint += expLine
     toPrint += "\n"
@@ -108,7 +108,7 @@ def printParamsFile(outFile, exonMetrics, metricsNames, exp_loc, exp_scale, exon
 #                                        contains mean, stdev parameters from gaussian distribution and
 #                                        exon filter status index from
 #                                        ["notCaptured", "cannotFitRG", "RGClose2LowThreshold", "fewSampsInRG", "call"].
-#  - exp_loc [float], exp_scale [float: The exponential parameters.
+#  - exp_loc [float], exp_scale [float: The half normal parameters.
 #  - paramsTitles (list[strs]): title of expected columns for each cluster
 def parseExonParamsPrivate(exonParamsFile):
     try:
@@ -147,7 +147,7 @@ def parseExonParamsPrivate(exonParamsFile):
         clusterIDs = list(clusterIDs)
         paramsTitles = list(paramsTitles)
 
-        # grab parameters of the exponential distribution common for all clusters
+        # grab parameters of the half normal distribution common for all clusters
         expLine = callsFH.readline().rstrip().split("\t")
         exp_loc = np.float64(expLine[4])
         exp_scale = np.float64(expLine[5])

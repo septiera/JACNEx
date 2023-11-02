@@ -4,7 +4,7 @@
 # Given a TSV of exon fragment counts produced by 1_countFrags.py
 # and a TSV with clustering information produced by 2_clusterSamps.py:
 # It filters out non-callable exons and computes parameters for two distributions:
-# an exponential distribution (loc=0, scale=lambda) for CN0 and a Gaussian distribution
+# a half normal distribution (loc=0, scale=stdev) for CN0 and a Gaussian distribution
 # (loc=mean, scale=stdev) for CN2 distinguishing autosomes and gonosomes.
 # See usage for more details.
 ###############################################################################################
@@ -56,12 +56,12 @@ def parseArgs(argv):
 DESCRIPTION:
 Given two TSV files: one containing the number of exon fragments and the other the sample clusters,
 we filter out non-callable exons based on various criteria and compute parameters for two distributions:
-1)- An exponential distribution (loc=0, scale=1/λ) derived from the distribution of normally uncovered
+1)- A half normal distribution (loc=0, scale=sted) derived from the distribution of normally uncovered
  intergenic regions to approximate the profile of homozygous deletions (CN0).
 2)- A Gaussian distribution (loc=mean, scale=stdev) based on specific counts for each cluster to deduce
  a profile close to what is expected in the normal haploid state (CN2).
 The results are saved in TSV format on the standard output (stdout) for each cluster chromosome type.
-The first line (excluding the header) represents the parameters of the exponential distribution.
+The first line (excluding the header) represents the parameters of the half normal distribution.
 Subsequent lines contain exon definitions [CHR, START, END, EXONID], along with the corresponding
 "loc" and "scale" parameters for the Gaussian distribution for each cluster.
 Additionally, all circular diagrams summarizing the proportions of filtered and unfiltered exons are
@@ -187,16 +187,16 @@ def main(argv):
     startTime = thisTime
 
     ####################
-    # Exponential fitting = CN0 on intergenic counts.
+    # half normal fitting = CN0 on intergenic counts.
     # Extracts distribution parameters and a threshold (uncaptThreshold)
     try:
-        (expon_loc, expon_scale, uncaptThreshold) = exonCalls.exonProcessing.computeCN0Params(intergenicFPMs)
+        (hnorm_loc, hnorm_scale, uncaptThreshold) = exonCalls.exonProcessing.computeCN0Params(intergenicFPMs)
     except Exception as e:
         raise Exception("computeCN0Params failed: %s", repr(e))
 
     thisTime = time.time()
     logger.debug("Done computeCN0Params, loc=%.2f, scale=%.2f, uncapThreshold=%.2f in %.2f s",
-                 expon_loc, expon_scale, uncaptThreshold, thisTime - startTime)
+                 hnorm_loc, hnorm_scale, uncaptThreshold, thisTime - startTime)
     startTime = thisTime
 
     ####################
@@ -303,10 +303,10 @@ def main(argv):
     outputName = os.path.splitext(outFile)[0]
     # autosomes
     exonCalls.exonCallsFile.printParamsFile(outputName + "_A.gz", exonMetrics_A, metricsNames,
-                                            expon_loc, expon_scale, autosomeExons)
+                                            hnorm_loc, hnorm_scale, autosomeExons)
     # gonosomes
     exonCalls.exonCallsFile.printParamsFile(outputName + "_G.gz", exonMetrics_G, metricsNames,
-                                            expon_loc, expon_scale, gonosomeExons)
+                                            hnorm_loc, hnorm_scale, gonosomeExons)
 
     thisTime = time.time()
     logger.debug("Done printing exon metrics for all (non-failed) clusters, in %.2fs", thisTime - startTime)

@@ -15,36 +15,36 @@ logger = logging.getLogger(__name__)
 ###############################################################################
 #############################################################
 # computeCN0Params
-# Calculates the parameters "expon_loc" and "exp_scale" associated with the fitted exponential
+# Calculates the parameters "hnorm_loc" and "hnorm_scale" associated with the fitted half normal
 # distribution from the intergenic count data. It also calculates the "uncaptThreshold".
 # It is the FPM (Fragments Per Million) limit below which exons are considered "uncaptured"
 # due to insufficient sequencing or capture. It's derived from the intergenic fragment distribution
-# and set at the 99th percentile of the associated exponential distribution (CN0).
+# and set at the 99th percentile of the associated half normal distribution (CN0).
 # Exons with FPM values below the threshold are marked as "uncaptured."
 #
 # Args:
 # - intergenicsFPM (np.ndarray[floats]): count data from intergenic regions.
 #
 # Returns:
-# - expon_loc [float]: location parameter of the fitted exponential distribution.
-# - expon_scale [float]: scale parameter of the fitted exponential distribution.
+# - hnormloc [float]: location parameter of the fitted half normal distribution.
+# - hnormscale [float]: scale parameter of the fitted half normal distribution.
 # - meanIntergenicFPM (np.ndarray[floats]): average fragment counts per region,
 #                                           array needed for debug/test script
 # - uncaptThreshold [float]: FPM threshold
 def computeCN0Params(intergenicsFPM):
-    # Fraction of the CDF of CNO exponential beyond which we truncate this distribution
-    fracCDFExp = 0.99
+    # Fraction of the CDF of CNO half normal beyond which we truncate this distribution
+    fracCDFHnorm = 0.95
     try:
-        # Fit an exponential distribution to the intergenic fragment per million (FPM) data
-        (expon_loc, expon_scale) = fitExponential(intergenicsFPM)
+        # Fit an half normal distribution to the intergenic fragment per million (FPM) data
+        (hnormloc, hnormscale) = fitHalfNormal(intergenicsFPM)
     except Exception as e:
-        logger.error("fitExponential failed : %s", repr(e))
+        logger.error("fitHalfNormal failed : %s", repr(e))
         raise
 
     # Calculate the FPM limit below which exons are considered "uncaptured"
-    uncaptThreshold = scipy.stats.expon.ppf(fracCDFExp, loc=expon_loc, scale=expon_scale)
+    uncaptThreshold = scipy.stats.halfnorm.ppf(fracCDFHnorm, loc=hnormloc, scale=hnormscale)
 
-    return (expon_loc, expon_scale, uncaptThreshold)
+    return (hnormloc, hnormscale, uncaptThreshold)
 
 
 #####################################
@@ -113,24 +113,24 @@ def processExonsAndComputeCN2Params(clusterID, chromType, exonFPMs, samples, clu
 ############################ PRIVATE FUNCTIONS ################################
 ###############################################################################
 #############################
-# fitExponential
+# fitHalfNormal
 # Given a fragment count array (dim = NBOfGenomicWindows*NBOfSamps),
-# fits an exponential distribution, fixing location to 0.
+# fits a half normal distribution, fixing location to 0.
 #
 # Args:
 # - intergenicsFPM (np.ndarray[floats]): count array (FPM normalized)
 #
 # Returns a tuple (loc, scale):
-# - expon_loc [float], expon_scale[float]: parameters of the exponential distribution
-def fitExponential(intergenicsFPM):
-    # Fit an exponential distribution,
+# - hnormloc [float], hnormscale[float]: parameters of the half normall distribution
+def fitHalfNormal(intergenicsFPM):
+    # Fit a half normal distribution,
     # enforces the "loc" parameter to be 0 because our model requires the distribution
     # to start at zero.
-    # f(x, scale) = (1/scale)*exp(-x/scale)
-    # scale = 1 / lambda
-    expon_loc, expon_scale = scipy.stats.expon.fit(intergenicsFPM, floc=0)
+    # scale = std_deviation
+    # f(x) = (1 / (scale * sqrt(2 * pi))) * exp(-x**2 / (2 * scale**2))
+    hnormloc, hnormscale = scipy.stats.halfnorm.fit(intergenicsFPM, floc=0)
 
-    return (expon_loc, expon_scale)
+    return (hnormloc, hnormscale)
 
 
 #############################################################

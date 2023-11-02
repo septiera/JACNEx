@@ -66,7 +66,7 @@ ARGUMENTS:
                     [clusterID, sampsInCluster, controlledBy, validCluster, clusterStatus]
                     File obtained from 2_clusterSamps.py.
     --params [str]: TSV file contains exon definitions in its first four columns,
-                    followed by distribution parameters ["loc", "scale"] for exponential
+                    followed by distribution parameters ["loc", "scale"] for half normal
                     and Gaussian distributions, and an additional column indicating the
                     exon filtering status for each cluster.
                     The file is generated using the 3_CNDistParams.py script.
@@ -223,7 +223,7 @@ def main(argv):
     # parse exon metrics for each valid cluster
     # extracts parameters of continuous distributions fitted on CN0, CN2 coverage profil
     try:
-        (exonMetrics_A, exonMetrics_G, exp_loc, exp_scale, metricsNames) = exonCalls.exonCallsFile.parseExonParamsFile(paramsFile)
+        (exonMetrics_A, exonMetrics_G, hnorm_loc, hnorm_scale, metricsNames) = exonCalls.exonCallsFile.parseExonParamsFile(paramsFile)
     except Exception as e:
         raise Exception("parseParamsFile failed for %s : %s", paramsFile, repr(e))
 
@@ -314,13 +314,13 @@ def main(argv):
             if clusterID.startswith("A"):
                 chromType = "A"
                 futureRes = pool.submit(CNVCalls.likelihoods.counts2likelihoods, clusterID,
-                                        samp2Index, autosomeFPMs, clust2samps, exp_loc, exp_scale,
+                                        samp2Index, autosomeFPMs, clust2samps, hnorm_loc, hnorm_scale,
                                         exonMetrics_A, len(CNStates), chromType)
             # gonosomes
             elif clusterID.startswith("G"):
                 chromType = "G"
                 futureRes = pool.submit(CNVCalls.likelihoods.counts2likelihoods, clusterID,
-                                        samp2Index, gonosomeFPMs, clust2samps, exp_loc, exp_scale,
+                                        samp2Index, gonosomeFPMs, clust2samps, hnorm_loc, hnorm_scale,
                                         exonMetrics_G, len(CNStates), chromType)
 
             else:

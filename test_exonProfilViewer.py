@@ -60,7 +60,7 @@ two columns [exonID, sampleID] tab-separated.
 For each exon, it identifies the associated filtering criteria.
 If the filtering value is 0 ("notCaptured") or 1 ("cannotFitRG"), a simple histogram will be plotted.
 In cases where filtering is 2 ("RGClose2LowThreshold"), 3 ("fewSampsInRG"), or 4 ("call"),
-specific distributions will be fitted for each copy number (CN0: exponential, CN1: Gaussian,
+specific distributions will be fitted for each copy number (CN0: half normal, CN1: Gaussian,
 CN2: Gaussian, CN3: gamma) based on the FPM (fragments per million) distribution for the cluster
 containing the target sample.
 The resulting visualization includes a combined histogram and distribution plot with their respective parameters.
@@ -73,7 +73,7 @@ ARGUMENTS:
             [clusterID, sampsInCluster, controlledBy, validCluster, clusterStatus]
             File obtained from 2_clusterSamps.py.
     --params [str]: TSV file contains exon definitions in its first four columns,
-                    followed by distribution parameters ["loc", "scale"] for exponential
+                    followed by distribution parameters ["loc", "scale"] for half normal
                     and Gaussian distributions, and an additional column indicating the
                     exon filtering status for each cluster.
                     The file is generated using the 3_CNDistParams.py script.
@@ -223,11 +223,11 @@ def parseUserTSV(userTSV, samples, autosomeExons, gonosomeExons):
 # - exonMetrics (array): Exon parameters.
 # - metricsNames (list): Titles of parameters.
 # - exonsData (array): Exon information.
-# - exp_loc (float): Exponential distribution location parameter.
-# - exp_scale (float): Exponential distribution scale parameter.
+# - hnorm_loc (float): distribution location parameter.
+# - hnorm_scale (float): distribution scale parameter.
 # - matplotOpenFile: Opened PDF file for plotting.
 def parsePlotExon(sampID, exonType, ei, samp2clusts, clust2samps, samples, fitWith, fpmData, exonMetrics,
-                  metricsNames, exonsData, exp_loc, exp_scale, matplotOpenFile):
+                  metricsNames, exonsData, hnorm_loc, hnorm_scale, matplotOpenFile):
 
     # Get cluster ID based on exon's location
     if exonType == "A":
@@ -267,24 +267,22 @@ def parsePlotExon(sampID, exonType, ei, samp2clusts, clust2samps, samples, fitWi
     gaussScale = exonMetrics[clusterID][ei, metricsNames.index("scale")]
 
     # if all the distributions can be represented,
-    # otherwise a simple histogram and the fit of the exponential will be plotted.
+    # otherwise a simple histogram and the fit of the half normal will be plotted.
     if exonFilterState > 1:
         # Update plot title with likelihood information
         plotTitle += f"\n{sampID} likelihoods:\n"
 
-        distribution_functions = CNVCalls.likelihoods.getDistributionObjects(exp_loc, exp_scale, gaussLoc, gaussScale)
+        distribution_functions = CNVCalls.likelihoods.getDistributionObjects(hnorm_loc, hnorm_scale, gaussLoc, gaussScale)
 
         for ci in range(len(distribution_functions)):
             pdf_function, loc, scale, shape = distribution_functions[ci]
             # np.ndarray 1D float: set of pdfs for all samples
             # scipy execution speed up
             if shape is not None:
-                # Si shape est défini (non None), utilisez-le dans l'appel de la fonction PDF
                 PDFRanges = pdf_function(xi, loc=loc, scale=scale, a=shape)
                 sampLikelihood = pdf_function(sampFPM, loc=loc, scale=scale, a=shape)
                 plotLegs.append(f"CN{ci} [loc={loc:.2f}, scale={scale:.2f}, shape={shape:.2f}]")
             else:
-                # Si shape est None, n'incluez pas l'argument a dans l'appel de la fonction PDF
                 PDFRanges = pdf_function(xi, loc=loc, scale=scale)
                 sampLikelihood = pdf_function(sampFPM, loc=loc, scale=scale)
                 plotLegs.append(f"CN{ci} [loc={loc:.2f}, scale={scale:.2f}]")
@@ -388,7 +386,7 @@ def main(argv):
     # parse exon metrics for each valid cluster
     # extracts parameters of continuous distributions fitted on CN0, CN2 coverage profil
     try:
-        (exonMetrics_A, exonMetrics_G, exp_loc, exp_scale, metricsNames) = exonCalls.exonCallsFile.parseExonParamsFile(paramsFile)
+        (exonMetrics_A, exonMetrics_G, hnorm_loc, hnorm_scale, metricsNames) = exonCalls.exonCallsFile.parseExonParamsFile(paramsFile)
     except Exception as e:
         raise Exception("parseParamsFile failed for %s : %s", paramsFile, repr(e))
 
@@ -419,7 +417,7 @@ def main(argv):
                     try:
                         parsePlotExon(sampID, exonType, ei, samp2clusts, clust2samps,
                                       samples, fitWith, fpmData, exonMetrics,
-                                      metricsNames, exonsData, exp_loc, exp_scale,
+                                      metricsNames, exonsData, hnorm_loc, hnorm_scale,
                                       matplotOpenFile)
                     except Exception as e:
                         if exonType == "A":

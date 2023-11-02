@@ -35,7 +35,7 @@ def allocateLikelihoodsArray(numSamps, numExons, numCN):
 # scenarios associated with different statistical distributions.
 # For each Fragment Per Million (FPM) of an exon within a sample:
 #   - CN0: Calculate the Probability Density Function (PDF) using parameters from an
-#   exponential distribution fitted to intergenic data (loc = 0, scale = 1 / lambda).
+#   half normal distribution fitted to intergenic data (loc = 0, scale = 1 / lambda).
 #   - CN2: Compute the PDF based on parameters from a robustly fitted Gaussian
 #   distribution, capturing the dominant coverage signal(loc = mean, scale = stdev).
 #   - CN1: use the parameters from CN2 while shifting the mean (loc) by
@@ -45,7 +45,7 @@ def allocateLikelihoodsArray(numSamps, numExons, numCN):
 #   a distribution with a heavy tail.
 #   The chosen heavy-tailed distribution is a gamma distribution. Its parameters are:
 #       - alpha [integer], representing shape (curvature) in SciPy.
-#       If alpha > 1, heavy tail; if alpha = 1, exponential-like; alpha < 1, light tail.
+#       If alpha > 1, heavy tail; if alpha = 1, half normal-like; alpha < 1, light tail.
 #       - theta [float] stretches or compresses distribution (scale in Scipy).
 #       Higher theta expands, lower compresses.
 #       Also, 'loc' parameter in SciPy shifts distribution along x-axis without changing
@@ -58,7 +58,7 @@ def allocateLikelihoodsArray(numSamps, numExons, numCN):
 # - samp2Index (dict): keys == sampleIDs, values == exonsFPM samples column indexes
 # - exonsFPM (np.ndarray[floats]): normalized fragment counts (FPMs)
 # - clust2samps (dict): mapping clusterID to a list of sampleIDs
-# - exp_loc[float], exp_scale[float]: parameters of the exponential distribution
+# - hnorm_loc[float], hnorm_scale[float]: parameters of the half normal distribution
 # - exMetrics (dict): keys == clusterIDs, values == np.ndarray [floats]
 #                     Dim = nbOfExons * ["loc", "scale", "filterStatus"].
 # - numCNs [int]: 4 copy number status: ["CN0", "CN1", "CN2", "CN3"]
@@ -70,7 +70,7 @@ def allocateLikelihoodsArray(numSamps, numExons, numCN):
 #                    "G" for gonosomes.
 # - likelihoodClustDict : keys == sampleID, values == np.ndarray(nbExons * nbCNStates)
 
-def counts2likelihoods(clusterID, samp2Index, exonsFPM, clust2samps, exp_loc, exp_scale,
+def counts2likelihoods(clusterID, samp2Index, exonsFPM, clust2samps, hnorm_loc, hnorm_scale,
                        exMetrics, numCNs, chromType):
 
     try:
@@ -93,7 +93,7 @@ def counts2likelihoods(clusterID, samp2Index, exonsFPM, clust2samps, exp_loc, ex
             gauss_loc = clusterMetrics[exonIndex, 0]
             gauss_scale = clusterMetrics[exonIndex, 1]
 
-            distribution_functions = getDistributionObjects(exp_loc, exp_scale, gauss_loc, gauss_scale)
+            distribution_functions = getDistributionObjects(hnorm_loc, hnorm_scale, gauss_loc, gauss_scale)
 
             for ci in range(numCNs):
                 pdf_function, loc, scale, shape = distribution_functions[ci]
@@ -121,20 +121,20 @@ def counts2likelihoods(clusterID, samp2Index, exonsFPM, clust2samps, exp_loc, ex
 ######################################
 # getDistributionObjects
 # Defines parameters for four types of distributions (CN0, CN1, CN2, CN3+),
-# involving exponential, normal, and gamma distributions.
+# involving half normal, normal, and gamma distributions.
 # For CN3+, the parameters are empriricaly adjusted to ensure compatibility between
 # Gaussian and gamma distributions.
 #
 # Args:
-# - exp_loc [float]: Location parameter for the exponential distribution (CN0).
-# - exp_scale [float]: 1 / lambda parameter for the exponential distribution (CN0).
+# - hnorm_loc [float]: Location parameter for the half normal distribution (CN0).
+# - hnorm_scale [float]: stdev parameter for the half normal distribution (CN0).
 # - gauss_loc [float]: Mean parameter for the Gaussian distribution (CN2).
 # - gauss_scale [float]: Standard deviation parameter for the Gaussian distribution (CN2).
 # Returns:
 # - CN_params(list of list): contains distribution objects from Scipy representing
 #                     different copy number types (CN0, CN1, CN2, CN3+).
 #                     Parameters vary based on distribution type (ordering: loc, scale, shape).
-def getDistributionObjects(exp_loc, exp_scale, gauss_loc, gauss_scale):
+def getDistributionObjects(hnorm_loc, hnorm_scale, gauss_loc, gauss_scale):
 
     # shifting Gaussian mean for CN1
     gaussShiftLoc = gauss_loc * 0.5
@@ -155,7 +155,7 @@ def getDistributionObjects(exp_loc, exp_scale, gauss_loc, gauss_scale):
     # Calculate the logarithm of gauss_loc_plus_scale + 1 once
     gauss_logLocAdd1 = np.log10(gauss_locAddScale + 1)
 
-    CN_params = [(scipy.stats.expon.pdf, exp_loc, exp_scale, None),  # CN0
+    CN_params = [(scipy.stats.halfnorm.pdf, hnorm_loc, hnorm_scale, None),  # CN0
                  (scipy.stats.norm.pdf, gaussShiftLoc, gauss_scale, None),  # CN1
                  (scipy.stats.norm.pdf, gauss_loc, gauss_scale, None),  # CN2
                  (scipy.stats.gamma.pdf, gauss_locAddScale, gauss_logLocAdd1, gamma_shape)]  # CN3+
