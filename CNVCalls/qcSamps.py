@@ -15,6 +15,11 @@ logger = logging.getLogger(__name__)
 ###############################################################################
 ############################ PUBLIC FUNCTIONS #################################
 ###############################################################################
+
+
+###############################################################################
+############################ PRIVATE FUNCTIONS ################################
+###############################################################################
 #######################
 # getCNsPaths
 # Compute copy number states (CNs) paths based on likelihoods and priors.
@@ -160,10 +165,11 @@ def plotHistogramsAndStats(clusterCounts, mean, upper_threshold, cluster, backen
 # - outliers (dict): key==clusterIDs, value==lists of outlier sampleIDs.
 # - fitWith (dict): keys==clusterIDs, value==lists of cluster IDs to fit with.
 # - clustIsValid (dict): keys==clusterIDs, value==Boolean values indicating cluster validity.
+# - minSamps [int]:  
 #
 # Returns:
 # - Tuple: A tuple containing updated dictionaries for clust2samps, fitWith, and clustIsValid.
-def updateClusteringData(clust2samps, outliers, fitWith, clustIsValid):
+def updateClusteringData(clust2samps, outliers, fitWith, clustIsValid, minSamps):
     # Create new dictionaries to store the updated data
     newClust2Samps = {}
     newFitWith = {}
@@ -186,9 +192,9 @@ def updateClusteringData(clust2samps, outliers, fitWith, clustIsValid):
                 newClust2Samps[clusterID] = newSampleIDs
 
                 # Update fitWith and clustIsValid for the old and new clusters
-                newFitWith[newCluster] = [clusterID]
+                newFitWith[newCluster] = []
                 newClustIsValid[newCluster] = False
-                newClustIsValid[clusterID] = (len(newSampleIDs) >= 20)  
+                newClustIsValid[clusterID] = (len(newSampleIDs) >= minSamps)  
 
         else:
             # Add the existing cluster to the new dictionaries
@@ -236,6 +242,3 @@ def generateNewClusterID(clusterID, clust2samps, newClust2samps):
     return newClusterName
 
 
-###############################################################################
-############################ PRIVATE FUNCTIONS ################################
-###############################################################################
