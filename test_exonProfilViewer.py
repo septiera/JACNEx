@@ -21,8 +21,7 @@ import matplotlib.backends.backend_pdf
 ####### JACNEx modules
 import countFrags.countsFile
 import clusterSamps.clustFile
-import exonCalls.exonCallsFile
-import exonCalls.exonProcessing
+import callCNVs.exonProcessing
 import CNVCalls.likelihoods
 
 # prevent matplotlib flooding the logs when we are in DEBUG loglevel
@@ -54,9 +53,8 @@ def parseArgs(argv):
     usage = "NAME:\n" + scriptName + """\n
 
 DESCRIPTION:
-Given  four TSV files: one for fragment count data, another for sample cluster information,
-a third for fitted continuous distribution parameters, and a user-defined file containing
-two columns [exonID, sampleID] tab-separated.
+Given  three TSV files: one for fragment count data, another for sample cluster information,
+and a user-defined file containing two columns [exonID, sampleID] tab-separated.
 For each exon, it identifies the associated filtering criteria.
 If the filtering value is 0 ("notCaptured") or 1 ("cannotFitRG"), a simple histogram will be plotted.
 In cases where filtering is 2 ("RGClose2LowThreshold"), 3 ("fewSampsInRG"), or 4 ("call"),
@@ -72,18 +70,12 @@ ARGUMENTS:
     --clusts [str]: TSV file, contains 5 columns hold the sample cluster definitions.
             [clusterID, sampsInCluster, controlledBy, validCluster, clusterStatus]
             File obtained from 2_clusterSamps.py.
-    --params [str]: TSV file contains exon definitions in its first four columns,
-                    followed by distribution parameters ["loc", "scale"] for half normal
-                    and Gaussian distributions, and an additional column indicating the
-                    exon filtering status for each cluster.
-                    The file is generated using the 3_CNDistParams.py script.
     --tocheck [str]: user-generated TSV file containing two columns [exonID(str), sampleID(str)] separated by tabs.
     --pdf[str]: a pdf file in which the graphical output will be produced.
     -h , --help: display this help and exit\n"""
 
     try:
-        opts, args = getopt.gnu_getopt(sys.argv[1:], 'h', ["help", "counts=", "clusts=", "params=",
-                                                           "tocheck=", "pdf="])
+        opts, args = getopt.gnu_getopt(sys.argv[1:], 'h', ["help", "counts=", "clusts=", "tocheck=", "pdf="])
     except getopt.GetoptError as e:
         raise Exception(e.msg + ". Try " + scriptName + " --help")
     if len(args) != 0:
@@ -97,8 +89,6 @@ ARGUMENTS:
             countsFile = value
         elif (opt in ("--clusts")):
             clustsFile = value
-        elif (opt in ("--params")):
-            paramsFile = value
         elif (opt in ("--tocheck")):
             tocheckFile = value
         elif (opt in ("--pdf")):
@@ -118,9 +108,6 @@ ARGUMENTS:
     elif (not os.path.isfile(clustsFile)):
         raise Exception("clustsFile " + clustsFile + " doesn't exist.")
 
-    if paramsFile == "":
-        raise Exception("you must provide a continuous distribution parameters file use --params. Try " + scriptName + " --help.")
-
     if tocheckFile == "":
         raise Exception("you must provide a user file use --tocheck. Try " + scriptName + " --help.")
     elif (not os.path.isfile(tocheckFile)):
@@ -134,168 +121,234 @@ ARGUMENTS:
         raise Exception("the directory where pdfFile " + pdfFile + " should be created doesn't exist")
 
     # AOK, return everything that's needed
-    return(countsFile, clustsFile, paramsFile, tocheckFile, pdfFile)
+    return(countsFile, clustsFile, tocheckFile, pdfFile)
 
 
 #########################
 # parseUserTSV
-# Given a user-provided TSV file containing sample names and exon identifiers,
-# along with a list of sample names and a list of exon definitions.
-# It parses the TSV file to generate a list of exons to check for each sample.
+# Parses a TSV file to map sample IDs to their respective exon indexes for autosomal and gonosomal exons.
 #
 # Args:
 # - userTSV (str): Path to the user TSV file.
 # - samples (list[str]): List of sample names.
-# - exons (list of lists[str, int, int, str]): List of exon definitions [CHR, START, END, EXONID].
 # - autosomeExons (list of lists[str, int, int, str]): autosomal exon information [CHR, START, END, EXONID].
 # - gonosomeExons (list of lists[str, int, int, str]): gonosomal exon information.
 #
-# Returns:
-# - samps2Check (dict): keys = sampleID, and values are sub-dictionaries categorized as follows:
-#                       - "A": List of exon indexes matching autosomal exons.
-#                       - "G": List of exon indexes matching gonosomal exons.
+# Returns a tuple (samps2ExonInd_A, samps2ExonInd_G):
+# - samps2ExonInd_A (dict): key==sampleID, value==List of exon indexes matching autosomal exons.
+# - samps2ExonInd_G (dict): same as samps2ExonInd_A for gonosomes
 def parseUserTSV(userTSV, samples, autosomeExons, gonosomeExons):
-    try:
-        # Check if the file exists before opening it
-        if not os.path.exists(userTSV):
-            raise FileNotFoundError("User TSV file does not exist.")
+    # Helper function to find the index of an exon in a list of exons based on the exon identifier.
+    def findExIndex(exonList, ei):
+        return next((i for i, exon in enumerate(exonList) if exon[3] == ei), None)
 
-        # Open the file using 'with' to ensure proper file closure
-        with (gzip.open(userTSV, "rt") if userTSV.endswith(".gz") else open(userTSV, "r")) as userTSVFH:
-            samps2Check = {key: {"A": [], "G": []} for key in samples}
+    # Helper function to open a file, which can be a regular text file or a gzipped file.
+    def openFile(filePath):
+        return gzip.open(filePath, "rt") if filePath.endswith(".gz") else open(filePath)
 
-            for line in userTSVFH:
-                splitLine = line.rstrip().split("\t", maxsplit=1)
-                sampID = splitLine[0]
-                exonENST = splitLine[1]
+    if not os.path.exists(userTSV):
+        raise FileNotFoundError(f"User TSV file {userTSV} does not exist.")
 
-                if sampID in samples:
-                    exonIDFound = False
-                    exonID_A = 0
-                    exonID_G = 0
+    # Initialize dictionaries to hold the mapping of sample IDs to exon indices.
+    samps2ExonInd_A, samps2ExonInd_G = {}, {}
 
-                    while not exonIDFound and exonID_A < len(autosomeExons):
-                        exonType = "A"  # Assume it's an autosome exon by default
-                        if autosomeExons[exonID_A][3] == exonENST:
-                            samps2Check[sampID][exonType].append(exonID_A)
-                            exonIDFound = True
-                        else:
-                            exonID_A += 1
+    # Open the TSV file and iterate over each line.
+    with openFile(userTSV) as file:
+        for line in file:
+            # Split each line into sample ID and exon ENST identifier.
+            sID, exENST = line.rstrip().split("\t", maxsplit=1)
+            # Check if the sample ID is in the list of valid samples.
+            if sID in samples:
+                # Find the exon index in autosomal and gonosomal lists.
+                ei_A = findExIndex(autosomeExons, exENST)
+                ei_G = findExIndex(gonosomeExons, exENST) if ei_A is None else None
 
-                    # If no match is found in autosomes and there are gonosome exons
-                    if not exonIDFound and gonosomeExons:
-                        while not exonIDFound and exonID_G < len(gonosomeExons):
-                            exonType = "G"  # Assume it's a gonosome exon
-                            if gonosomeExons[exonID_G][3] == exonENST:
-                                samps2Check[sampID][exonType].append(exonID_G)
-                                exonIDFound = True
-                            else:
-                                exonID_G += 1
-
-                    if not exonIDFound:
-                        logger.error("Exon identifier %s has no match with the bed file provided in step 1.", exonENST)
-                        raise Exception("Exon identifier not found.")
+                # Update the dictionaries with the found exon indices.
+                if ei_A is not None:
+                    samps2ExonInd_A.setdefault(sID, []).append(ei_A)
+                elif ei_G is not None:
+                    samps2ExonInd_G.setdefault(sID, []).append(ei_G)
                 else:
-                    logger.error("Sample name %s has no match with the sample name list.", sampID)
-                    raise Exception("Sample name not found.")
+                    logger.error(f"Exon identifier {exENST} not found in provided exon lists.")
+                    raise ValueError(f"Exon identifier {exENST} not found.")
+            else:
+                logger.error(f"Sample name {sID} not found in provided samples list.")
+                raise ValueError(f"Sample name {sID} not found.")
 
-    except Exception as e:
-        # Handle exceptions and log errors
-        logger.error("Error processing userTSV: %s", e)
-        raise e
+    return (samps2ExonInd_A, samps2ExonInd_G)
 
-    return samps2Check
+
+#############################################################
+# filterExonsAndComputeCN2Params
+# filter exons based on their FPM values and compute parameters for copy number variation (CNV) analysis.
+# It evaluates each exon to determine its filtering state and calculates the mean and standard deviation
+# for the FPMs of exons that are not filtered out.
+# If an error occurs during the filtering or calculation, the function logs the error and raises an exception.
+#
+# Args:
+# - targetFPMs (np.ndarray[floats]): FPM values for exons across cluster samples.
+# - uncaptThreshold [float]: A threshold value for filtering out uncaptured FPMs.
+#
+# Returns a tuple (CN2params, filterStatesVec):
+# - CN2ParamsArray (np.ndarray[floats]): calculated robustly Gaussian parameters for each exon,
+#                                       including mean (loc) and standard deviation (scale)
+#                                       for exons passing the two firsts filtering criteria
+#                                       ("notCaptured", "cannotFitRG").
+# - filterStatesVec (np.ndarray[ints]): filter state index of each exon.
+def filterExonsAndComputeCN2Params(targetFPMs, uncaptThreshold):
+    # Possible filtering states for exons
+    filterStates = ["notCaptured", "cannotFitRG", "RGClose2LowThreshold", "fewSampsInRG", "call"]
+
+    # Define parameter identifiers for CN2 metrics
+    paramsID = ["loc", "scale"]
+
+    # Initialize an array to store CN2 parameters with a default value of -1
+    CN2ParamsArray = np.full((targetFPMs.shape[0], len(paramsID)), -1, dtype=np.float64)
+
+    # Vector to keep track of the filter state for each exon
+    filterStatesVec = np.zeros(targetFPMs.shape[0], dtype=int)
+
+    # Process each exon to determine its filter state and compute CN2 parameters
+    for exonIndex, exFPMs in enumerate(targetFPMs):
+        try:
+            # Apply filtering and update parameters for the current exon
+            filterState, exonCN2Params = callCNVs.exonProcessing.evaluateAndComputeExonMetrics(exFPMs, uncaptThreshold, paramsID)
+            filterStatesVec[exonIndex] = filterStates.index(filterState)
+            if filterState == 'call':
+                # Update CN2ParamsArray only for exon calls
+                CN2ParamsArray[exonIndex] = exonCN2Params
+        except Exception as e:
+            logger.error("Error evaluateAndComputeExonMetrics exon index %i: %s", exonIndex, repr(e))
+            raise
+
+    return (CN2ParamsArray, filterStatesVec)
+
+
+########################
+# generateClusterExonPlots
+# processes exon data for a given set of samples, identifying clusters of samples and generating
+# plots for each exon within these clusters.
+# It filters the exons based on predefined conditions, computes the copy number variation (CNV) parameters,
+# and creates plots for exons that pass the filtering criteria.
+# If plotting fails due to an exception, the function logs the error and proceeds with the next exon.
+# The function ensures all plots are saved into a single PDF file.
+#
+# Args:
+# - chromType [int]: type of chrom being processed (0 autosomes, 1 gonosomes).
+# - samps2Check (dict): key==sampleID, value==exon indexes list.
+# - FPMsArray (np.ndarray[floats]): FPM for a given exon across samples.
+# - exonsInfos (list[str, int, int, str]): information about each exon[CHR, START, END, EXONID].
+# - samples (list[strs]):sample IDs corresponding to the columns in FPMsArray.
+# - clust2samps (dict): key==clusterID, value==sampleIDs list.
+# - samp2clusts (dict): key==sampleID, value==their respective clusterIDs [autosomes, gonosomes].
+# - fitWith (dict): key==clusterID, value== fitwith clusterIDs list.
+# - hnorm_loc [float]: half Gaussian mean.
+# - hnorm_scale: half Gaussian stdev.
+# - unCaptFPMLimit: A threshold value for filtering out uncaptured FPMs in the analysis.
+# - pdfFile: The file path for the PDF where the plots will be saved.
+def generateClusterExonPlots(chromType, samps2Check, FPMsArray, exonsInfos, samples, clust2samps, samp2clusts,
+                             fitWith, hnorm_loc, hnorm_scale, unCaptFPMLimit, pdfFile):
+    matplotOpenFile = matplotlib.backends.backend_pdf.PdfPages(pdfFile)
+
+    samp2Index = {sample: i for i, sample in enumerate(samples)}
+
+    for sampID in samps2Check:
+        clusterID = samp2clusts[sampID][chromType]
+        exonIndexes = np.array(samps2Check[sampID])  # Assurez-vous que c'est un np.array d'entiers
+        
+        # Vérifiez que les indices d'exon sont dans les limites
+        if np.any(exonIndexes >= FPMsArray.shape[0]):
+            raise IndexError(f"Exon index out of bounds for cluster {clusterID}. Max allowed index is {FPMsArray.shape[0]-1}, but got index {exonIndexes.max()}.")
+
+        sampsInClust = callCNVs.exonProcessing.getSampIndexes(clusterID, clust2samps, samp2Index, fitWith)
+        sampsInClust = np.array(sampsInClust)  # Assurez-vous que c'est un np.array d'entiers
+        
+        # Vérifiez que les indices des échantillons sont dans les limites
+        if np.any(sampsInClust >= FPMsArray.shape[1]):
+            raise IndexError(f"Sample index out of bounds for cluster {clusterID}. Max allowed index is {FPMsArray.shape[1]-1}, but got index {sampsInClust.max()}.")
+
+        # Si aucune erreur, procéder avec l'accès sécurisé
+        targetFPMs = FPMsArray[np.ix_(exonIndexes, sampsInClust)]
+
+        CN2params, filterStatesVec = filterExonsAndComputeCN2Params(targetFPMs, unCaptFPMLimit)
+
+        for ei in exonIndexes:
+            sampExFPM = FPMsArray[ei, samp2Index[sampID]]  # Direct lookup from the dictionary
+            if filterStatesVec[ei] < 2:
+                warning_message = f"Skipping plot for exon index {ei}, sample {sampID}, cluster {clusterID}..."
+                logger.warning(warning_message)
+                continue
+
+            try:
+                getReadyPlotExon(sampID, ei, clusterID, sampExFPM, targetFPMs[ei], CN2params[ei], filterStatesVec[ei],
+                                 exonsInfos[ei], hnorm_loc, hnorm_scale, matplotOpenFile)
+            except Exception as e:
+                error_message = f"Plotting failed for exon index {ei}, sample {sampID}, cluster {clusterID}: {e}"
+                logger.error(error_message)
+                continue  # Continue with the next exon
+
+    matplotOpenFile.close()
 
 
 ######################################
-# parsePlotExon
+# getReadyPlotExon
 # Parses and plots exon-related data for a specific sample and exon.
 #
 # Args:
-# - sampID (str)
-# - exonType (str): "A" or "G"
-# - ei (int)
-# - samp2clusts (dict): Mapping of samples to clusters.
-# - clust2samps (dict): Mapping of clusters to samples.
-# - samples (list): List of sample names.
-# - fitWith (dict): Mapping of clusters to control cluster ID.
-# - fpmData (array): Exon-level FPM values.
-# - exonMetrics (array): Exon parameters.
-# - metricsNames (list): Titles of parameters.
-# - exonsData (array): Exon information.
+# - sampID [str]
+# - ei [int]
+# - clusterID [int]
+# - sampExFPM [float]: sample exon FPM
+# - exClustFPMs (np.ndarray[floats]): exon FPM values for all samples in clusterID
+# - exCN2params (np.ndarray[floats]): exon gaussian parameters [loc, scale]
+# - exfilterState [int]: filter index
+# - exInfos (list[str, int, int, str]): exon [CHR, START, END, EXONID]
 # - hnorm_loc (float): distribution location parameter.
 # - hnorm_scale (float): distribution scale parameter.
 # - matplotOpenFile: Opened PDF file for plotting.
-def parsePlotExon(sampID, exonType, ei, samp2clusts, clust2samps, samples, fitWith, fpmData, exonMetrics,
-                  metricsNames, exonsData, hnorm_loc, hnorm_scale, matplotOpenFile):
-
-    # Get cluster ID based on exon's location
-    if exonType == "A":
-        clusterID = samp2clusts[sampID][0]
-    else:
-        clusterID = samp2clusts[sampID][1]
-
-    # Get sample indexes for target and control clusters
-    try:
-        # Get sample indexes for the current cluster
-        sampsInd = exonCalls.exonProcessing.getSampIndexes(clusterID, clust2samps, samples, fitWith)
-    except Exception as e:
-        logger.error("getClusterSamps failed for cluster %i : %s", clusterID, repr(e))
-        raise
-
-    # Extract FPM values for relevant samples
-    exonFPM = fpmData[ei, sampsInd]
-    sampFPM = fpmData[ei, samples.index(sampID)]
-
-    exonFilterState = exonMetrics[clusterID][ei, metricsNames.index("filterStates")]
-    logger.info(exonFilterState)
+def getReadyPlotExon(sampID, ei, clusterID, sampExFPM, exClustFPMs, exCN2params, exfilterState, exInfos,
+                     hnorm_loc, hnorm_scale, matplotOpenFile):
     ##### init graphic parameters
     # definition of a range of values that is sufficiently narrow to have
     # a clean representation of the adjusted distributions.
-    xi = np.linspace(0, np.max(exonFPM), len(sampsInd) * 3)
+    xi = np.linspace(0, np.max(sampExFPM), len(exClustFPMs) * 3)
 
-    exonInfo = '_'.join(map(str, exonsData[ei]))
-    plotTitle = f"Cluster:{clusterID}, NbSamps:{len(sampsInd)}, exonInd:{ei}\nexonInfos:{exonInfo}, filteringState:{exonFilterState}"
+    exonInfo = '_'.join(map(str, exInfos))
+    plotTitle = f"Cluster:{clusterID}, NbSamps:{len(exClustFPMs)}, exonInd:{ei}\nexonInfos:{exonInfo}, filteringState:{exfilterState}"
 
     yLists = []
     plotLegs = []
-    verticalLines = [sampFPM]
-    vertLinesLegs = f"{sampID} FPM={sampFPM:.3f}"
+    verticalLines = [sampExFPM]
+    vertLinesLegs = f"{sampID} FPM={sampExFPM:.3f}"
 
     # get gauss_loc and gauss_scale from exParams
-    gaussLoc = exonMetrics[clusterID][ei, metricsNames.index("loc")]
-    gaussScale = exonMetrics[clusterID][ei, metricsNames.index("scale")]
+    gaussLoc = exCN2params[0]
+    gaussScale = exCN2params[1]
 
-    # if all the distributions can be represented,
-    # otherwise a simple histogram and the fit of the half normal will be plotted.
-    if exonFilterState > 1:
-        # Update plot title with likelihood information
-        plotTitle += f"\n{sampID} likelihoods:\n"
+    # Update plot title with likelihood information
+    plotTitle += f"\n{sampID} likelihoods:\n"
 
-        distribution_functions = CNVCalls.likelihoods.getDistributionObjects(hnorm_loc, hnorm_scale, gaussLoc, gaussScale)
+    distribution_functions = CNVCalls.likelihoods.getDistributionObjects(hnorm_loc, hnorm_scale, gaussLoc, gaussScale)
 
-        for ci in range(len(distribution_functions)):
-            pdf_function, loc, scale, shape = distribution_functions[ci]
-            # np.ndarray 1D float: set of pdfs for all samples
-            # scipy execution speed up
-            if shape is not None:
-                PDFRanges = pdf_function(xi, loc=loc, scale=scale, a=shape)
-                sampLikelihood = pdf_function(sampFPM, loc=loc, scale=scale, a=shape)
-                plotLegs.append(f"CN{ci} [loc={loc:.2f}, scale={scale:.2f}, shape={shape:.2f}]")
-            else:
-                PDFRanges = pdf_function(xi, loc=loc, scale=scale)
-                sampLikelihood = pdf_function(sampFPM, loc=loc, scale=scale)
-                plotLegs.append(f"CN{ci} [loc={loc:.2f}, scale={scale:.2f}]")
+    for ci in range(len(distribution_functions)):
+        pdf_function, loc, scale, shape = distribution_functions[ci]
+        # np.ndarray 1D float: set of pdfs for all samples
+        # scipy execution speed up
+        if shape is not None:
+            PDFRanges = pdf_function(xi, loc=loc, scale=scale, a=shape)
+            sampLikelihood = pdf_function(sampExFPM, loc=loc, scale=scale, a=shape)
+            plotLegs.append(f"CN{ci} [loc={loc:.2f}, scale={scale:.2f}, shape={shape:.2f}]")
+        else:
+            PDFRanges = pdf_function(xi, loc=loc, scale=scale)
+            sampLikelihood = pdf_function(sampExFPM, loc=loc, scale=scale)
+            plotLegs.append(f"CN{ci} [loc={loc:.2f}, scale={scale:.2f}]")
 
-            yLists.append(PDFRanges)
-            plotTitle += f"CN{ci}:{sampLikelihood:.3e} "
+        yLists.append(PDFRanges)
+        plotTitle += f"CN{ci}:{sampLikelihood:.3e} "
 
-        ylim = 2 * np.max(yLists[2])
-    else:
-        logger.info("The analyzed exon is not covered, so no call is made.")
-        return
+    ylim = 2 * np.max(yLists[2])
 
-    plotExonProfile(exonFPM, xi, yLists, plotLegs, verticalLines, vertLinesLegs, plotTitle, ylim, matplotOpenFile)
+    plotExonProfile(exClustFPMs, xi, yLists, plotLegs, verticalLines, vertLinesLegs, plotTitle, ylim, matplotOpenFile)
 
 
 #########################
@@ -351,7 +404,7 @@ def plotExonProfile(rawData, xi, yLists, plotLegs, verticalLines, vertLinesLegs,
 def main(argv):
 
     # parse, check and preprocess arguments
-    (countsFile, clustsFile, paramsFile, tocheckFile, pdfFile) = parseArgs(argv)
+    (countsFile, clustsFile, tocheckFile, pdfFile) = parseArgs(argv)
 
     # args seem OK, start working
     logger.debug("called with: " + " ".join(argv[1:]))
@@ -383,50 +436,55 @@ def main(argv):
     startTime = thisTime
 
     ####################
-    # parse exon metrics for each valid cluster
-    # extracts parameters of continuous distributions fitted on CN0, CN2 coverage profil
-    try:
-        (exonMetrics_A, exonMetrics_G, hnorm_loc, hnorm_scale, metricsNames) = exonCalls.exonCallsFile.parseExonParamsFile(paramsFile)
-    except Exception as e:
-        raise Exception("parseParamsFile failed for %s : %s", paramsFile, repr(e))
-
-    thisTime = time.time()
-    logger.debug("Done parsing paramsFile, in %.2f s", thisTime - startTime)
-    startTime = thisTime
-
-    ####################
     # parse user file
     try:
-        samps2Check = parseUserTSV(tocheckFile, samples, autosomeExons, gonosomeExons)
+        (samps2ExonInd_A, samps2ExonInd_G) = parseUserTSV(tocheckFile, samples, autosomeExons, gonosomeExons)
     except Exception as e:
         raise Exception("parseUserTSV failed for %s : %s", tocheckFile, repr(e))
 
-    #####################
-    # process
-    matplotOpenFile = matplotlib.backends.backend_pdf.PdfPages(pdfFile)
+    thisTime = time.time()
+    logger.debug("Done parsing UserTSV, in %.2f s", thisTime - startTime)
+    startTime = thisTime
 
-    for sampID in samps2Check.keys():
-        for exonType in ["A", "G"]:
-            exonIndexes = samps2Check[sampID][exonType]
-            if exonIndexes:  # Check if the list is not empty
-                exonMetrics = exonMetrics_A if exonType == "A" else exonMetrics_G
-                fpmData = autosomeFPMs if exonType == "A" else gonosomeFPMs
-                exonsData = autosomeExons if exonType == "A" else gonosomeExons
+    ###################
+    # fit CN0
+    try:
+        (hnorm_loc, hnorm_scale, uncaptThreshold) = callCNVs.exonProcessing.computeCN0Params(intergenicFPMs)
+    except Exception as e:
+        raise Exception("computeCN0Params failed: %s", repr(e))
 
-                for ei in exonIndexes:
-                    try:
-                        parsePlotExon(sampID, exonType, ei, samp2clusts, clust2samps,
-                                      samples, fitWith, fpmData, exonMetrics,
-                                      metricsNames, exonsData, hnorm_loc, hnorm_scale,
-                                      matplotOpenFile)
-                    except Exception as e:
-                        if exonType == "A":
-                            error_message = f"Failed for exon index {ei} sample {sampID} from autosomes: {repr(e)}"
-                        else:
-                            error_message = f"Failed for exon index {ei} sample {sampID} from gonosomes: {repr(e)}"
-                        raise Exception(error_message)
+    thisTime = time.time()
+    logger.debug("Done computeCN0Params, loc=%.2f, scale=%.2f, uncapThreshold=%.2f in %.2f s",
+                 hnorm_loc, hnorm_scale, uncaptThreshold, thisTime - startTime)
+    startTime = thisTime
 
-    matplotOpenFile.close()
+    # build root name for output pdfs, will just need to append autosomes.pdf or gonosomes.pdf
+    rootFileName = os.path.basename(pdfFile)
+    rootFileName = os.path.splitext(rootFileName)[0]
+
+    # autosomes
+    try:
+        chromType = 0
+        pdfFile_A = rootFileName + "_autosomes.pdf"
+        generateClusterExonPlots(chromType, samps2ExonInd_A, autosomeFPMs, autosomeExons, samples, clust2samps, samp2clusts,
+                                 fitWith, hnorm_loc, hnorm_scale, uncaptThreshold, pdfFile_A)
+    except Exception as e:
+        logger.error("generateClusterExonPlots failed for autosomes: %s", repr(e))
+        raise
+
+    # sex chromosomes
+    try:
+        chromType = 1
+        pdfFile_G = rootFileName + "_gonosomes.pdf"
+        generateClusterExonPlots(chromType, samps2ExonInd_G, gonosomeFPMs, gonosomeExons, samples, clust2samps, samp2clusts,
+                                 fitWith, hnorm_loc, hnorm_scale, uncaptThreshold, pdfFile_G)
+    except Exception as e:
+        logger.error("generateClusterExonPlots failed for autosomes: %s", repr(e))
+        raise
+
+    thisTime = time.time()
+    logger.debug("Done exon profil plots, in %.2f s", thisTime - startTime)
+    startTime = thisTime
 
 
 ####################################################################################
