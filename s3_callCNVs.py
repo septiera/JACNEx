@@ -16,7 +16,6 @@ import logging
 import countFrags.countsFile
 import clusterSamps.clustFile
 import callCNVs.exonProcessing
-import exonCalls.exonCallsFile
 
 # prevent matplotlib flooding the logs when we are in DEBUG loglevel
 logging.getLogger('matplotlib').setLevel(logging.WARNING)
@@ -223,18 +222,8 @@ def main(argv):
     logger.debug("Done parallelClusterProcessing in %.2f s", thisTime - startTime)
     startTime = thisTime
 
-    #####################################################
-    # Print exon defs + metrics to outFile
-    # requires two independent outputs, one for the gonosomes and the other for the autosomes
-    outputName = os.path.splitext(outFile)[0]
-    # autosomes
-    exonCalls.exonCallsFile.printParamsFile(outputName + "_A.gz", CN2Params_A, ["loc", "scale"],
-                                            hnorm_loc, hnorm_scale, autosomeExons)
-    # gonosomes
-    exonCalls.exonCallsFile.printParamsFile(outputName + "_G.gz", CN2Params_G, ["loc", "scale"],
-                                            hnorm_loc, hnorm_scale, gonosomeExons)
-
     sys.exit()
+
     thisTime = time.time()
     logger.debug("Done printing exon metrics for all (non-failed) clusters, in %.2fs", thisTime - startTime)
     logger.info("ALL DONE")
