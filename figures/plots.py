@@ -1,4 +1,5 @@
 import logging
+import os
 import matplotlib.pyplot
 import matplotlib.backends.backend_pdf
 import scipy.cluster.hierarchy
@@ -235,14 +236,16 @@ def plotDendrogram(linkageMatrix, samples, clust2samps, fitWith, clustIsValid, t
 #
 # Args:
 # - clustID [str]: cluster identifier
-# - filterStatus (list[strs]): exon filter status names
-# - exStatusArray (numpy.ndarray[ints]): exon status indexes from "filterStatus"
-# - matplotOpenFile: File handle to save the generated plot
-def plotPieChart(clustID, filterStatus, exStatusArray, matplotOpenFile):
+# - filterStates (list[strs]): filter states IDs
+# - exStatusArray (numpy.ndarray[ints]): exon filtering states indexes
+# - plotDir: Folder path for save the generated plot
+def plotPieChart(clustID, filterStates, exStatusArray, plotDir):
+    name_pie_charts_file = f"exonsFiltersSummary_pieChart_cluster_{clustID}.pdf"
+    pdf_pie_charts = os.path.join(plotDir, name_pie_charts_file)
+    matplotOpenFile = matplotlib.backends.backend_pdf.PdfPages(pdf_pie_charts)
+
     # Use numpy.unique() to obtain unique values and their occurrences
-    # with return_counts=True, unique_values will contain the sorted unique values
-    # in ascending order, and counts will correspond to the number of occurrences
-    # for each unique value in the same sorted order.
+    # with return_counts=True
     uniqueValues, counts = np.unique(exStatusArray[exStatusArray != -1], return_counts=True)
 
     # Create the pie chart figure and subplot
@@ -260,8 +263,8 @@ def plotPieChart(clustID, filterStatus, exStatusArray, matplotOpenFile):
                        labeldistance=None)
 
     # Calculate percentage distances for custom label positioning
-    step = (0.8 - 0.2) / (len(filterStatus) - 1)
-    pctdists = [0.8 - i * step for i in range(len(filterStatus))]
+    step = (0.8 - 0.2) / (len(filterStates) - 1)
+    pctdists = [0.8 - i * step for i in range(len(filterStates))]
 
     # Position the labels at custom percentage distances
     for t, d in zip(p, pctdists):
@@ -274,10 +277,10 @@ def plotPieChart(clustID, filterStatus, exStatusArray, matplotOpenFile):
 
     matplotlib.pyplot.axis('equal')
     matplotlib.pyplot.title("Filtered and called exons from cluster " + str(clustID))
-    matplotlib.pyplot.legend(loc='upper right', fontsize='small', labels=filterStatus)
+    matplotlib.pyplot.legend(loc='upper right', fontsize='small', labels=filterStates)
     matplotOpenFile.savefig(fig)
     matplotlib.pyplot.close()
-
+    matplotOpenFile.close()
 
 #############################################################
 # barPlot
