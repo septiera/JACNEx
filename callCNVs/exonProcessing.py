@@ -286,6 +286,10 @@ def evaluateAndComputeExonMetrics(exFPMs, unCaptFPMLimit, paramsID):
         else:
             raise Exception(f"fitRobustGaussian failed: {repr(e)}")
 
+    # If none of the two first filters applied, update the CN2 parameters with calculated values
+    exonCN2Params[0, paramsID.index("loc")] = gaussian_loc
+    exonCN2Params[0, paramsID.index("scale")] = gaussian_scale
+
     ### Filter n°3: Check if fitted gaussian overlaps the uncaptured exon profile threshold
     if filterZscore(gaussian_loc, gaussian_scale, unCaptFPMLimit):
         return ("RGClose2LowThreshold", exonCN2Params)
@@ -293,10 +297,6 @@ def evaluateAndComputeExonMetrics(exFPMs, unCaptFPMLimit, paramsID):
     ### Filter n°4: Check if the sample's contribution to the gaussian is too low (less than 50%)
     if filterSampsContrib2Gaussian(gaussian_loc, gaussian_scale, exFPMs):
         return ("fewSampsInRG", exonCN2Params)
-
-    # If none of the filters applied, update the CN2 parameters with calculated values
-    exonCN2Params[0, paramsID.index("loc")] = gaussian_loc
-    exonCN2Params[0, paramsID.index("scale")] = gaussian_scale
 
     return ("call", exonCN2Params)
 
