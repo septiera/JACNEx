@@ -16,6 +16,7 @@ import logging
 import countFrags.countsFile
 import clusterSamps.clustFile
 import callCNVs.exonProcessing
+import callCNVs.likelihoods
 
 # prevent matplotlib flooding the logs when we are in DEBUG loglevel
 logging.getLogger('matplotlib').setLevel(logging.WARNING)
@@ -182,7 +183,7 @@ def main(argv):
         raise Exception("parseAndNormalizeCounts failed")
 
     thisTime = time.time()
-    logger.info("done parseAndNormalizeCounts, in %.2fs", thisTime - startTime)
+    logger.info("Done parseAndNormalizeCounts, in %.2fs", thisTime - startTime)
     startTime = thisTime
 
     ###################
@@ -213,13 +214,39 @@ def main(argv):
     try:
         speDir = createDebugFolder(plotDir, "exonFilteringSummary")  # to remove
         (CN2Params_A, CN2Params_G) = callCNVs.exonProcessing.parallelClusterProcessing(autosomeFPMs, gonosomeFPMs, samples,
-                                                                                           uncaptThreshold, clust2samps, fitWith,
-                                                                                           clustIsValid, speDir, jobs)
+                                                                                       uncaptThreshold, clust2samps, fitWith,
+                                                                                       clustIsValid, speDir, jobs)
     except Exception as e:
         raise Exception("parallelClusterProcessing failed: %s", repr(e))
 
     thisTime = time.time()
     logger.debug("Done parallelClusterProcessing in %.2f s", thisTime - startTime)
+    startTime = thisTime
+
+    # - States to be emitted by the HMM corresponding to different types of copy numbers:
+    # CNO = homodeletion , CN1 = heterodeletion, CN2 = diploid (normal copy number)
+    # CN3 = duplication, we decided not to distinguish the number of copies, so 3+.
+    CNStates = ["CN0", "CN1", "CN2", "CN3"]
+
+    # - CNState occurrence probabilities of the human genome, obtained from 1000 genome data
+    # (doi:10.1186/1471-2105-13-305).
+    priors = [6.34e-4, 2.11e-3, 9.96e-1, 1.25e-3]
+
+    ####################
+    # Likelihood calculation for each sample (pseudo emission array)
+    try:
+        speDir = createDebugFolder(plotDir, "CNprofilInClust")  # to remove
+        (likelihoods_A, cnCount_A, likelihoods_G, cnCount_G) = callCNVs.likelihoods.allChromLikelihoods(samples, autosomeFPMs,
+                                                                                                        gonosomeFPMs, clust2samps,
+                                                                                                        fitWith, hnorm_loc,
+                                                                                                        hnorm_scale, CN2Params_A,
+                                                                                                        CN2Params_G, CNStates,
+                                                                                                        priors, jobs, speDir)
+    except Exception as e:
+        raise Exception("allChromLikelihoods failed: %s", repr(e))
+
+    thisTime = time.time()
+    logger.debug("Done allChromLikelihoods in %.2f s", thisTime - startTime)
     startTime = thisTime
 
     sys.exit()
