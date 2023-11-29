@@ -235,16 +235,38 @@ def main(argv):
     ####################
     # Likelihood calculation for each sample (pseudo emission array)
     try:
-        speDir = createDebugFolder(plotDir, "CNprofilInClust")  # to remove
-        (likelihoods_A, likelihoods_G) = callCNVs.likelihoods.allChromLikelihoods(samples, autosomeFPMs, gonosomeFPMs,
-                                                                                  clust2samps, fitWith, hnorm_loc,
-                                                                                  hnorm_scale, CN2Params_A, CN2Params_G,
-                                                                                  CNStates, priors, jobs, speDir)
+        (likelihoods_A, likelihoods_G) = callCNVs.likelihoods.allChrom(samples, autosomeFPMs, gonosomeFPMs,
+                                                                       clust2samps, fitWith, hnorm_loc,
+                                                                       hnorm_scale, CN2Params_A, CN2Params_G,
+                                                                       CNStates, priors, jobs, speDir)
     except Exception as e:
-        raise Exception("allChromLikelihoods failed: %s", repr(e))
+        raise Exception("likelihoods.allChrom failed: %s", repr(e))
 
     thisTime = time.time()
-    logger.debug("Done allChromLikelihoods in %.2f s", thisTime - startTime)
+    logger.debug("Done likelihoods.allChrom in %.2f s", thisTime - startTime)
+    startTime = thisTime
+
+    #########
+    # generates a transition matrix for CN states from likelihood data,
+    # and computes CN probabilities for both autosomal and gonosomal samples.
+    # The function adds an 'init' state to the transition matrix, improving its use
+    # in Hidden Markov Models (HMMs).
+    # The 'init' state, based on priors, helps to start and reset the HMM but doesn't
+    # represent any actual CN state.
+    # CNProbs_A and CNProbs_G dictionaries contain CN probabilities for autosomal and
+    # gonosomal exon and for each samples, respectively, and are important for
+    # further analysis, such as calculating quality scores and assessing CNV impacts.
+    # The resulting 'transMatrix' is a 2D numpy array. dim =(nbOfCNStates + 1) * (nbOfCNStates + 1)
+    try:
+        (transMatrix, CNProbs_A, CNProbs_G) = callCNVs.transitions.getTransMatrixAndProbs(likelihoods_A, likelihoods_G,
+                                                                                          autosomeExons, gonosomeExons,
+                                                                                          priors, len(CNStates))
+    except Exception as e:
+        logger.error("getTransMatrix failed : %s", repr(e))
+        raise Exception("getTransMatrix failed")
+
+    thisTime = time.time()
+    logger.debug("Done getTransMatrix, in %.2fs", thisTime - startTime)
     startTime = thisTime
 
     sys.exit()
