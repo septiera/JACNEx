@@ -170,7 +170,7 @@ def main(argv):
     logger.info("starting to work")
     startTime = time.time()
 
-    plotDir = createDebugFolder(os.path.dirname(outFile), "DEBUG_PLOTS")  # to remove
+    plotDir = createDebugFolder(os.path.dirname(outFile), "DEBUG_PLOTS_zscoreDynamic")  # to remove
 
     ###################
     # parse and FPM-normalize the counts, differentiating between exons on autosomes and gonosomes,
@@ -236,12 +236,10 @@ def main(argv):
     # Likelihood calculation for each sample (pseudo emission array)
     try:
         speDir = createDebugFolder(plotDir, "CNprofilInClust")  # to remove
-        (likelihoods_A, cnCount_A, likelihoods_G, cnCount_G) = callCNVs.likelihoods.allChromLikelihoods(samples, autosomeFPMs,
-                                                                                                        gonosomeFPMs, clust2samps,
-                                                                                                        fitWith, hnorm_loc,
-                                                                                                        hnorm_scale, CN2Params_A,
-                                                                                                        CN2Params_G, CNStates,
-                                                                                                        priors, jobs, speDir)
+        (likelihoods_A, likelihoods_G) = callCNVs.likelihoods.allChromLikelihoods(samples, autosomeFPMs, gonosomeFPMs,
+                                                                                  clust2samps, fitWith, hnorm_loc,
+                                                                                  hnorm_scale, CN2Params_A, CN2Params_G,
+                                                                                  CNStates, priors, jobs, speDir)
     except Exception as e:
         raise Exception("allChromLikelihoods failed: %s", repr(e))
 
