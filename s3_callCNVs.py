@@ -291,7 +291,7 @@ def main(argv):
     #########
     # Computes CNVs quality score
     try:
-        QS = callCNVs.CNVsQS.getQS(CNVs, samples, CNProbs_A, CNProbs_G)
+        QS = callCNVs.CNVsQS.getQS(CNVs, CNProbs_A, CNProbs_G)
     except Exception as e:
         raise Exception("getQS failed: %s", repr(e))
 
