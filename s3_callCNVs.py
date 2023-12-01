@@ -262,18 +262,66 @@ def main(argv):
                                                                                           autosomeExons, gonosomeExons,
                                                                                           priors, len(CNStates))
     except Exception as e:
-        logger.error("getTransMatrix failed : %s", repr(e))
-        raise Exception("getTransMatrix failed")
+        logger.error("getTransMatrixAndProbs failed : %s", repr(e))
+        raise Exception("getTransMatrixAndProbs failed")
 
     thisTime = time.time()
-    logger.debug("Done getTransMatrix, in %.2fs", thisTime - startTime)
+    logger.debug("Done getTransMatrixAndProbs, in %.2fs", thisTime - startTime)
+    startTime = thisTime
+
+    ######## DEBUG PRINT
+    # Manually format the transMatrix to a string with two decimal places
+    formatted_matrix = "\n".join(["\t".join([f"{cell:.2f}" for cell in row]) for row in transMatrix])
+    logger.debug("Transition Matrix:\n%s", formatted_matrix)
+    ########
+
+    #########
+    # Application of the HMM using the Viterbi algorithm.
+    # returns a list of lists [CNtype, exonStart, exonEnd, pathProb, sampleName].
+    try:
+        CNVs = callCNVs.HMM.processCNVCalls(samples, autosomeExons, gonosomeExons, likelihoods_A, likelihoods_G,
+                                            transMatrix, jobs)
+    except Exception as e:
+        raise Exception("HMM.processCNVCalls failed: %s", repr(e))
+
+    thisTime = time.time()
+    logger.debug("Done HMM.processCNVCalls in %.2f s", thisTime - startTime)
+    startTime = thisTime
+
+    #########
+    # Computes CNVs quality score
+    try:
+        QS = callCNVs.CNVsQS.getQS(CNVs, samples, CNProbs_A, CNProbs_G)
+    except Exception as e:
+        raise Exception("getQS failed: %s", repr(e))
+
+    thisTime = time.time()
+    logger.debug("Done getQS in %.2f s", thisTime - startTime)
+    startTime = thisTime
+
+    #########
+    # VCF formatting
+    try:
+        headers, vcf = callCNVs.VCFFile.vcfFormat(CNVs, QS, autosomeExons, gonosomeExons)
+    except Exception as e:
+        raise Exception("vcfFormat failed: %s", repr(e))
+
+    thisTime = time.time()
+    logger.debug("Done vcfFormat in %.2f s", thisTime - startTime)
+    startTime = thisTime
+
+    #########
+    # VCF printing
+    try:
+        callCNVs.VCFFile.printVCFFile(CNVs, QS, autosomeExons, gonosomeExons)
+    except Exception as e:
+        raise Exception("printVCFFilefailed: %s", repr(e))
+
+    thisTime = time.time()
+    logger.debug("Done printVCFFile in %.2f s", thisTime - startTime)
     startTime = thisTime
 
     sys.exit()
-
-    thisTime = time.time()
-    logger.debug("Done printing exon metrics for all (non-failed) clusters, in %.2fs", thisTime - startTime)
-    logger.info("ALL DONE")
 
 
 ####################################################################################
