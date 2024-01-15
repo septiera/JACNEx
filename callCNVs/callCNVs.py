@@ -1,6 +1,7 @@
 import logging
 import numpy as np
 import concurrent.futures
+import math
 
 import callCNVs.transitions
 
@@ -15,7 +16,7 @@ logger = logging.getLogger(__name__)
 ############################ PUBLIC FUNCTIONS #################################
 ###############################################################################
 ######################################
-# processCNVCalls
+# applyHMM
 # Processes CNV calls for a given set of samples in parallel.
 # Args:
 # - samples (list[strs]): List of sample identifiers.
@@ -29,16 +30,50 @@ logger = logging.getLogger(__name__)
 #
 # Returns:
 # - CNVs (list[str, int, int, int, floats, str]): CNV infos [chromType, CNType, exonStart, exonEnd, pathProb, sampleName]
-def process_cnv_calls(samples, autosomeExons, gonosomeExons, likelihoods_A, likelihoods_G, transMatrix, jobs):
-    CNVs = []
-    paraSample = min(max(jobs // 2, 1), len(samples))
+def applyHMM(samples, autosomeExons, gonosomeExons, likelihoods_A, likelihoods_G, transMatrix, jobs):
+    CNVs_A = []
+    CNVs_G = []
+    paraSample = min(math.ceil(jobs / 2), len(samples))
     logger.info("%i samples => will process %i in parallel", len(samples), paraSample)
 
     with concurrent.futures.ProcessPoolExecutor(paraSample) as pool:
-        processChromType("A", samples, autosomeExons, likelihoods_A, transMatrix, pool, CNVs)
-        processChromType("G", samples, gonosomeExons, likelihoods_G, transMatrix, pool, CNVs)
+        processChromType(samples, autosomeExons, likelihoods_A, transMatrix, pool, CNVs_A)
+        processChromType(samples, gonosomeExons, likelihoods_G, transMatrix, pool, CNVs_G)
 
-    return CNVs
+    return (CNVs_A, CNVs_G)
+
+
+######################################
+# processChromType
+# Processes a specific type of chromosome (either autosomal or gonosomal) for CNV calls.
+# This function iterates over each sample and each exon range to submit CNV calling tasks
+# to a multiprocessing pool.
+# It leverages the Viterbi algorithm to identify CNVs for each chromosome type.
+
+# Args:
+# - samples (list[strs]): A list of sample identifiers.
+# - exons (list[str, int, int, str]): exon on autosome infos [chr, START, END, EXONID].
+# - likelihoods (dict): key==sample ID, value==Likelihoods,
+#                       np.ndarray 2D [floats], dim = NbofExons * NbOfCNStates
+# - transMatrix (np.ndarray[floats]): A transition matrix used in the HMM Viterbi algorithm.
+# - pool (concurrent.futures.Executor): A concurrent executor for parallel processing.
+# - CNVs (list[str, int, int, int, floats, str]): CNV infos [CNType, exonStart, exonEnd, pathProb, sampleName]
+def processChromType(samples, exons, likelihoods, transMatrix, pool, CNVs):
+    isFirstExon = callCNVs.transitions.flagChromStarts(exons)
+    # Find indexes marking the start of each chromosome
+    startIndexes = np.where(isFirstExon)[0]
+
+    for sampID in samples:
+        if sampID not in likelihoods.keys():
+            logger.debug("no CNV calling for sample %s", sampID)
+            continue
+
+        for i in range(len(startIndexes)):
+            firstExOnChrom = startIndexes[i]
+            lastExOnChrom = startIndexes[i + 1] - 1 if i + 1 < len(startIndexes) else len(exons)
+            sampOneChromLikelihood = likelihoods[sampID][firstExOnChrom:lastExOnChrom, :]
+            futureRes = pool.submit(viterbi, sampOneChromLikelihood, transMatrix, sampID, firstExOnChrom)
+            futureRes.add_done_callback(lambda future: concatCNVs(future, CNVs))
 
 
 ###############################################################################
@@ -53,47 +88,18 @@ def process_cnv_calls(samples, autosomeExons, gonosomeExons, likelihoods_A, like
 # and appends it to the global CNVs list.
 #
 # Args:
-# futureViterbi (concurrent.futures.Future): A Future object representing an asynchronous execution
+# futureSampCNVExtract (concurrent.futures.Future): A Future object representing an asynchronous execution
 #                                            of the Viterbi algorithm.
 # CNVs (list[str, int, int, int, floats, str]): A global list to which the results of the Viterbi
 #                                               algorithm are appended.
-def concatCNVs(futureViterbi, CNVs):
-    e = futureViterbi.exception()
+def concatCNVs(futureSampCNVExtract, CNVs):
+    e = futureSampCNVExtract.exception()
     if e is not None:
-        logger.warning("Failed viterbi for sample %s, skipping it", str(e))
+        logger.warning("Failed viterbi %s", str(e))
     else:
-        viterbiRes = futureViterbi.result()
-        CNVs.extend(viterbiRes)
-
-
-######################################
-# processChromType
-# Processes a specific type of chromosome (either autosomal or gonosomal) for CNV calls.
-# This function iterates over each sample and each exon range to submit CNV calling tasks
-# to a multiprocessing pool.
-# It leverages the Viterbi algorithm to identify CNVs for each chromosome type.
-
-# Args:
-# - chromType [str]: "A"==autosomes, "G"==gonosomes
-# - samples (list[strs]): A list of sample identifiers.
-# - exons (list[str, int, int, str]): exon on autosome infos [chr, START, END, EXONID].
-# - likelihoods (dict): key==sample ID, value==Likelihoods,
-#                       np.ndarray 2D [floats], dim = NbofExons * NbOfCNStates
-# - transMatrix (np.ndarray[floats]): A transition matrix used in the HMM Viterbi algorithm.
-# - pool (concurrent.futures.Executor): A concurrent executor for parallel processing.
-# - CNVs (list[str, int, int, int, floats, str]): CNV infos [chromType, CNType, exonStart, exonEnd, pathProb, sampleName]
-
-def processChromType(chromType, samples, exons, likelihoods, transMatrix, pool, CNVs):
-    isFirstExon = callCNVs.transitions.flagChromStarts(exons)
-    for sampID in samples:
-        for i, firstExOnChrom in enumerate(isFirstExon):
-            if i + 1 < len(isFirstExon):
-                lastExOnChrom = isFirstExon[i + 1] - 1
-            else:
-                lastExOnChrom = len(exons)
-            sampLikelihoodOneChrom = likelihoods[sampID][firstExOnChrom:lastExOnChrom, :]
-            futureRes = pool.submit(viterbi, chromType, sampLikelihoodOneChrom, transMatrix, sampID)
-            futureRes.add_done_callback(lambda future: concatCNVs(future, CNVs))
+        viterbiRes = futureSampCNVExtract.result()
+        for cnv in range(len(viterbiRes)):
+            CNVs.append(viterbiRes[cnv])
 
 
 ######################################
@@ -106,7 +112,6 @@ def processChromType(chromType, samples, exons, likelihoods, transMatrix, pool, 
 # The process involves backtracking and path tracking.
 #
 # Args:
-# - chromType [str]: "A"==autosomes, "G"==gonosomes
 # - CNcallOneSamp (np.ndarray[floats]): pseudo emission probabilities (likelihood)
 #                                       of each state for each observation for one sample
 #                                       dim = [NbObservations, NbStates]
@@ -115,30 +120,30 @@ def processChromType(chromType, samples, exons, likelihoods, transMatrix, pool, 
 # - sampleID [str]
 #
 # Returns:
-# - sampCNVs (list[str, int, int, int, floats, str]): sample CNV infos [chromType, CNType,
-#                                                     exonStart, exonEnd, pathProb, sampleID]
-def viterbi(chromType, CNCallOneSamp, transMatrix, sampleID):
+# - sampCNVs (list[int, int, int, floats, str]): sample CNV infos [CNType, exonStart, exonEnd, pathProb, sampleID]
+def viterbi(chromLikelihoods, transMatrix, sampleID, firstExOnChrom):
     try:
+        logger.debug("process viterbi on sample %s, on exon chrom start: %i", sampleID, firstExOnChrom)
         # list of lists to return
         # First filled with [Cntype, startExonCalledIndex, endExonCalledIndex],
         # and then with [Cntype, startExonIndex, endExonIndex].
         CNVs = []
 
         # np.ndarray of called exon indexes
-        exIndexCalled = np.where(np.all(CNCallOneSamp != -1, axis=1))[0]
+        exIndexCalled = np.where(np.all(chromLikelihoods != -1, axis=1))[0]
 
         # Get the dimensions of the input matrix
         NbObservations = len(exIndexCalled)
         NbStatesWithVoid = len(transMatrix)
 
         # control that the right number of hidden state
-        if NbStatesWithVoid != CNCallOneSamp.shape[1] + 1:
-            logger.error("NbStates not consistent with number of columns + 1 in CNcallOneSamp")
+        if NbStatesWithVoid != chromLikelihoods.shape[1] + 1:
+            logger.error("NbStates not consistent with number of columns + 1 in chromCalls")
             raise
 
         # Transpose the input matrix in the same format as the emission matrix in the classic
         # Viterbi algorithm, dim = [NbStates * NbObservations]
-        CNCallOneSamp = CNCallOneSamp.transpose()
+        chromLikelihoods = chromLikelihoods.transpose()
 
         # Step 1: Initialize variables
         # probsPrev[i]: stores the probability of the most likely path ending in state i at the previous exon
@@ -175,8 +180,8 @@ def viterbi(chromType, CNCallOneSamp, transMatrix, sampleID):
                         # Calculate the probability of observing the current observation given a previous state
                         prob = (probsPrev[prevState] *
                                 transMatrix[prevState, currentState] *
-                                CNCallOneSamp[currentState - 1, exIndexCalled[exonIndex]])
-                        # currentState - 1 because CNCallOneSamp doesn't have values for void state
+                                chromLikelihoods[currentState - 1, exIndexCalled[exonIndex]])
+                        # currentState - 1 because chromLikelihoods doesn't have values for void state
 
                         # Find the previous state with the maximum probability
                         # Store the index of the previous state with the maximum probability in the "path" matrix
@@ -197,11 +202,11 @@ def viterbi(chromType, CNCallOneSamp, transMatrix, sampleID):
                 ((probsCurrent[4] == 0) or (path[4, exonIndex] == 3))):
 
                 try:
-                    tmpList = backtrack_aggregateCalls(path, exonIndex - 1, 3, probMax, chromType, sampleID)
+                    tmpList = backtrack_aggregateCalls(path, exonIndex - 1, 3, max(probsPrev), sampleID)
                     CNVs.extend(tmpList)
                     # logger.info("successfully backtrack from %i exInd", exonIndex - 1)
                 except Exception:
-                    logger.error("sample %s, %s, exon %i, exon -1 %i", sampleID, chromType, exIndexCalled[exonIndex], exIndexCalled[exonIndex - 1])
+                    logger.error("sample %s, %s, exon %i, exon -1 %i", sampleID, exIndexCalled[exonIndex], exIndexCalled[exonIndex - 1])
                     logger.error("%f, %f, %f, %f, %f", probsCurrent[0], probsCurrent[1],
                                  probsCurrent[2], probsCurrent[3], probsCurrent[4])
                     return (sampleID, CNVs)
@@ -218,15 +223,15 @@ def viterbi(chromType, CNCallOneSamp, transMatrix, sampleID):
                     probsPrev[i] = probsCurrent[i]
                 exonIndex += 1
 
-        tmpList = backtrack_aggregateCalls(path, exonIndex - 1, probsPrev.argmax(), probMax)
+        tmpList = backtrack_aggregateCalls(path, exonIndex - 1, probsPrev.argmax(), max(probsPrev), sampleID)
         CNVs.extend(tmpList)
 
-        mapCNVIndexToExons(CNVs, exIndexCalled)
-
+        mapCNVIndexToExons(CNVs, exIndexCalled, firstExOnChrom)
+        logger.debug("End process sample %s, NB CNVs: %i", sampleID, len(CNVs))
         return (CNVs)
 
     except Exception as e:
-        logger.error("CNCalls failed for sample n°%s - %s", sampleID, repr(e))
+        logger.error("CNCalls failed for sample %s - error: %s - exonIndex %s", sampleID, repr(e), str(exonIndex))
         raise Exception(sampleID)
 
 
@@ -246,8 +251,8 @@ def viterbi(chromType, CNCallOneSamp, transMatrix, sampleID):
 #                   of the chromosome path.
 # - lastState [int]: state with the best probability for the last exon, best path.
 #
-# Returns a list of CNVs, a CNV == [chromType, CNType, startExon, endExon, pathProb, sampleID]
-def backtrack_aggregateCalls(path, lastExon, lastState, pathProb, chromType, sampleID):
+# Returns a list of CNVs, a CNV == [CNType, startExon, endExon, pathProb, sampleID]
+def backtrack_aggregateCalls(path, lastExon, lastState, pathProb, sampleID):
     CNVs = []
     startExon = None
     endExon = None
@@ -280,9 +285,9 @@ def backtrack_aggregateCalls(path, lastExon, lastState, pathProb, chromType, sam
         if currentState == 0:
             if nextState != 3:
                 startExon = nextExon
-                CNVs.append([chromType, nextState, startExon, endExon, pathProb, sampleID])
+                CNVs.append([nextState, startExon, endExon, pathProb, sampleID])
                 if hetDelEndExon is not None:
-                    CNVs.append([chromType, 2, startExon, hetDelEndExon, pathProb, sampleID])
+                    CNVs.append([2, startExon, hetDelEndExon, pathProb, sampleID])
                     hetDelEndExon = None
             break
 
@@ -294,17 +299,17 @@ def backtrack_aggregateCalls(path, lastExon, lastState, pathProb, chromType, sam
 
         elif currentState == 3:
             startExon = nextExon
-            CNVs.append([chromType, nextState, startExon, endExon, pathProb, sampleID])
+            CNVs.append([nextState, startExon, endExon, pathProb, sampleID])
             if hetDelEndExon is not None:
-                CNVs.append([chromType, 2, startExon, hetDelEndExon, pathProb, sampleID])
+                CNVs.append([2, startExon, hetDelEndExon, pathProb, sampleID])
                 hetDelEndExon = None
 
         # DUPs
         elif (currentState == 4) or (nextState == 4):
             startExon = nextExon
-            CNVs.append([chromType, nextState, startExon, endExon, pathProb, sampleID])
+            CNVs.append([nextState, startExon, endExon, pathProb, sampleID])
             if hetDelEndExon is not None:
-                CNVs.append([chromType, 2, startExon, hetDelEndExon, pathProb, sampleID])
+                CNVs.append([2, startExon, hetDelEndExon, pathProb, sampleID])
                 hetDelEndExon = None
             endExon = nextExon - 1
 
@@ -315,7 +320,7 @@ def backtrack_aggregateCalls(path, lastExon, lastState, pathProb, chromType, sam
         elif (currentState == 2) and (nextState == 1):
             # create HVDEL
             startExon = nextExon
-            CNVs.append([chromType, nextState, startExon, endExon, pathProb, sampleID])
+            CNVs.append([nextState, startExon, endExon, pathProb, sampleID])
             # keep endExon except if HVDEL was preceded by another HETDEL,
             # in which case ...
             if hetDelEndExon is not None:
@@ -349,8 +354,8 @@ def backtrack_aggregateCalls(path, lastExon, lastState, pathProb, chromType, sam
 #
 # Returns:
 # None (The CNVs list will be modified in-place.)
-def mapCNVIndexToExons(CNVs, exIndexCalled):
+def mapCNVIndexToExons(CNVs, exIndexCalled, firstExOnChrom):
     for event in range(len(CNVs)):
         CNVs[event][0] = CNVs[event][0] - 1
-        CNVs[event][1] = exIndexCalled[CNVs[event][1]]
-        CNVs[event][2] = exIndexCalled[CNVs[event][2]]
+        CNVs[event][1] = firstExOnChrom + exIndexCalled[CNVs[event][1]]
+        CNVs[event][2] = firstExOnChrom + exIndexCalled[CNVs[event][2]]
