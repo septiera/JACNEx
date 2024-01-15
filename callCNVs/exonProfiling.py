@@ -5,8 +5,6 @@ import numpy as np
 import scipy.stats
 from concurrent.futures import ProcessPoolExecutor
 
-import figures.plots
-
 # prevent numba flooding the logs when we are in DEBUG loglevel
 logging.getLogger('numba').setLevel(logging.WARNING)
 
@@ -17,9 +15,8 @@ logger = logging.getLogger(__name__)
 ###############################################################################
 ############################ PUBLIC FUNCTIONS #################################
 ###############################################################################
-
 #############################################################
-# computeCN0Params
+# calcCN0Params
 # Calculates the parameters "hnorm_loc" and "hnorm_scale" associated with the
 # fitted half normal distribution from the intergenic count data.
 # It also calculates the "uncaptThreshold".
@@ -35,7 +32,7 @@ logger = logging.getLogger(__name__)
 # - hnormloc [float]: location parameter of the fitted half normal distribution.
 # - hnormscale [float]: scale parameter of the fitted half normal distribution.
 # - uncaptThreshold [float]: FPM threshold.
-def computeCN0Params(intergenicsFPM):
+def calcCN0Params(intergenicsFPM):
     # half normal CDF fraction beyond which we truncate this distribution
     fracCDFHnorm = 0.95
     try:
@@ -51,102 +48,93 @@ def computeCN0Params(intergenicsFPM):
 
 
 ##############################################################
-# parallelClusterProcessing
-# Processes and analyzes genomic exon profiles in parallel for multiple clusters.
+# calcCN2Params
+# Calculates CN2 parameters for both autosomes and gonosomes using input FPMs.
+# Maps sample names to indices for efficient lookup.
+# Determines the number of clusters for parallel processing.
+# Iterates over clusters, processing each valid cluster in parallel.
 #
 # Args:
-# - autosomeFPMs (np.ndarray[floats]): exon FPMs for autosomal chromosomes.
-# - gonosomeFPMs (np.ndarray[floats]): exon FPMs for gonosomal chromosomes.
-# - samples (list[strs]): sample IDs.
-# - uncaptThreshold  [float]: threshold for determining uncaptured exons.
-# - clust2samps (dict): key==clusterID, value==sampleID list.
-# - fitWith (dict): key==clusterID, value==list of clusterIDs
-# - clustIsValid (dict): key==clusterID, value==boolean.
-# - plotDir (str): directory path where plots will be saved.
-# - jobs (int): number of parallel processing jobs to use.
+# - autosomeFPMs (np.ndarray[floats]): Autosome fragment counts.
+# - gonosomeFPMs (np.ndarray[floats]): Gonosome fragment counts.
+# - samples (list[str]): sample names.
+# - uncaptThreshold (float): Threshold for considering exons as uncaptured(<).
+# - clust2samps (dict): Mapping of cluster IDs to sample lists.
+# - fitWith (dict): Mapping of cluster IDs to related cluster IDs.
+# - clustIsValid (dict): Indicates validity of each cluster.
+# - jobs (int): Number of jobs for parallel processing.
 #
 # Returns a tuple (CN2Params_A, CN2Params_G):
 # - CN2Params_A (dict): for autosomal clusters, key==clusterID,
 #                       value==np.ndarray[floats] dim=NbOfExons*["loc", "scale"].
 # - CN2Params_G (dict): same as CN2Params_A but for gonosomal clusters.
-def parallelClusterProcessing(autosomeFPMs, gonosomeFPMs, samples, uncaptThreshold,
-                              clust2samps, fitWith, clustIsValid, plotDir, jobs):
+def calcCN2Params(autosomeFPMs, gonosomeFPMs, samples, uncaptThreshold,
+                  clust2samps, fitWith, clustIsValid, jobs):
     # initialize output dictionaries
     CN2Params_A = {}
     CN2Params_G = {}
 
     # convert the list of samples to a dictionary mapping sample name to its index
     # for O(1) lookup time
-    samp2Index = {sample: i for i, sample in enumerate(samples)}
+    sampIndexMap = {sample: i for i, sample in enumerate(samples)}
 
     # determine the number of clusters to process in parallel, based on available jobs
-    para_clusters = min(math.ceil(jobs / 2), len(clust2samps))
-    logger.info("%i new clusters => will process %i in parallel", len(clust2samps), para_clusters)
+    paraClusters = min(math.ceil(jobs / 2), len(clust2samps))
+    logger.info("%i new clusters => will process %i in parallel", len(clust2samps), paraClusters)
 
-    try:
-        # function to process each cluster using provided exon counts and configuration
-        def processCluster(clusterID, chromType, FPMs):
-            future_res = pool.submit(analyzeExonDataForCluster, clusterID, chromType, FPMs, uncaptThreshold, plotDir)
-            future_res.add_done_callback(updateParamsDict)
+    # set up a pool of workers for parallel processing
+    with ProcessPoolExecutor(paraClusters) as pool:
+        # iterate over all clusters and submit processing tasks
+        for clusterID in clust2samps:
 
-        # Define a function to update the CN2params dictionary with the results
-        # from a processed cluster
-        # arg: a Future object returned by ProcessPoolExecutor.submit(analyzeExonDataForCluster).
-        # is a tuple (chromType, clusterID, CN2ParamsArray)
-        # Any additional values in the tuple will be ignored.
-        # If something went wrong, raise error in log;
-        # Add CN2ParamsArray to the dictionary with clusterID as the key,
-        # using chromType to identify the dictionary to update.
-        def updateParamsDict(future_clusterMetrics):
-            e = future_clusterMetrics.exception()
-            if e is not None:
-                logger.warning("Failed to analyzeExonDataForCluster for cluster %s, skipping it.", e)
+            # skip processing for invalid clusters
+            if not clustIsValid[clusterID]:
+                logger.warning("cluster %s is invalid, low sample number %i, skipping it.",
+                               clusterID, len(clust2samps[clusterID]))
+                continue
+
+            # get sample indexes for the current cluster and associated fitWith clusters
+            try:
+                sampsInd = getSampIndexes(clusterID, clust2samps, sampIndexMap, fitWith)
+            except Exception as e:
+                logger.error("Error in getSampIndexes for cluster %s: %s", clusterID, e)
+                raise
+
+            # Determine the type of chromosome and submit the cluster for processing
+            if clusterID.startswith("A"):
+                processCN2Cluster(clusterID, autosomeFPMs[:, sampsInd], uncaptThreshold, CN2Params_A, pool)
+            elif clusterID.startswith("G"):
+                processCN2Cluster(clusterID, gonosomeFPMs[:, sampsInd], uncaptThreshold, CN2Params_G, pool)
             else:
-                counts2_params_res = future_clusterMetrics.result()
-                (chromType, clusterID, CN2ParamsArray) = counts2_params_res
+                logger.error("Unknown chromosome type for cluster %s.", clusterID)
+                raise
 
-                if chromType == "A":
-                    CN2Params_A[clusterID] = CN2ParamsArray
-                else:
-                    CN2Params_G[clusterID] = CN2ParamsArray
-
-                logger.info("Done analyzeExonDataForCluster %s.", clusterID)
-
-        # set up a pool of workers for parallel processing
-        with ProcessPoolExecutor(para_clusters) as pool:
-            # iterate over all clusters and submit processing tasks
-            for clusterID in clust2samps:
-                # skip processing for invalid clusters
-                if not clustIsValid[clusterID]:
-                    logger.warning("cluster %s is invalid, low sample number %i, skipping it.", clusterID, len(clust2samps[clusterID]))
-                    continue
-
-                # get sample indexes for the current cluster and associated fitWith clusters
-                try:
-                    sampsInd = getSampIndexes(clusterID, clust2samps, samp2Index, fitWith)
-                except Exception as e:
-                    logger.error("getSampIndexes failed for cluster %s: %s", clusterID, repr(e))
-                    raise
-
-                # Determine the type of chromosome and submit the cluster for processing
-                if clusterID.startswith("A"):
-                    processCluster(clusterID, "A", autosomeFPMs[:, sampsInd])
-                elif clusterID.startswith("G"):
-                    processCluster(clusterID, "G", gonosomeFPMs[:, sampsInd])
-                else:
-                    logger.error("cluster %s does not specify if it's from autosomes or gonosomes.", clusterID)
-                    raise
-
-        return (CN2Params_A, CN2Params_G)
-
-    except Exception as e:
-        logger.error("parallelClusterProcessing failed for %s - %s", clusterID, repr(e))
-        raise Exception(clusterID)
+    return (CN2Params_A, CN2Params_G)
 
 
 ###############################################################################
 ############################ PRIVATE FUNCTIONS ################################
 ###############################################################################
+#############################################################
+# fitHalfNormal
+# Given a fragment count array (dim = NBOfExons*NBOfSamps),
+# fits a half normal distribution, fixing location to 0.
+#
+# Args:
+# - intergenicsFPM (np.ndarray[floats]): count array (FPM normalized)
+#
+# Returns a tuple (loc, scale):
+# - hnormloc [float], hnormscale[float]: parameters of the half normall distribution
+def fitHalfNormal(intergenicsFPM):
+    # Fit a half normal distribution,
+    # enforces the "loc" parameter to be 0 because our model requires the distribution
+    # to start at zero.
+    # scale = std_deviation
+    # f(x) = (1 / (scale * sqrt(2 * pi))) * exp(-x**2 / (2 * scale**2))
+    hnormloc, hnormscale = scipy.stats.halfnorm.fit(intergenicsFPM, floc=0)
+
+    return (hnormloc, hnormscale)
+
 
 #############################################################
 # getSampIndexes
@@ -172,25 +160,58 @@ def getSampIndexes(clusterID, clust2samps, samp2Index, fitWith):
     return allSampsInd
 
 
-#############################################################
-# analyzeExonDataForCluster
-# processes a set of exons for a given cluster to apply filtering criteria and compute CN2
-# parameters for each exon. Additionally, if in debug mode, generates a pie chart that summarizes
-# the filtering process for the cluster.
+##############################################################
+# processCN2Cluster
+# Submits a task to process a single cluster's FPM data to calculate CN2 parameters.
+# Submits a task to the processing pool.
+# On task completion, triggers a callback to update the parameters.
 #
 # Args:
-# - clusterID [str]=
-# - chromType [str]: "A" for autosomes, "G" for gonosomes
+# - clusterID (str): Identifier of the cluster.
+# - FPMs (np.ndarray): Fragment counts for the cluster.
+# - uncaptThreshold (float): Threshold for uncaptured exons.
+# - CN2Params (dict): Dictionary to store CN2 parameters.
+# - pool (ProcessPoolExecutor): Pool of workers for parallel processing.
+def processCN2Cluster(clusterID, FPMs, uncaptThreshold, CN2Params, pool):
+    future_res = pool.submit(computeClusterCN2Params, FPMs, uncaptThreshold)
+    future_res.add_done_callback(lambda future: updateCN2Params(future, CN2Params, clusterID))
+
+
+##############################################################
+# updateCN2Params
+# Updates the CN2 parameters dictionary with results from processed clusters.
+# Checks for exceptions in the processing task.
+# Updates the CN2Params dictionary with new data from the completed task.
+# Args:
+# - future_clusterMetrics (Future): Future object from completed task.
+# - CN2Params (dict): Dictionary to be updated with CN2 parameters.
+# - clusterID (str): Identifier of the processed cluster.
+#
+# Output:
+# Updates dictionary with new CN2 parameters for the processed cluster.
+def updateCN2Params(future_clusterMetrics, CN2Params, clusterID):
+    e = future_clusterMetrics.exception()
+    if e is not None:
+        logger.warning("Analysis failed for cluster %s: %s.", clusterID, str(e))
+    else:
+        CN2ParamsArray = future_clusterMetrics.result()
+        CN2Params[clusterID] = CN2ParamsArray
+        logger.info("Completed analysis for cluster %s.", clusterID)
+
+
+#############################################################
+# computeClusterCN2Params
+# Processes exon data for a given cluster, apply filtering criteria, and compute CN2
+# parameters for each exon.
+#
+# Args:
 # - exonFPMs (np.ndarray[floats]): normalised counts from exons
 # - uncaptThreshold [float]: threshold for determining if an exon is captured or not.
-# - plotDir: directory path where the pie chart plot will be saved.
 #
-# Returns a tuple (chromType, clusterID, clustExMetrics):
-# - chromType [str]
-# - clusterID [str]
-# - CN2ParamsArray (np.ndarray[floats]): dim: NBofExons x NBofMetrics.
+# Returns:
+# - CN2Params (np.ndarray[floats]): dim: NBofExons x NBofMetrics.
 #                                        Metrics include 'loc' (mean) and 'scale' (standard deviation) for each exon.
-def analyzeExonDataForCluster(clusterID, chromType, exonFPMs, uncaptThreshold, plotDir):
+def computeClusterCN2Params(exonFPMs, uncaptThreshold):
     # Possible filtering states for exons
     filterStates = ["notCaptured", "cannotFitRG", "RGClose2LowThreshold", "fewSampsInRG", "call"]
 
@@ -198,7 +219,7 @@ def analyzeExonDataForCluster(clusterID, chromType, exonFPMs, uncaptThreshold, p
     paramsID = ["loc", "scale"]
 
     # Initialize an array to store CN2 parameters with a default value of -1
-    CN2ParamsArray = np.full((exonFPMs.shape[0], len(paramsID)), -1, dtype=np.float64)
+    CN2Params = np.full((exonFPMs.shape[0], len(paramsID)), -1, dtype=np.float64)
 
     # Vector to keep track of the filter state for each exon
     filterStatesVec = np.zeros(exonFPMs.shape[0], dtype=int)
@@ -207,49 +228,20 @@ def analyzeExonDataForCluster(clusterID, chromType, exonFPMs, uncaptThreshold, p
     for exonIndex, exFPMs in enumerate(exonFPMs):
         try:
             # Apply filtering and update parameters for the current exon
-            filterState, exonCN2Params = evaluateAndComputeExonMetrics(exFPMs, uncaptThreshold, paramsID)
+            filterState, exonCN2Params = assessExonAndComputeCN2Metrics(exFPMs, uncaptThreshold, paramsID)
             filterStatesVec[exonIndex] = filterStates.index(filterState)
             if filterState == 'call':
                 # Update CN2ParamsArray only for exon calls
-                CN2ParamsArray[exonIndex] = exonCN2Params
+                CN2Params[exonIndex] = exonCN2Params
         except Exception as e:
             logger.error("evaluateAndComputeExonMetrics failed at exon index %i: %s", exonIndex, repr(e))
             raise
 
-    # DEBUG: Generate a pie chart summarizing the filter states for the cluster
-    if logger.isEnabledFor(logging.DEBUG):
-        try:
-            figures.plots.plotPieChart(clusterID, filterStates, filterStatesVec, plotDir)
-        except Exception as e:
-            logger.error("plotPieChart failed for cluster %s: %s", clusterID, repr(e))
-            raise
-
-    return (chromType, clusterID, CN2ParamsArray)
+    return CN2Params
 
 
 #############################################################
-# fitHalfNormal
-# Given a fragment count array (dim = NBOfExons*NBOfSamps),
-# fits a half normal distribution, fixing location to 0.
-#
-# Args:
-# - intergenicsFPM (np.ndarray[floats]): count array (FPM normalized)
-#
-# Returns a tuple (loc, scale):
-# - hnormloc [float], hnormscale[float]: parameters of the half normall distribution
-def fitHalfNormal(intergenicsFPM):
-    # Fit a half normal distribution,
-    # enforces the "loc" parameter to be 0 because our model requires the distribution
-    # to start at zero.
-    # scale = std_deviation
-    # f(x) = (1 / (scale * sqrt(2 * pi))) * exp(-x**2 / (2 * scale**2))
-    hnormloc, hnormscale = scipy.stats.halfnorm.fit(intergenicsFPM, floc=0)
-
-    return (hnormloc, hnormscale)
-
-
-#############################################################
-# evaluateAndComputeExonMetrics
+# assessExonAndComputeCN2Metrics
 # processes an exon by applying a series of filters to determine its filter status.
 # Specs:
 # 1) Check if the exon is not captured (median coverage = 0).
@@ -268,7 +260,7 @@ def fitHalfNormal(intergenicsFPM):
 #
 # Returns a tuple containing the filter status as a string and an array of computed CN2 parameters.
 # The CN2 parameters array contains 'loc' (mean) and 'scale' (standard deviation) if calculated.
-def evaluateAndComputeExonMetrics(exFPMs, unCaptFPMLimit, paramsID):
+def assessExonAndComputeCN2Metrics(exFPMs, unCaptFPMLimit, paramsID):
     # CN2 parameters array with default NaN values
     exonCN2Params = np.full((1, len(paramsID)), np.nan)
 
@@ -276,7 +268,7 @@ def evaluateAndComputeExonMetrics(exFPMs, unCaptFPMLimit, paramsID):
     if filterUncapturedExons(exFPMs):
         return ("notCaptured", exonCN2Params)
 
-    # Attempt robust gaussian fitting to calculate CN2
+    # Attempt robust Gaussian fitting to calculate CN2
     # Filter n°2: Check if fitting is impossible, indicated by median close to zero
     try:
         (gaussian_loc, gaussian_scale) = fitRobustGaussian(exFPMs)
@@ -325,12 +317,12 @@ def filterUncapturedExons(exFPMs):
 
 #############################################################
 # fitRobustGaussian
-# Fits a single principal gaussian component around a starting guess point
-# in a 1-dimensional gaussian mixture of unknown components with EM algorithm
+# Fits a single principal Gaussian component around a starting guess point
+# in a 1-dimensional Gaussian mixture of unknown components with EM algorithm
 # script found to :https://github.com/hmiemad/robust_Gaussian_fit (v01_2023)
 #
 # Args:
-# - X (np.array): A sample of 1-dimensional mixture of gaussian random variables
+# - X (np.array): A sample of 1-dimensional mixture of Gaussian random variables
 # - mean (float, optional): Expectation. Defaults to None.
 # - stdev (float, optional): Standard deviation. Defaults to None.
 # - bandwidth (float, optional): Hyperparameter of truncation. Defaults to 2.
@@ -356,8 +348,8 @@ def fitRobustGaussian(X, mean=None, stdev=None, bandwidth=2.0, eps=1.0e-5):
         """
         create a uniform window on X around mu of width 2*bandwidth*sigma
         find the mean of that window to shift the window to most expected local value
-        measure the standard deviation of the window and divide by the standard deviation of a truncated gaussian distribution
-        measure the proportion of points inside the window, divide by the weight of a truncated gaussian distribution
+        measure the standard deviation of the window and divide by the standard deviation of a truncated Gaussian distribution
+        measure the proportion of points inside the window, divide by the weight of a truncated Gaussian distribution
         """
         Window = np.logical_and(X - mean - bandwidth * stdev < 0, X - mean + bandwidth * stdev > 0)
 
@@ -401,9 +393,9 @@ def truncated_integral_and_sigma(x):
 
 #############################################################
 # filterZscore
-# Given a robustly fitted gaussian parameters and an FPM threshold separating
+# Given a robustly fitted Gaussian parameters and an FPM threshold separating
 # coverage associated with exon non-capture or capture during sequencing,
-# exon are filtered when the gaussian for the exon is indistinguishable from
+# exon are filtered when the Gaussian for the exon is indistinguishable from
 # the non-capture threshold.
 #
 # Spec:
@@ -437,7 +429,7 @@ def filterZscore(mean, stdev, unCaptFPMLimit):
 
 #############################################################
 # filterSampsContrib2Gaussian
-# Given a FPM counts from an exon and a robustly fitted gaussian paramaters,
+# Given a FPM counts from an exon and a robustly fitted Gaussian paramaters,
 # filters the exons.
 #
 # Spec:
