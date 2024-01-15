@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 ############################ PUBLIC FUNCTIONS #################################
 ###############################################################################
 ############################################
-# getTransMatrixAndProbs
+# getTransMatrix
 # Calculates the transition matrix for CN states including an 'init' state, and computes
 # the CN probabilities for autosomal and gonosomal samples.
 # Methodology:
@@ -34,12 +34,8 @@ logger = logging.getLogger(__name__)
 # Returns:
 # - transAndInit (np.ndarray[floats]): transition matrix used for the HMM, including
 #                                      the "init" state. dim = [nbStates+1, nbStates+1]
-# - CNProbs_A(dict): key=sampID, value=2D numpy arrays [floats]
-#                    representing CN states probabilities for exon calls (no call==-1).
-#                    dim = NbExonsOnAutosomes * NbOfCNStates
-# - CNPath_G (dict): same as CNProbs_A but for gonosomes
-def getTransMatrixAndProbs(likelihoods_A, likelihoods_G, autosomeExons, gonosomeExons,
-                           priors, nbStates):
+def getTransMatrix(likelihoods_A, likelihoods_G, autosomeExons, gonosomeExons,
+                   priors, nbStates):
 
     # identify the start of new chromosomes for autosomal and gonosomal exons
     isFirstExon_A = flagChromStarts(autosomeExons)
@@ -61,7 +57,7 @@ def getTransMatrixAndProbs(likelihoods_A, likelihoods_G, autosomeExons, gonosome
     # normalize the transition matrix and add an 'init' state
     transAndInit = formatTransMatrix(transitions, priors, nbStates)
 
-    return (transAndInit, CNProbs_A, CNProbs_G)
+    return transAndInit
 
 
 ###############################################################################
@@ -97,7 +93,7 @@ def flagChromStarts(exons):
 # getCNProbs
 # Computes the probabilities for all CN states for each exon in each sample.
 # Methodology:
-# 1. For each sample, it calculates the combined probabilities (odds) for each CN state
+# 1. For each sample, it calculates the probabilities (odds) for each CN state
 #    of each exon by multiplying the likelihood data with prior probabilities.
 # 2. If an exon is marked as 'no call' (indicated by -1 in the likelihood data),
 #    the function sets the probabilities for all CN states of that exon to -1.
