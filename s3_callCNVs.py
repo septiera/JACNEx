@@ -11,12 +11,17 @@ import getopt
 import os
 import time
 import logging
+import traceback
 
 ####### JACNEx modules
 import countFrags.countsFile
 import clusterSamps.clustFile
 import callCNVs.exonProcessing
 import callCNVs.likelihoods
+import callCNVs.transitions
+import callCNVs.HMM
+import callCNVs.CNVQualAssessment
+import callCNVs.callsFile
 
 # prevent matplotlib flooding the logs when we are in DEBUG loglevel
 logging.getLogger('matplotlib').setLevel(logging.WARNING)
@@ -25,7 +30,7 @@ logging.getLogger('matplotlib').setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 
-###############################################################################
+###############################################################################s
 ############################ PUBLIC FUNCTIONS ################################
 ###############################################################################
 
@@ -42,6 +47,8 @@ def parseArgs(argv):
     countsFile = ""
     clustsFile = ""
     outFile = ""
+    # optional args with default values
+    padding = 10
     # jobs default: 80% of available cores
     jobs = round(0.8 * len(os.sched_getaffinity(0)))
 
@@ -70,12 +77,12 @@ ARGUMENTS:
                     [CLUSTER_ID, SAMPLES, FIT_WITH, VALID]. File obtained from 2_clusterSamps.py.
     --out [str]: file where results will be saved, must not pre-exist, will be gzipped if it ends
                  with '.gz', can have a path component but the subdir must exist.
+    --padding [int] : number of bps used to pad the exon coordinates, default : """ + str(padding) + """
     --jobs [int]: cores that we can use, defaults to 80% of available cores ie """ + str(jobs) + "\n" + """
     -h , --help: display this help and exit\n"""
 
     try:
-        opts, args = getopt.gnu_getopt(sys.argv[1:], 'h', ["help", "counts=", "clusts=", "out=", "jobs=",
-                                                           "plotDir=", "printParams="])
+        opts, args = getopt.gnu_getopt(sys.argv[1:], 'h', ["help", "counts=", "clusts=", "out=", "padding=", "jobs="])
     except getopt.GetoptError as e:
         raise Exception(e.msg + ". Try " + scriptName + " --help")
     if len(args) != 0:
@@ -91,6 +98,8 @@ ARGUMENTS:
             clustsFile = value
         elif opt in ("--out"):
             outFile = value
+        elif opt in ("--padding"):
+            padding = value
         elif opt in ("--jobs"):
             jobs = value
         else:
@@ -118,6 +127,13 @@ ARGUMENTS:
     #####################################################
     # Check other args
     try:
+        padding = int(padding)
+        if (padding < 0):
+            raise Exception()
+    except Exception:
+        raise Exception("padding must be a non-negative integer, not " + str(padding))
+
+    try:
         jobs = int(jobs)
         if (jobs <= 0):
             raise Exception()
@@ -125,7 +141,7 @@ ARGUMENTS:
         raise Exception("jobs must be a positive integer, not " + str(jobs))
 
     # AOK, return everything that's needed
-    return(countsFile, clustsFile, outFile, jobs)
+    return(countsFile, clustsFile, outFile, padding, jobs)
 
 
 ###############################################################################
@@ -163,7 +179,7 @@ def createDebugFolder(mainFolder, dirName):
 # may be available in the log
 def main(argv):
     # parse, check and preprocess arguments
-    (countsFile, clustsFile, outFile, jobs) = parseArgs(argv)
+    (countsFile, clustsFile, outFile, padding, jobs) = parseArgs(argv)
 
     # args seem OK, start working
     logger.debug("called with: " + " ".join(argv[1:]))
@@ -236,9 +252,9 @@ def main(argv):
     # Likelihood calculation for each sample (pseudo emission array)
     try:
         (likelihoods_A, likelihoods_G) = callCNVs.likelihoods.allChrom(samples, autosomeFPMs, gonosomeFPMs,
-                                                                       clust2samps, fitWith, hnorm_loc,
-                                                                       hnorm_scale, CN2Params_A, CN2Params_G,
-                                                                       CNStates, priors, jobs, speDir)
+                                                                       clust2samps, hnorm_loc, hnorm_scale,
+                                                                       CN2Params_A, CN2Params_G,
+                                                                       CNStates, jobs)
     except Exception as e:
         raise Exception("likelihoods.allChrom failed: %s", repr(e))
 
@@ -277,10 +293,10 @@ def main(argv):
 
     #########
     # Application of the HMM using the Viterbi algorithm.
-    # returns a list of lists [CNtype, exonStart, exonEnd, pathProb, sampleName].
+    # returns a list of lists [chromType, CNType, exonStart, exonEnd, pathProb, sampleID].
     try:
-        CNVs = callCNVs.HMM.processCNVCalls(samples, autosomeExons, gonosomeExons, likelihoods_A, likelihoods_G,
-                                            transMatrix, jobs)
+        CNVs_A, CNVs_G = callCNVs.HMM.processCNVCalls(samples, autosomeExons, gonosomeExons, likelihoods_A, likelihoods_G,
+                                                      transMatrix, jobs)
     except Exception as e:
         raise Exception("HMM.processCNVCalls failed: %s", repr(e))
 
@@ -291,34 +307,26 @@ def main(argv):
     #########
     # Computes CNVs quality score
     try:
-        QS = callCNVs.CNVsQS.getQS(CNVs, CNProbs_A, CNProbs_G)
+        qs_A = callCNVs.CNVQualAssessment.getCNVsQualityScore(CNVs_A, CNProbs_A)
+        qs_G = callCNVs.CNVQualAssessment.getCNVsQualityScore(CNVs_G, CNProbs_G)
     except Exception as e:
-        raise Exception("getQS failed: %s", repr(e))
+        traceback.print_exc()
+        raise Exception("getCNVsQualityScore failed: %s", repr(e))
 
     thisTime = time.time()
-    logger.debug("Done getQS in %.2f s", thisTime - startTime)
-    startTime = thisTime
-
-    #########
-    # VCF formatting
-    try:
-        headers, vcf = callCNVs.VCFFile.vcfFormat(CNVs, QS, autosomeExons, gonosomeExons)
-    except Exception as e:
-        raise Exception("vcfFormat failed: %s", repr(e))
-
-    thisTime = time.time()
-    logger.debug("Done vcfFormat in %.2f s", thisTime - startTime)
+    logger.debug("Done getCNVsQualityScore in %.2f s", thisTime - startTime)
     startTime = thisTime
 
     #########
     # VCF printing
     try:
-        callCNVs.VCFFile.printVCFFile(CNVs, QS, autosomeExons, gonosomeExons)
+        callCNVs.callsFile.printCallsFile(CNVs_A, CNVs_G, qs_A, qs_G, autosomeExons, gonosomeExons,
+                                          samples, padding, outFile, scriptName)
     except Exception as e:
-        raise Exception("printVCFFilefailed: %s", repr(e))
+        raise Exception("printCallsFile failed: %s", repr(e))
 
     thisTime = time.time()
-    logger.debug("Done printVCFFile in %.2f s", thisTime - startTime)
+    logger.debug("Done printCallsFile in %.2f s", thisTime - startTime)
     startTime = thisTime
 
     sys.exit()
