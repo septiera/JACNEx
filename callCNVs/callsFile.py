@@ -64,6 +64,20 @@ def printCallsFile(CNVs_A, CNVs_G, qs_A, qs_G, autosomeExons, gonosomeExons, sam
 ###############################################################################
 ############################ PRIVATE FUNCTIONS ################################
 ###############################################################################
+# vcfFormat
+# formats CNV data into a Variant Call Format (VCF), organizing CNVs by chromosome,
+# position, and type, and handling VCF-specific fields.
+#
+# Args:
+# - CNVs (list): CNV information, each CNV formatted as [CNType, startExonIndex, endExonIndex,
+#    probability, sampleID].
+# - QS (list[floats]): Quality scores corresponding to each CNV.
+# - exons (list): Exon information, each exon formatted as [chromosome, start, end, exonID].
+# - samples (list[strs])
+# - padding [int]: Value used to adjust start and end positions of CNVs.
+#
+# Returns:
+# vcf (list[strs]): Each string represents a line in a VCF file, formatted with CNV information.
 def vcfFormat(CNVs, QS, exons, samples, padding):
     # Define the number of columns before sample information in a VCF file
     # ["#CHROM","POS","ID","REF","ALT","QUAL","FILTER","INFO","FORMAT"]
@@ -82,9 +96,6 @@ def vcfFormat(CNVs, QS, exons, samples, padding):
         cn, startExi, endExi, prob, sampID = cnvList
         # Retrieve quality score for current CNV
         cnvQS = QS[cnvIndex]
-
-        if cnvQS <= 0:
-            continue
 
         # Get chromosome, start and end position from exons
         chrom = exons[startExi][0]
@@ -125,7 +136,7 @@ def vcfFormat(CNVs, QS, exons, samples, padding):
 
     logger.debug("total CNVs: %i, total aggregated CNVs: %i", len(CNVs), len(cnv_dict))
 
-    sorted_tuple_list = sorted(cnv_dict, key=chromosome_sort_key)
+    sorted_tuple_list = sorted(cnv_dict, key=chromSort)
 
     # Add all processed VCF lines to the output list
     for cnv in sorted_tuple_list:
@@ -134,7 +145,18 @@ def vcfFormat(CNVs, QS, exons, samples, padding):
     return vcf
 
 
-def chromosome_sort_key(chrom_tuple):
+#################################################
+# chromSort
+# sorting chromosomes, handling both numerical and special chromosomes (X, Y, M)
+# for logical sorting.
+#
+# Args:
+# - chrom_tuple (tuple): A tuple representing a CNV, the first element being the
+#    chromosome identifier (e.g., 'chr1', 'chrX').
+#
+# Returns a tuple: Sorting key for chromosomes, ensuring numerical chromosomes
+# are sorted numerically and special chromosomes in a predefined order.
+def chromSort(chrom_tuple):
     chrom = chrom_tuple[0]
     # Extract the chromosome part after "chr"
     chrom_num = chrom[3:]
