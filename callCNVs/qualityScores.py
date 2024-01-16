@@ -9,29 +9,31 @@ logger = logging.getLogger(__name__)
 ############################ PUBLIC FUNCTIONS #################################
 ###############################################################################
 ###################################
-# getCNVsQualityScore
-# This function is the main entry point for calculating quality scores for a list of CNVs.
-# It iterates over each CNV in the provided list, calls calculateCNVQualityScore for each,
-# and compiles the scores into a list.
-# This approach allows for a comprehensive assessment of the quality of each CNV detection
-# within the context of the given dataset, taking into account both the individual CNV
-# characteristics and the overall sequencing data profile.
+# calcQualityScore
+# calculates quality scores for a list of CNVs by comparing their path probabilities
+# with the baseline CN2 state probabilities.
 #
 # Args:
-# - CNVs (list[str, int, int, int, floats, str]): CNV infos [chromType, CNType, exonStart, exonEnd, pathProb, sampleName]
-# - CNPath_A (dict): key=sampID, value=2D numpy arrays [floats]
-#                    representing CN states probabilities for exon calls (no call==-1).
-#                    dim = NbExonsOnAutosomes * NbOfCNStates
-# - CNPath_G (dict): same as CNProbs_A but for gonosomes
+# - CNVs (list): CNV information. Each CNV is represented as [CNType[int], exonStart[int],
+#    exonEnd[int], pathProb[float], sampleName[str]].
+# - likelihoods (dict): key==sampleID, value==np.array[floats] likelihoods
+# - transMatrix (numpy.ndarray): Transition matrix used in the HMM Viterbi algorithm.
 #
-# Return a list of floats, where each element is the quality score corresponding to a CNV in
-# the CNVs list. This list is of the same length as CNVs.
-def getCNVsQualityScore(CNVs, CNProbs):
-    quality_scores = []
+# Returns:
+# - qualityScores (list[floats]): Quality scores for each CNV. The score is a log-odds
+#    measure comparing the CNV's path probability with the CN2 probability.
+def calcQualityScore(CNVs, likelihoods, transMatrix):
+    qualityScores = []
     for cnv in CNVs:
-        score = calculateCNVQualityScore(cnv, CNProbs)
-        quality_scores.append(score)
-    return quality_scores
+
+        exonIndexStart, exonIndexEnd, cnProbs, sampID = cnv[1], cnv[2], cnv[3], cnv[4]
+        if cnProbs == 0:
+            print(cnProbs, exonIndexStart, exonIndexEnd, cnProbs, sampID)
+            continue
+
+        score = calculateCNVQualityScore(cnProbs, likelihoods[sampID][exonIndexStart:exonIndexEnd + 1, 2], transMatrix[3][3])
+        qualityScores.append(score)
+    return qualityScores
 
 
 ###############################################################################
@@ -39,68 +41,44 @@ def getCNVsQualityScore(CNVs, CNProbs):
 ###############################################################################
 ###################################
 # calculateCNVQualityScore
-# This function calculates a quality score for a given CNV.
-# The score is computed by dividing the path probability of the CNV (viterbi most probable path)
-# by the average CN2 probability for the range of exons affected by the CNV.
-# This method provides a measure of the CNV's reliability compared to the baseline CN2
-# state probabilities.
+# calculates a quality score for a single CNV. The score is derived from the
+# CNV's path probability and the CN2 state probability for the CNV's exons.
 #
 # Args:
-# - CNVs (list[str, int, int, int, floats, str]): CNV infos [chromType, CNType, exonStart, exonEnd, pathProb, sampleName]
-# - CNPath_A (dict): key=sampID, value=2D numpy arrays [floats]
-#                    representing CN states probabilities for exon calls (no call==-1).
-#                    dim = NbExonsOnAutosomes * NbOfCNStates
-# - CNPath_G (dict): same as CNProbs_A but for gonosomes
-def calculateCNVQualityScore(cnv, CNProbs):
-    # Extract necessary information from the CNV
-    cn, exonStart, exonEnd, pathProb, sampleName = cnv[0], cnv[1], cnv[2], cnv[3], cnv[4],
+# - pathProb [float]: The path probability of the CNV.
+# - cnvCN2likelihoods (numpy.ndarray[floats]): CN2 likelihoods for the CNV's exons.
+# - CN2toCN2probs (float): Transition probability from CN2 to CN2 state.
+#
+# Returns:
+# - logOdds [float]: The calculated quality score (log odds) for the CNV.
+def calculateCNVQualityScore(cnProbs, cnvCN2likelihoods, CN2toCN2probs):
+    # Calculate the CN2 probabilities
+    CN2Probs = calculateCN2Probs(cnvCN2likelihoods, CN2toCN2probs)
 
-    # Calculate the average of CN2 probabilities
-    CN2Average = calculateCN2ProbsAverage(CNProbs, exonStart, exonEnd, sampleName)
-
-    logOdds = 0
-
-    if pathProb == 0:
-        print(cn, exonStart, exonEnd, pathProb, sampleName, CN2Average)
-    # Check if the CN2 average is not zero
-    elif CN2Average != 0:
-        # Calculate the quality score (log odds)
-        logOdds = np.log10(pathProb / CN2Average)
-
+    # Calculate the quality score (log odds)
+    logOdds = np.log10(cnProbs / CN2Probs)
     return logOdds
 
 
 ###################################
 # calculateCN2ProbsAverage
-# This function calculates the average probability of the CN2 state for a specified
-# range of exons.
-# It is designed to handle sequencing data from either autosomes or gonosomes, based
-# on the chromosome type provided.
-# The function iterates through the probability matrices for each sample, extracting
-# and averaging the CN2 probabilities for the specified exon range, excluding any 'no call' entries.
+# calculates the aggregated probability for the CN2 state across a range of exons.
+# the optimal path, if there is no change and it remains at CN2, CN2 to CN2 transition
+# probabilities are used, reflecting the stability of this state.
 #
 # Args:
-# - CNProbs (dict): key=='A' for autosomes or 'G' for gonosomes, value==dictionary (key==sample ID,
-#                   value==2D numpy array of CN state probabilities [floats].
-# - chromType [str]: 'A' for autosomes or 'G' for gonosomes
-# - exonStart [int]: index representing the starting exon.
-# - exonEnd [int]: index representing the ending exon.
-# - sampleName [str]: sample identifier for which the CN2 probabilities are to be calculated.
+# - cnvCN2likelihoods (numpy.ndarray): CN2 likelihoods for a range of exons.
+# - CN2toCN2probs [float]: transition probability from CN2 to CN2 state.
 #
-# Return a float representing the average CN2 probability across all samples for the
-# specified exon range. Returns 0 if there are no valid CN2 probabilities.
-def calculateCN2ProbsAverage(CNProbs, exonStart, exonEnd, sampleName):
-    # Retrieve the probability array for the specified sample
-    probs = CNProbs[sampleName]
-
+# Returns:
+# - CN2Probs [float]: aggregated probability for the CN2 state.
+def calculateCN2Probs(cnvCN2likelihoods, CN2toCN2probs):
     # Extract probabilities for specified exons and exclude 'no call'
-    CN2Probs4Sample = probs[exonStart:exonEnd, 2]
-    validCN2Probs = CN2Probs4Sample[CN2Probs4Sample != -1]
+    validCN2Probs = cnvCN2likelihoods[cnvCN2likelihoods != -1]
+    probsPrev = 1
+    CN2Probs = 0
+    for likelihoods in validCN2Probs:
+        CN2Probs = probsPrev * CN2toCN2probs * likelihoods
+        probsPrev = CN2Probs
 
-    # Calculate the average if the list is not empty
-    if len(validCN2Probs) > 0:
-        averageCN2Probs = np.mean(validCN2Probs)
-    else:
-        averageCN2Probs = 0
-
-    return averageCN2Probs
+    return CN2Probs
