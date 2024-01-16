@@ -279,14 +279,16 @@ def main(argv):
     startTime = thisTime
 
     ######## DEBUG PRINT
-    # Manually format the transMatrix to a string with two decimal places
     formatted_matrix = "\n".join(["\t".join([f"{cell:.2e}" for cell in row]) for row in transMatrix])
     logger.debug("Transition Matrix:\n%s", formatted_matrix)
     ########
 
     #########
-    # Application of the HMM using the Viterbi algorithm.
-    # returns a list of lists [chromType, CNType, exonStart, exonEnd, pathProb, sampleID].
+    # Application of the HMM using the Viterbi algorithm. (calling step)
+    # processes both autosomal and gonosomal exon data for a set of samples, yielding
+    # a list of CNVs for each category. Each CNV is detailed with information including
+    # CNV type, start and end positions of the affected exons, the probability of the path,
+    # and the sample ID.
     try:
         CNVs_A, CNVs_G = callCNVs.callCNVs.applyHMM(samples, autosomeExons, gonosomeExons,
                                                     likelihoods_A, likelihoods_G, transMatrix,
@@ -299,10 +301,12 @@ def main(argv):
     startTime = thisTime
 
     #########
-    # Computes CNVs quality score
+    # Computation of CNVs quality score
+    # assesses the reliability of each CNV detection by comparing the path probability of the CNV
+    # with the CN2 path probability for each exon in the CNV.
     try:
-        qs_A = callCNVs.qualityScores.calcQualityScore(CNVs_A, CNProbs_A)
-        qs_G = callCNVs.qualityScores.calcQualityScore(CNVs_G, CNProbs_G)
+        qs_A = callCNVs.qualityScores.calcQualityScore(CNVs_A, likelihoods_A, transMatrix)
+        qs_G = callCNVs.qualityScores.calcQualityScore(CNVs_G, likelihoods_G, transMatrix)
     except Exception as e:
         traceback.print_exc()
         raise Exception("getCNVsQualityScore failed: %s", repr(e))
