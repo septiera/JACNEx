@@ -231,19 +231,10 @@ def main(argv):
     # The CN1 (single copy loss) and CN3+ (copy gain) profiles are deduced from the parameters
     # of the Gaussian distribution established for CN2. Based on the assumption that CN1 and
     # CN3 represent deviations from the CN2 state.
-
-    # build root name for pie charts
-    pieChartFileRoot = os.path.basename(outFile)
-    # remove file extension (.tsv probably), and also .gz if present
-    if pieChartFileRoot.endswith(".gz"):
-        pieChartFileRoot = os.path.splitext(pieChartFileRoot)[0]
-    pieChartFileRoot = os.path.splitext(pieChartFileRoot)[0]
-    pieChartFileRoot = os.path.join(plotDir, pieChartFileRoot)
-
     try:
         (CN2Params_A, CN2Params_G) = callCNVs.exonProfiling.calcCN2Params(autosomeFPMs, gonosomeFPMs, samples,
                                                                           uncaptThreshold, clust2samps, fitWith,
-                                                                          clustIsValid, pieChartFileRoot, jobs)
+                                                                          clustIsValid, plotDir, jobs)
     except Exception as e:
         raise Exception("calcCN2Params failed: %s", repr(e))
 

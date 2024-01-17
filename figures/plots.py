@@ -282,6 +282,7 @@ def plotPieChart(clustID, filterStates, exStatusArray, plotDir):
     matplotlib.pyplot.close()
     matplotOpenFile.close()
 
+
 #############################################################
 # barPlot
 # Creates a bar plot of copy number frequencies based on the count array.

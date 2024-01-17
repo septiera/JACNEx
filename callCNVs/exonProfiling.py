@@ -64,7 +64,7 @@ def calcCN0Params(intergenicsFPM):
 # - clust2samps (dict): Mapping of cluster IDs to sample lists.
 # - fitWith (dict): Mapping of cluster IDs to related cluster IDs.
 # - clustIsValid (dict): Indicates validity of each cluster.
-# - pieChartFileRoot [str]: folder path for saving a pieChart representing
+# - plotDir [str]: folder path for saving a pieChart representing
 #   the summary of exon filtering by cluster.
 # - jobs [int]: Number of jobs for parallel processing.
 #
@@ -73,7 +73,7 @@ def calcCN0Params(intergenicsFPM):
 #                       value==np.ndarray[floats] dim=NbOfExons*["loc", "scale"].
 # - CN2Params_G (dict): same as CN2Params_A but for gonosomal clusters.
 def calcCN2Params(autosomeFPMs, gonosomeFPMs, samples, uncaptThreshold,
-                  clust2samps, fitWith, clustIsValid, pieChartFileRoot, jobs):
+                  clust2samps, fitWith, clustIsValid, plotDir, jobs):
     # initialize output dictionaries
     CN2Params_A = {}
     CN2Params_G = {}
@@ -107,10 +107,10 @@ def calcCN2Params(autosomeFPMs, gonosomeFPMs, samples, uncaptThreshold,
             # Determine the type of chromosome and submit the cluster for processing
             if clusterID.startswith("A"):
                 processCN2Cluster(clusterID, autosomeFPMs[:, sampsInd], uncaptThreshold, CN2Params_A,
-                                  pieChartFileRoot, pool)
+                                  plotDir, pool)
             elif clusterID.startswith("G"):
                 processCN2Cluster(clusterID, gonosomeFPMs[:, sampsInd], uncaptThreshold, CN2Params_G,
-                                  pieChartFileRoot, pool)
+                                  plotDir, pool)
             else:
                 logger.error("Unknown chromosome type for cluster %s.", clusterID)
                 raise
@@ -177,11 +177,11 @@ def getSampIndexes(clusterID, clust2samps, samp2Index, fitWith):
 # - exonsFPMs (np.ndarray): Fragment counts for the cluster.
 # - uncaptThreshold (float): Threshold for uncaptured exons.
 # - CN2Params (dict): Dictionary to store CN2 parameters.
-# - pieChartFileRoot [str]: folder path for saving a pieChart representing
+# - plotDir [str]: folder path for saving a pieChart representing
 #   the summary of exon filtering by cluster.
 # - pool (ProcessPoolExecutor): Pool of workers for parallel processing.
-def processCN2Cluster(clusterID, exonsFPMs, uncaptThreshold, CN2Params, pieChartFileRoot, pool):
-    future_res = pool.submit(computeClusterCN2Params, exonsFPMs, uncaptThreshold, clusterID, pieChartFileRoot)
+def processCN2Cluster(clusterID, exonsFPMs, uncaptThreshold, CN2Params, plotDir, pool):
+    future_res = pool.submit(computeClusterCN2Params, exonsFPMs, uncaptThreshold, clusterID, plotDir)
     future_res.add_done_callback(lambda future: updateCN2Params(future, CN2Params, clusterID))
 
 
@@ -216,13 +216,13 @@ def updateCN2Params(future_clusterMetrics, CN2Params, clusterID):
 # - exonFPMs (np.ndarray[floats]): normalised counts from exons
 # - uncaptThreshold [float]: threshold for determining if an exon is captured or not.
 # - clusterID (str): Identifier of the processed cluster.
-# - pieChartFileRoot [str]: folder path for saving a pieChart representing
+# - plotDir [str]: folder path for saving a pieChart representing
 #   the summary of exon filtering by cluster.
 #
 # Returns:
 # - CN2Params (np.ndarray[floats]): dim: NBofExons x NBofMetrics.
 #                                        Metrics include 'loc' (mean) and 'scale' (standard deviation) for each exon.
-def computeClusterCN2Params(exonFPMs, uncaptThreshold, clusterID, pieChartFileRoot):
+def computeClusterCN2Params(exonFPMs, uncaptThreshold, clusterID, plotDir):
     # Possible filtering states for exons
     filterStates = ["notCaptured", "cannotFitRG", "RGClose2LowThreshold", "fewSampsInRG", "call"]
 
@@ -251,7 +251,7 @@ def computeClusterCN2Params(exonFPMs, uncaptThreshold, clusterID, pieChartFileRo
     # DEBUG: Generate a pie chart summarizing the filter states for the cluster
     if logger.isEnabledFor(logging.DEBUG):
         try:
-            figures.plots.plotPieChart(clusterID, filterStates, filterStatesVec, pieChartFileRoot)
+            figures.plots.plotPieChart(clusterID, filterStates, filterStatesVec, plotDir)
         except Exception as e:
             logger.error("plotPieChart failed for cluster %s: %s", clusterID, repr(e))
             raise
