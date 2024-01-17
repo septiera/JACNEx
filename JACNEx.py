@@ -12,6 +12,7 @@ from datetime import datetime
 ####### MAGE-CNV modules
 import s1_countFrags
 import s2_clusterSamps
+import s3_callCNVs
 
 
 ###############################################################################
@@ -35,8 +36,7 @@ def parseArgs(argv):
     # sys.argv-like lists for each mageCNV step
     step1Args = ["s1_countFrags.py"]
     step2Args = ["s2_clusterSamps.py"]
-    step3Args = ["s3_CNCalls.py"]
-    step4Args = ["s4_TBN.py"]
+    step3Args = ["s3_callCNVs.py"]
 
     # default values of global optional args, as strings
     # jobs default: 80% of available cores
@@ -51,8 +51,6 @@ def parseArgs(argv):
 
     # default values of step2 optional args, as strings
     minSamps = "20"
-    maxCorr = "0.95"
-    minCorr = "0.85"
 
     usage = "NAME:\n" + scriptName + """\n
 DESCRIPTION:
@@ -78,15 +76,12 @@ Step 1 optional arguments, defaults should be OK:
 
 Step 2 optional arguments, defaults should be OK:
    --minSamps [int]: blablabla, default : """ + minSamps + """
-   --maxCorr [float]: blablabla, default : """ + maxCorr + """
-   --minCorr [float]: blablabla, default : """ + minCorr + """
-   --noGender : blablabla
 """
 
     try:
         opts, args = getopt.gnu_getopt(argv[1:], 'h', ["bams=", "bams-from=", "bed=", "workDir=", "jobs=",
                                                        "help", "tmp=", "padding=", "maxGap=", "samtools=",
-                                                       "minSamps=", "maxCorr=", "minCorr=", "noGender"])
+                                                       "minSamps="])
     except getopt.GetoptError as e:
         raise Exception(e.msg + ". Try " + scriptName + " --help")
     if len(args) != 0:
@@ -102,11 +97,8 @@ Step 2 optional arguments, defaults should be OK:
             step1Args.extend([opt, value])
         elif opt in ("--jobs"):
             step1Args.extend([opt, value])
-            step3Args.extend([opt, value])
-        elif opt in ("--minSamps", "--maxCorr", "--minCorr"):
+        elif opt in ("--minSamps"):
             step2Args.extend([opt, value])
-        elif opt in ("--noGender"):
-            step2Args.append(opt)
         else:
             raise Exception("unhandled option " + opt)
 
@@ -124,11 +116,9 @@ Step 2 optional arguments, defaults should be OK:
 
     if "--minSamps" not in step2Args:
         step2Args.extend(["--minSamps", minSamps])
-    if "--maxCorr" not in step2Args:
-        step2Args.extend(["--maxCorr", maxCorr])
-    if "--minCorr" not in step2Args:
-        step2Args.extend(["--minCorr", minCorr])
 
+    if "--padding" not in step3Args:
+        step3Args.extend(["--padding", padding])
     if "--jobs" not in step3Args:
         step3Args.extend(["--jobs", jobs])
 
@@ -143,7 +133,7 @@ Step 2 optional arguments, defaults should be OK:
             raise Exception("workDir " + workDir + " doesn't exist and can't be mkdir'd: " + str(e))
 
     # AOK, return everything that's needed
-    return(workDir, step1Args, step2Args, step3Args, step4Args)
+    return(workDir, step1Args, step2Args, step3Args)
 
 
 ####################################################
@@ -197,11 +187,10 @@ def findBestPrevCF(countsFilesAll, samples):
 def main(argv):
     # strings for each step, for log messages / exception names
     stepNames = ("STEP0 - CHECK/MAKE SUBDIR HIERARCHY -", "STEP1 - COUNT FRAGMENTS -",
-                 "STEP2 - CLUSTER SAMPLES -", "STEP3 - CALL EXON-LEVEL CNs -",
-                 "STEP4 - CALL CNVs -")
+                 "STEP2 - CLUSTER SAMPLES -", "STEP3 - CALL CNVs -")
 
     # parse, check and preprocess arguments
-    (workDir, step1Args, step2Args, step3Args, step4Args) = parseArgs(argv)
+    (workDir, step1Args, step2Args, step3Args) = parseArgs(argv)
     logger.info("called with: " + " ".join(argv[1:]))
 
     ##################
@@ -231,7 +220,15 @@ def main(argv):
         except Exception:
             raise Exception(stepNames[0] + " clustersDir " + clustersDir + "doesn't exist and can't be mkdir'd")
 
-    # step2: QC plots from step2 go in date-stamped subdirs of plotDir
+    # step3: callsFiles are saved (date-stamped and gzipped) in callsDir
+    callsDir = workDir + '/CallFiles/'
+    if not os.path.isdir(callsDir):
+        try:
+            os.mkdir(callsDir)
+        except Exception:
+            raise Exception(stepNames[0] + " callsDir " + callsDir + "doesn't exist and can't be mkdir'd")
+
+    # QC plots from step2 and step3 go in date-stamped subdirs of plotDir
     plotDir = workDir + '/QCPlots/'
     if not os.path.isdir(plotDir):
         try:
@@ -302,6 +299,29 @@ def main(argv):
 
         #########
         # complement step3Args and check them
+        thisPlotDir = plotDir + 'exonFilteringPieCharts_' + dateStamp
+        if os.path.isdir(thisPlotDir):
+            raise Exception(stepNames[3] + " plotDir " + thisPlotDir + " already exists")
+        step3Args.extend(["--plotDir", thisPlotDir])
+
+        # new callsFile to create
+        callsFile = callsDir + '/callsFile_' + dateStamp + '.vcf.gz'
+        if os.path.isfile(callsFile):
+            raise Exception(stepNames[3] + " callsFile " + callsFile + " already exists")
+        step3Args.extend(["--out", callsFile])
+
+        step3ArgsForCheck = step3Args.copy()
+        step3ArgsForCheck.extend(["--counts", bogusFile])
+        step3ArgsForCheck.extend(["--clusts", bogusFile])
+
+        # check step3 args, discarding results
+        try:
+            s3_callCNVs.parseArgs(step3ArgsForCheck)
+        except Exception as e:
+            raise Exception(stepNames[3] + " parseArgs problem: " + str(e))
+
+        #########
+        # complement step3Args and check them
         # TODO similarly to step2, using bogusFile for --counts and --clusters
 
     ######################
@@ -336,6 +356,18 @@ def main(argv):
         logger.error("%s FAILED: %s", stepNames[2], str(e))
         raise Exception("STEP2 FAILED, check log")
     logger.info("%s DONE", stepNames[2])
+
+    #########
+    # step 3
+    logger.info("%s STARTING", stepNames[3])
+    step3Args.extend(["--counts", countsFile])
+    step3Args.extend(["--clusts", clustersFile])
+    try:
+        s3_callCNVs.main(step3Args)
+    except Exception as e:
+        logger.error("%s FAILED: %s", stepNames[3], str(e))
+        raise Exception("STEP3 FAILED, check log")
+    logger.info("%s DONE", stepNames[3])
 
     logger.info("ALL DONE")
 

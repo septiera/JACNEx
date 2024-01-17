@@ -17,7 +17,7 @@ Example:
 ```
 BAMS="BAMs/sample1.bam,BAMs/sample2.bam"
 BED="Transcripts_Data/ensemblCanonicalTranscripts.bed.gz"
-python MAGe_CNV/1_countFrags.py --bams $BAMS --bed $BED --tmp /mnt/RamDisk/ --jobs 30 > fragCounts.tsv 2> step1.log
+python JACNEx/s1_countFrags.py --bams $BAMS --bed $BED --tmp /mnt/RamDisk/ --jobs 30 > fragCounts.tsv 2> step1.log
 ```
 
 ##### STEP 2 : Samples clustering <br>
@@ -30,9 +30,26 @@ In addition, all graphical support (quality control histogram for each sample an
 Example:
 ```
 COUNT="fragCounts.tsv"
-python MAGe_CNV/2_clusterSamps.py --counts $COUNT > resClustering.tsv 2> step2.log
+python JACNEx/s2_clusterSamps.py --counts $COUNT > resClustering.tsv 2> step2.log
 ```
 ##### STEP 3 : Copy numbers calls<br>
+Accepts exon fragment count data (from 1_countFrags.py) and sample clustering information (from 2_clusterSamps.py) as input.<br>
+Performs several critical operations:<br>
+    a) Determines parameters for CN0 (half Gaussian) and CN2 (Gaussian) distributions for autosomal and gonosomal exons.<br>
+    b) Excludes non-interpretable exons based on set criteria.<br>
+    c) Calculates likelihoods for each CN state across exons and samples.<br>
+    d) Generates a transition matrix for CN state changes.<br>
+    e) Applies a Hidden Markov Model (HMM) to call and group CNVs.<br>
+    f) Outputs the CNV calls in VCF format.<br>
+The script utilizes multiprocessing for efficient computation and is structured to handle errors and exceptions effectively, providing clear error messages for troubleshooting.<br>
+In addition, pie chart summarising exon filtering are produced as pdf files in plotDir.<br>
+
+Example:
+```
+COUNT="fragCounts.tsv"
+CLUST="clusters.tsv"
+python JACNEx/s3_callCNVs.py --counts $COUNT --clusts $CLUST > callCNVs.vcf 2> step3.log
+```
 
 ### CONFIGURATION:
 

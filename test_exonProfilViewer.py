@@ -138,156 +138,207 @@ ARGUMENTS:
 # - samps2ExonInd_A (dict): key==sampleID, value==List of exon indexes matching autosomal exons.
 # - samps2ExonInd_G (dict): same as samps2ExonInd_A for gonosomes
 def parseUserTSV(userTSV, samples, autosomeExons, gonosomeExons):
-    # Helper function to find the index of an exon in a list of exons based on the exon identifier.
-    def findExIndex(exonList, ei):
-        return next((i for i, exon in enumerate(exonList) if exon[3] == ei), None)
-
-    # Helper function to open a file, which can be a regular text file or a gzipped file.
-    def openFile(filePath):
-        return gzip.open(filePath, "rt") if filePath.endswith(".gz") else open(filePath)
 
     if not os.path.exists(userTSV):
         raise FileNotFoundError(f"User TSV file {userTSV} does not exist.")
 
-    # Initialize dictionaries to hold the mapping of sample IDs to exon indices.
+    sample_set = set(samples)
+    autosome_dict = {exon[3]: idx for idx, exon in enumerate(autosomeExons)}
+    gonosome_dict = {exon[3]: idx for idx, exon in enumerate(gonosomeExons)}
+
     samps2ExonInd_A, samps2ExonInd_G = {}, {}
 
-    # Open the TSV file and iterate over each line.
-    with openFile(userTSV) as file:
+    with gzip.open(userTSV, "rt") if userTSV.endswith(".gz") else open(userTSV) as file:
         for line in file:
-            # Split each line into sample ID and exon ENST identifier.
             sID, exENST = line.rstrip().split("\t", maxsplit=1)
-            # Check if the sample ID is in the list of valid samples.
-            if sID in samples:
-                # Find the exon index in autosomal and gonosomal lists.
-                ei_A = findExIndex(autosomeExons, exENST)
-                ei_G = findExIndex(gonosomeExons, exENST) if ei_A is None else None
-
-                # Update the dictionaries with the found exon indices.
-                if ei_A is not None:
-                    samps2ExonInd_A.setdefault(sID, []).append(ei_A)
-                elif ei_G is not None:
-                    samps2ExonInd_G.setdefault(sID, []).append(ei_G)
-                else:
-                    logger.error(f"Exon identifier {exENST} not found in provided exon lists.")
-                    raise ValueError(f"Exon identifier {exENST} not found.")
-            else:
+            if sID not in sample_set:
                 logger.error(f"Sample name {sID} not found in provided samples list.")
-                raise ValueError(f"Sample name {sID} not found.")
+                continue
+
+            ei_A = autosome_dict.get(exENST)
+            ei_G = gonosome_dict.get(exENST) if ei_A is None else None
+
+            if ei_A is not None:
+                samps2ExonInd_A.setdefault(sID, []).append(ei_A)
+            elif ei_G is not None:
+                samps2ExonInd_G.setdefault(sID, []).append(ei_G)
+            else:
+                logger.error(f"Exon identifier {exENST} not found in provided exon lists.")
 
     return (samps2ExonInd_A, samps2ExonInd_G)
 
 
-#############################################################
-# filterExonsAndComputeCN2Params
-# filter exons based on their FPM values and compute parameters for copy number variation (CNV) analysis.
-# It evaluates each exon to determine its filtering state and calculates the mean and standard deviation
-# for the FPMs of exons that are not filtered out.
-# If an error occurs during the filtering or calculation, the function logs the error and raises an exception.
+###########################################################################
+# createExonPlotsPDF
+# Main function to create PDF files containing exon plots.
 #
 # Args:
-# - targetFPMs (np.ndarray[floats]): FPM values for exons across cluster samples.
-# - uncaptThreshold [float]: A threshold value for filtering out uncaptured FPMs.
+# - pdfFile [str]: Path to the PDF file where plots will be saved.
+# - samps2ExonInd_A (dict): key==sampleID, value==List of exon indexes matching autosomal exons.
+# - samps2ExonInd_G (dict): same as samps2ExonInd_A for gonosomes
+# - autosomeFPMs (np.ndarray[floats]): exon FPMs for autosomes. dim=[NBofExons, NBofSamps]
+# - gonosomeFPMs (np.ndarray[floats])
+# - intergenicFPMs (np.ndarray[floats])
+# - autosomeExons (list of lists[str, int, int, str]): autosomal exon information.
+# - gonosomeExons (list of lists[str, int, int, str])
+# - other_params: Additional parameters required for plotting.
+def createExonPlotsPDF(pdfFile, samps2ExonInd_A, samps2ExonInd_G, autosomeFPMs, gonosomeFPMs, intergenicFPMs,
+                       autosomeExons, gonosomeExons, other_params):
+    hnorm_loc, hnorm_scale, uncaptThreshold = computeCN0Parameters(intergenicFPMs)
+
+    other_params['hnorm_loc'] = hnorm_loc
+    other_params['hnorm_scale'] = hnorm_scale
+    other_params['uncaptThreshold'] = uncaptThreshold
+
+    if len(samps2ExonInd_A) != 0:
+        createPlotsForChromosomeType(0, samps2ExonInd_A, autosomeFPMs, autosomeExons, "_autosomes.pdf", pdfFile, other_params)
+    elif len(samps2ExonInd_G) != 0:
+        createPlotsForChromosomeType(1, samps2ExonInd_G, gonosomeFPMs, gonosomeExons, "_gonosomes.pdf", pdfFile, other_params)
+    else:
+        raise
+
+
+##########################################
+# computeCN0Parameters
+# Computes parameters for CN0 (Copy Number 0) based on intergenic FPMs.
 #
-# Returns a tuple (CN2params, filterStatesVec):
-# - CN2ParamsArray (np.ndarray[floats]): calculated robustly Gaussian parameters for each exon,
-#                                       including mean (loc) and standard deviation (scale)
-#                                       for exons passing the two firsts filtering criteria
-#                                       ("notCaptured", "cannotFitRG").
-# - filterStatesVec (np.ndarray[ints]): filter state index of each exon.
-def filterExonsAndComputeCN2Params(targetFPMs, uncaptThreshold):
-    # Possible filtering states for exons
+# Args:
+# - intergenicFPMs (np.ndarray[floats]): Array of FPMs for intergenic regions.
+#
+# Returns a tuple containing hnorm_loc (half Gaussian mean), hnorm_scale (half Gaussian standard deviation),
+# and uncaptThreshold (threshold for uncaptured FPMs).
+def computeCN0Parameters(intergenicFPMs):
+    try:
+        (hnorm_loc, hnorm_scale, uncaptThreshold) = callCNVs.exonProcessing.computeCN0Params(intergenicFPMs)
+        return hnorm_loc, hnorm_scale, uncaptThreshold
+    except Exception as e:
+        logger.error("computeCN0Params failed: %s", repr(e))
+        raise
+
+
+##########################################
+# createPlotsForChromosomeType
+# Creates exon plots for a specific chromosome type (autosomes or gonosomes).
+#
+# Args:
+# - chromType [int]: Type of chromosome (0='autosomes' or 1='gonosomes').
+# - samps2ExonInd (dict): key==sampleID, value==List of exon indexes
+# - FPMs (np.ndarray[floats])
+# - exons (list of lists[str, int, int, str])
+# - pdfFileSuffix [str]: Suffix for the PDF file name.
+# - pdfFile [str]: Path to the base PDF file.
+# - other_params: Additional parameters for plotting.
+def createPlotsForChromosomeType(chromType, samps2ExonInd, FPMs, exons, pdfFileSuffix, pdfFile, other_params):
+    try:
+        pdfFile = generatePDFRootName(pdfFile, pdfFileSuffix)
+        generateClusterExonPlots(chromType, samps2ExonInd, FPMs, exons, other_params, pdfFile)
+    except Exception as e:
+        logger.error(f"generateClusterExonPlots failed for {chromType}: {repr(e)}")
+        raise
+
+
+#####################################
+# Generate root name for output PDF files.
+# returns a new PDF file name with the given suffix.
+def generatePDFRootName(pdfFile, suffix):
+    rootFileName = os.path.splitext(pdfFile)[0]
+    return rootFileName + suffix
+
+
+######################################
+# generateClusterExonPlots
+# Generates exon plots for a cluster of samples.
+#
+# Args:
+# - chromType [int]: Type of chromosome.
+# - samps2Check (dict): key==sampleID, value==List of exon indexes
+# - FPMs (np.ndarray[floats])
+# - exons (list of lists[str, int, int, str])
+# - other_params: Additional parameters required for plotting.
+# - pdfFile: Path to the PDF file for saving plots.
+def generateClusterExonPlots(chromType, samps2Check, FPMs, exons, other_params, pdfFile):
+    matplotlib.pyplot.close('all')
+    matplotOpenFile = matplotlib.backends.backend_pdf.PdfPages(pdfFile)
+    samp2Index = {sample: i for i, sample in enumerate(other_params['samples'])}
+
+    try:
+        for sampID, exonIndexes in samps2Check.items():
+            plotExonsForSample(sampID, exonIndexes, chromType, samp2Index, FPMs, exons, other_params, matplotOpenFile)
+    except Exception as e:
+        logger.error(f"Error processing exon plots: {e}")
+    finally:
+        matplotOpenFile.close()
+
+
+##################################
+# plotExonsForSample
+# Handles plotting of exons for a specific sample.
+#
+# Args:
+# - sampID [str]
+# - exonIndexes (list[int])
+# - chromType [int]
+# - samp2Index(dict): key==sampleID, value==List of exon indexes
+# - FPMs (np.ndarray[floats])
+# - exons (list of lists[str, int, int, str])
+# - other_params: Additional parameters required for plotting.
+# - matplotOpenFile: Matplotlib PDF file object for saving plots.
+def plotExonsForSample(sampID, exonIndexes, chromType, samp2Index, FPMs, exons, other_params, matplotOpenFile):
+    samp2clusts = other_params['samp2clusts']
+    clust2samps = other_params['clust2samps']
+    fitWith = other_params['fitWith']
+    unCaptFPMLimit = other_params['uncaptThreshold']
+    hnorm_loc = other_params["hnorm_loc"]
+    hnorm_scale = other_params["hnorm_scale"]
+
+    clusterID = samp2clusts[sampID][chromType]
+    exonIndexes = np.array(exonIndexes)
+
+    sampsInClust = callCNVs.exonProcessing.getSampIndexes(clusterID, clust2samps, samp2Index, fitWith)
+    sampsInClust = np.array(sampsInClust)
+
+    targetFPMs = FPMs[exonIndexes[:, None], sampsInClust]
+    CN2params, filterStatesVec = computeExonCNVParameters(targetFPMs, unCaptFPMLimit)
+
+    for ei, realExInd in enumerate(exonIndexes):
+        if filterStatesVec[ei] < 2:
+            logger.warning(f"Skipping plot for exon index {realExInd}, sample {sampID}, cluster {clusterID}")
+            continue
+
+        try:
+            getReadyPlotExon(sampID, realExInd, clusterID, FPMs[realExInd, samp2Index[sampID]], targetFPMs[ei],
+                             CN2params[ei], filterStatesVec[ei], exons[realExInd], hnorm_loc, hnorm_scale, matplotOpenFile)
+        except Exception as e:
+            logger.error(f"Plotting failed for exon index {realExInd}, sample {sampID}, cluster {clusterID}: {e}")
+            continue
+
+
+############################################
+# computeExonCNVParameters
+# Computes parameters for exon Copy Number Variation (CNV) analysis.
+#
+# Args:
+# - targetFPMs (np.ndarray[floats]): Target FPM values for exons across cluster samples.
+# - uncaptThreshold [float]: Threshold value for filtering out uncaptured FPMs.
+#
+# Returns a tuple containing CN2ParamsArray (array of CN2 parameters for each exon,
+# including mean and standard deviation) and filterStatesVec (array of filter state indices for each exon).
+def computeExonCNVParameters(targetFPMs, uncaptThreshold):
     filterStates = ["notCaptured", "cannotFitRG", "RGClose2LowThreshold", "fewSampsInRG", "call"]
-
-    # Define parameter identifiers for CN2 metrics
     paramsID = ["loc", "scale"]
-
-    # Initialize an array to store CN2 parameters with a default value of -1
     CN2ParamsArray = np.full((targetFPMs.shape[0], len(paramsID)), -1, dtype=np.float64)
-
-    # Vector to keep track of the filter state for each exon
     filterStatesVec = np.zeros(targetFPMs.shape[0], dtype=int)
 
-    # Process each exon to determine its filter state and compute CN2 parameters
     for exonIndex, exFPMs in enumerate(targetFPMs):
         try:
-            # Apply filtering and update parameters for the current exon
             filterState, exonCN2Params = callCNVs.exonProcessing.evaluateAndComputeExonMetrics(exFPMs, uncaptThreshold, paramsID)
             filterStatesVec[exonIndex] = filterStates.index(filterState)
-            if filterState == 'call':
-                # Update CN2ParamsArray only for exon calls
-                CN2ParamsArray[exonIndex] = exonCN2Params
+            CN2ParamsArray[exonIndex] = exonCN2Params
         except Exception as e:
-            logger.error("Error evaluateAndComputeExonMetrics exon index %i: %s", exonIndex, repr(e))
+            logger.error(f"Error processing exon metrics: {e}")
             raise
 
     return (CN2ParamsArray, filterStatesVec)
-
-
-########################
-# generateClusterExonPlots
-# processes exon data for a given set of samples, identifying clusters of samples and generating
-# plots for each exon within these clusters.
-# It filters the exons based on predefined conditions, computes the copy number variation (CNV) parameters,
-# and creates plots for exons that pass the filtering criteria.
-# If plotting fails due to an exception, the function logs the error and proceeds with the next exon.
-# The function ensures all plots are saved into a single PDF file.
-#
-# Args:
-# - chromType [int]: type of chrom being processed (0 autosomes, 1 gonosomes).
-# - samps2Check (dict): key==sampleID, value==exon indexes list.
-# - FPMsArray (np.ndarray[floats]): FPM for a given exon across samples.
-# - exonsInfos (list[str, int, int, str]): information about each exon[CHR, START, END, EXONID].
-# - samples (list[strs]):sample IDs corresponding to the columns in FPMsArray.
-# - clust2samps (dict): key==clusterID, value==sampleIDs list.
-# - samp2clusts (dict): key==sampleID, value==their respective clusterIDs [autosomes, gonosomes].
-# - fitWith (dict): key==clusterID, value== fitwith clusterIDs list.
-# - hnorm_loc [float]: half Gaussian mean.
-# - hnorm_scale: half Gaussian stdev.
-# - unCaptFPMLimit: A threshold value for filtering out uncaptured FPMs in the analysis.
-# - pdfFile: The file path for the PDF where the plots will be saved.
-def generateClusterExonPlots(chromType, samps2Check, FPMsArray, exonsInfos, samples, clust2samps, samp2clusts,
-                             fitWith, hnorm_loc, hnorm_scale, unCaptFPMLimit, pdfFile):
-    matplotOpenFile = matplotlib.backends.backend_pdf.PdfPages(pdfFile)
-
-    samp2Index = {sample: i for i, sample in enumerate(samples)}
-
-    for sampID in samps2Check:
-        clusterID = samp2clusts[sampID][chromType]
-        exonIndexes = np.array(samps2Check[sampID])  # Assurez-vous que c'est un np.array d'entiers
-        
-        # Vérifiez que les indices d'exon sont dans les limites
-        if np.any(exonIndexes >= FPMsArray.shape[0]):
-            raise IndexError(f"Exon index out of bounds for cluster {clusterID}. Max allowed index is {FPMsArray.shape[0]-1}, but got index {exonIndexes.max()}.")
-
-        sampsInClust = callCNVs.exonProcessing.getSampIndexes(clusterID, clust2samps, samp2Index, fitWith)
-        sampsInClust = np.array(sampsInClust)  # Assurez-vous que c'est un np.array d'entiers
-        
-        # Vérifiez que les indices des échantillons sont dans les limites
-        if np.any(sampsInClust >= FPMsArray.shape[1]):
-            raise IndexError(f"Sample index out of bounds for cluster {clusterID}. Max allowed index is {FPMsArray.shape[1]-1}, but got index {sampsInClust.max()}.")
-
-        # Si aucune erreur, procéder avec l'accès sécurisé
-        targetFPMs = FPMsArray[np.ix_(exonIndexes, sampsInClust)]
-
-        CN2params, filterStatesVec = filterExonsAndComputeCN2Params(targetFPMs, unCaptFPMLimit)
-
-        for ei in exonIndexes:
-            sampExFPM = FPMsArray[ei, samp2Index[sampID]]  # Direct lookup from the dictionary
-            if filterStatesVec[ei] < 2:
-                warning_message = f"Skipping plot for exon index {ei}, sample {sampID}, cluster {clusterID}..."
-                logger.warning(warning_message)
-                continue
-
-            try:
-                getReadyPlotExon(sampID, ei, clusterID, sampExFPM, targetFPMs[ei], CN2params[ei], filterStatesVec[ei],
-                                 exonsInfos[ei], hnorm_loc, hnorm_scale, matplotOpenFile)
-            except Exception as e:
-                error_message = f"Plotting failed for exon index {ei}, sample {sampID}, cluster {clusterID}: {e}"
-                logger.error(error_message)
-                continue  # Continue with the next exon
-
-    matplotOpenFile.close()
 
 
 ######################################
@@ -311,7 +362,7 @@ def getReadyPlotExon(sampID, ei, clusterID, sampExFPM, exClustFPMs, exCN2params,
     ##### init graphic parameters
     # definition of a range of values that is sufficiently narrow to have
     # a clean representation of the adjusted distributions.
-    xi = np.linspace(0, np.max(sampExFPM), len(exClustFPMs) * 3)
+    xi = np.linspace(0, np.max(exClustFPMs), len(exClustFPMs) * 3)
 
     exonInfo = '_'.join(map(str, exInfos))
     plotTitle = f"Cluster:{clusterID}, NbSamps:{len(exClustFPMs)}, exonInd:{ei}\nexonInfos:{exonInfo}, filteringState:{exfilterState}"
@@ -446,41 +497,18 @@ def main(argv):
     logger.debug("Done parsing UserTSV, in %.2f s", thisTime - startTime)
     startTime = thisTime
 
-    ###################
-    # fit CN0
+    ####################
+    # plot exon profil
     try:
-        (hnorm_loc, hnorm_scale, uncaptThreshold) = callCNVs.exonProcessing.computeCN0Params(intergenicFPMs)
+        other_params = {'samples': samples, 'clust2samps': clust2samps, 'samp2clusts': samp2clusts, 'fitWith': fitWith}
+        createExonPlotsPDF(pdfFile, samps2ExonInd_A, samps2ExonInd_G, autosomeFPMs, gonosomeFPMs, intergenicFPMs,
+                           autosomeExons, gonosomeExons, other_params)
     except Exception as e:
-        raise Exception("computeCN0Params failed: %s", repr(e))
+        raise Exception("generateExonPlots failed for %s : %s", tocheckFile, repr(e))
 
     thisTime = time.time()
-    logger.debug("Done computeCN0Params, loc=%.2f, scale=%.2f, uncapThreshold=%.2f in %.2f s",
-                 hnorm_loc, hnorm_scale, uncaptThreshold, thisTime - startTime)
+    logger.debug("Done generateExonPlots, in %.2f s", thisTime - startTime)
     startTime = thisTime
-
-    # build root name for output pdfs, will just need to append autosomes.pdf or gonosomes.pdf
-    rootFileName = os.path.basename(pdfFile)
-    rootFileName = os.path.splitext(rootFileName)[0]
-
-    # autosomes
-    try:
-        chromType = 0
-        pdfFile_A = rootFileName + "_autosomes.pdf"
-        generateClusterExonPlots(chromType, samps2ExonInd_A, autosomeFPMs, autosomeExons, samples, clust2samps, samp2clusts,
-                                 fitWith, hnorm_loc, hnorm_scale, uncaptThreshold, pdfFile_A)
-    except Exception as e:
-        logger.error("generateClusterExonPlots failed for autosomes: %s", repr(e))
-        raise
-
-    # sex chromosomes
-    try:
-        chromType = 1
-        pdfFile_G = rootFileName + "_gonosomes.pdf"
-        generateClusterExonPlots(chromType, samps2ExonInd_G, gonosomeFPMs, gonosomeExons, samples, clust2samps, samp2clusts,
-                                 fitWith, hnorm_loc, hnorm_scale, uncaptThreshold, pdfFile_G)
-    except Exception as e:
-        logger.error("generateClusterExonPlots failed for autosomes: %s", repr(e))
-        raise
 
     thisTime = time.time()
     logger.debug("Done exon profil plots, in %.2f s", thisTime - startTime)
