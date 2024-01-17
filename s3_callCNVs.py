@@ -57,14 +57,13 @@ DESCRIPTION:
 Accepts exon fragment count data (from 1_countFrags.py) and sample clustering information
 (from 2_clusterSamps.py) as input.
 Performs several critical operations:
-    a) Normalizes fragment counts to Fragments Per Million (FPM).
-    b) Excludes non-interpretable exons based on set criteria.
-    c) Determines parameters for CN0 (half Gaussian) and CN2 (Gaussian) distributions for
+    a) Determines parameters for CN0 (half Gaussian) and CN2 (Gaussian) distributions for
        autosomal and gonosomal exons.
-    d) Calculates likelihoods for each CN state across exons and samples.
-    e) Generates a transition matrix for CN state changes.
-    f) Applies a Hidden Markov Model (HMM) to group CNV calls.
-    g) Outputs the CNV calls in VCF format.
+    b) Excludes non-interpretable exons based on set criteria.
+    c) Calculates likelihoods for each CN state across exons and samples.
+    d) Generates a transition matrix for CN state changes.
+    e) Applies a Hidden Markov Model (HMM) to call and group CNVs.
+    f) Outputs the CNV calls in VCF format.
 The script utilizes multiprocessing for efficient computation and is structured to handle
 errors and exceptions effectively, providing clear error messages for troubleshooting.
 In addition, pie chart summarising exon filtering are produced as pdf files in plotDir.
