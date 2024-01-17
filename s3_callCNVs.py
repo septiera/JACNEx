@@ -48,6 +48,7 @@ def parseArgs(argv):
     outFile = ""
     # optional args with default values
     padding = 10
+    plotDir = "./plotDir/"
     # jobs default: 80% of available cores
     jobs = round(0.8 * len(os.sched_getaffinity(0)))
 
@@ -66,6 +67,7 @@ Performs several critical operations:
     g) Outputs the CNV calls in VCF format.
 The script utilizes multiprocessing for efficient computation and is structured to handle
 errors and exceptions effectively, providing clear error messages for troubleshooting.
+In addition, pie chart summarising exon filtering are produced as pdf files in plotDir.
 
 ARGUMENTS:
     --counts [str]: TSV file, first 4 columns hold the exon definitions, subsequent columns
@@ -75,11 +77,13 @@ ARGUMENTS:
     --out [str]: file where results will be saved, must not pre-exist, will be gzipped if it ends
                  with '.gz', can have a path component but the subdir must exist.
     --padding [int] : number of bps used to pad the exon coordinates, default : """ + str(padding) + """
+    --plotDir [str]: subdir (created if needed) where plot files will be produced, default:  """ + plotDir + """
     --jobs [int]: cores that we can use, defaults to 80% of available cores ie """ + str(jobs) + "\n" + """
     -h , --help: display this help and exit\n"""
 
     try:
-        opts, args = getopt.gnu_getopt(sys.argv[1:], 'h', ["help", "counts=", "clusts=", "out=", "padding=", "jobs="])
+        opts, args = getopt.gnu_getopt(sys.argv[1:], 'h', ["help", "counts=", "clusts=", "out=", "padding=",
+                                                           "plotDir=", "jobs="])
     except getopt.GetoptError as e:
         raise Exception(e.msg + ". Try " + scriptName + " --help")
     if len(args) != 0:
@@ -97,6 +101,8 @@ ARGUMENTS:
             outFile = value
         elif opt in ("--padding"):
             padding = value
+        elif (opt in ("--plotDir")):
+            plotDir = value
         elif opt in ("--jobs"):
             jobs = value
         else:
@@ -130,6 +136,13 @@ ARGUMENTS:
     except Exception:
         raise Exception("padding must be a non-negative integer, not " + str(padding))
 
+    # test plotdir last so we don't mkdir unless all other args are OK
+    if not os.path.isdir(plotDir):
+        try:
+            os.mkdir(plotDir)
+        except Exception as e:
+            raise Exception("plotDir " + plotDir + " doesn't exist and can't be mkdir'd: " + str(e))
+
     try:
         jobs = int(jobs)
         if (jobs <= 0):
@@ -138,7 +151,7 @@ ARGUMENTS:
         raise Exception("jobs must be a positive integer, not " + str(jobs))
 
     # AOK, return everything that's needed
-    return(countsFile, clustsFile, outFile, padding, jobs)
+    return(countsFile, clustsFile, outFile, padding, plotDir, jobs)
 
 
 ###############################################################################
@@ -151,7 +164,7 @@ ARGUMENTS:
 # may be available in the log
 def main(argv):
     # parse, check and preprocess arguments
-    (countsFile, clustsFile, outFile, padding, jobs) = parseArgs(argv)
+    (countsFile, clustsFile, outFile, padding, plotDir, jobs) = parseArgs(argv)
 
     # args seem OK, start working
     logger.debug("called with: " + " ".join(argv[1:]))
@@ -218,10 +231,19 @@ def main(argv):
     # The CN1 (single copy loss) and CN3+ (copy gain) profiles are deduced from the parameters
     # of the Gaussian distribution established for CN2. Based on the assumption that CN1 and
     # CN3 represent deviations from the CN2 state.
+
+    # build root name for pie charts
+    pieChartFileRoot = os.path.basename(outFile)
+    # remove file extension (.tsv probably), and also .gz if present
+    if pieChartFileRoot.endswith(".gz"):
+        pieChartFileRoot = os.path.splitext(pieChartFileRoot)[0]
+    pieChartFileRoot = os.path.splitext(pieChartFileRoot)[0]
+    pieChartFileRoot = os.path.join(plotDir, pieChartFileRoot)
+
     try:
         (CN2Params_A, CN2Params_G) = callCNVs.exonProfiling.calcCN2Params(autosomeFPMs, gonosomeFPMs, samples,
                                                                           uncaptThreshold, clust2samps, fitWith,
-                                                                          clustIsValid, jobs)
+                                                                          clustIsValid, pieChartFileRoot, jobs)
     except Exception as e:
         raise Exception("calcCN2Params failed: %s", repr(e))
 
