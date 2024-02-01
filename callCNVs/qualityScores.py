@@ -71,14 +71,12 @@ def calculateCNVQualityScore(cnProbs, cnvCN2likelihoods, CN2toCN2probs):
 # - CN2toCN2probs [float]: transition probability from CN2 to CN2 state.
 #
 # Returns:
-# - CN2Probs [float]: aggregated probability for the CN2 state.
+# - probsPrev [float]: aggregated probability for the CN2 state.
 def calculateCN2Probs(cnvCN2likelihoods, CN2toCN2probs):
     # Extract probabilities for specified exons and exclude 'no call'
     validCN2Probs = cnvCN2likelihoods[cnvCN2likelihoods != -1]
     probsPrev = 1
-    CN2Probs = 0
-    for likelihoods in validCN2Probs:
-        CN2Probs = probsPrev * CN2toCN2probs * likelihoods
-        probsPrev = CN2Probs
 
-    return CN2Probs
+    for likelihoods in validCN2Probs:
+        probsPrev = probsPrev * CN2toCN2probs * likelihoods
+    return probsPrev
