@@ -56,7 +56,7 @@ python JACNEx/s3_callCNVs.py --counts $COUNT --clusts $CLUST > callCNVs.vcf 2> s
 
 ### DEPENDENCIES:
 It is necessary that all the software used are present. <br>
-Samtools (tested with v1.15.1): <br>
+Samtools (tested with v1.15.1 - v1.18): <br>
 ```
 wget https://github.com/samtools/samtools/releases/download/1.15.1/samtools-1.15.1.tar.bz2
 tar -vxjf samtools-1.15.1.tar.bz2
@@ -65,18 +65,26 @@ cd samtools-1.15.1
 make all all-htslib
 ```
 It is also necessary to have python version >= 3.7 (3.6 and earlier have a bug that breaks JACNEx).
-As well as the following modules:
+
+JACNEx also requires the following python modules:
+numpy scipy numba ncls matplotlib scikit-learn KDEpy
+We recommend the following commands, which cleanly install all the requirements in
+a virtual environment, using the system-wide versions if available:
 ```
-python3 -m venv ~/pyEnv_JACNEx
+PYTHON=python3.11 ### or python3, or python, or... on ALMA9 we use python3.11
+$PYTHON -m venv --system-site-packages ~/pyEnv_JACNEx
 source ~/pyEnv_JACNEx/bin/activate
 pip install --upgrade pip
-pip install numpy scipy numba ncls matplotlib scikit-learn KDEpy
-
-
-numpy v1.19.5
-scipy v1.5.4
-matplotlib v3.3.4
-scikit-learn v0.24.2
-KDEpy-1.1.0
-
+pip install numpy scipy matplotlib ncls numba scikit-learn KDEpy
 ```
+On an ALMA9 system today (12/02/2024) this uses the system-wide:
+numpy-1.23.5 (from python3.11-numpy-1.23.5-1.el9.x86_64)
+SciPy-1.10.1 (from python3.11-scipy-1.10.1-2.el9.x86_64)
+
+and it installs in ~/pyEnv_JACNEx/ :
+matplotlib-3.8.2
+ncls-0.0.68
+numba-0.59.0
+scikit-learn-1.4.0
+KDEpy-1.1.8
+
