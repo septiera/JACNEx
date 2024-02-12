@@ -66,8 +66,8 @@ make all all-htslib
 ```
 It is also necessary to have python version >= 3.7 (3.6 and earlier have a bug that breaks JACNEx).
 
-JACNEx also requires the following python modules:
-numpy scipy numba ncls matplotlib scikit-learn KDEpy
+JACNEx also requires the following python modules:<br>
+numpy scipy numba ncls matplotlib scikit-learn KDEpy<br>
 We recommend the following commands, which cleanly install all the requirements in
 a virtual environment, using the system-wide versions if available:
 ```
@@ -77,14 +77,14 @@ source ~/pyEnv_JACNEx/bin/activate
 pip install --upgrade pip
 pip install numpy scipy matplotlib ncls numba scikit-learn KDEpy
 ```
-On an ALMA9 system today (12/02/2024) this uses the system-wide:
-numpy-1.23.5 (from python3.11-numpy-1.23.5-1.el9.x86_64)
+On an ALMA9 system today (12/02/2024) this uses the system-wide:<br>
+numpy-1.23.5 (from python3.11-numpy-1.23.5-1.el9.x86_64)<br>
 SciPy-1.10.1 (from python3.11-scipy-1.10.1-2.el9.x86_64)
 
-and it installs in ~/pyEnv_JACNEx/ :
-matplotlib-3.8.2
-ncls-0.0.68
-numba-0.59.0
-scikit-learn-1.4.0
-KDEpy-1.1.8
+and it installs in ~/pyEnv_JACNEx/ :<br>
+matplotlib-3.8.2<br>
+ncls-0.0.68<br>
+numba-0.59.0<br>
+scikit-learn-1.4.0<br>
+KDEpy-1.1.8<br>
 
