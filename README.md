@@ -67,8 +67,8 @@ make all all-htslib
 It is also necessary to have python version >= 3.7 (3.6 and earlier have a bug that breaks JACNEx).
 As well as the following modules:
 ```
-python3 -m venv ~/pyEnv_MageCNV
-source ~/pyEnv_MageCNV/bin/activate
+python3 -m venv ~/pyEnv_JACNEx
+source ~/pyEnv_JACNEx/bin/activate
 pip install --upgrade pip
 pip install numpy scipy numba ncls matplotlib scikit-learn KDEpy
 
