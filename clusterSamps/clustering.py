@@ -78,19 +78,39 @@ def buildClusters(FPMarray, chromType, samples, minSize, plotFile):
     # build clusters from the linkage matrix
     (clust2samps, fitWith) = linkage2clusters(linkageMatrix, chromType, samples, minSize)
 
-    # define valid clusters, ie size (including FIT_WITH) >= minSize
+    # define valid clusters, ie size (including valid FIT_WITH) >= minSize
     clustSizeNoFW = {}
     clustIsValid = {}
+
+    # need to examine the clusters sorted by number of (other) clusters in their fitWith
+    nbFW2clusts = [None] * len(clust2samps)
+
     for clust in clust2samps:
         clustSizeNoFW[clust] = len(clust2samps[clust])
+        nbFW = len(fitWith[clust])
+        if not nbFW2clusts[nbFW]:
+            nbFW2clusts[nbFW] = []
+        nbFW2clusts[nbFW].append(clust)
+
+    for nbFW in range(len(nbFW2clusts)):
+        if nbFW2clusts[nbFW]:
+            for clust in nbFW2clusts[nbFW]:
+                size = clustSizeNoFW[clust]
+                for fw in fitWith[clust]:
+                    if clustIsValid[fw]:
+                        size += clustSizeNoFW[fw]
+                if size >= minSize:
+                    clustIsValid[clust] = True
+                else:
+                    clustIsValid[clust] = False
+
+    # remove invalid clusters from fitWith
     for clust in clust2samps:
-        size = clustSizeNoFW[clust]
+        validFWs = []
         for fw in fitWith[clust]:
-            size += clustSizeNoFW[fw]
-        if size >= minSize:
-            clustIsValid[clust] = True
-        else:
-            clustIsValid[clust] = False
+            if clustIsValid[fw]:
+                validFWs.append(fw)
+        fitWith[clust] = validFWs
 
     # produce and plot dendrogram
     if os.path.isfile(plotFile):
