@@ -7,12 +7,11 @@ import getopt
 import logging
 import os
 import sys
-import numpy as np
 import sklearn.decomposition
 import matplotlib.pyplot
 # from mpl_toolkits.mplot3d import Axes3D
 
-####### MAGE-CNV modules
+####### JACNEx modules
 import clusterSamps.clustFile
 import countFrags.countsFile
 import countFrags.bed

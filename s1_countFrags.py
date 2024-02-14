@@ -1,5 +1,5 @@
 ###############################################################################################
-######################################## MAGE-CNV step 1: count reads #########################
+######################################## JACNEx step 1: count reads ###########################
 ###############################################################################################
 # Given a BED of exons and one or more BAM files, count the number of sequenced fragments
 # from each BAM that overlap each exon (+- padding).
@@ -17,7 +17,7 @@ import logging
 import numpy as np
 from concurrent.futures import ProcessPoolExecutor
 
-####### MAGE-CNV modules
+####### JACNEx modules
 import countFrags.bed
 import countFrags.countsFile
 import countFrags.countFragments

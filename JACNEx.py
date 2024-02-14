@@ -9,7 +9,7 @@ import tempfile
 from datetime import datetime
 
 
-####### MAGE-CNV modules
+####### JACNEx modules
 import s1_countFrags
 import s2_clusterSamps
 import s3_callCNVs
@@ -25,7 +25,7 @@ import s3_callCNVs
 # strings (eg sys.argv).
 # Return a list with:
 # - everything needed by this module's main()
-# - one sys.argv-like list (as a list of strings) for each mageCNV step
+# - one sys.argv-like list (as a list of strings) for each JACNEx step
 # If anything is wrong, raise Exception("EXPLICIT ERROR MESSAGE")
 def parseArgs(argv):
     scriptName = os.path.basename(argv[0])
@@ -33,7 +33,7 @@ def parseArgs(argv):
     # args needed by main()
     workDir = ""
 
-    # sys.argv-like lists for each mageCNV step
+    # sys.argv-like lists for each JACNEx step
     step1Args = ["s1_countFrags.py"]
     step2Args = ["s2_clusterSamps.py"]
     step3Args = ["s3_callCNVs.py"]
@@ -123,7 +123,7 @@ Step 2 optional arguments, defaults should be OK:
         step3Args.extend(["--jobs", jobs])
 
     #####################################################
-    # process mageCNV.py-specific options, other options will be checked by s[1-4]_*.parseArgs()
+    # process JACNEx.py-specific options, other options will be checked by s[1-4]_*.parseArgs()
     if workDir == "":
         raise Exception("you must provide a workDir with --workDir. Try " + scriptName + " --help")
     elif not os.path.isdir(workDir):

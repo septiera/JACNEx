@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 # We currently normalize the counts as FPM, but we don't take into account
 # the size of the exons.
 # Question: shouldn't we normalize as FPMK = fragments per Million per KB of exon?
-# See: https://github.com/septiera/MAGe_CNV/issues/5#issuecomment-1434952464
+# See: https://github.com/septiera/JACNEx/issues/5#issuecomment-1434952464
 #
 # To answer this, we search here for a correlation between exon length and FPM.
 #

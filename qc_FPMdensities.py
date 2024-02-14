@@ -11,7 +11,7 @@ import matplotlib.backends.backend_pdf
 import os
 import sys
 
-####### MAGE-CNV modules
+####### JACNEx modules
 import countFrags.countsFile
 import figures.plots
 

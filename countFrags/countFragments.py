@@ -9,7 +9,7 @@ import numpy as np
 import ncls
 from concurrent.futures import ProcessPoolExecutor
 
-####### MAGE-CNV modules
+####### JACNEx modules
 import countFrags.bed
 
 # set up logger, using inherited config

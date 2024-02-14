@@ -9,7 +9,7 @@ import os
 import sys
 import traceback
 
-####### MAGE-CNV modules
+####### JACNEx modules
 import clusterSamps.clustFile
 
 # set up logger, using inherited config, in case we get called as a module

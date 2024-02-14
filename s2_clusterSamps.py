@@ -1,5 +1,5 @@
 ###############################################################################################
-######################################## MAGE-CNV step 2: Sample clustering  ##################
+######################################## JACNEx step 2: Sample clustering  ####################
 ###############################################################################################
 # Given a TSV of fragment counts as produced by 1_countFrags.py:
 # build clusters of samples that will be used as controls for one another.
@@ -12,7 +12,7 @@ import sys
 import time
 import traceback
 
-####### MAGE-CNV modules
+####### JACNEx modules
 import clusterSamps.clustering
 import clusterSamps.clustFile
 import countFrags.bed
