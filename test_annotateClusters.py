@@ -232,6 +232,8 @@ def parseMetadata(metadataFile):
             sex = 'F'
         elif (qc == "suspected XXY") or (qc == "suspected XXY or contamination"):
             sex = 'XXY'
+        elif qc == "suspected contamination":
+            pass  # == noop
         elif qc != '':
             logger.error("parsing QC column in metadata file %s, found unexpected/unimplemented value %s",
                          metadataFile, qc)
