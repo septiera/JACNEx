@@ -93,10 +93,11 @@ Step 2 optional arguments, defaults should be OK:
             sys.exit(0)
         elif opt in ("--workDir"):
             workDir = value
-        elif opt in ("--bams", "--bams-from", "--bed", "--tmp", "--padding", "--maxGap", "--samtools"):
+        elif opt in ("--bams", "--bams-from", "--bed", "--tmp", "--maxGap", "--samtools"):
             step1Args.extend([opt, value])
-        elif opt in ("--jobs"):
+        elif opt in ("--jobs", "--padding"):
             step1Args.extend([opt, value])
+            step3Args.extend([opt, value])
         elif opt in ("--minSamps"):
             step2Args.extend([opt, value])
         else:
@@ -172,7 +173,7 @@ def findBestPrevCF(countsFilesAll, samples):
                 commonSamplesCF += 1
             else:
                 otherSamplesCF += 1
-        if (commonSamplesCF > commonSamples) or ((commonSamplesCF == commonSamples) and (otherSamplesCF < otherSamples)) :
+        if (commonSamplesCF > commonSamples) or ((commonSamplesCF == commonSamples) and (otherSamplesCF < otherSamples)):
             bestCF = cf
             commonSamples = commonSamplesCF
             otherSamples = otherSamplesCF
@@ -324,10 +325,6 @@ def main(argv):
             s3_callCNVs.parseArgs(step3ArgsForCheck)
         except Exception as e:
             raise Exception(stepNames[3] + " parseArgs problem: " + str(e))
-
-        #########
-        # complement step3Args and check them
-        # TODO similarly to step2, using bogusFile for --counts and --clusters
 
     ######################
     logger.info("arguments look OK, starting to work")
