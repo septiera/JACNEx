@@ -57,11 +57,11 @@ def buildClusters(FPMarray, chromType, samples, minSize, plotFile):
     logger.debug(logMess)
 
     dim = 0
-    while (pca.explained_variance_ratio_[dim] > minExplainedVar):
+    while ((dim < maxDims) and (pca.explained_variance_ratio_[dim] > minExplainedVar)):
         dim += 1
     if dim == 0:
-        logger.warning("in buildClusters: no informative PCA dimensions, very unusual... arbitrarily setting dim=10")
-        dim = 10
+        logger.warning("in buildClusters: no informative PCA dimensions, very unusual... setting dim=maxDims")
+        dim = maxDims
     logger.debug("in buildClusters with chromType=%s, chosen number of PCA dimensions = %i", chromType, dim)
     # now fit again with only dim dimensions, and project samples
     samplesInPCAspace = sklearn.decomposition.PCA(n_components=dim, svd_solver='full').fit_transform(FPMarray.T)
