@@ -141,12 +141,13 @@ Step 2 optional arguments, defaults should be OK:
 # - countsFilesAll: list of pre-existing countsFiles (possibly empty), with PATH
 # - samples: list of sample names
 # Return (cf, commonSamples) where
-# - cf is the countsFile with the most common samples, or '' if list was empty or
-#   if no countsFile has any sample from samples
+# - cf is the countsFile with the most common samples (and the fewest other samples), or '' if
+#   list was empty or if no countsFile has any sample from samples
 # - commonSamples is the number of common samples
 def findBestPrevCF(countsFilesAll, samples):
     bestCF = ''
     commonSamples = 0
+    otherSamples = 0
     # build dict of samples, value==1
     samplesD = {}
     for s in samples:
@@ -165,12 +166,16 @@ def findBestPrevCF(countsFilesAll, samples):
         # get rid of exon definition headers
         del samplesCF[0:4]
         commonSamplesCF = 0
+        otherSamplesCF = 0
         for s in samplesCF:
             if s in samplesD:
                 commonSamplesCF += 1
-        if commonSamplesCF > commonSamples:
+            else:
+                otherSamplesCF += 1
+        if (commonSamplesCF > commonSamples) or ((commonSamplesCF == commonSamples) and (otherSamplesCF < otherSamples)) :
             bestCF = cf
             commonSamples = commonSamplesCF
+            otherSamples = otherSamplesCF
         countsFH.close()
     return(bestCF, commonSamples)
 
