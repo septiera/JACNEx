@@ -81,8 +81,8 @@ ARGUMENTS:
     -h , --help: display this help and exit\n"""
 
     try:
-        opts, args = getopt.gnu_getopt(sys.argv[1:], 'h', ["help", "counts=", "clusts=", "out=", "padding=",
-                                                           "plotDir=", "jobs="])
+        opts, args = getopt.gnu_getopt(argv[1:], 'h', ["help", "counts=", "clusts=", "out=", "padding=",
+                                                       "plotDir=", "jobs="])
     except getopt.GetoptError as e:
         raise Exception(e.msg + ". Try " + scriptName + " --help")
     if len(args) != 0:
