@@ -63,8 +63,9 @@ def buildClusters(FPMarray, chromType, samples, minSize, plotFile):
         logger.warning("in buildClusters: no informative PCA dimensions, very unusual... setting dim=maxDims")
         dim = maxDims
     logger.debug("in buildClusters with chromType=%s, chosen number of PCA dimensions = %i", chromType, dim)
-    # now fit again with only dim dimensions, and project samples
-    samplesInPCAspace = sklearn.decomposition.PCA(n_components=dim, svd_solver='full').fit_transform(FPMarray.T)
+    # project samples and truncate to dim dimensions
+    samplesInPCAspace = pca.transform(FPMarray.T)
+    samplesInPCAspace = np.delete(samplesInPCAspace, np.s_[dim:maxDims], 1)
 
     # hierarchical clustering of the samples projected in the PCA space:
     # - use 'average' method to define the distance between clusters (== UPGMA),
