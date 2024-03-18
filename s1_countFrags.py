@@ -248,7 +248,7 @@ def main(argv):
     exons = countFrags.bed.processBed(bedFile, padding)
 
     thisTime = time.time()
-    logger.debug("Done pre-processing BED, in %.2fs", thisTime - startTime)
+    logger.info("Done pre-processing BED, in %.2fs", thisTime - startTime)
     startTime = thisTime
 
     # allocate countsArray and countsFilled, and populate them with pre-calculated
@@ -261,7 +261,7 @@ def main(argv):
         raise Exception("extractCountsFromPrev failed - " + str(e))
 
     thisTime = time.time()
-    logger.debug("Done parsing previous countsFile, in %.2fs", thisTime - startTime)
+    logger.info("Done parsing previous countsFile, in %.2fs", thisTime - startTime)
     startTime = thisTime
 
     # total number of samples that still need to be processed
@@ -344,9 +344,8 @@ def main(argv):
         with ProcessPoolExecutor(paraSamples) as pool:
             for bamIndex in range(len(bamsToProcess)):
                 bam = bamsToProcess[bamIndex]
-                sample = samples[bamIndex]
                 if countsFilled[bamIndex]:
-                    logger.info('Sample %s already filled from countsFile', sample)
+                    # logger.debug('Sample %s already filled from countsFile', samples[bamIndex])
                     continue
                 else:
                     futureRes = pool.submit(countFrags.countFragments.bam2counts,
@@ -370,7 +369,7 @@ def main(argv):
     countFrags.countsFile.printCountsFile(exons, samples, countsArray, outFile)
 
     thisTime = time.time()
-    logger.debug("Done printing counts for all (non-failed) samples, in %.2fs", thisTime - startTime)
+    logger.info("Done printing counts for all (non-failed) samples, in %.2fs", thisTime - startTime)
     if len(failedBams) > 0:
         raise("counting FAILED for " + len(failedBams) + " samples, check the log!")
     else:
