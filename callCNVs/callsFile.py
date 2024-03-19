@@ -1,6 +1,6 @@
+import gzip
 import logging
 import time
-import gzip
 
 # set up logger, using inherited config
 logger = logging.getLogger(__name__)
