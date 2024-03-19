@@ -10,12 +10,12 @@ import getopt
 import gzip
 import logging
 import math
+import numpy
 import os
 import re
 import shutil
 import sys
 import time
-import numpy
 
 ####### JACNEx modules
 import countFrags.bed
