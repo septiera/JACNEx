@@ -8,15 +8,15 @@
 # The resulting plots are saved in PDF format for further analysis and sharing.
 # See usage for more details.
 ###############################################################################################
-import sys
 import getopt
-import os
 import gzip
-import numpy as np
-import time
 import logging
 import matplotlib.pyplot
 import matplotlib.backends.backend_pdf
+import numpy
+import os
+import sys
+import time
 
 ####### JACNEx modules
 import countFrags.countsFile
@@ -176,9 +176,9 @@ def parseUserTSV(userTSV, samples, autosomeExons, gonosomeExons):
 # - pdfFile [str]: Path to the PDF file where plots will be saved.
 # - samps2ExonInd_A (dict): key==sampleID, value==List of exon indexes matching autosomal exons.
 # - samps2ExonInd_G (dict): same as samps2ExonInd_A for gonosomes
-# - autosomeFPMs (np.ndarray[floats]): exon FPMs for autosomes. dim=[NBofExons, NBofSamps]
-# - gonosomeFPMs (np.ndarray[floats])
-# - intergenicFPMs (np.ndarray[floats])
+# - autosomeFPMs (numpy.ndarray[floats]): exon FPMs for autosomes. dim=[NBofExons, NBofSamps]
+# - gonosomeFPMs (numpy.ndarray[floats])
+# - intergenicFPMs (numpy.ndarray[floats])
 # - autosomeExons (list of lists[str, int, int, str]): autosomal exon information.
 # - gonosomeExons (list of lists[str, int, int, str])
 # - other_params: Additional parameters required for plotting.
@@ -203,7 +203,7 @@ def createExonPlotsPDF(pdfFile, samps2ExonInd_A, samps2ExonInd_G, autosomeFPMs, 
 # Computes parameters for CN0 (Copy Number 0) based on intergenic FPMs.
 #
 # Args:
-# - intergenicFPMs (np.ndarray[floats]): Array of FPMs for intergenic regions.
+# - intergenicFPMs (numpy.ndarray[floats]): Array of FPMs for intergenic regions.
 #
 # Returns a tuple containing hnorm_loc (half Gaussian mean), hnorm_scale (half Gaussian standard deviation),
 # and uncaptThreshold (threshold for uncaptured FPMs).
@@ -223,7 +223,7 @@ def computeCN0Parameters(intergenicFPMs):
 # Args:
 # - chromType [int]: Type of chromosome (0='autosomes' or 1='gonosomes').
 # - samps2ExonInd (dict): key==sampleID, value==List of exon indexes
-# - FPMs (np.ndarray[floats])
+# - FPMs (numpy.ndarray[floats])
 # - exons (list of lists[str, int, int, str])
 # - pdfFileSuffix [str]: Suffix for the PDF file name.
 # - pdfFile [str]: Path to the base PDF file.
@@ -252,7 +252,7 @@ def generatePDFRootName(pdfFile, suffix):
 # Args:
 # - chromType [int]: Type of chromosome.
 # - samps2Check (dict): key==sampleID, value==List of exon indexes
-# - FPMs (np.ndarray[floats])
+# - FPMs (numpy.ndarray[floats])
 # - exons (list of lists[str, int, int, str])
 # - other_params: Additional parameters required for plotting.
 # - pdfFile: Path to the PDF file for saving plots.
@@ -279,7 +279,7 @@ def generateClusterExonPlots(chromType, samps2Check, FPMs, exons, other_params, 
 # - exonIndexes (list[int])
 # - chromType [int]
 # - samp2Index(dict): key==sampleID, value==List of exon indexes
-# - FPMs (np.ndarray[floats])
+# - FPMs (numpy.ndarray[floats])
 # - exons (list of lists[str, int, int, str])
 # - other_params: Additional parameters required for plotting.
 # - matplotOpenFile: Matplotlib PDF file object for saving plots.
@@ -292,10 +292,10 @@ def plotExonsForSample(sampID, exonIndexes, chromType, samp2Index, FPMs, exons, 
     hnorm_scale = other_params["hnorm_scale"]
 
     clusterID = samp2clusts[sampID][chromType]
-    exonIndexes = np.array(exonIndexes)
+    exonIndexes = numpy.array(exonIndexes)
 
     sampsInClust = callCNVs.exonProcessing.getSampIndexes(clusterID, clust2samps, samp2Index, fitWith)
-    sampsInClust = np.array(sampsInClust)
+    sampsInClust = numpy.array(sampsInClust)
 
     targetFPMs = FPMs[exonIndexes[:, None], sampsInClust]
     CN2params, filterStatesVec = computeExonCNVParameters(targetFPMs, unCaptFPMLimit)
@@ -318,7 +318,7 @@ def plotExonsForSample(sampID, exonIndexes, chromType, samp2Index, FPMs, exons, 
 # Computes parameters for exon Copy Number Variation (CNV) analysis.
 #
 # Args:
-# - targetFPMs (np.ndarray[floats]): Target FPM values for exons across cluster samples.
+# - targetFPMs (numpy.ndarray[floats]): Target FPM values for exons across cluster samples.
 # - uncaptThreshold [float]: Threshold value for filtering out uncaptured FPMs.
 #
 # Returns a tuple containing CN2ParamsArray (array of CN2 parameters for each exon,
@@ -326,8 +326,8 @@ def plotExonsForSample(sampID, exonIndexes, chromType, samp2Index, FPMs, exons, 
 def computeExonCNVParameters(targetFPMs, uncaptThreshold):
     filterStates = ["notCaptured", "cannotFitRG", "RGClose2LowThreshold", "fewSampsInRG", "call"]
     paramsID = ["loc", "scale"]
-    CN2ParamsArray = np.full((targetFPMs.shape[0], len(paramsID)), -1, dtype=np.float64)
-    filterStatesVec = np.zeros(targetFPMs.shape[0], dtype=int)
+    CN2ParamsArray = numpy.full((targetFPMs.shape[0], len(paramsID)), -1, dtype=numpy.float64)
+    filterStatesVec = numpy.zeros(targetFPMs.shape[0], dtype=int)
 
     for exonIndex, exFPMs in enumerate(targetFPMs):
         try:
@@ -350,8 +350,8 @@ def computeExonCNVParameters(targetFPMs, uncaptThreshold):
 # - ei [int]
 # - clusterID [int]
 # - sampExFPM [float]: sample exon FPM
-# - exClustFPMs (np.ndarray[floats]): exon FPM values for all samples in clusterID
-# - exCN2params (np.ndarray[floats]): exon gaussian parameters [loc, scale]
+# - exClustFPMs (numpy.ndarray[floats]): exon FPM values for all samples in clusterID
+# - exCN2params (numpy.ndarray[floats]): exon gaussian parameters [loc, scale]
 # - exfilterState [int]: filter index
 # - exInfos (list[str, int, int, str]): exon [CHR, START, END, EXONID]
 # - hnorm_loc (float): distribution location parameter.
@@ -362,7 +362,7 @@ def getReadyPlotExon(sampID, ei, clusterID, sampExFPM, exClustFPMs, exCN2params,
     ##### init graphic parameters
     # definition of a range of values that is sufficiently narrow to have
     # a clean representation of the adjusted distributions.
-    xi = np.linspace(0, np.max(exClustFPMs), len(exClustFPMs) * 3)
+    xi = numpy.linspace(0, numpy.max(exClustFPMs), len(exClustFPMs) * 3)
 
     exonInfo = '_'.join(map(str, exInfos))
     plotTitle = f"Cluster:{clusterID}, NbSamps:{len(exClustFPMs)}, exonInd:{ei}\nexonInfos:{exonInfo}, filteringState:{exfilterState}"
@@ -383,7 +383,7 @@ def getReadyPlotExon(sampID, ei, clusterID, sampExFPM, exClustFPMs, exCN2params,
 
     for ci in range(len(distribution_functions)):
         pdf_function, loc, scale, shape = distribution_functions[ci]
-        # np.ndarray 1D float: set of pdfs for all samples
+        # numpy.ndarray 1D float: set of pdfs for all samples
         # scipy execution speed up
         if shape is not None:
             PDFRanges = pdf_function(xi, loc=loc, scale=scale, a=shape)
@@ -397,7 +397,7 @@ def getReadyPlotExon(sampID, ei, clusterID, sampExFPM, exClustFPMs, exCN2params,
         yLists.append(PDFRanges)
         plotTitle += f"CN{ci}:{sampLikelihood:.3e} "
 
-    ylim = 2 * np.max(yLists[2])
+    ylim = 2 * numpy.max(yLists[2])
 
     plotExonProfile(exClustFPMs, xi, yLists, plotLegs, verticalLines, vertLinesLegs, plotTitle, ylim, matplotOpenFile)
 
@@ -409,7 +409,7 @@ def getReadyPlotExon(sampID, ei, clusterID, sampExFPM, exClustFPMs, exCN2params,
 # points of interest on the histogram. The graph is saved as a PDF file.
 #
 # Args:
-# - rawData (np.ndarray[float]): exon FPM counts
+# - rawData (numpy.ndarray[float]): exon FPM counts
 # - xi (list[float]): x-axis values for the density or distribution curves, ranges
 # - yLists (list of lists[float]): y-axis values, probability density function values
 # - plotLegs (list[str]): labels for the density or distribution curves

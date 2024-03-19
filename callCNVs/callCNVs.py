@@ -1,12 +1,10 @@
-import logging
-import numpy as np
 import concurrent.futures
+import logging
 import math
+import numpy
 
+####### JACNEx modules
 import callCNVs.transitions
-
-# prevent PIL flooding the logs when we are in DEBUG loglevel
-logging.getLogger('PIL').setLevel(logging.WARNING)
 
 # set up logger, using inherited config
 logger = logging.getLogger(__name__)
@@ -23,9 +21,9 @@ logger = logging.getLogger(__name__)
 # - autosomeExons (list[str, int, int, str]): exon on autosome infos [chr, START, END, EXONID].
 # - gonosomeExons (list[str, int, int, str]): exon on gonosome infos.
 # - likelihoods_A (dict): key==sample ID, value==Likelihoods for autosomal chromosomes,
-#                         np.ndarray 2D [floats], dim = NbofExons * NbOfCNStates
+#                         numpy.ndarray 2D [floats], dim = NbofExons * NbOfCNStates
 # - likelihoods_G (dict): key==sample ID, value==Likelihoods for gonosomal chromosomes
-# - transMatrix (np.ndarray[floats]): Transition matrix for the HMM Viterbi algorithm.
+# - transMatrix (numpy.ndarray[floats]): Transition matrix for the HMM Viterbi algorithm.
 # - jobs (int): Number of jobs to run in parallel.
 #
 # Returns a tuple of two lists: The first list contains CNV information for autosomal chromosomes,
@@ -55,8 +53,8 @@ def applyHMM(samples, autosomeExons, gonosomeExons, likelihoods_A, likelihoods_G
 # - samples (list[strs]): A list of sample identifiers.
 # - exons (list[str, int, int, str]): exon on autosome infos [chr, START, END, EXONID].
 # - likelihoods (dict): key==sample ID, value==Likelihoods,
-#                       np.ndarray 2D [floats], dim = NbofExons * NbOfCNStates
-# - transMatrix (np.ndarray[floats]): A transition matrix used in the HMM Viterbi algorithm.
+#                       numpy.ndarray 2D [floats], dim = NbofExons * NbOfCNStates
+# - transMatrix (numpy.ndarray[floats]): A transition matrix used in the HMM Viterbi algorithm.
 # - pool (concurrent.futures.Executor): A concurrent executor for parallel processing.
 # - CNVs (list[str, int, int, int, floats, str]): CNV infos [CNType, exonStart, exonEnd, pathProb, sampleName]
 def processSamps(samples, exons, likelihoods, transMatrix, pool, CNVs):
@@ -90,7 +88,7 @@ def processChrom(likelihoods, transMatrix, sampID, exons):
     # determine the start of each chromosome within the exon data
     isFirstExon = callCNVs.transitions.flagChromStarts(exons)
     # find indexes marking the start of each chromosome
-    startIndexes = np.where(isFirstExon)[0]
+    startIndexes = numpy.where(isFirstExon)[0]
     # list to store CNVs for the sample
     sampCNVs = []
 
@@ -183,9 +181,9 @@ def countCNVs(sampCNVs):
 #    or failures during the process.
 #
 # Args:
-# - chromLikelihoods (np.ndarray[floats]): pseudo-emission probabilities (likelihood) of each
+# - chromLikelihoods (numpy.ndarray[floats]): pseudo-emission probabilities (likelihood) of each
 #    state for each observation (exon) for one sample. Dim = [NbObservations, NbStates].
-# - transMatrix (np.ndarray[floats]): transition probabilities between states, including a
+# - transMatrix (numpy.ndarray[floats]): transition probabilities between states, including a
 #    void status. Dim = [NbStates + 1, NbStates + 1].
 # - sampleID [str]
 # - firstExOnChrom [int]: index of the first exon on the chromosome being processed.
@@ -201,7 +199,7 @@ def viterbi(chromLikelihoods, transMatrix, sampleID, firstExOnChrom):
         CNVs = []
 
         # find indexes of exons that have been called (i.e., not marked with -1)
-        exIndexCalled = np.where(np.all(chromLikelihoods != -1, axis=1))[0]
+        exIndexCalled = numpy.where(numpy.all(chromLikelihoods != -1, axis=1))[0]
 
         # handle the case where no exons are callable for the chromosome
         if len(exIndexCalled) == 0:
@@ -222,14 +220,14 @@ def viterbi(chromLikelihoods, transMatrix, sampleID, firstExOnChrom):
 
         # Step 1: Initialize variables
         # probsPrev[i]: stores the probability of the most likely path ending in state i at the previous exon
-        probsPrev = np.zeros(NbStatesWithVoid, dtype=np.float128)
+        probsPrev = numpy.zeros(NbStatesWithVoid, dtype=numpy.float128)
         probsPrev[0] = 1
         # probsCurrent[i]: same ending at current exon
-        probsCurrent = np.zeros(NbStatesWithVoid, dtype=np.float128)
+        probsCurrent = numpy.zeros(NbStatesWithVoid, dtype=numpy.float128)
         # path[i,e]: state at exon e-1 that produces the highest probability ending in state i at exon e
         # (ie, probsCurrent[i])
         # this state is 0 (void) if the path starts here
-        path = np.zeros((NbStatesWithVoid, NbObservations), dtype=np.uint8)
+        path = numpy.zeros((NbStatesWithVoid, NbObservations), dtype=numpy.uint8)
 
         # Step 2: Score propagation
         # Iterate through each observation, current states, and previous states.
@@ -329,7 +327,7 @@ def viterbi(chromLikelihoods, transMatrix, sampleID, firstExOnChrom):
 #    the original chronological order of exons.
 #
 # Args:
-# - path (np.ndarray[ints]): optimal state transitions for each time step, as determined by the
+# - path (numpy.ndarray[ints]): optimal state transitions for each time step, as determined by the
 #    Viterbi algorithm. Dimensions are [NBState, NBObservations].
 # - lastExon [int]: index of the last exon traversed by the Viterbi algorithm before a reset
 #    or the end of the chromosome path.

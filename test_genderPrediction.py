@@ -1,10 +1,9 @@
-import numpy as np
 import logging
-
-# import sklearn submodule for Kmeans calculation
-import sklearn.cluster
-
 import matplotlib.backends.backend_pdf
+import numpy
+import sklearn.cluster  # Kmeans
+
+####### JACNEx modules
 import qc_FPMdensities
 import figures.plots
 
@@ -20,12 +19,12 @@ logger = logging.getLogger(__name__)
 # Assign a gender for each sample (ie column of exonsFPM)
 #
 # Args:
-# - exonsFPM: np.ndarray of FPM-normalized counts (floats), size = nbOfExons x nbOfSamples
-# - exonOnSexChr: uint8 np.ndarray of size = nbOfExons, as returned by exonOnSexChr()
+# - exonsFPM: numpy.ndarray of FPM-normalized counts (floats), size = nbOfExons x nbOfSamples
+# - exonOnSexChr: uint8 numpy.ndarray of size = nbOfExons, as returned by exonOnSexChr()
 # - intergenicsFPM: same as exonsFPM for intergenic pseudo-exons
 # - samples: list of nbOfSamples strings
 #
-# Returns an uint8 np.ndarray, size = nbOfSamples, value at index i is:
+# Returns an uint8 numpy.ndarray, size = nbOfSamples, value at index i is:
 # - 1 if the sample/column index i is predicted to be "Female" (actually Male if species
 #      uses the ZW sex detmination system)
 # - 2 if it's predicted to be Male
@@ -34,11 +33,11 @@ logger = logging.getLogger(__name__)
 # all-female assignment vector. This can happen legitimately if the cohort is single-gender,
 # but it could also result from noisy / heterogeneous data, or flaws in our methodology.
 def assignGender(exonsFPM, exonOnSexChr, intergenicsFPM, samples):
-    sample2gender = np.ones(exonsFPM.shape[1], dtype=np.uint8)
+    sample2gender = numpy.ones(exonsFPM.shape[1], dtype=numpy.uint8)
 
     # FPM cut-off to roughly characterize exons that aren't captured, using intergenic pseudo-exons,
     # hard-coded 99%-quantile over all samples and all intergenic pseudo-exons
-    maxFPMuncaptured = np.quantile(intergenicsFPM, 0.99)
+    maxFPMuncaptured = numpy.quantile(intergenicsFPM, 0.99)
 
     # For each sex chromosome and each sample, calculate the sum of FPMs of "accepted" exons:
     # "accepted" == every exon for YW, but for XZ we only count exons that are "captured"
@@ -46,11 +45,11 @@ def assignGender(exonsFPM, exonOnSexChr, intergenicsFPM, samples):
     # This provides a cleaner signal when samples use different capture kits.
     # dtype=float64 to avoid rounding errors when summing the many small values
     YWexonsFPM = exonsFPM[exonOnSexChr == 2]
-    sumOfFPMsYW = np.sum(YWexonsFPM, axis=0, dtype=np.float64)
+    sumOfFPMsYW = numpy.sum(YWexonsFPM, axis=0, dtype=numpy.float64)
 
     XZexonsFPM = exonsFPM[exonOnSexChr == 1]
-    tenPercentQuantilePerExon = np.quantile(XZexonsFPM, 0.1, axis=1)
-    sumOfFPMsXZ = np.sum(XZexonsFPM[tenPercentQuantilePerExon > maxFPMuncaptured], axis=0, dtype=np.float64)
+    tenPercentQuantilePerExon = numpy.quantile(XZexonsFPM, 0.1, axis=1)
+    sumOfFPMsXZ = numpy.sum(XZexonsFPM[tenPercentQuantilePerExon > maxFPMuncaptured], axis=0, dtype=numpy.float64)
 
     # EXPERIMENTING: plot the distributions
     # create matplotlib PDF object
@@ -99,7 +98,7 @@ def assignGender(exonsFPM, exonOnSexChr, intergenicsFPM, samples):
 # Assigns sexe to each kmean groups based on their coverage ratios.
 #
 # Args:
-# - gonosomesFPM (np.ndarray[float]): normalized fragment counts
+# - gonosomesFPM (numpy.ndarray[float]): normalized fragment counts
 # - gonosomesExons (list of list[str]): exon definitions
 # - samples (list[str]): sample names
 # Returns a list of lists[str] for each sexe is assigned the Kmeans samples list.
@@ -168,15 +167,15 @@ def sexAssignment(gonosomesFPM, gonosomesExons, samples):
 # - gonoNames (list[str])
 # - kmeans (list[int]): sampsNB length where for each sample index in 'samples'
 # is associated a group predicted by Kmeans (always 0 or 1)
-# - gonosomesFPM (np.ndarray(float))
+# - gonosomesFPM (numpy.ndarray(float))
 # - gonosomesExons (list of lists[str])
-# Returns a np.ndarray[floats] contains the cover ratio, dim= GonosomesNB * kmeanGpNB
+# Returns a numpy.ndarray[floats] contains the cover ratio, dim= GonosomesNB * kmeanGpNB
 def getRatioGono2KmeanGp(gonoNames, kmeans, gonosomesFPM, gonosomesExons):
     # sorting of Kmeans group identifiers from 0
-    groupList = sorted(np.unique(kmeans))
+    groupList = sorted(numpy.unique(kmeans))
 
     # To Fill and returns
-    ratioGono = np.empty((len(gonoNames), len(groupList)), dtype=np.float32)
+    ratioGono = numpy.empty((len(gonoNames), len(groupList)), dtype=numpy.float32)
 
     for gonoIndex in range(len(gonoNames)):
         gonoName = gonoNames[gonoIndex]
@@ -185,12 +184,12 @@ def getRatioGono2KmeanGp(gonoNames, kmeans, gonosomesFPM, gonosomesExons):
             # selection normalized count data on current gonosome exons (row) and samples
             # in current Kmeans group (column)
             exonsIndex = [i for i, exon in enumerate(gonosomesExons) if exon[0] == gonoName]
-            sampsIndexKGp = np.where(kmeans == kmeanGroup)[0]
+            sampsIndexKGp = numpy.where(kmeans == kmeanGroup)[0]
             gonoTmpArray = gonosomesFPM[exonsIndex][:, sampsIndexKGp]
 
             #####################
             # cover ratio calculation (axis=0, sum all exons for each sample)
-            ratioGono[gonoIndex, kmeanGroup] = np.median(np.sum(gonoTmpArray, axis=0))
+            ratioGono[gonoIndex, kmeanGroup] = numpy.median(numpy.sum(gonoTmpArray, axis=0))
 
     return ratioGono
 
@@ -203,7 +202,7 @@ def getRatioGono2KmeanGp(gonoNames, kmeans, gonosomesFPM, gonosomesExons):
 # 2) identification of sexe with two identical gonosomes (eg: human Female = 2*chrX)
 # One groups(G1) is expected to have : 1.5*ratio(G2)<ratio(G1)< 3*ratio(G2) for this gonosome.
 # Args:
-# - ratioGono (np.ndarray[floats]): cover ratio, dim = gonosomesNB * kmeansGpNB
+# - ratioGono (numpy.ndarray[floats]): cover ratio, dim = gonosomesNB * kmeansGpNB
 # - gonoNames (list[str])
 # - chrSexUniq [str]: name of the single sex-specific gonosome (eg: human Male= "chrY", bird Female= "chrW")
 # - chrSexDup [str]: name of the duplicated sex-specific gonosome (eg: human Female= "chrX", bird Male= "chrZ")

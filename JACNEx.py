@@ -1,3 +1,4 @@
+import datetime
 import getopt
 import glob
 import gzip
@@ -6,8 +7,6 @@ import os
 import re
 import sys
 import tempfile
-from datetime import datetime
-
 
 ####### JACNEx modules
 import s1_countFrags
@@ -243,7 +242,7 @@ def main(argv):
             raise Exception(stepNames[0] + " plotDir " + plotDir + " doesn't exist and can't be mkdir'd")
 
     # shared date+time stamp, for new files
-    dateStamp = datetime.today().strftime('%Y-%m-%d_%H-%M-%S')
+    dateStamp = datetime.datetime.today().strftime('%Y-%m-%d_%H-%M-%S')
 
     ##################
     # check arguments of all steps before starting any actual work:

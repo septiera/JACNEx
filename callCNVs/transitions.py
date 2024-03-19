@@ -1,5 +1,5 @@
 import logging
-import numpy as np
+import numpy
 
 # set up logger, using inherited config
 logger = logging.getLogger(__name__)
@@ -22,17 +22,17 @@ logger = logging.getLogger(__name__)
 #
 # Args:
 # - likelihoods_A (dict): CN likelihoods for autosomal exons; key=sampID[str],
-#                         values=np.ndarray of likelihoods[floats].
+#                         values=numpy.ndarray of likelihoods[floats].
 #                         dim = NbExonsOnAutosomes * NbOfCNStates
 # - likelihoods_G (dict): CN likelihoods for gonosomal exons.
 # - autosomeExons (list of lists[str, int, int, str]): autosome exon infos;
 #                                                      [CHR,START,END,EXONID]
 # - gonosomeExons (list of lists[str, int, int, str]): gonosome exon infos
-# - priors (np.ndarray[floats]): prior probabilities for each CN status.
+# - priors (numpy.ndarray[floats]): prior probabilities for each CN status.
 # - nbStates [int]: number of CN states.
 #
 # Returns:
-# - transAndInit (np.ndarray[floats]): transition matrix used for the HMM, including
+# - transAndInit (numpy.ndarray[floats]): transition matrix used for the HMM, including
 #                                      the "init" state. dim = [nbStates+1, nbStates+1]
 def getTransMatrix(likelihoods_A, likelihoods_G, autosomeExons, gonosomeExons,
                    priors, nbStates):
@@ -48,7 +48,7 @@ def getTransMatrix(likelihoods_A, likelihoods_G, autosomeExons, gonosomeExons,
     # initialize the transition matrix
     # 2D array [ints], expected format for a transition matrix [i; j]
     # contains all prediction counts of states
-    transitions = np.zeros((nbStates, nbStates), dtype=int)
+    transitions = numpy.zeros((nbStates, nbStates), dtype=int)
     # update the transition matrix with CN probabilities for autosomal samples
     transitions = updateTransMatrix(transitions, CNProbs_A, priors, isFirstExon_A)
     # repeat the process for gonosomal samples
@@ -74,10 +74,10 @@ def getTransMatrix(likelihoods_A, likelihoods_G, autosomeExons, gonosomeExons,
 #                             in the format [CHR, START, END, EXON_ID].
 #
 # Returns:
-# - isFirstExon (np.ndarray[bool]): each 'True' indicates the first exon of a chromosome.
+# - isFirstExon (numpy.ndarray[bool]): each 'True' indicates the first exon of a chromosome.
 def flagChromStarts(exons):
     # initialize a boolean array with False
-    isFirstExon = np.zeros(len(exons), dtype=bool)
+    isFirstExon = numpy.zeros(len(exons), dtype=bool)
     prevChr = None
 
     for index, exon in enumerate(exons):
@@ -99,8 +99,8 @@ def flagChromStarts(exons):
 #    the function sets the probabilities for all CN states of that exon to -1.
 #
 # Args:
-# - likelihoodDict (dict): keys=sampID, values=np.ndarray(NBExons,NBStates)
-# - priors (np.ndarray): Prior probabilities for CN states.
+# - likelihoodDict (dict): keys=sampID, values=numpy.ndarray(NBExons,NBStates)
+# - priors (numpy.ndarray): Prior probabilities for CN states.
 #
 # Returns:
 # - CNProbs (dict): CN probabilities per sample, keys = sampID, values = 2D numpy arrays
@@ -110,7 +110,7 @@ def getCNProbs(likelihoodDict, priors):
 
     for sampID, likelihoods in likelihoodDict.items():
         odds = likelihoods * priors
-        skip_exon = np.any(likelihoods == -1, axis=1)
+        skip_exon = numpy.any(likelihoods == -1, axis=1)
         odds[skip_exon] = -1
         CNProbs[sampID] = odds
 
@@ -133,23 +133,23 @@ def getCNProbs(likelihoodDict, priors):
 #    previous CN state to the current CN state.
 #
 # Args:
-# - transitions (np.ndarray[floats]): Transition matrix to be updated, dimensions [NBStates, NBStates].
+# - transitions (numpy.ndarray[floats]): Transition matrix to be updated, dimensions [NBStates, NBStates].
 # - CNProbs (dict): CN probabilities per sample, keys = sampID,
 #                   values = 2D numpy arrays representing CN probabilities for each exon.
-# - priors (np.ndarray): Prior probabilities for CN states.
-# - isFirstExon (np.ndarray[bool]): each 'True' indicates the first exon of a chromosome.
+# - priors (numpy.ndarray): Prior probabilities for CN states.
+# - isFirstExon (numpy.ndarray[bool]): each 'True' indicates the first exon of a chromosome.
 #
 # Returns:
-# - transitions (np.ndarray[ints]): Updated transition matrix.
+# - transitions (numpy.ndarray[ints]): Updated transition matrix.
 def updateTransMatrix(transitions, CNProbs, priors, isFirstExon):
     for sampID, odds in CNProbs.items():
         # determine the most probable CN state for each exon
-        CNsList = np.argmax(odds, axis=1)
+        CNsList = numpy.argmax(odds, axis=1)
         # identify exons with non-interpretable data
-        # np.ndarray of boolean (0:call, 1:no call) of length NbExons
-        isSkipped = np.any(odds == -1, axis=1)
+        # numpy.ndarray of boolean (0:call, 1:no call) of length NbExons
+        isSkipped = numpy.any(odds == -1, axis=1)
         # start with the most probable CN state based on priors (CN2)
-        prevCN = np.argmax(priors)
+        prevCN = numpy.argmax(priors)
 
         for ei in range(len(CNsList)):
             currCN = CNsList[ei]
@@ -160,7 +160,7 @@ def updateTransMatrix(transitions, CNProbs, priors, isFirstExon):
 
             # reset prevCN at the start of each new chromosome
             if isFirstExon[ei]:
-                prevCN = np.argmax(priors)
+                prevCN = numpy.argmax(priors)
 
             # updates variables
             transitions[prevCN, currCN] += 1
@@ -176,20 +176,20 @@ def updateTransMatrix(transitions, CNProbs, priors, isFirstExon):
 # the HMM.
 #
 # Args:
-# - transitions (np.ndarray): The transition matrix to be formatted, dimensions [nbStates, nbStates].
-# - priors (np.ndarray): Prior probabilities for CN states, used for the 'init' state.
+# - transitions (numpy.ndarray): The transition matrix to be formatted, dimensions [nbStates, nbStates].
+# - priors (numpy.ndarray): Prior probabilities for CN states, used for the 'init' state.
 # - nbStates (int): Number of CN states.
 #
 # Returns:
-# - np.ndarray: The formatted transition matrix with normalized values and an 'init' state,
+# - numpy.ndarray: The formatted transition matrix with normalized values and an 'init' state,
 #               dimensions [nbStates+1, nbStates+1].
 def formatTransMatrix(transitions, priors, nbStates):
     # Normalize each row of the transition matrix
-    row_sums = np.sum(transitions, axis=1, keepdims=True)
+    row_sums = numpy.sum(transitions, axis=1, keepdims=True)
     normalized_arr = transitions / row_sums
 
     # Add an 'init' state to the matrix
-    transAndInit = np.vstack((priors, normalized_arr))
-    transAndInit = np.hstack((np.zeros((nbStates + 1, 1)), transAndInit))
+    transAndInit = numpy.vstack((priors, normalized_arr))
+    transAndInit = numpy.hstack((numpy.zeros((nbStates + 1, 1)), transAndInit))
 
     return transAndInit

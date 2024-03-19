@@ -1,12 +1,9 @@
+import concurrent.futures
 import logging
-import numpy as np
 import math
+import numpy
 import scipy.stats
-from concurrent.futures import ProcessPoolExecutor
 import traceback
-
-# prevent PIL flooding the logs when we are in DEBUG loglevel
-logging.getLogger('PIL').setLevel(logging.WARNING)
 
 # set up logger, using inherited config
 logger = logging.getLogger(__name__)
@@ -31,18 +28,18 @@ logger = logging.getLogger(__name__)
 #
 # Args:
 # - samples (list[strs]): sample identifiers.
-# - autosomeFPMs (np.ndarray[floats]): FPM data for autosomes. dim=[NbOfExons, NBOfSamples]
-# - gonosomeFPMs (np.ndarray[floats]): same as autosomeFPMs but for gonosomes.
+# - autosomeFPMs (numpy.ndarray[floats]): FPM data for autosomes. dim=[NbOfExons, NBOfSamples]
+# - gonosomeFPMs (numpy.ndarray[floats]): same as autosomeFPMs but for gonosomes.
 # - clust2samps (dict): key==clusterIDs, value==lists of sample IDs.
 # - hnorm_loc, hnorm_scale [float][float]: Parameters for the half-Gaussian distribution.
-# - CN2Params_A (dict): key==clusterID, value== np.ndarray dim=[nbOfExons, NbOfParams]
+# - CN2Params_A (dict): key==clusterID, value== numpy.ndarray dim=[nbOfExons, NbOfParams]
 #                     Parameters for CN2 state (representing normal copy number) in autosomes.
 # - CN2Params_G (dict): same as CN2Params_A but for gonosomes.
 # - CNStates (list[strs]): representing the different copy number states (e.g., CN0, CN1, CN2, CN3+).
 # - jobs [int]: number of parallel jobs to run.
 #
 # Returns a tuple (likelihoods_A, likelihoods_G), where:
-# - likelihoods_A (dict): key==sampleIDs, value==np.ndarray dim=[NBOfExons, NBOfCNStates]
+# - likelihoods_A (dict): key==sampleIDs, value==numpy.ndarray dim=[NBOfExons, NBOfCNStates]
 #                         containing likelihoods for each sample in autosomes.
 # - likelihoods_G (dict): same as likelihoods_A but for gonosomes.
 def calcLikelihoods(samples, autosomeFPMs, gonosomeFPMs, clust2samps, clustIsValid, hnorm_loc,
@@ -59,7 +56,7 @@ def calcLikelihoods(samples, autosomeFPMs, gonosomeFPMs, clust2samps, clustIsVal
     logger.info("%i new clusters => will process %i in parallel", len(clust2samps), paraClusters)
 
     # set up a pool of workers for parallel processing
-    with ProcessPoolExecutor(paraClusters) as pool:
+    with concurrent.futures.ProcessPoolExecutor(paraClusters) as pool:
         # iterate over all clusters and submit them for processing
         for clusterID in clust2samps:
 
@@ -95,7 +92,7 @@ def calcLikelihoods(samples, autosomeFPMs, gonosomeFPMs, clust2samps, clustIsVal
 # - clusterID (str): identifier of the cluster being processed.
 # - clust2samps (dict): key==clusterIDs, value==lists of sample IDs.
 # - samp2Index (dict): key==sampleID[str], value==exonsFPM samples column index[int].
-# - exonsFPMs (np.ndarray): Normalized fragment counts for exons (FPM data).
+# - exonsFPMs (numpy.ndarray): Normalized fragment counts for exons (FPM data).
 # - hnorm_loc (float), hnorm_scale (float): Parameters for the half-Gaussian distribution.
 # - clustCN2Params (dict): Gaussian distribution parameters for CN2 state, keyed by cluster ID.
 # - numCNStates (int): The number of Copy Number (CN) states.
@@ -160,15 +157,15 @@ def updateLikelihoods(future_clusterLikelihoods, likelihoods, clusterID):
 # Args:
 # - clusterID [str]: cluster identifier being processed
 # - samp2Index (dict): key==sampleID[str], value==exonsFPM samples column index[int]
-# - exonsFPM (np.ndarray[floats]): normalized fragment counts (FPMs)
+# - exonsFPM (numpy.ndarray[floats]): normalized fragment counts (FPMs)
 # - clust2samps (dict): key==clusterID, value==list of sampleIDs
 # - hnorm_loc[float], hnorm_scale[float]: parameters of the half normal distribution
-# - clustCN2Params (np.ndarray[floats]): Dim = nbOfExons * ["loc", "scale"].
+# - clustCN2Params (numpy.ndarray[floats]): Dim = nbOfExons * ["loc", "scale"].
 #                                        Gaussian distribution parameters.
 # - numCNs [int]: 4 copy number status ["CN0", "CN1", "CN2", "CN3"]
 #
 # Returns:
-# - likelihoodsDict : keys==sampleID, values==np.ndarray(nbExons * nbCNStates)
+# - likelihoodsDict : keys==sampleID, values==numpy.ndarray(nbExons * nbCNStates)
 #                     contains all the samples in a cluster.
 def calcClustLikelihoods(clusterID, samp2Index, exonsFPM, clust2samps, hnorm_loc, hnorm_scale,
                          CN2Params, numCNs):
@@ -178,11 +175,11 @@ def calcClustLikelihoods(clusterID, samp2Index, exonsFPM, clust2samps, hnorm_loc
 
     # dictionary to hold the likelihoods for each sample, initialized to -1 for
     # all exons and CN states.
-    likelihoodsDict = {samp: np.full((exonsFPM.shape[0], numCNs), -1, dtype=np.float128)
+    likelihoodsDict = {samp: numpy.full((exonsFPM.shape[0], numCNs), -1, dtype=numpy.float128)
                        for samp in sampleIDs}
 
     # check for valid exons, which do not contain -1, indicating no call exons.
-    validExons = ~np.any(CN2Params == -1, axis=1)
+    validExons = ~numpy.any(CN2Params == -1, axis=1)
 
     # looping over each exon to compute the likelihoods for each CN state
     for ei in range(len(CN2Params)):
@@ -251,7 +248,7 @@ def setupCNDistribParams(hnorm_loc, hnorm_scale, gauss_loc, gauss_scale):
     # adaptable and stable, especially if 'gauss_locAddScale' varies over a wide range.
     # This approach creates a narrower distribution more in line with the expected
     # characteristics of CN3+ data.
-    gauss_logLocAdd1 = np.log10(gauss_locAddScale + 1)
+    gauss_logLocAdd1 = numpy.log10(gauss_locAddScale + 1)
 
     # Distribution parameters for CN0, CN1, CN2, and CN3+ are stored in CN_params.
     CN_params = [(scipy.stats.halfnorm.pdf, hnorm_loc, hnorm_scale, None),  # CN0

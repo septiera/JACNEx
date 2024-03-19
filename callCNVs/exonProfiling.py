@@ -1,10 +1,11 @@
+import concurrent.futures
 import logging
 import math
 import numba
-import numpy as np
+import numpy
 import scipy.stats
-from concurrent.futures import ProcessPoolExecutor
 
+####### JACNEx modules
 import figures.plots
 
 # prevent numba flooding the logs when we are in DEBUG loglevel
@@ -28,7 +29,7 @@ logger = logging.getLogger(__name__)
 # percentile of the associated half normal distribution (CN0).
 #
 # Args:
-# - intergenicsFPM (np.ndarray[floats]): count data from intergenic regions.
+# - intergenicsFPM (numpy.ndarray[floats]): count data from intergenic regions.
 #
 # Returns a tuple (hnormloc, hnormscale, uncaptThreshold):
 # - hnormloc [float]: location parameter of the fitted half normal distribution.
@@ -57,8 +58,8 @@ def calcCN0Params(intergenicsFPM):
 # Iterates over clusters, processing each valid cluster in parallel.
 #
 # Args:
-# - autosomeFPMs (np.ndarray[floats]): Autosome fragment counts.
-# - gonosomeFPMs (np.ndarray[floats]): Gonosome fragment counts.
+# - autosomeFPMs (numpy.ndarray[floats]): Autosome fragment counts.
+# - gonosomeFPMs (numpy.ndarray[floats]): Gonosome fragment counts.
 # - samples (list[str]): sample names.
 # - uncaptThreshold [float]: Threshold for considering exons as uncaptured(<).
 # - clust2samps (dict): Mapping of cluster IDs to sample lists.
@@ -70,7 +71,7 @@ def calcCN0Params(intergenicsFPM):
 #
 # Returns a tuple (CN2Params_A, CN2Params_G):
 # - CN2Params_A (dict): for autosomal clusters, key==clusterID,
-#                       value==np.ndarray[floats] dim=NbOfExons*["loc", "scale"].
+#                       value==numpy.ndarray[floats] dim=NbOfExons*["loc", "scale"].
 # - CN2Params_G (dict): same as CN2Params_A but for gonosomal clusters.
 def calcCN2Params(autosomeFPMs, gonosomeFPMs, samples, uncaptThreshold,
                   clust2samps, fitWith, clustIsValid, plotDir, jobs):
@@ -87,7 +88,7 @@ def calcCN2Params(autosomeFPMs, gonosomeFPMs, samples, uncaptThreshold,
     logger.info("%i new clusters => will process %i in parallel", len(clust2samps), paraClusters)
 
     # set up a pool of workers for parallel processing
-    with ProcessPoolExecutor(paraClusters) as pool:
+    with concurrent.futures.ProcessPoolExecutor(paraClusters) as pool:
         # iterate over all clusters and submit processing tasks
         for clusterID in clust2samps:
 
@@ -127,7 +128,7 @@ def calcCN2Params(autosomeFPMs, gonosomeFPMs, samples, uncaptThreshold,
 # fits a half normal distribution, fixing location to 0.
 #
 # Args:
-# - intergenicsFPM (np.ndarray[floats]): count array (FPM normalized)
+# - intergenicsFPM (numpy.ndarray[floats]): count array (FPM normalized)
 #
 # Returns a tuple (loc, scale):
 # - hnormloc [float], hnormscale[float]: parameters of the half normall distribution
@@ -174,7 +175,7 @@ def getSampIndexes(clusterID, clust2samps, samp2Index, fitWith):
 #
 # Args:
 # - clusterID (str): Identifier of the cluster.
-# - exonsFPMs (np.ndarray): Fragment counts for the cluster.
+# - exonsFPMs (numpy.ndarray): Fragment counts for the cluster.
 # - uncaptThreshold (float): Threshold for uncaptured exons.
 # - CN2Params (dict): Dictionary to store CN2 parameters.
 # - plotDir [str]: folder path for saving a pieChart representing
@@ -213,14 +214,14 @@ def updateCN2Params(future_clusterMetrics, CN2Params, clusterID):
 # parameters for each exon.
 #
 # Args:
-# - exonFPMs (np.ndarray[floats]): normalised counts from exons
+# - exonFPMs (numpy.ndarray[floats]): normalised counts from exons
 # - uncaptThreshold [float]: threshold for determining if an exon is captured or not.
 # - clusterID (str): Identifier of the processed cluster.
 # - plotDir [str]: folder path for saving a pieChart representing
 #   the summary of exon filtering by cluster.
 #
 # Returns:
-# - CN2Params (np.ndarray[floats]): dim: NBofExons x NBofMetrics.
+# - CN2Params (numpy.ndarray[floats]): dim: NBofExons x NBofMetrics.
 #                                        Metrics include 'loc' (mean) and 'scale' (standard deviation) for each exon.
 def computeClusterCN2Params(exonFPMs, uncaptThreshold, clusterID, plotDir):
     # Possible filtering states for exons
@@ -230,10 +231,10 @@ def computeClusterCN2Params(exonFPMs, uncaptThreshold, clusterID, plotDir):
     paramsID = ["loc", "scale"]
 
     # Initialize an array to store CN2 parameters with a default value of -1
-    CN2Params = np.full((exonFPMs.shape[0], len(paramsID)), -1, dtype=np.float64)
+    CN2Params = numpy.full((exonFPMs.shape[0], len(paramsID)), -1, dtype=numpy.float64)
 
     # Vector to keep track of the filter state for each exon
-    filterStatesVec = np.zeros(exonFPMs.shape[0], dtype=int)
+    filterStatesVec = numpy.zeros(exonFPMs.shape[0], dtype=int)
 
     # Process each exon to determine its filter state and compute CN2 parameters
     for exonIndex, exFPMs in enumerate(exonFPMs):
@@ -281,7 +282,7 @@ def computeClusterCN2Params(exonFPMs, uncaptThreshold, clusterID, plotDir):
 # The CN2 parameters array contains 'loc' (mean) and 'scale' (standard deviation) if calculated.
 def assessExonAndComputeCN2Metrics(exFPMs, unCaptFPMLimit, paramsID):
     # CN2 parameters array with default NaN values
-    exonCN2Params = np.full((1, len(paramsID)), np.nan)
+    exonCN2Params = numpy.full((1, len(paramsID)), numpy.nan)
 
     # Filter n°1: Check if exon is not captured, indicated by zero median coverage
     if filterUncapturedExons(exFPMs):
@@ -327,7 +328,7 @@ def assessExonAndComputeCN2Metrics(exFPMs, unCaptFPMLimit, paramsID):
 # Returns "True" if exon doesn't pass the filter otherwise "False"
 @numba.njit
 def filterUncapturedExons(exFPMs):
-    medianFPM = np.median(exFPMs)
+    medianFPM = numpy.median(exFPMs)
     if medianFPM == 0:
         return True
     else:
@@ -341,7 +342,7 @@ def filterUncapturedExons(exFPMs):
 # script found to :https://github.com/hmiemad/robust_Gaussian_fit (v01_2023)
 #
 # Args:
-# - X (np.array): A sample of 1-dimensional mixture of Gaussian random variables
+# - X (numpy.array): A sample of 1-dimensional mixture of Gaussian random variables
 # - mean (float, optional): Expectation. Defaults to None.
 # - stdev (float, optional): Standard deviation. Defaults to None.
 # - bandwidth (float, optional): Hyperparameter of truncation. Defaults to 2.
@@ -352,12 +353,12 @@ def filterUncapturedExons(exFPMs):
 def fitRobustGaussian(X, mean=None, stdev=None, bandwidth=2.0, eps=1.0e-5):
     if mean is None:
         # median is an approach as robust and naïve as possible to Expectation
-        mean = np.median(X)
+        mean = numpy.median(X)
     mu_0 = mean + 1
 
     if stdev is None:
         # rule of thumb
-        stdev = np.std(X) / 3
+        stdev = numpy.std(X) / 3
     sigma_0 = stdev + 1
 
     bandwidth_truncated_normal_sigma = truncated_integral_and_sigma(bandwidth)
@@ -370,13 +371,13 @@ def fitRobustGaussian(X, mean=None, stdev=None, bandwidth=2.0, eps=1.0e-5):
         measure the standard deviation of the window and divide by the standard deviation of a truncated Gaussian distribution
         measure the proportion of points inside the window, divide by the weight of a truncated Gaussian distribution
         """
-        Window = np.logical_and(X - mean - bandwidth * stdev < 0, X - mean + bandwidth * stdev > 0)
+        Window = numpy.logical_and(X - mean - bandwidth * stdev < 0, X - mean + bandwidth * stdev > 0)
 
         # condition to identify exons with points arround at the median
         if Window.any():
-            mu_0, mean = mean, np.average(X[Window])
-            var = np.average(np.square(X[Window])) - mean**2
-            sigma_0, stdev = stdev, np.sqrt(var) / bandwidth_truncated_normal_sigma
+            mu_0, mean = mean, numpy.average(X[Window])
+            var = numpy.average(numpy.square(X[Window])) - mean**2
+            sigma_0, stdev = stdev, numpy.sqrt(var) / bandwidth_truncated_normal_sigma
         # no points arround the median
         # e.g. exon where more than 1/2 of the samples have an FPM = 0.
         # A Gaussian fit is impossible => raise exception
@@ -399,7 +400,8 @@ def normal_erf(x, mean=0, sigma=1, depth=50):
         normal = normal + ele
         erf = erf + ele * x / (2.0 * i + 1)
 
-    return np.clip(normal / np.sqrt(2.0 * np.pi) / sigma, 0, None), np.clip(erf / np.sqrt(2.0 * np.pi) / sigma, -0.5, 0.5)
+    return (numpy.clip(normal / numpy.sqrt(2.0 * numpy.pi) / sigma, 0, None),
+            numpy.clip(erf / numpy.sqrt(2.0 * numpy.pi) / sigma, -0.5, 0.5))
 
 
 #############################################################
@@ -407,7 +409,7 @@ def normal_erf(x, mean=0, sigma=1, depth=50):
 # used by fitRobustGaussian function
 def truncated_integral_and_sigma(x):
     n, e = normal_erf(x)
-    return np.sqrt(1 - n * x / e)
+    return numpy.sqrt(1 - n * x / e)
 
 
 #############################################################

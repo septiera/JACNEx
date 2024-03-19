@@ -10,7 +10,6 @@ import logging
 import os
 import sys
 import time
-import traceback
 
 ####### JACNEx modules
 import clusterSamps.clustering
@@ -168,7 +167,6 @@ def main(argv):
             autosomeFPMs, "A", samples, minSamps, plotFile)
     except Exception as e:
         logger.error("buildClusters failed for autosomes: %s", repr(e))
-        traceback.print_exc()
         raise Exception("buildClusters failed")
 
     thisTime = time.time()
@@ -182,7 +180,6 @@ def main(argv):
             gonosomeFPMs, "G", samples, minSamps, plotFile)
     except Exception as e:
         logger.error("buildClusters failed for gonosomes: %s", repr(e))
-        traceback.print_exc()
         raise Exception("buildClusters failed")
     clust2samps.update(clust2sampsGono)
     fitWith.update(fitWithGono)
@@ -219,5 +216,4 @@ if __name__ == '__main__':
         main(sys.argv)
     except Exception as e:
         sys.stderr.write("ERROR in " + scriptName + " : " + repr(e) + "\n")
-        traceback.print_exc()
         sys.exit(1)

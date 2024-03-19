@@ -1,8 +1,9 @@
 import logging
-import numpy as np
 import matplotlib.pyplot
+import numpy
 import scipy.stats
 
+####### JACNEx modules
 import countFrags.countsFile
 import countFrags.countFragments
 
@@ -29,15 +30,15 @@ countsFile = "../RunMageCNV/mageCNV_transcripts-230209/CountFiles/countsFile_202
 (exons, SOIs, countsArray) = countFrags.countsFile.parseCountsFile(countsFile)
 countsFPM = countFrags.countFragments.normalizeCounts(countsArray)
 
-exonLengths = np.array([exons[i][2] - exons[i][1] for i in range(len(exons))])
+exonLengths = numpy.array([exons[i][2] - exons[i][1] for i in range(len(exons))])
 
 # average FPM per exon, over all samples
-meanFPM = np.mean(countsFPM, axis=1)
+meanFPM = numpy.mean(countsFPM, axis=1)
 
 #####################
 # hum strange, some exons are huge!
 # find their indexes in exons
-np.where(exonLengths > 40000)[0]
+numpy.where(exonLengths > 40000)[0]
 # -> array([161869, 189096, 287231])
 # retrieve their IDs:
 exons[161869]

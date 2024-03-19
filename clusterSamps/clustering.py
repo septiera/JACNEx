@@ -1,13 +1,12 @@
 import logging
-import numpy as np
-import statistics
+import numpy
 import os
+import scipy.cluster.hierarchy  # hierachical clustering
+import sklearn.decomposition  # PCA
+import statistics
 
-# hierachical clustering
-import scipy.cluster.hierarchy
-# PCA
-import sklearn.decomposition
 
+####### JACNEx modules
 import figures.plots
 
 # set up logger, using inherited config
@@ -25,7 +24,7 @@ logger = logging.getLogger(__name__)
 # to calculate likelihoods of each exon-level CN state.
 #
 # Args:
-# - FPMarray (np.ndarray[float]): normalised fragment counts for exons on the
+# - FPMarray (numpy.ndarray[float]): normalised fragment counts for exons on the
 #   chromosome type indicated by chromType, for all samples
 # - chromType (string): one of 'A', 'G' indicating that FPMarray holds counts
 #   for exons on autosomes or gonosomes
@@ -53,7 +52,7 @@ def buildClusters(FPMarray, chromType, samples, minSize, plotFile):
     pca = sklearn.decomposition.PCA(n_components=maxDims, svd_solver='full').fit(FPMarray.T)
     logMess = "in buildClusters while choosing the PCA dimension, explained variance ratio:"
     logger.debug(logMess)
-    logMess = np.array_str(pca.explained_variance_ratio_, max_line_width=200, precision=3)
+    logMess = numpy.array_str(pca.explained_variance_ratio_, max_line_width=200, precision=3)
     logger.debug(logMess)
 
     dim = 0
@@ -65,7 +64,7 @@ def buildClusters(FPMarray, chromType, samples, minSize, plotFile):
     logger.debug("in buildClusters with chromType=%s, chosen number of PCA dimensions = %i", chromType, dim)
     # project samples and truncate to dim dimensions
     samplesInPCAspace = pca.transform(FPMarray.T)
-    samplesInPCAspace = np.delete(samplesInPCAspace, np.s_[dim:maxDims], 1)
+    samplesInPCAspace = numpy.delete(samplesInPCAspace, numpy.s_[dim:maxDims], 1)
 
     # hierarchical clustering of the samples projected in the PCA space:
     # - use 'average' method to define the distance between clusters (== UPGMA),

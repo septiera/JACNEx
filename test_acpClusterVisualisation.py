@@ -5,10 +5,10 @@
 ###############################################################################################
 import getopt
 import logging
-import os
-import sys
-import sklearn.decomposition
 import matplotlib.pyplot
+import os
+import sklearn.decomposition
+import sys
 # from mpl_toolkits.mplot3d import Axes3D
 
 ####### JACNEx modules

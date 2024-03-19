@@ -5,17 +5,17 @@
 # from each BAM that overlap each exon (+- padding).
 # See usage for details.
 ###############################################################################################
-import sys
+import concurrent.futures
 import getopt
-import os
-import math
-import re
-import time
 import gzip
-import shutil
 import logging
-import numpy as np
-from concurrent.futures import ProcessPoolExecutor
+import math
+import os
+import re
+import shutil
+import sys
+import time
+import numpy
 
 ####### JACNEx modules
 import countFrags.bed
@@ -341,7 +341,7 @@ def main(argv):
 
         #####################################################
         # Process new BAMs, up to paraSamples in parallel
-        with ProcessPoolExecutor(paraSamples) as pool:
+        with concurrent.futures.ProcessPoolExecutor(paraSamples) as pool:
             for bamIndex in range(len(bamsToProcess)):
                 bam = bamsToProcess[bamIndex]
                 if countsFilled[bamIndex]:
@@ -357,7 +357,7 @@ def main(argv):
         if len(failedBams) > 0:
             for failedI in reversed(failedBams):
                 del(samples[failedI])
-            countsArray = np.delete(countsArray, failedBams, axis=1)
+            countsArray = numpy.delete(countsArray, failedBams, axis=1)
 
         thisTime = time.time()
         logger.info("Processed %i new BAMs in %.2fs, i.e. %.2fs per BAM",

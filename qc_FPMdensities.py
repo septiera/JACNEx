@@ -6,17 +6,14 @@
 import getopt
 import KDEpy
 import logging
-import numpy as np
 import matplotlib.backends.backend_pdf
+import numpy
 import os
 import sys
 
 ####### JACNEx modules
 import countFrags.countsFile
 import figures.plots
-
-# prevent PIL flooding the logs when we are in DEBUG loglevel
-logging.getLogger('PIL').setLevel(logging.WARNING)
 
 # set up logger, using inherited config, in case we get called as a module
 logger = logging.getLogger(__name__)
@@ -139,7 +136,7 @@ def main(argv):
 # density plots for PASSing and FAILing samples.
 #
 # Args:
-# - counts (np.ndarray[float]): normalised fragment counts
+# - counts (numpy.ndarray[float]): normalised fragment counts
 # - samples (list[str]): sample names
 # - plotFilePass: pdf filename (with path) where plots for QC-passing samples are made
 # - plotFileFail: same as plotFilePass but for QC-failing samples
@@ -169,7 +166,7 @@ def SampsQC(counts, samples, plotFilePass, plotFileFail, minLow2high=0.2, testBW
         # value should be fine
         fracDataForSmoothing = 0.96
         # corresponding max counts value
-        maxData = np.quantile(sampleCounts, fracDataForSmoothing)
+        maxData = numpy.quantile(sampleCounts, fracDataForSmoothing)
 
         # produce smoothed representation(s) (one if testBW==False, several otherwise)
         dataRanges = []
@@ -253,7 +250,7 @@ def SampsQC(counts, samples, plotFilePass, plotFileFail, minLow2high=0.2, testBW
 # representation of the data.
 #
 # Args:
-# - data: a 1D np.ndarray of floats (>= 0)
+# - data: a 1D numpy.ndarray of floats (>= 0)
 # - maxData (float): data values beyond maxData are not plotted (but they ARE
 #     used to calculate the bandwidth when using a heuristic)
 # - numValues (int): approximate size of the returned x and y, default should be fine
@@ -261,7 +258,7 @@ def SampsQC(counts, samples, plotFilePass, plotFileFail, minLow2high=0.2, testBW
 #     heuristic, or a float (to use a fixed bandwidth)
 #
 # Returns a tuple (x, y, bwValue):
-# - x and y are np.ndarrays of the same size representing the smoothed density of data
+# - x and y are numpy.ndarrays of the same size representing the smoothed density of data
 # - bwValue is the bandwidth value (float) used for the KDE
 def smoothData(data, maxData=10, numValues=1000, bandwidth='scott'):
     # if using a bandwidth heuristic ('scott', 'silverman' or 'ISJ'):
@@ -281,14 +278,14 @@ def smoothData(data, maxData=10, numValues=1000, bandwidth='scott'):
     # values to be ignored (because that weight goes to negative values)
     # this issue can be alleviated by mirroring the data, see:
     # https://kdepy.readthedocs.io/en/latest/examples.html#boundary-correction-using-mirroring
-    dataReducedMirrored = np.concatenate((dataReduced, -dataReduced))
+    dataReducedMirrored = numpy.concatenate((dataReduced, -dataReduced))
     # Compute KDE using bwValue, and twice as many grid points
     (dataRange, density) = KDEpy.FFTKDE(bw=bwValue).fit(dataReducedMirrored).evaluate(numValues * 2)
     # double the y-values to get integral of ~1 on the positive dataRanges
     density = density * 2
     # delete values outside of [0, maxData]
-    density = density[np.logical_and(0 <= dataRange, dataRange <= maxData)]
-    dataRange = dataRange[np.logical_and(0 <= dataRange, dataRange <= maxData)]
+    density = density[numpy.logical_and(0 <= dataRange, dataRange <= maxData)]
+    dataRange = dataRange[numpy.logical_and(0 <= dataRange, dataRange <= maxData)]
     return(dataRange, density, bwValue)
 
 
@@ -300,7 +297,7 @@ def smoothData(data, maxData=10, numValues=1000, bandwidth='scott'):
 # - the first local max of data after minIndex, with analogous definition
 #
 # Args:
-# - data: a 1D np.ndarray of floats
+# - data: a 1D numpy.ndarray of floats
 # - windowSize: int, default should be fine if running on y returned by smoothData()
 #     with its default numValues
 #

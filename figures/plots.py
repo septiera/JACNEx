@@ -1,9 +1,9 @@
 import logging
-import os
 import matplotlib.pyplot
 import matplotlib.backends.backend_pdf
+import numpy
+import os
 import scipy.cluster.hierarchy
-import numpy as np
 
 # prevent matplotlib and PIL flooding the logs when we are in DEBUG loglevel
 logging.getLogger('matplotlib').setLevel(logging.WARNING)
@@ -246,7 +246,7 @@ def plotPieChart(clustID, filterStates, exStatusArray, plotDir):
 
     # Use numpy.unique() to obtain unique values and their occurrences
     # with return_counts=True
-    uniqueValues, counts = np.unique(exStatusArray[exStatusArray != -1], return_counts=True)
+    uniqueValues, counts = numpy.unique(exStatusArray[exStatusArray != -1], return_counts=True)
 
     # Create the pie chart figure and subplot
     fig = matplotlib.pyplot.figure(figsize=(5, 5))
@@ -269,10 +269,10 @@ def plotPieChart(clustID, filterStates, exStatusArray, plotDir):
     # Position the labels at custom percentage distances
     for t, d in zip(p, pctdists):
         xi, yi = t.get_position()
-        ri = np.sqrt(xi**2 + yi**2)
-        phi = np.arctan2(yi, xi)
-        x = d * ri * np.cos(phi)
-        y = d * ri * np.sin(phi)
+        ri = numpy.sqrt(xi**2 + yi**2)
+        phi = numpy.arctan2(yi, xi)
+        x = d * ri * numpy.cos(phi)
+        y = d * ri * numpy.sin(phi)
         t.set_position((x, y))
 
     matplotlib.pyplot.axis('equal')
@@ -289,7 +289,7 @@ def plotPieChart(clustID, filterStates, exStatusArray, plotDir):
 # The plot includes error bars representing the standard deviation.
 #
 # Args:
-# - countArray (np.ndarray[ints]): Count array representing copy number frequencies.
+# - countArray (numpy.ndarray[ints]): Count array representing copy number frequencies.
 # - CNStatus (list[str]): Names of copy number states.
 # - outFolder (str): Path to the output folder for saving the bar plot.
 def barPlot(countArray, CNStatus, pdf):
@@ -297,24 +297,24 @@ def barPlot(countArray, CNStatus, pdf):
     fig = matplotlib.pyplot.figure(figsize=(10, 8))
 
     # Calculate the mean and standard deviation for each category
-    means = np.mean(countArray, axis=0)
-    stds = np.std(countArray, axis=0)
+    means = numpy.mean(countArray, axis=0)
+    stds = numpy.std(countArray, axis=0)
 
     # Normalize the means to get frequencies
-    total_mean = np.sum(means)
+    total_mean = numpy.sum(means)
     frequencies = means / total_mean
 
     # Plot the bar plot with error bars
     matplotlib.pyplot.bar(CNStatus, frequencies, yerr=stds / total_mean, capsize=3)
 
     # Define the vertical offsets for the annotations dynamically based on standard deviation
-    mean_offset = np.max(frequencies) * 0.1
-    std_offset = np.max(frequencies) * 0.05
+    mean_offset = numpy.max(frequencies) * 0.1
+    std_offset = numpy.max(frequencies) * 0.05
 
     # Add labels for mean and standard deviation above each bar
     for i in range(len(CNStatus)):
         matplotlib.pyplot.text(i, frequencies[i] + mean_offset, f'μ={frequencies[i]:.1e}', ha='center')
-        matplotlib.pyplot.text(i, frequencies[i] + std_offset, f'σ={stds[i]/total_mean:.1e}', ha='center')
+        matplotlib.pyplot.text(i, frequencies[i] + std_offset, f'σ={stds[i] / total_mean:.1e}', ha='center')
 
     # Set the labels and title
     matplotlib.pyplot.xlabel('Copy number States')

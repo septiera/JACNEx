@@ -6,11 +6,11 @@
 # It operates as the third step in the CNV analysis pipeline, emphasizing exon filtering and CNV calling.
 # See usage for details.
 ###############################################################################################
-import sys
 import getopt
-import os
-import time
 import logging
+import os
+import sys
+import time
 import traceback
 
 ####### JACNEx modules
@@ -22,9 +22,6 @@ import callCNVs.transitions
 import callCNVs.callCNVs
 import callCNVs.qualityScores
 import callCNVs.callsFile
-
-# prevent matplotlib flooding the logs when we are in DEBUG loglevel
-logging.getLogger('matplotlib').setLevel(logging.WARNING)
 
 # set up logger, using inherited config, in case we get called as a module
 logger = logging.getLogger(__name__)
