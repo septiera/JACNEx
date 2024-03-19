@@ -381,7 +381,7 @@ if __name__ == '__main__':
     # configure logging, sub-modules will inherit this config
     logging.basicConfig(format='%(asctime)s %(levelname)s %(name)s: %(message)s',
                         datefmt='%Y-%m-%d %H:%M:%S',
-                        level=logging.DEBUG)
+                        level=logging.INFO)
     # set up logger: we want script name rather than 'root'
     logger = logging.getLogger(scriptName)
 

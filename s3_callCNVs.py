@@ -25,6 +25,8 @@ import callCNVs.callsFile
 
 # set up logger, using inherited config, in case we get called as a module
 logger = logging.getLogger(__name__)
+# override inherited level (when working on step 3)
+logger.setLevel(logging.DEBUG)
 
 
 ###############################################################################
