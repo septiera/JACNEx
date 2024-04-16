@@ -1,3 +1,4 @@
+import datetime
 import getopt
 import glob
 import gzip
@@ -6,10 +7,8 @@ import os
 import re
 import sys
 import tempfile
-from datetime import datetime
 
-
-####### MAGE-CNV modules
+####### JACNEx modules
 import s1_countFrags
 import s2_clusterSamps
 import s3_callCNVs
@@ -25,7 +24,7 @@ import s3_callCNVs
 # strings (eg sys.argv).
 # Return a list with:
 # - everything needed by this module's main()
-# - one sys.argv-like list (as a list of strings) for each mageCNV step
+# - one sys.argv-like list (as a list of strings) for each JACNEx step
 # If anything is wrong, raise Exception("EXPLICIT ERROR MESSAGE")
 def parseArgs(argv):
     scriptName = os.path.basename(argv[0])
@@ -33,7 +32,7 @@ def parseArgs(argv):
     # args needed by main()
     workDir = ""
 
-    # sys.argv-like lists for each mageCNV step
+    # sys.argv-like lists for each JACNEx step
     step1Args = ["s1_countFrags.py"]
     step2Args = ["s2_clusterSamps.py"]
     step3Args = ["s3_callCNVs.py"]
@@ -93,10 +92,11 @@ Step 2 optional arguments, defaults should be OK:
             sys.exit(0)
         elif opt in ("--workDir"):
             workDir = value
-        elif opt in ("--bams", "--bams-from", "--bed", "--tmp", "--padding", "--maxGap", "--samtools"):
+        elif opt in ("--bams", "--bams-from", "--bed", "--tmp", "--maxGap", "--samtools"):
             step1Args.extend([opt, value])
-        elif opt in ("--jobs"):
+        elif opt in ("--jobs", "--padding"):
             step1Args.extend([opt, value])
+            step3Args.extend([opt, value])
         elif opt in ("--minSamps"):
             step2Args.extend([opt, value])
         else:
@@ -123,7 +123,7 @@ Step 2 optional arguments, defaults should be OK:
         step3Args.extend(["--jobs", jobs])
 
     #####################################################
-    # process mageCNV.py-specific options, other options will be checked by s[1-4]_*.parseArgs()
+    # process JACNEx.py-specific options, other options will be checked by s[1-4]_*.parseArgs()
     if workDir == "":
         raise Exception("you must provide a workDir with --workDir. Try " + scriptName + " --help")
     elif not os.path.isdir(workDir):
@@ -141,12 +141,13 @@ Step 2 optional arguments, defaults should be OK:
 # - countsFilesAll: list of pre-existing countsFiles (possibly empty), with PATH
 # - samples: list of sample names
 # Return (cf, commonSamples) where
-# - cf is the countsFile with the most common samples, or '' if list was empty or
-#   if no countsFile has any sample from samples
+# - cf is the countsFile with the most common samples (and the fewest other samples), or '' if
+#   list was empty or if no countsFile has any sample from samples
 # - commonSamples is the number of common samples
 def findBestPrevCF(countsFilesAll, samples):
     bestCF = ''
     commonSamples = 0
+    otherSamples = 0
     # build dict of samples, value==1
     samplesD = {}
     for s in samples:
@@ -165,12 +166,16 @@ def findBestPrevCF(countsFilesAll, samples):
         # get rid of exon definition headers
         del samplesCF[0:4]
         commonSamplesCF = 0
+        otherSamplesCF = 0
         for s in samplesCF:
             if s in samplesD:
                 commonSamplesCF += 1
-        if commonSamplesCF > commonSamples:
+            else:
+                otherSamplesCF += 1
+        if (commonSamplesCF > commonSamples) or ((commonSamplesCF == commonSamples) and (otherSamplesCF < otherSamples)):
             bestCF = cf
             commonSamples = commonSamplesCF
+            otherSamples = otherSamplesCF
         countsFH.close()
     return(bestCF, commonSamples)
 
@@ -237,7 +242,7 @@ def main(argv):
             raise Exception(stepNames[0] + " plotDir " + plotDir + " doesn't exist and can't be mkdir'd")
 
     # shared date+time stamp, for new files
-    dateStamp = datetime.today().strftime('%Y-%m-%d_%H-%M-%S')
+    dateStamp = datetime.datetime.today().strftime('%Y-%m-%d_%H-%M-%S')
 
     ##################
     # check arguments of all steps before starting any actual work:
@@ -320,10 +325,6 @@ def main(argv):
         except Exception as e:
             raise Exception(stepNames[3] + " parseArgs problem: " + str(e))
 
-        #########
-        # complement step3Args and check them
-        # TODO similarly to step2, using bogusFile for --counts and --clusters
-
     ######################
     logger.info("arguments look OK, starting to work")
 
@@ -378,9 +379,9 @@ def main(argv):
 if __name__ == '__main__':
     scriptName = os.path.basename(sys.argv[0])
     # configure logging, sub-modules will inherit this config
-    logging.basicConfig(format='%(asctime)s %(levelname)s %(name)s: %(message)s',
+    logging.basicConfig(format='%(levelname)s %(asctime)s %(name)s: %(message)s',
                         datefmt='%Y-%m-%d %H:%M:%S',
-                        level=logging.DEBUG)
+                        level=logging.INFO)
     # set up logger: we want script name rather than 'root'
     logger = logging.getLogger(scriptName)
 

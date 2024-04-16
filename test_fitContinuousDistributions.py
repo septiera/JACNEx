@@ -1,6 +1,4 @@
 ###############################################################################################
-######################## JACNEx step 3: exon filtering and calling ############################
-###############################################################################################
 # Given a TSV of exon fragment counts produced by 1_countFrags.py
 # It applies various continuous distributions from scipy's "continuous_distns" to
 # normalized fragments counts of intergenic regions.
@@ -10,7 +8,7 @@ import getopt
 import logging
 import matplotlib.pyplot
 import matplotlib.backends.backend_pdf
-import numpy as np
+import numpy
 import os
 import scipy.stats
 import sys
@@ -120,8 +118,8 @@ ARGUMENTS:
 #                                       ordered by sse
 def bestFitContinuousDistribs(data, bins):
     # Get histogram of original data
-    y, x = np.histogram(data, bins=bins, density=True)
-    x = (x + np.roll(x, -1))[:-1] / 2.0
+    y, x = numpy.histogram(data, bins=bins, density=True)
+    x = (x + numpy.roll(x, -1))[:-1] / 2.0
 
     # Initialize output lists
     best_distributions = []
@@ -161,9 +159,9 @@ def bestFitContinuousDistribs(data, bins):
                 # It cannot substitute the user's visual assessment since variations in bins
                 # can lead to significant changes in SSE without necessarily reflecting the
                 # true quality of the fit.
-                sse = np.sum((y - pdf)**2)
+                sse = numpy.sum((y - pdf)**2)
 
-                if np.isnan(sse):
+                if numpy.isnan(sse):
                     logger.info("{:>3} / {:<3}: {} NOT FIT: nan r² score".format(ii + 1, len(_distn_names), distribution.name))
                 else:
                     best_distributions.append((distribution, params, pdf, sse))
@@ -207,7 +205,7 @@ def plotDistrib(intergenicVec, userBins, distributions, plotFile, NBBestFit, yli
         label = str(top[i][0].name)
         matplotlib.pyplot.plot(bins[:-1],
                                top[i][2],
-                               label=f'{label} r²={np.round(top[i][4], 2)}',
+                               label=f'{label} r²={numpy.round(top[i][4], 2)}',
                                linewidth=3.0,
                                linestyle='--')
 
@@ -264,7 +262,7 @@ def main(argv):
     plotFile4 = os.path.join(plotDir, str(NBBestFit) + "_bestContinuousDistrib_Only2params_" + str(userBins) + "bins_" + str(NBSampsToProcess) + "_" + str(len(samples)) + "samps.pdf")
 
     # Generate random indexes for the columns
-    randomSampInd = np.random.choice(intergenicFPMs.shape[1], NBSampsToProcess, replace=False)
+    randomSampInd = numpy.random.choice(intergenicFPMs.shape[1], NBSampsToProcess, replace=False)
     sampleNames = ' '.join([samples[index] for index in randomSampInd])
     logger.info(f"samples analysed: {sampleNames}")
 
@@ -279,11 +277,11 @@ def main(argv):
     # value should be fine
     fracDataForSmoothing = 0.99
     # corresponding max counts value
-    maxData = np.quantile(vec, fracDataForSmoothing)
+    maxData = numpy.quantile(vec, fracDataForSmoothing)
     subFPMsVec = vec[vec <= maxData]
 
     interVec = intergenicFPMs.reshape(-1)
-    maxData = np.quantile(interVec, fracDataForSmoothing)
+    maxData = numpy.quantile(interVec, fracDataForSmoothing)
     intergenicFPMsVec = interVec[interVec <= maxData]
 
     #####################
@@ -319,7 +317,7 @@ def main(argv):
         try:
             plotDistrib(data, userBins, distributions_to_use[i], plot_file, NBBestFit, ylim[i])
         except Exception as e:
-            raise Exception(f"Failed to plot distributions for plotFile{i+1}: {repr(e)}")
+            raise Exception(f"Failed to plot distributions for plotFile{i + 1}: {repr(e)}")
 
     thisTime = time.time()
     logger.debug("Done plotting best distributions in %.2f s", thisTime - startTime)

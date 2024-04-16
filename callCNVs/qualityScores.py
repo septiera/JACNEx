@@ -1,5 +1,5 @@
 import logging
-import numpy as np
+import numpy
 
 # set up logger, using inherited config
 logger = logging.getLogger(__name__)
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 # Args:
 # - CNVs (list): CNV information. Each CNV is represented as [CNType[int], exonStart[int],
 #    exonEnd[int], pathProb[float], sampleName[str]].
-# - likelihoods (dict): key==sampleID, value==np.array[floats] likelihoods
+# - likelihoods (dict): key==sampleID, value==numpy.array[floats] likelihoods
 # - transMatrix (numpy.ndarray): Transition matrix used in the HMM Viterbi algorithm.
 #
 # Returns:
@@ -56,7 +56,7 @@ def calculateCNVQualityScore(cnProbs, cnvCN2likelihoods, CN2toCN2probs):
     CN2Probs = calculateCN2Probs(cnvCN2likelihoods, CN2toCN2probs)
 
     # Calculate the quality score (log odds)
-    logOdds = np.log10(cnProbs / CN2Probs)
+    logOdds = numpy.log10(cnProbs / CN2Probs)
     return logOdds
 
 

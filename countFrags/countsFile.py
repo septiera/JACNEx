@@ -1,8 +1,7 @@
-import numpy as np
-import numba  # make python faster
 import gzip
 import logging
-
+import numba  # make python faster
+import numpy
 
 # prevent numba flooding the logs when we are in DEBUG loglevel
 logging.getLogger('numba').setLevel(logging.WARNING)
@@ -39,11 +38,11 @@ def extractCountsFromPrev(genomicWindows, SOIs, prevCountsFile):
     # countsArray[exonIndex,sampleIndex] will store the specified count
     # order=F should improve performance, since we fill the array one column
     # at a time when parsing BAMs
-    # dtype=np.uint32 should be fast and sufficient
-    countsArray = np.zeros((len(genomicWindows), len(SOIs)), dtype=np.uint32, order='F')
+    # dtype=numpy.uint32 should be fast and sufficient
+    countsArray = numpy.zeros((len(genomicWindows), len(SOIs)), dtype=numpy.uint32, order='F')
     # countsFilled: same size and order as sampleNames, value will be set
     # to True iff counts were filled from countsFile
-    countsFilled = np.array([False] * len(SOIs))
+    countsFilled = numpy.array([False] * len(SOIs))
 
     if (prevCountsFile != ''):
         # we have a prevCounts file, parse it
@@ -57,7 +56,7 @@ def extractCountsFromPrev(genomicWindows, SOIs, prevCountsFile):
         # fill prev2new to identify SOIs that are in prevCountsFile:
         # prev2new is a 1D numpy array, size = len(prevSamples), prev2new[prev] is the
         # index in SOIs of sample prevSamples[prev] if it's present, -1 otherwise
-        prev2new = np.full(len(prevSamples), -1, dtype=int)
+        prev2new = numpy.full(len(prevSamples), -1, dtype=int)
         # prevIndexes: temp dict, key = sample identifier, value = index in prevSamples
         prevIndexes = {}
         for prevIndex in range(len(prevSamples)):
@@ -109,9 +108,9 @@ def parseAndNormalizeCounts(countsFile):
     gonosomeExons = []
     intergenics = []
     # windowType==0 for intergenic pseudo-exons, 1 for gonosome exons, 2 for autosome exons
-    windowType = np.zeros(len(genomicWindows), dtype=np.uint8)
-    sumOfCountsAuto = np.zeros(len(samples), dtype=np.uint32)
-    sumOfCountsTotal = np.zeros(len(samples), dtype=np.uint32)
+    windowType = numpy.zeros(len(genomicWindows), dtype=numpy.uint8)
+    sumOfCountsAuto = numpy.zeros(len(samples), dtype=numpy.uint32)
+    sumOfCountsTotal = numpy.zeros(len(samples), dtype=numpy.uint32)
     sexChroms = sexChromosomes()
 
     for i in range(len(genomicWindows)):
@@ -134,9 +133,9 @@ def parseAndNormalizeCounts(countsFile):
     sumOfCountsTotal[sumOfCountsTotal == 0] = 1
 
     # Second pass: populate *FPMs, normalizing the counts on the fly
-    autosomeFPMs = np.zeros((len(autosomeExons), len(samples)), dtype=np.float32)
-    gonosomeFPMs = np.zeros((len(gonosomeExons), len(samples)), dtype=np.float32)
-    intergenicFPMs = np.zeros((len(intergenics), len(samples)), dtype=np.float32)
+    autosomeFPMs = numpy.zeros((len(autosomeExons), len(samples)), dtype=numpy.float32)
+    gonosomeFPMs = numpy.zeros((len(gonosomeExons), len(samples)), dtype=numpy.float32)
+    intergenicFPMs = numpy.zeros((len(intergenics), len(samples)), dtype=numpy.float32)
     # indexes of next auto / gono / intergenic window to populate
     nextAutoIndex = 0
     nextGonoIndex = 0
@@ -237,7 +236,7 @@ def parseCountsFile(countsFile):
         exon = [splitLine[0], int(splitLine[1]), int(splitLine[2]), splitLine[3]]
         genomicWindows.append(exon)
         # convert counts to 1D np array and save
-        counts = np.fromstring(splitLine[4], dtype=np.uint32, sep='\t')
+        counts = numpy.fromstring(splitLine[4], dtype=numpy.uint32, sep='\t')
         countsList.append(counts)
     countsFH.close()
     return(genomicWindows, samples, countsList)
@@ -247,7 +246,6 @@ def parseCountsFile(countsFile):
 # prevCountsVec2CountsArray :
 # fill countsArray[exonIndex] with appropriate counts from prevCounts, using prev2new to
 # know which prev samples (ie columns from prev2new) go where in countsArray[exonIndex].
-# This small auxiliary function enables numba optimizations.
 # Args:
 #   - countsArray is an int numpy array to populate, dim = NbGenomicWindows x NbSOIs
 #   - exonIndex is the index of the current exon

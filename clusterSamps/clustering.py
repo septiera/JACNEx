@@ -1,13 +1,12 @@
 import logging
-import numpy as np
-import statistics
+import numpy
 import os
+import scipy.cluster.hierarchy  # hierachical clustering
+import sklearn.decomposition  # PCA
+import statistics
 
-# hierachical clustering
-import scipy.cluster.hierarchy
-# PCA
-import sklearn.decomposition
 
+####### JACNEx modules
 import figures.plots
 
 # set up logger, using inherited config
@@ -25,7 +24,7 @@ logger = logging.getLogger(__name__)
 # to calculate likelihoods of each exon-level CN state.
 #
 # Args:
-# - FPMarray (np.ndarray[float]): normalised fragment counts for exons on the
+# - FPMarray (numpy.ndarray[float]): normalised fragment counts for exons on the
 #   chromosome type indicated by chromType, for all samples
 # - chromType (string): one of 'A', 'G' indicating that FPMarray holds counts
 #   for exons on autosomes or gonosomes
@@ -53,18 +52,19 @@ def buildClusters(FPMarray, chromType, samples, minSize, plotFile):
     pca = sklearn.decomposition.PCA(n_components=maxDims, svd_solver='full').fit(FPMarray.T)
     logMess = "in buildClusters while choosing the PCA dimension, explained variance ratio:"
     logger.debug(logMess)
-    logMess = np.array_str(pca.explained_variance_ratio_, max_line_width=200, precision=3)
+    logMess = numpy.array_str(pca.explained_variance_ratio_, max_line_width=200, precision=3)
     logger.debug(logMess)
 
     dim = 0
-    while (pca.explained_variance_ratio_[dim] > minExplainedVar):
+    while ((dim < maxDims) and (pca.explained_variance_ratio_[dim] > minExplainedVar)):
         dim += 1
     if dim == 0:
-        logger.warning("in buildClusters: no informative PCA dimensions, very unusual... arbitrarily setting dim=10")
-        dim = 10
+        logger.warning("in buildClusters: no informative PCA dimensions, very unusual... setting dim=maxDims")
+        dim = maxDims
     logger.debug("in buildClusters with chromType=%s, chosen number of PCA dimensions = %i", chromType, dim)
-    # now fit again with only dim dimensions, and project samples
-    samplesInPCAspace = sklearn.decomposition.PCA(n_components=dim, svd_solver='full').fit_transform(FPMarray.T)
+    # project samples and truncate to dim dimensions
+    samplesInPCAspace = pca.transform(FPMarray.T)
+    samplesInPCAspace = numpy.delete(samplesInPCAspace, numpy.s_[dim:maxDims], 1)
 
     # hierarchical clustering of the samples projected in the PCA space:
     # - use 'average' method to define the distance between clusters (== UPGMA),
@@ -78,19 +78,39 @@ def buildClusters(FPMarray, chromType, samples, minSize, plotFile):
     # build clusters from the linkage matrix
     (clust2samps, fitWith) = linkage2clusters(linkageMatrix, chromType, samples, minSize)
 
-    # define valid clusters, ie size (including FIT_WITH) >= minSize
+    # define valid clusters, ie size (including valid FIT_WITH) >= minSize
     clustSizeNoFW = {}
     clustIsValid = {}
+
+    # need to examine the clusters sorted by number of (other) clusters in their fitWith
+    nbFW2clusts = [None] * len(clust2samps)
+
     for clust in clust2samps:
         clustSizeNoFW[clust] = len(clust2samps[clust])
+        nbFW = len(fitWith[clust])
+        if not nbFW2clusts[nbFW]:
+            nbFW2clusts[nbFW] = []
+        nbFW2clusts[nbFW].append(clust)
+
+    for nbFW in range(len(nbFW2clusts)):
+        if nbFW2clusts[nbFW]:
+            for clust in nbFW2clusts[nbFW]:
+                size = clustSizeNoFW[clust]
+                for fw in fitWith[clust]:
+                    if clustIsValid[fw]:
+                        size += clustSizeNoFW[fw]
+                if size >= minSize:
+                    clustIsValid[clust] = True
+                else:
+                    clustIsValid[clust] = False
+
+    # remove invalid clusters from fitWith
     for clust in clust2samps:
-        size = clustSizeNoFW[clust]
+        validFWs = []
         for fw in fitWith[clust]:
-            size += clustSizeNoFW[fw]
-        if size >= minSize:
-            clustIsValid[clust] = True
-        else:
-            clustIsValid[clust] = False
+            if clustIsValid[fw]:
+                validFWs.append(fw)
+        fitWith[clust] = validFWs
 
     # produce and plot dendrogram
     if os.path.isfile(plotFile):

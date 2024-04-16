@@ -1,6 +1,6 @@
 import gzip
 import logging
-import numpy as np
+import numpy
 
 # set up logger, using inherited config
 logger = logging.getLogger(__name__)
@@ -199,8 +199,8 @@ def insertPseudoExons(exons):
             # update prevEnd unless exon is fully included in prev
             prevEnd = max(prevEnd, exon[2])
 
-    medianExonLength = int(np.median(exonLengths))
-    selectedIED = int(np.quantile(interExonDistances, interExonQuantile))
+    medianExonLength = int(numpy.median(exonLengths))
+    selectedIED = int(numpy.quantile(interExonDistances, interExonQuantile))
     logger.info("Creating intergenic pseudo-exons: length = %i , interExonDistance = %i",
                 medianExonLength, selectedIED)
 

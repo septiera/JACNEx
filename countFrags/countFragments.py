@@ -1,15 +1,14 @@
+import concurrent.futures
+import logging
+import ncls  # similar to interval trees but faster (https://github.com/biocore-ntnu/ncls)
+import numba  # make python faster
+import numpy
 import os
 import re
 import subprocess
 import tempfile
-import logging
-import numba  # make python faster
-import numpy as np
-# nested containment lists, similar to interval trees but faster (https://github.com/biocore-ntnu/ncls)
-import ncls
-from concurrent.futures import ProcessPoolExecutor
 
-####### MAGE-CNV modules
+####### JACNEx modules
 import countFrags.bed
 
 # set up logger, using inherited config
@@ -108,7 +107,7 @@ def bam2counts(bamFile, nbOfExons, maxGap, tmpDir, samtools, jobs, sampleIndex):
     try:
         # data structures to return:
         # 1D numpy array containing the sample fragment counts for all exons
-        sampleCounts = np.zeros(nbOfExons, dtype=np.uint32)
+        sampleCounts = numpy.zeros(nbOfExons, dtype=numpy.uint32)
         # list of lists with info about breakpoints support
         breakPoints = []
 
@@ -160,7 +159,7 @@ def bam2counts(bamFile, nbOfExons, maxGap, tmpDir, samtools, jobs, sampleIndex):
 
         ############################################
         # parse alignments
-        with ProcessPoolExecutor(realJobs) as pool:
+        with concurrent.futures.ProcessPoolExecutor(realJobs) as pool:
             # next line to examine
             nextLine = samproc.stdout.readline()
 
@@ -324,7 +323,7 @@ def processBatch(batchOfLines, nbOfExons, maxGap):
 
     # results to return:
     # 1D numpy array containing the fragment counts for all exons in batchOfLines
-    batchCounts = np.zeros(nbOfExons, dtype=np.uint32)
+    batchCounts = numpy.zeros(nbOfExons, dtype=numpy.uint32)
     # list of lists with info about breakpoints support
     batchBPs = []
 

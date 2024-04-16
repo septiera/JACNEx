@@ -1,23 +1,23 @@
 ###############################################################################################
-######################################## MAGE-CNV step 1: count reads #########################
+######################################## JACNEx step 1: count reads ###########################
 ###############################################################################################
 # Given a BED of exons and one or more BAM files, count the number of sequenced fragments
 # from each BAM that overlap each exon (+- padding).
 # See usage for details.
 ###############################################################################################
-import sys
+import concurrent.futures
 import getopt
-import os
-import math
-import re
-import time
 import gzip
-import shutil
 import logging
-import numpy as np
-from concurrent.futures import ProcessPoolExecutor
+import math
+import numpy
+import os
+import re
+import shutil
+import sys
+import time
 
-####### MAGE-CNV modules
+####### JACNEx modules
 import countFrags.bed
 import countFrags.countsFile
 import countFrags.countFragments
@@ -248,7 +248,7 @@ def main(argv):
     exons = countFrags.bed.processBed(bedFile, padding)
 
     thisTime = time.time()
-    logger.debug("Done pre-processing BED, in %.2fs", thisTime - startTime)
+    logger.info("Done pre-processing BED, in %.2fs", thisTime - startTime)
     startTime = thisTime
 
     # allocate countsArray and countsFilled, and populate them with pre-calculated
@@ -261,7 +261,7 @@ def main(argv):
         raise Exception("extractCountsFromPrev failed - " + str(e))
 
     thisTime = time.time()
-    logger.debug("Done parsing previous countsFile, in %.2fs", thisTime - startTime)
+    logger.info("Done parsing previous countsFile, in %.2fs", thisTime - startTime)
     startTime = thisTime
 
     # total number of samples that still need to be processed
@@ -341,12 +341,11 @@ def main(argv):
 
         #####################################################
         # Process new BAMs, up to paraSamples in parallel
-        with ProcessPoolExecutor(paraSamples) as pool:
+        with concurrent.futures.ProcessPoolExecutor(paraSamples) as pool:
             for bamIndex in range(len(bamsToProcess)):
                 bam = bamsToProcess[bamIndex]
-                sample = samples[bamIndex]
                 if countsFilled[bamIndex]:
-                    logger.info('Sample %s already filled from countsFile', sample)
+                    # logger.debug('Sample %s already filled from countsFile', samples[bamIndex])
                     continue
                 else:
                     futureRes = pool.submit(countFrags.countFragments.bam2counts,
@@ -358,7 +357,7 @@ def main(argv):
         if len(failedBams) > 0:
             for failedI in reversed(failedBams):
                 del(samples[failedI])
-            countsArray = np.delete(countsArray, failedBams, axis=1)
+            countsArray = numpy.delete(countsArray, failedBams, axis=1)
 
         thisTime = time.time()
         logger.info("Processed %i new BAMs in %.2fs, i.e. %.2fs per BAM",
@@ -370,7 +369,7 @@ def main(argv):
     countFrags.countsFile.printCountsFile(exons, samples, countsArray, outFile)
 
     thisTime = time.time()
-    logger.debug("Done printing counts for all (non-failed) samples, in %.2fs", thisTime - startTime)
+    logger.info("Done printing counts for all (non-failed) samples, in %.2fs", thisTime - startTime)
     if len(failedBams) > 0:
         raise("counting FAILED for " + len(failedBams) + " samples, check the log!")
     else:
