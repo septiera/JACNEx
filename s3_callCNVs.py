@@ -17,6 +17,7 @@ import traceback
 import countFrags.countsFile
 import clusterSamps.clustFile
 import callCNVs.exonProfiling
+import callCNVs.rescaling
 import callCNVs.likelihoods
 import callCNVs.transitions
 import callCNVs.callCNVs
@@ -239,6 +240,35 @@ def main(argv):
     thisTime = time.time()
     logger.debug("Done calcCN2Params in %.2f s", thisTime - startTime)
     startTime = thisTime
+
+    ####################
+    # Rescaling:
+    # Rescaling FPMs ensure consistency across samples.
+    # FPM values can vary due to factors like sequencing depth, necessitating rescaling for comparability.
+    # Additionally, rescaling is crucial for adjusting parameters of probability distributions,
+    # like the standard deviation of the half-normal distribution and standard deviation of the main normal distribution.
+    # This adjustment ensures that statistical assumptions remain valid and models accurately reflect
+    # data characteristics, enhancing the accuracy of subsequent analyses.
+    # dictionaries Params_A and Params_G follow the same format as CN2Params but contain different data
+    # [stdCN2/meanCN2, stdCN0/meanCN2].
+    # The arrays FPMsrescal_A and FPMsrescal_G have the same dimensions as the original arrays autosomeFPMs and gonosomeFPMs,
+    # respectively.
+    try:
+        (Params_A, Params_G, FPMsrescal_A, FPMsrescal_G) = callCNVs.rescaling.rescaleClusterFPMAndParams(autosomeFPMs, gonosomeFPMs,
+                                                                                                         CN2Params_A, CN2Params_G,
+                                                                                                         hnorm_scale, samples,
+                                                                                                         clust2samps, fitWith,
+                                                                                                         clustIsValid)
+    except Exception as e:
+        raise Exception("calcCN2Params failed: %s", repr(e))
+
+    thisTime = time.time()
+    logger.debug("Done calcCN2Params in %.2f s", thisTime - startTime)
+    startTime = thisTime
+
+
+
+
 
     # ########################
     # # Build HMM input datas:
