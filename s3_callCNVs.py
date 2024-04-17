@@ -240,102 +240,108 @@ def main(argv):
     logger.debug("Done calcCN2Params in %.2f s", thisTime - startTime)
     startTime = thisTime
 
-    ########################
-    # Build HMM input datas:
-    # determines copy states (e.g., diploid, deletion, duplication) for each genome region and sample
-    # based on probabilistic data and state transitions, enabling the detection of significant genomic variations.
+    # ########################
+    # # Build HMM input datas:
+    # # determines copy states (e.g., diploid, deletion, duplication) for each genome region and sample
+    # # based on probabilistic data and state transitions, enabling the detection of significant genomic variations.
 
-    # - States to be emitted by the HMM corresponding to different types of copy numbers.
-    CNStates = ["CN0", "CN1", "CN2", "CN3"]
+    # # - States to be emitted by the HMM corresponding to different types of copy numbers.
+    # CNStates = ["CN0", "CN1", "CN2", "CN3"]
 
-    # - CNState occurrence probabilities of the human genome (Initial State Probabilities),
-    # obtained from 1000 genome data (doi:10.1186/1471-2105-13-305).
-    priors = [6.34e-4, 2.11e-3, 9.96e-1, 1.25e-3]
+    # # - CNState occurrence probabilities of the human genome (Initial State Probabilities),
+    # # obtained from 1000 genome data (doi:10.1186/1471-2105-13-305).
+    # priors = [6.34e-4, 2.11e-3, 9.96e-1, 1.25e-3]
 
-    ####################
-    # - Calculates the likelihoods for each sample in a genomic dataset,
-    # considering both autosomal and gonosomal data. It uses FPM data.
-    # The function applies continuous distribution parameters (specifically designed to
-    # describe the CN profile for each exon) to compute the likelihoods. These likelihoods
-    # are essentially Pseudo Emission Probabilities, at the exon level in different samples.
-    # The calculation is performed in parallel for efficiency, handling autosomes and gonosomes separately.
-    try:
-        (likelihoods_A, likelihoods_G) = callCNVs.likelihoods.calcLikelihoods(samples, autosomeFPMs, gonosomeFPMs,
-                                                                              clust2samps, clustIsValid, hnorm_loc,
-                                                                              hnorm_scale, CN2Params_A, CN2Params_G,
-                                                                              CNStates, jobs)
-    except Exception as e:
-        raise Exception("calcLikelihoods failed: %s", repr(e))
+    # ####################
+    # # - Calculates the likelihoods for each sample in a genomic dataset,
+    # # considering both autosomal and gonosomal data. It uses FPM data.
+    # # The function applies continuous distribution parameters (specifically designed to
+    # # describe the CN profile for each exon) to compute the likelihoods. These likelihoods
+    # # are essentially Pseudo Emission Probabilities, at the exon level in different samples.
+    # # The calculation is performed in parallel for efficiency, handling autosomes and gonosomes separately.
+    # try:
+    #     (likelihoods_A, likelihoods_G) = callCNVs.likelihoods.calcLikelihoods(samples, autosomeFPMs, gonosomeFPMs,
+    #                                                                           clust2samps, clustIsValid, hnorm_loc,
+    #                                                                           hnorm_scale, CN2Params_A, CN2Params_G,
+    #                                                                           CNStates, jobs)
+    # except Exception as e:
+    #     raise Exception("calcLikelihoods failed: %s", repr(e))
+
+    # thisTime = time.time()
+    # logger.debug("Done calcLikelihoods in %.2f s", thisTime - startTime)
+    # startTime = thisTime
+
+    # #########
+    # # - generates a transition matrix for CN states from likelihood data,
+    # # and computes CN probabilities for both autosomal and gonosomal samples.
+    # # The function adds an 'init' state to the transition matrix, improving its use
+    # # in Hidden Markov Models (HMMs).
+    # # The 'init' state, based on priors, helps to start and reset the HMM but doesn't
+    # # represent any actual CN state.
+    # # The resulting 'transMatrix' is a 2D numpy array. dim =(nbOfCNStates + 1) * (nbOfCNStates + 1)
+    # try:
+    #     transMatrix = callCNVs.transitions.getTransMatrix(likelihoods_A, likelihoods_G, autosomeExons, gonosomeExons,
+    #                                                       priors, len(CNStates))
+    # except Exception as e:
+    #     raise Exception("getTransMatrix failed: %s", repr(e))
+
+    # thisTime = time.time()
+    # logger.debug("Done getTransMatrix, in %.2fs", thisTime - startTime)
+    # startTime = thisTime
+
+    # ######## DEBUG PRINT
+    # formatted_matrix = "\n".join(["\t".join([f"{cell:.2e}" for cell in row]) for row in transMatrix])
+    # logger.debug("Transition Matrix:\n%s", formatted_matrix)
+    # ########
+
+    # #########
+    # # Application of the HMM using the Viterbi algorithm. (calling step)
+    # # processes both autosomal and gonosomal exon data for a set of samples, yielding
+    # # a list of CNVs for each category. Each CNV is detailed with information including
+    # # CNV type, start and end positions of the affected exons, the probability of the path,
+    # # and the sample ID.
+    # try:
+    #     CNVs_A, CNVs_G = callCNVs.callCNVs.applyHMM(samples, autosomeExons, gonosomeExons,
+    #                                                 likelihoods_A, likelihoods_G, transMatrix,
+    #                                                 jobs)
+    # except Exception as e:
+    #     raise Exception("HMM.processCNVCalls failed: %s", repr(e))
+
+    # thisTime = time.time()
+    # logger.debug("Done HMM.processCNVCalls in %.2f s", thisTime - startTime)
+    # startTime = thisTime
+
+    # #########
+    # # Computation of CNVs quality score
+    # # assesses the reliability of each CNV detection by comparing the path probability of the CNV
+    # # with the CN2 path probability for each exon in the CNV.
+    # try:
+    #     qs_A = callCNVs.qualityScores.calcQualityScore(CNVs_A, likelihoods_A, transMatrix)
+    #     qs_G = callCNVs.qualityScores.calcQualityScore(CNVs_G, likelihoods_G, transMatrix)
+    # except Exception as e:
+    #     traceback.print_exc()
+    #     raise Exception("getCNVsQualityScore failed: %s", repr(e))
+
+    # thisTime = time.time()
+    # logger.debug("Done getCNVsQualityScore in %.2f s", thisTime - startTime)
+    # startTime = thisTime
+
+    # #########
+    # # VCF printing
+    # try:
+    #     callCNVs.callsFile.printCallsFile(CNVs_A, CNVs_G, qs_A, qs_G, autosomeExons, gonosomeExons,
+    #                                       samples, padding, outFile, scriptName)
+    # except Exception as e:
+    #     raise Exception("printCallsFile failed: %s", repr(e))
+
+    # thisTime = time.time()
+    # logger.debug("Done printCallsFile in %.2f s", thisTime - startTime)
+    # startTime = thisTime
+
+    # sys.exit()
 
     thisTime = time.time()
-    logger.debug("Done calcLikelihoods in %.2f s", thisTime - startTime)
-    startTime = thisTime
-
-    #########
-    # - generates a transition matrix for CN states from likelihood data,
-    # and computes CN probabilities for both autosomal and gonosomal samples.
-    # The function adds an 'init' state to the transition matrix, improving its use
-    # in Hidden Markov Models (HMMs).
-    # The 'init' state, based on priors, helps to start and reset the HMM but doesn't
-    # represent any actual CN state.
-    # The resulting 'transMatrix' is a 2D numpy array. dim =(nbOfCNStates + 1) * (nbOfCNStates + 1)
-    try:
-        transMatrix = callCNVs.transitions.getTransMatrix(likelihoods_A, likelihoods_G, autosomeExons, gonosomeExons,
-                                                          priors, len(CNStates))
-    except Exception as e:
-        raise Exception("getTransMatrix failed: %s", repr(e))
-
-    thisTime = time.time()
-    logger.debug("Done getTransMatrix, in %.2fs", thisTime - startTime)
-    startTime = thisTime
-
-    ######## DEBUG PRINT
-    formatted_matrix = "\n".join(["\t".join([f"{cell:.2e}" for cell in row]) for row in transMatrix])
-    logger.debug("Transition Matrix:\n%s", formatted_matrix)
-    ########
-
-    #########
-    # Application of the HMM using the Viterbi algorithm. (calling step)
-    # processes both autosomal and gonosomal exon data for a set of samples, yielding
-    # a list of CNVs for each category. Each CNV is detailed with information including
-    # CNV type, start and end positions of the affected exons, the probability of the path,
-    # and the sample ID.
-    try:
-        CNVs_A, CNVs_G = callCNVs.callCNVs.applyHMM(samples, autosomeExons, gonosomeExons,
-                                                    likelihoods_A, likelihoods_G, transMatrix,
-                                                    jobs)
-    except Exception as e:
-        raise Exception("HMM.processCNVCalls failed: %s", repr(e))
-
-    thisTime = time.time()
-    logger.debug("Done HMM.processCNVCalls in %.2f s", thisTime - startTime)
-    startTime = thisTime
-
-    #########
-    # Computation of CNVs quality score
-    # assesses the reliability of each CNV detection by comparing the path probability of the CNV
-    # with the CN2 path probability for each exon in the CNV.
-    try:
-        qs_A = callCNVs.qualityScores.calcQualityScore(CNVs_A, likelihoods_A, transMatrix)
-        qs_G = callCNVs.qualityScores.calcQualityScore(CNVs_G, likelihoods_G, transMatrix)
-    except Exception as e:
-        traceback.print_exc()
-        raise Exception("getCNVsQualityScore failed: %s", repr(e))
-
-    thisTime = time.time()
-    logger.debug("Done getCNVsQualityScore in %.2f s", thisTime - startTime)
-    startTime = thisTime
-
-    #########
-    # VCF printing
-    try:
-        callCNVs.callsFile.printCallsFile(CNVs_A, CNVs_G, qs_A, qs_G, autosomeExons, gonosomeExons,
-                                          samples, padding, outFile, scriptName)
-    except Exception as e:
-        raise Exception("printCallsFile failed: %s", repr(e))
-
-    thisTime = time.time()
-    logger.debug("Done printCallsFile in %.2f s", thisTime - startTime)
+    logger.debug("Done DEBUG STEP", thisTime - startTime)
     startTime = thisTime
 
     sys.exit()

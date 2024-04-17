@@ -79,9 +79,7 @@ def calcCN2Params(autosomeFPMs, gonosomeFPMs, samples, uncaptThreshold,
     CN2Params_A = {}
     CN2Params_G = {}
 
-    # convert the list of samples to a dictionary mapping sample name to its index
-    # for O(1) lookup time
-    sampIndexMap = {sample: i for i, sample in enumerate(samples)}
+    sampIndexMap = createSampleIndexMap(samples)
 
     # determine the number of clusters to process in parallel, based on available jobs
     paraClusters = min(math.ceil(jobs / 2), len(clust2samps))
@@ -100,17 +98,17 @@ def calcCN2Params(autosomeFPMs, gonosomeFPMs, samples, uncaptThreshold,
 
             # get sample indexes for the current cluster and associated fitWith clusters
             try:
-                sampsInd = getSampIndexes(clusterID, clust2samps, sampIndexMap, fitWith)
+                sampsPresence = getSampPresenceBool(clusterID, clust2samps, sampIndexMap, fitWith, samples)
             except Exception as e:
-                logger.error("Error in getSampIndexes for cluster %s: %s", clusterID, e)
+                logger.error("Error in getSampPresenceBool for cluster %s: %s", clusterID, e)
                 raise
 
             # Determine the type of chromosome and submit the cluster for processing
             if clusterID.startswith("A"):
-                processCN2Cluster(clusterID, autosomeFPMs[:, sampsInd], uncaptThreshold, CN2Params_A,
+                processCN2Cluster(clusterID, autosomeFPMs[:, sampsPresence], uncaptThreshold, CN2Params_A,
                                   plotDir, pool)
             elif clusterID.startswith("G"):
-                processCN2Cluster(clusterID, gonosomeFPMs[:, sampsInd], uncaptThreshold, CN2Params_G,
+                processCN2Cluster(clusterID, gonosomeFPMs[:, sampsPresence], uncaptThreshold, CN2Params_G,
                                   plotDir, pool)
             else:
                 logger.error("Unknown chromosome type for cluster %s.", clusterID)
@@ -144,27 +142,51 @@ def fitHalfNormal(intergenicsFPM):
 
 
 #############################################################
-# getSampIndexes
-# consolidates the indexes of sample IDs that are associated with a specific cluster
-# and any additional clusters specified to 'fit with' the primary cluster.
+# createSampleIndexMap
+# Creates a dictionary mapping sample names to their indices in a list for O(1) lookup time.
+#
+# Args:
+# -samples (list[str]): List of sample IDs in order to FPM array columns.
+#
+# Returns:
+# -dict: A dictionary mapping sample names to their indices.
+def createSampleIndexMap(samples):
+    return {sample: i for i, sample in enumerate(samples)}
+
+
+#############################################################
+# getSampPresenceBool
+# Retrieves an array of boolean values indicating sample identification within the primary cluster
+# and its related clusters.
 #
 # Args:
 # -clusterID [str]: identifier of the primary cluster being processed.
 # -clust2samps (dict): key==clusterID, value==list of sampleIDs.
 # -samp2Index (dict): key==sampleID, value==sample column index in 'counts' array.
 # -fitWith(dict): key==clusterID, value==list of clusterIDs.
+# -samples (list[str]): List of sample IDs in order to FPM array columns.
+# -addRelatedClusts (bool, optional): Whether to include samples from related clusters. Defaults to True.
 #
-# Returns a list of samples indexes from 'counts' array.
-def getSampIndexes(clusterID, clust2samps, samp2Index, fitWith):
-    # Gather all the sample IDs for the current cluster and associated fitWith clusters.
-    allSamps = set(clust2samps[clusterID])
-    for clustID in fitWith[clusterID]:
-        allSamps.update(clust2samps[clustID])
+# Returns:
+# -sampsPresence(np.ndarray[bool]): indicating sample presence in the cluster and its related clusters.
+def getSampPresenceBool(clusterID, clust2samps, samp2Index, fitWith, samples, addRelatedClusts=True):
+    # Initialize an array of boolean values for all samples
+    sampsPresence = numpy.zeros(len(samples), dtype=bool)
 
-    # Convert the sample IDs to indexes using samp2Index.
-    allSampsInd = [samp2Index[sample] for sample in allSamps]
+    # Gather all the sample IDs for the current cluster
+    clustSampsNames = set(clust2samps[clusterID])
 
-    return allSampsInd
+    # Include samples from related clusters if specified
+    if addRelatedClusts:
+        for clustID in fitWith[clusterID]:
+            clustSampsNames.update(clust2samps[clustID])
+
+    # Convert the sample IDs to indexes using samp2Index and set
+    # the corresponding indexes to True
+    for sample in clustSampsNames:
+        sampsPresence[samp2Index[sample]] = True
+
+    return sampsPresence
 
 
 ##############################################################
