@@ -249,12 +249,12 @@ def main(argv):
     # like the standard deviation of the half-normal distribution and standard deviation of the main normal distribution.
     # This adjustment ensures that statistical assumptions remain valid and models accurately reflect
     # data characteristics, enhancing the accuracy of subsequent analyses.
-    # dictionaries Params_A and Params_G follow the same format as CN2Params but contain different data
+    # dictionaries params_A and params_G follow the same format as CN2Params but contain different data
     # [stdCN2/meanCN2, stdCN0/meanCN2].
     # The arrays FPMsrescal_A and FPMsrescal_G have the same dimensions as the original arrays autosomeFPMs and gonosomeFPMs,
     # respectively.
     try:
-        (Params_A, Params_G, FPMsrescal_A, FPMsrescal_G) = callCNVs.rescaling.rescaleClusterFPMAndParams(autosomeFPMs, gonosomeFPMs,
+        (params_A, params_G, FPMsrescal_A, FPMsrescal_G) = callCNVs.rescaling.rescaleClusterFPMAndParams(autosomeFPMs, gonosomeFPMs,
                                                                                                          CN2Params_A, CN2Params_G,
                                                                                                          hnorm_scale, samples,
                                                                                                          clust2samps, fitWith,
@@ -266,40 +266,31 @@ def main(argv):
     logger.debug("Done calcCN2Params in %.2f s", thisTime - startTime)
     startTime = thisTime
 
+    ########################
+    # Build HMM input datas:
+    # determines copy states (e.g., diploid, deletion, duplication) for each genome region and sample
+    # based on probabilistic data and state transitions, enabling the detection of significant genomic variations.
 
+    # - States to be emitted by the HMM corresponding to different types of copy numbers.
+    CNStates = ["CN0", "CN1", "CN2", "CN3"]
 
+    ####################
+    # - Calculates the likelihoods for each sample in a genomic dataset,
+    # considering both autosomal and gonosomal data. It uses FPM data.
+    # The function applies continuous distribution parameters (specifically designed to
+    # describe the CN profile for each exon) to compute the likelihoods. These likelihoods
+    # are essentially Pseudo Emission Probabilities, at the exon level in different samples.
+    # The calculation is performed in parallel for efficiency, handling autosomes and gonosomes separately.
+    try:
+        (likelihoods_A, likelihoods_G) = callCNVs.likelihoods.calcLikelihoods(samples, FPMsrescal_A, FPMsrescal_G,
+                                                                              clust2samps, clustIsValid, params_A,
+                                                                              params_G, CNStates, jobs)
+    except Exception as e:
+        raise Exception("calcLikelihoods failed: %s", repr(e))
 
-
-    # ########################
-    # # Build HMM input datas:
-    # # determines copy states (e.g., diploid, deletion, duplication) for each genome region and sample
-    # # based on probabilistic data and state transitions, enabling the detection of significant genomic variations.
-
-    # # - States to be emitted by the HMM corresponding to different types of copy numbers.
-    # CNStates = ["CN0", "CN1", "CN2", "CN3"]
-
-    # # - CNState occurrence probabilities of the human genome (Initial State Probabilities),
-    # # obtained from 1000 genome data (doi:10.1186/1471-2105-13-305).
-    # priors = [6.34e-4, 2.11e-3, 9.96e-1, 1.25e-3]
-
-    # ####################
-    # # - Calculates the likelihoods for each sample in a genomic dataset,
-    # # considering both autosomal and gonosomal data. It uses FPM data.
-    # # The function applies continuous distribution parameters (specifically designed to
-    # # describe the CN profile for each exon) to compute the likelihoods. These likelihoods
-    # # are essentially Pseudo Emission Probabilities, at the exon level in different samples.
-    # # The calculation is performed in parallel for efficiency, handling autosomes and gonosomes separately.
-    # try:
-    #     (likelihoods_A, likelihoods_G) = callCNVs.likelihoods.calcLikelihoods(samples, autosomeFPMs, gonosomeFPMs,
-    #                                                                           clust2samps, clustIsValid, hnorm_loc,
-    #                                                                           hnorm_scale, CN2Params_A, CN2Params_G,
-    #                                                                           CNStates, jobs)
-    # except Exception as e:
-    #     raise Exception("calcLikelihoods failed: %s", repr(e))
-
-    # thisTime = time.time()
-    # logger.debug("Done calcLikelihoods in %.2f s", thisTime - startTime)
-    # startTime = thisTime
+    thisTime = time.time()
+    logger.debug("Done calcLikelihoods in %.2f s", thisTime - startTime)
+    startTime = thisTime
 
     # #########
     # # - generates a transition matrix for CN states from likelihood data,
