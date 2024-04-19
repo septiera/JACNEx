@@ -63,8 +63,6 @@ def calcLikelihoods(samples, autosomeFPMs, gonosomeFPMs, clust2samps, clustIsVal
 
             # skip processing for invalid clusters
             if not clustIsValid[clusterID]:
-                logger.warning("cluster %s is invalid, low sample number %i, skipping it.",
-                               clusterID, len(clust2samps[clusterID]))
                 continue
 
             # determine the type of chromosome and process accordingly
@@ -172,12 +170,12 @@ def calcClustLikelihoods(clusterID, samp2Index, exonsFPM, clust2samps, params, n
     likelihoodsDict = {samp: numpy.full((exonsFPM.shape[0], numCNs), -1, dtype=numpy.float128)
                        for samp in sampleIDs}
 
-    # check for valid exons, which do not contain -1, indicating no call exons.
-    validExons = ~numpy.any(params == -1, axis=1)
+    # Identify exons with non-interpretable data
+    isSkipped = numpy.any(params == -1, axis=1)
 
     # looping over each exon to compute the likelihoods for each CN state
     for ei in range(len(params)):
-        if not validExons[ei]:
+        if isSkipped[ei]:
             continue
 
         gauss_loc = 1
