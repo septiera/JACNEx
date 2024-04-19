@@ -45,7 +45,6 @@ def rescaleClusterFPMAndParams(autosomeFPMs, gonosomeFPMs, CN2Params_A, CN2Param
     for clusterID in clust2samps:
         # skip processing for invalid clusters
         if not clustIsValid[clusterID]:
-            logger.warning("cluster %s is invalid, low sample number %i, skipping it.", clusterID, len(clust2samps[clusterID]))
             continue
 
         # get sample indexes for the current cluster and associated fitWith clusters
