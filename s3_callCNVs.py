@@ -301,7 +301,7 @@ def main(argv):
     # Bayesian theory provides a robust framework for this adjustment, facilitating convergence between
     # previous and current priors.
     try:
-        priors = callCNVs.priors.getPriors(likelihoods_A, likelihoods_G, CNStates, jobs)
+        priors = callCNVs.priors.getPriors(likelihoods_A, likelihoods_G, jobs)
     except Exception as e:
         raise Exception("getPriorsfailed: %s", repr(e))
 
