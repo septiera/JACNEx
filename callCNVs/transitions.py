@@ -1,6 +1,9 @@
 import logging
 import numpy
 
+####### JACNEx modules
+import callCNVs.priors
+
 # set up logger, using inherited config
 logger = logging.getLogger(__name__)
 
@@ -41,18 +44,14 @@ def getTransMatrix(likelihoods_A, likelihoods_G, autosomeExons, gonosomeExons,
     isFirstExon_A = flagChromStarts(autosomeExons)
     isFirstExon_G = flagChromStarts(gonosomeExons)
 
-    # compute CN probabilities for autosomal and gonosomal samples
-    CNProbs_A = getCNProbs(likelihoods_A, priors)
-    CNProbs_G = getCNProbs(likelihoods_G, priors)
-
     # initialize the transition matrix
     # 2D array [ints], expected format for a transition matrix [i; j]
     # contains all prediction counts of states
     transitions = numpy.zeros((nbStates, nbStates), dtype=int)
     # update the transition matrix with CN probabilities for autosomal samples
-    transitions = updateTransMatrix(transitions, CNProbs_A, priors, isFirstExon_A)
+    transitions = updateTransMatrix(transitions, likelihoods_A, priors, isFirstExon_A)
     # repeat the process for gonosomal samples
-    transitions = updateTransMatrix(transitions, CNProbs_G, priors, isFirstExon_G)
+    transitions = updateTransMatrix(transitions, likelihoods_G, priors, isFirstExon_G)
 
     # normalize the transition matrix and add an 'init' state
     transAndInit = formatTransMatrix(transitions, priors, nbStates)
@@ -90,34 +89,6 @@ def flagChromStarts(exons):
 
 
 #########################################
-# getCNProbs
-# Computes the probabilities for all CN states for each exon in each sample.
-# Methodology:
-# 1. For each sample, it calculates the probabilities (odds) for each CN state
-#    of each exon by multiplying the likelihood data with prior probabilities.
-# 2. If an exon is marked as 'no call' (indicated by -1 in the likelihood data),
-#    the function sets the probabilities for all CN states of that exon to -1.
-#
-# Args:
-# - likelihoodDict (dict): keys=sampID, values=numpy.ndarray(NBExons,NBStates)
-# - priors (numpy.ndarray): Prior probabilities for CN states.
-#
-# Returns:
-# - CNProbs (dict): CN probabilities per sample, keys = sampID, values = 2D numpy arrays
-#                   representing CN probabilities for each exon.
-def getCNProbs(likelihoodDict, priors):
-    CNProbs = {}
-
-    for sampID, likelihoods in likelihoodDict.items():
-        odds = likelihoods * priors
-        skip_exon = numpy.any(likelihoods == -1, axis=1)
-        odds[skip_exon] = -1
-        CNProbs[sampID] = odds
-
-    return CNProbs
-
-
-#########################################
 # updateTransMatrix
 # Updates the transition matrix based on the most probable CN states
 # for each exon.
@@ -134,28 +105,22 @@ def getCNProbs(likelihoodDict, priors):
 #
 # Args:
 # - transitions (numpy.ndarray[floats]): Transition matrix to be updated, dimensions [NBStates, NBStates].
-# - CNProbs (dict): CN probabilities per sample, keys = sampID,
-#                   values = 2D numpy arrays representing CN probabilities for each exon.
+# - likelihoodsDict (dict): CN likelihoodss per sample, keys = sampID,
+#                           values = 2D numpy arrays representing CN probabilities for each exon.
 # - priors (numpy.ndarray): Prior probabilities for CN states.
 # - isFirstExon (numpy.ndarray[bool]): each 'True' indicates the first exon of a chromosome.
 #
 # Returns:
 # - transitions (numpy.ndarray[ints]): Updated transition matrix.
-def updateTransMatrix(transitions, CNProbs, priors, isFirstExon):
-    for sampID, odds in CNProbs.items():
-        # determine the most probable CN state for each exon
-        CNsList = numpy.argmax(odds, axis=1)
-        # identify exons with non-interpretable data
-        # numpy.ndarray of boolean (0:call, 1:no call) of length NbExons
-        isSkipped = numpy.any(odds == -1, axis=1)
-        # start with the most probable CN state based on priors (CN2)
+def updateTransMatrix(transitions, likelihoodsDict, priors, isFirstExon):
+    for sampID, likelihoodArr in likelihoodsDict.items():
+        CNPath = callCNVs.priors.getCNPath(likelihoodArr, priors)
         prevCN = numpy.argmax(priors)
-
-        for ei in range(len(CNsList)):
-            currCN = CNsList[ei]
+        for ei in range(len(CNPath)):
+            currCN = CNPath[ei]
 
             # skip non-interpretable exons
-            if isSkipped[ei]:
+            if currCN == -1:
                 continue
 
             # reset prevCN at the start of each new chromosome

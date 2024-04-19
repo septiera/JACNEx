@@ -313,29 +313,28 @@ def main(argv):
     formatted_priors = "\t".join(["%.3e" % x for x in priors])
     logger.debug("Initialisation Matrix:\n%s", formatted_priors)
 
+    #########
+    # - generates a transition matrix for CN states from likelihood data,
+    # and computes CN probabilities for both autosomal and gonosomal samples.
+    # The function adds an 'init' state to the transition matrix, improving its use
+    # in Hidden Markov Models (HMMs).
+    # The 'init' state, based on priors, helps to start and reset the HMM but doesn't
+    # represent any actual CN state.
+    # The resulting 'transMatrix' is a 2D numpy array. dim =(nbOfCNStates + 1) * (nbOfCNStates + 1)
+    try:
+        transMatrix = callCNVs.transitions.getTransMatrix(likelihoods_A, likelihoods_G, autosomeExons, gonosomeExons,
+                                                          priors, len(CNStates))
+    except Exception as e:
+        raise Exception("getTransMatrix failed: %s", repr(e))
 
-    # #########
-    # # - generates a transition matrix for CN states from likelihood data,
-    # # and computes CN probabilities for both autosomal and gonosomal samples.
-    # # The function adds an 'init' state to the transition matrix, improving its use
-    # # in Hidden Markov Models (HMMs).
-    # # The 'init' state, based on priors, helps to start and reset the HMM but doesn't
-    # # represent any actual CN state.
-    # # The resulting 'transMatrix' is a 2D numpy array. dim =(nbOfCNStates + 1) * (nbOfCNStates + 1)
-    # try:
-    #     transMatrix = callCNVs.transitions.getTransMatrix(likelihoods_A, likelihoods_G, autosomeExons, gonosomeExons,
-    #                                                       priors, len(CNStates))
-    # except Exception as e:
-    #     raise Exception("getTransMatrix failed: %s", repr(e))
+    thisTime = time.time()
+    logger.debug("Done getTransMatrix, in %.2fs", thisTime - startTime)
+    startTime = thisTime
 
-    # thisTime = time.time()
-    # logger.debug("Done getTransMatrix, in %.2fs", thisTime - startTime)
-    # startTime = thisTime
-
-    # ######## DEBUG PRINT
-    # formatted_matrix = "\n".join(["\t".join([f"{cell:.2e}" for cell in row]) for row in transMatrix])
-    # logger.debug("Transition Matrix:\n%s", formatted_matrix)
-    # ########
+    ######## DEBUG PRINT
+    formatted_matrix = "\n".join(["\t".join([f"{cell:.2e}" for cell in row]) for row in transMatrix])
+    logger.debug("Transition Matrix:\n%s", formatted_matrix)
+    ########
 
     # #########
     # # Application of the HMM using the Viterbi algorithm. (calling step)
