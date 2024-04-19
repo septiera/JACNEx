@@ -18,6 +18,7 @@ import countFrags.countsFile
 import clusterSamps.clustFile
 import callCNVs.exonProfiling
 import callCNVs.rescaling
+import callCNVs.priors
 import callCNVs.likelihoods
 import callCNVs.transitions
 import callCNVs.callCNVs
@@ -260,10 +261,10 @@ def main(argv):
                                                                                                          clust2samps, fitWith,
                                                                                                          clustIsValid)
     except Exception as e:
-        raise Exception("calcCN2Params failed: %s", repr(e))
+        raise Exception("rescaleClusterFPMAndParams failed: %s", repr(e))
 
     thisTime = time.time()
-    logger.debug("Done calcCN2Params in %.2f s", thisTime - startTime)
+    logger.debug("Done rescaleClusterFPMAndParams in %.2f s", thisTime - startTime)
     startTime = thisTime
 
     ########################
@@ -291,6 +292,27 @@ def main(argv):
     thisTime = time.time()
     logger.debug("Done calcLikelihoods in %.2f s", thisTime - startTime)
     startTime = thisTime
+
+    #########
+    # Obtain priors probabilities using likelihood data for each CN. 
+    # The process follows Bayesian principles, which involve updating prior probabilities based on observed data.
+    # This ensures that the estimation of prior probabilities aligns with the evidence provided by likelihood
+    # data for each CN.
+    # Bayesian theory provides a robust framework for this adjustment, facilitating convergence between
+    # previous and current priors.
+    try:
+        priors = callCNVs.priors.getPriors(likelihoods_A, likelihoods_G, CNStates, jobs)
+    except Exception as e:
+        raise Exception("getPriorsfailed: %s", repr(e))
+
+    thisTime = time.time()
+    logger.debug("Done getPriors in %.2f s", thisTime - startTime)
+    startTime = thisTime
+
+    ####### DEBUG PRINT
+    formatted_priors = "\t".join(["%.3e" % x for x in priors])
+    logger.debug("Initialisation Matrix:\n%s", formatted_priors)
+
 
     # #########
     # # - generates a transition matrix for CN states from likelihood data,
