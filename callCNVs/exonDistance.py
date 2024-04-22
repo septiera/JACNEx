@@ -1,5 +1,6 @@
 import logging
 import numpy
+import math
 
 
 # set up logger, using inherited config
@@ -9,88 +10,53 @@ logger = logging.getLogger(__name__)
 ###############################################################################
 ############################ PUBLIC FUNCTIONS #################################
 ###############################################################################
-#####################
-# create_trans_func
-# Creates a function to dynamically adjust transition probabilities based on distance
-# for a given state. The function implements an exponential model to modify the transition
-# probability to the CN2 state (z) when the distance exceeds dmax, up to a maximum probability
-# adjustment of fmax. This adjustment reflects decreased correlation as the distance increases.
-#
-# Args:
-# - z (float): Initial transition probability to the CN2 state from the previous state.
-# - alpha (float): Coefficient for exponential growth of f(d), calculated to ensure that f(d)
-#                  reaches fmax at the maximum considered distance (dmax).
-# - prevState (int): Index of the previous state in the transition matrix.
-# - transMatrix (np.array): Matrix containing the base transition probabilities between states.
-# - dmax (float): Threshold distance beyond which the probability begins to adjust exponentially.
-# - fmax (float): Maximum value of the adjusted transition probability to CN2, ensuring f(d) does
-#                 not grow unbounded and maintains realistic biological correlation.
-#
-# Returns:
-# - function: A function that computes adjusted transition probabilities based on the input distance d.
-#             It maintains overall transition probability normalization while specifically adjusting
-#             for the CN2 state exponentially and others linearly to ensure total probabilities sum to 1.
-def create_trans_func(z, alpha, prevState, transMatrix, dmax, fmax):
-    def trans_func(d):
-        # Determine f(d) based on the distance d
-        if d <= dmax:
-            # f(d) remains 1 as long as d is less than or equal to dmax
-            f_d = 1
-            g_d = 1  # g(d) remains 1 to maintain original transition probabilities
-        else:
-            # Exponential calculation of f(d) for d > dmax
-            f_d = numpy.exp(alpha * (d - dmax))
-            # Limit f(d) to fmax to prevent excessive growth
-            f_d = min(f_d, fmax)
-
-        # Calculate g(d) to adjust transitions towards other states
-        if d > dmax:
-            # Adjust g(d) to ensure the sum of probabilities remains 1
-            g_d = (1 - z * f_d) / (1 - z) if z < 1 else 0
-
-        # Construct the adjusted transition vector
-        transitions = numpy.zeros(len(transMatrix[prevState]))
-        # Specific transition to CN2
-        transitions[2] = f_d * z
-        for state in range(len(transitions)):
-            # Apply g(d) to the other states
-            if state != 2:
-                transitions[state] = g_d * transMatrix[prevState][state]
-
-        return transitions
-
-    return trans_func
-
-
 ########################
-# initTransFunc
-#  Initializes a list of dynamic transition functions for each state in a Hidden Markov Model,
-# using a specified maximum distance and a prior probability for state CN2 to calculate adjustments.
-# These functions account for potential changes in correlation due to varying distances between sequence events.
+# initAdjustTransMatrix
+# When distance between exons increases, the correlation between CN states of
+# consecutive exons diminishes until at some point with simply expect the priors.
+# Formally we implement this as follows:
+# if transition probability to CN2 > priorCN2 leave untouched;
+# else:
+#   - transition to CN2 is inflated following an exponential law
+#   until reaching the prior at d = dmax,
+#   - transitions to CN0,CN1,CN3+ are reduced uniformly to compensate.
 #
 # Args:
 # - transMatrix (np.array): Matrix of base transition probabilities between states.
-# - priorCN2 (float): Prior probability for transitioning to the CN2 state.
-# - dmax (float): Distance threshold for activating exponential probability adjustments.
+# - dmax (float): Distance where prior is reached. Default 18000bp from Freeman GenomeRes 2006.
 #
 # Returns:
-# - list of functions: Each function calculates transition probabilities dynamically based on distance,
-#                         ensuring that transitions are adjusted to reflect both exponential and linear shifts
-#                         in probabilities based on the biological relevance of distance.
-def initTransFunc(transMatrix, priorCN2, dmax=18000):
+# - function: adjustTransMatrix(d)
+#    - Arg: d [int]: distance between exons
+#    - return: adjusted transition probability matrix (np.ndarray dim(5*5))
+# as defined above
+def initAdjustTransMatrix(transMatrix, dmax=18000):
 
-    num_states = transMatrix.shape[0]
-    transFuncs = []
+    def adjustTransMatrix(d):
+        priorCN2 = transMatrix[0, 3]
+        numStatesWithVoid = transMatrix.shape[0]
+        newTrans = numpy.zeros_like(transMatrix)
 
-    for prevState in range(num_states):
-        # Extract z, the transition probability to CN2
-        z = transMatrix[prevState, 2]
-        # Calculate fmax as priorCN2 divided by z
-        fmax = priorCN2 / z
-        # Compute alpha to control the growth of f(d)
-        alpha = numpy.log(fmax) / dmax
+        if d >= dmax:
+            for prevState in range(numStatesWithVoid):
+                newTrans[prevState, :] = transMatrix[0, :].copy()
 
-        # Add the state-specific transition function to the list
-        transFuncs.append(create_trans_func(z, alpha, prevState, transMatrix, dmax, fmax))
+        else:
+            # copy prior
+            newTrans[0, :] = transMatrix[0, :].copy()
 
-    return transFuncs
+            for prevState in range(1, numStatesWithVoid):
+                probTransCN2 = transMatrix[prevState, 3]
+                if probTransCN2 > priorCN2:
+                    newTrans[prevState, :] = transMatrix[prevState, :].copy()
+                else:
+                    fmax = priorCN2 / probTransCN2
+                    f_d = fmax ** (d / dmax)
+                    g_d = (1 - probTransCN2 * f_d) / (1 - probTransCN2)
+
+                    newTrans[prevState, :] = g_d * transMatrix[prevState, :].copy()
+                    newTrans[prevState, 3] = f_d * probTransCN2
+
+        return newTrans
+
+    return adjustTransMatrix
