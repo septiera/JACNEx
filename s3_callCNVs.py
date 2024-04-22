@@ -151,7 +151,7 @@ ARGUMENTS:
         raise Exception("jobs must be a positive integer, not " + str(jobs))
 
     # AOK, return everything that's needed
-    return(countsFile, clustsFile, outFile, padding, plotDir, jobs)
+    return (countsFile, clustsFile, outFile, padding, plotDir, jobs)
 
 
 ###############################################################################
@@ -294,7 +294,7 @@ def main(argv):
     startTime = thisTime
 
     #########
-    # Obtain priors probabilities using likelihood data for each CN. 
+    # Obtain priors probabilities using likelihood data for each CN.
     # The process follows Bayesian principles, which involve updating prior probabilities based on observed data.
     # This ensures that the estimation of prior probabilities aligns with the evidence provided by likelihood
     # data for each CN.
