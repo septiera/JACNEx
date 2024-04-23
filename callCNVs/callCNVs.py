@@ -5,6 +5,7 @@ import numpy
 
 ####### JACNEx modules
 import callCNVs.transitions
+import callCNVs.exonDistance
 
 # set up logger, using inherited config
 logger = logging.getLogger(__name__)
@@ -25,19 +26,20 @@ logger = logging.getLogger(__name__)
 # - likelihoods_G (dict): key==sample ID, value==Likelihoods for gonosomal chromosomes
 # - transMatrix (numpy.ndarray[floats]): Transition matrix for the HMM Viterbi algorithm.
 # - jobs (int): Number of jobs to run in parallel.
+# - dmax (int): Maximum distance threshold between exons.
 #
 # Returns a tuple of two lists: The first list contains CNV information for autosomal chromosomes,
 # and the second list for gonosomal chromosomes. Each list contains tuples with CNV information:
 # [CNType, exonIndexStart, exonIndexEnd, bestPathProbabilities, sampleName].
-def applyHMM(samples, autosomeExons, gonosomeExons, likelihoods_A, likelihoods_G, transMatrix, jobs):
+def applyHMM(samples, autosomeExons, gonosomeExons, likelihoods_A, likelihoods_G, transMatrix, jobs, dmax):
     CNVs_A = []
     CNVs_G = []
     paraSample = min(math.ceil(jobs / 2), len(samples))
     logger.info("%i samples => will process %i in parallel", len(samples), paraSample)
 
     with concurrent.futures.ProcessPoolExecutor(paraSample) as pool:
-        processSamps(samples, autosomeExons, likelihoods_A, transMatrix, pool, CNVs_A)
-        processSamps(samples, gonosomeExons, likelihoods_G, transMatrix, pool, CNVs_G)
+        processSamps(samples, autosomeExons, likelihoods_A, transMatrix, pool, CNVs_A, dmax)
+        processSamps(samples, gonosomeExons, likelihoods_G, transMatrix, pool, CNVs_G, dmax)
     return (CNVs_A, CNVs_G)
 
 
@@ -57,7 +59,8 @@ def applyHMM(samples, autosomeExons, gonosomeExons, likelihoods_A, likelihoods_G
 # - transMatrix (numpy.ndarray[floats]): A transition matrix used in the HMM Viterbi algorithm.
 # - pool (concurrent.futures.Executor): A concurrent executor for parallel processing.
 # - CNVs (list[str, int, int, int, floats, str]): CNV infos [CNType, exonStart, exonEnd, pathProb, sampleName]
-def processSamps(samples, exons, likelihoods, transMatrix, pool, CNVs):
+# - dmax (int): Maximum distance threshold between exons.
+def processSamps(samples, exons, likelihoods, transMatrix, pool, CNVs, dmax):
     for sampID in samples:
         # check if the sample ID is present in the likelihoods dictionary
         if sampID not in likelihoods.keys():
@@ -65,7 +68,7 @@ def processSamps(samples, exons, likelihoods, transMatrix, pool, CNVs):
             continue
         # submit a task for processing the chromosome data for the current sample
         # task is submitted to the provided process pool for parallel execution
-        futureRes = pool.submit(processChrom, likelihoods[sampID], transMatrix, sampID, exons)
+        futureRes = pool.submit(processChrom, likelihoods[sampID], transMatrix, sampID, exons, dmax)
         # add a callback to the future object
         # once the task is complete, the concatCNVs function will be called with the result
         # the concatCNVs function will handle the aggregation of CNVs from the result
@@ -81,10 +84,11 @@ def processSamps(samples, exons, likelihoods, transMatrix, pool, CNVs):
 # - transMatrix (numpy.ndarray): Transition matrix for the HMM Viterbi algorithm.
 # - sampID (str): Sample identifier.
 # - exons (list of [str, int, int, str]): Exon information for the chromosome.
+# - dmax (int): Maximum distance threshold between exons.
 #
 # Returns:
 # - sampCNVs (list): CNVs detected for the sample. Each CNV is represented as a tuple.
-def processChrom(likelihoods, transMatrix, sampID, exons):
+def processChrom(likelihoods, transMatrix, sampID, exons, dmax):
     # determine the start of each chromosome within the exon data
     isFirstExon = callCNVs.transitions.flagChromStarts(exons)
     # find indexes marking the start of each chromosome
@@ -104,7 +108,7 @@ def processChrom(likelihoods, transMatrix, sampID, exons):
 
         # apply the Viterbi algorithm to identify CNVs for the current chromosome
         try:
-            chromCNVs = viterbi(sampOneChromLikelihood, transMatrix, sampID, firstExOnChrom)
+            chromCNVs = viterbi(sampOneChromLikelihood, transMatrix, sampID, firstExOnChrom, exons, dmax)
         except Exception as e:
             logger.error("viterbi failed:", sampID, repr(e))
             raise
@@ -155,9 +159,10 @@ def countCNVs(sampCNVs):
         cn_counts[cn] = cn_counts.get(cn, 0) + 1
 
     # Prepare the string for each CN and its count, including CNs with 0 occurrences
-    cn_list = [f"CN{cn}:{cn_counts.get(cn, 0)}" for cn in range(max(cn_counts.keys()) + 1)]
-    cn_str = ', '.join(cn_list)
-    logger.debug("Done callCNvs for %s, %s", sampCNVs[0][4], cn_str)
+    if len(cn_counts.keys()) != 0:
+        cn_list = [f"CN{cn}:{cn_counts.get(cn, 0)}" for cn in range(max(cn_counts.keys()) + 1)]
+        cn_str = ', '.join(cn_list)
+        logger.debug("Done callCNvs for %s, %s", sampCNVs[0][4], cn_str)
 
 
 ######################################
@@ -170,6 +175,9 @@ def countCNVs(sampCNVs):
 # Specs:
 # - Initialization: initializing necessary variables, including the probability matrices
 #    and the path matrix.
+# - Adjustment for Exon Distance: adjusts transition probabilities based on the distance
+#   between exons, employing a power law approach to smooth probabilities as the distance increases
+#   up to a maximum distance (dmax).
 # - Score Propagation: iterates over each observation (exon) and calculates the probabilities
 #    for each state by considering the likelihood of the current observation and the transition
 #    probabilities from previous states.
@@ -189,12 +197,14 @@ def countCNVs(sampCNVs):
 # - firstExOnChrom [int]: index of the first exon on the chromosome being processed.
 #    necessary to find the indices of the exons precisely derived from the bed based on the
 #    indices of the callable exons.
+# - exons [list of lists[str, int, int, str]]: exon infos [chr, START, END, EXONID].
+# - dmax [int]: Maximum distance threshold between exons.
 #
 # Returns:
 # - sampCNVs (list of list[int, int, int, floats, str]): A list of CNVs detected. Each CNV is
 #    represented as a list containing the CNV type, start exon index, end exon index, path probability,
 #    and sample ID.
-def viterbi(chromLikelihoods, transMatrix, sampleID, firstExOnChrom):
+def viterbi(chromLikelihoods, transMatrix, sampleID, firstExOnChrom, exons, dmax):
     try:
         CNVs = []
 
@@ -236,6 +246,9 @@ def viterbi(chromLikelihoods, transMatrix, sampleID, firstExOnChrom):
         #  - transition probabilities
         exonIndex = 0
         while exonIndex < len(exIndexCalled):
+            distFromPrevEx = exons[exIndexCalled[exonIndex - 1]][2] - exons[exIndexCalled[exonIndex]][1]
+            # Adjusts transition probabilities based on exon distance using a power law approach.
+            adjustedTransMatrix = callCNVs.exonDistance.adjustTransMatrix(transMatrix, distFromPrevEx, dmax)
 
             for currentState in range(NbStatesWithVoid):
                 probMax = -1
@@ -251,7 +264,7 @@ def viterbi(chromLikelihoods, transMatrix, sampleID, firstExOnChrom):
                     for prevState in range(NbStatesWithVoid):
                         # calculate the probability of observing the current observation given a previous state
                         prob = (probsPrev[prevState] *
-                                transMatrix[prevState, currentState] *
+                                adjustedTransMatrix[prevState, currentState] *
                                 chromLikelihoods[currentState - 1, exIndexCalled[exonIndex]])
                         # currentState - 1 because chromLikelihoods doesn't have values for void state
 

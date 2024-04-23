@@ -336,22 +336,22 @@ def main(argv):
     logger.debug("Transition Matrix:\n%s", formatted_matrix)
     ########
 
-    # #########
-    # # Application of the HMM using the Viterbi algorithm. (calling step)
-    # # processes both autosomal and gonosomal exon data for a set of samples, yielding
-    # # a list of CNVs for each category. Each CNV is detailed with information including
-    # # CNV type, start and end positions of the affected exons, the probability of the path,
-    # # and the sample ID.
-    # try:
-    #     CNVs_A, CNVs_G = callCNVs.callCNVs.applyHMM(samples, autosomeExons, gonosomeExons,
-    #                                                 likelihoods_A, likelihoods_G, transMatrix,
-    #                                                 jobs)
-    # except Exception as e:
-    #     raise Exception("HMM.processCNVCalls failed: %s", repr(e))
+    #########
+    # Application of the HMM using the Viterbi algorithm. (calling step)
+    # processes both autosomal and gonosomal exon data for a set of samples, yielding
+    # a list of CNVs for each category. Each CNV is detailed with information including
+    # CNV type, start and end positions of the affected exons, the probability of the path,
+    # and the sample ID.
+    try:
+        CNVs_A, CNVs_G = callCNVs.callCNVs.applyHMM(samples, autosomeExons, gonosomeExons,
+                                                    likelihoods_A, likelihoods_G, transMatrix,
+                                                    jobs, dmax)
+    except Exception as e:
+        raise Exception("HMM.processCNVCalls failed: %s", repr(e))
 
-    # thisTime = time.time()
-    # logger.debug("Done HMM.processCNVCalls in %.2f s", thisTime - startTime)
-    # startTime = thisTime
+    thisTime = time.time()
+    logger.debug("Done HMM.processCNVCalls in %.2f s", thisTime - startTime)
+    startTime = thisTime
 
     # #########
     # # Computation of CNVs quality score
