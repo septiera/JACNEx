@@ -246,7 +246,7 @@ def viterbi(chromLikelihoods, transMatrix, sampleID, firstExOnChrom, exons, dmax
         #  - transition probabilities
         exonIndex = 0
         while exonIndex < len(exIndexCalled):
-            distFromPrevEx = exons[exIndexCalled[exonIndex - 1]][2] - exons[exIndexCalled[exonIndex]][1]
+            distFromPrevEx = exons[exIndexCalled[exonIndex - 1]][2] - exons[exIndexCalled[exonIndex]][1] - 1
             # Adjusts transition probabilities based on exon distance using a power law approach.
             adjustedTransMatrix = callCNVs.exonDistance.adjustTransMatrix(transMatrix, distFromPrevEx, dmax)
 
