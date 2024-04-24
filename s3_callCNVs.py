@@ -49,6 +49,7 @@ def parseArgs(argv):
     outFile = ""
     # optional args with default values
     padding = 10
+    transMatrixCutoff = 90
     plotDir = "./plotDir/"
     # jobs default: 80% of available cores
     jobs = round(0.8 * len(os.sched_getaffinity(0)))
@@ -77,13 +78,15 @@ ARGUMENTS:
     --out [str]: file where results will be saved, must not pre-exist, will be gzipped if it ends
                  with '.gz', can have a path component but the subdir must exist.
     --padding [int] : number of bps used to pad the exon coordinates, default : """ + str(padding) + """
+    --transMatrixCutoff [int]: inter-exon percentile threshold for initializing the transition matrix,
+                               default : """ + str(transMatrixCutoff) + """
     --plotDir [str]: subdir (created if needed) where plot files will be produced, default:  """ + plotDir + """
     --jobs [int]: cores that we can use, defaults to 80% of available cores ie """ + str(jobs) + "\n" + """
     -h , --help: display this help and exit\n"""
 
     try:
         opts, args = getopt.gnu_getopt(argv[1:], 'h', ["help", "counts=", "clusts=", "out=", "padding=",
-                                                       "plotDir=", "jobs="])
+                                                       "transMatrixCutoff=", "plotDir=", "jobs="])
     except getopt.GetoptError as e:
         raise Exception(e.msg + ". Try " + scriptName + " --help")
     if len(args) != 0:
@@ -101,6 +104,8 @@ ARGUMENTS:
             outFile = value
         elif opt in ("--padding"):
             padding = value
+        elif opt in ("--transMatrixCutoff"):
+            transMatrixCutoff = value
         elif (opt in ("--plotDir")):
             plotDir = value
         elif opt in ("--jobs"):
@@ -136,6 +141,15 @@ ARGUMENTS:
     except Exception:
         raise Exception("padding must be a non-negative integer, not " + str(padding))
 
+    try:
+        transMatrixCutoff = int(transMatrixCutoff)
+        if (transMatrixCutoff < 10):
+            raise Exception()
+        elif (transMatrixCutoff < 50):
+            logger.warning("transMatrixCutoff smaller than 50 may be insufficient?")
+    except Exception:
+        raise Exception("transMatrixCutoff must be greater than 10, not " + str(transMatrixCutoff))
+
     # test plotdir last so we don't mkdir unless all other args are OK
     if not os.path.isdir(plotDir):
         try:
@@ -151,7 +165,7 @@ ARGUMENTS:
         raise Exception("jobs must be a positive integer, not " + str(jobs))
 
     # AOK, return everything that's needed
-    return (countsFile, clustsFile, outFile, padding, plotDir, jobs)
+    return (countsFile, clustsFile, outFile, padding, transMatrixCutoff, plotDir, jobs)
 
 
 ###############################################################################
@@ -164,7 +178,7 @@ ARGUMENTS:
 # may be available in the log
 def main(argv):
     # parse, check and preprocess arguments
-    (countsFile, clustsFile, outFile, padding, plotDir, jobs) = parseArgs(argv)
+    (countsFile, clustsFile, outFile, padding, pDist, plotDir, jobs) = parseArgs(argv)
 
     # args seem OK, start working
     logger.debug("called with: " + " ".join(argv[1:]))
@@ -321,9 +335,12 @@ def main(argv):
     # The 'init' state, based on priors, helps to start and reset the HMM but doesn't
     # represent any actual CN state.
     # The resulting 'transMatrix' is a 2D numpy array. dim =(nbOfCNStates + 1) * (nbOfCNStates + 1)
+    # Additionally, the function calculates the maximum distance below a given percentile
+    # threshold, dmax, from the distances between exons for both autosomal and gonosomal samples.
+    # This dmax value is used in subsequent steps of the CNV calling process.
     try:
-        transMatrix = callCNVs.transitions.getTransMatrix(likelihoods_A, likelihoods_G, autosomeExons, gonosomeExons,
-                                                          priors, len(CNStates))
+        transMatrix, dmax = callCNVs.transitions.getTransMatrix(likelihoods_A, likelihoods_G, autosomeExons,
+                                                                gonosomeExons, priors, len(CNStates), pDist)
     except Exception as e:
         raise Exception("getTransMatrix failed: %s", repr(e))
 
