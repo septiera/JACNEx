@@ -58,8 +58,8 @@ def parseArgs(argv):
     usage = "NAME:\n" + scriptName + """\n
 DESCRIPTION:
 Given a BED of exons and one or more BAM files:
-- pad the exons (+- padding), and create intergenic (or deep intronic) pseudo-exons in
-    the larger gaps between exons;
+- pad the exons (+- padding), merge overlapping padded exons, and create intergenic (or deep
+    intronic) pseudo-exons in the larger gaps between exons;
 - count the number of sequenced fragments from each BAM that overlap each (pseudo-)exon.
 Results are printed to --out in TSV format (possibly gzipped): first 4 columns hold the
 (pseudo-)exon definitions after padding and sorting, subsequent columns hold the counts.
@@ -243,7 +243,7 @@ def main(argv):
     logger.info("starting to work")
     startTime = time.time()
 
-    # parse exons from BED to obtain a list of lists (dim=(NbExons+NbPseudoExons) x [CHR,START,END,EXONID]),
+    # parse exons from BED to obtain a list of lists (dim=(NbMergedExons+NbPseudoExons) x [CHR,START,END,EXONID]),
     # the exons and pseudo-exons are sorted according to their genomic position and padded
     exons = countFrags.bed.processBed(bedFile, padding)
 
