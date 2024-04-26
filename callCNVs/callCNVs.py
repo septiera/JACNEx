@@ -68,57 +68,11 @@ def processSamps(samples, exons, likelihoods, transMatrix, pool, CNVs, dmax):
             continue
         # submit a task for processing the chromosome data for the current sample
         # task is submitted to the provided process pool for parallel execution
-        futureRes = pool.submit(processChrom, likelihoods[sampID], transMatrix, sampID, exons, dmax)
+        futureRes = pool.submit(viterbi(likelihoods[sampID], transMatrix, sampID, exons, dmax))
         # add a callback to the future object
         # once the task is complete, the concatCNVs function will be called with the result
         # the concatCNVs function will handle the aggregation of CNVs from the result
         futureRes.add_done_callback(lambda future: concatCNVs(future, CNVs))
-
-
-######################################
-# processChrom
-# Processes CNV calls for a single chromosome using the Viterbi algorithm.
-#
-# Args:
-# - likelihoods (numpy.ndarray): Array of likelihoods for a single sample.
-# - transMatrix (numpy.ndarray): Transition matrix for the HMM Viterbi algorithm.
-# - sampID (str): Sample identifier.
-# - exons (list of [str, int, int, str]): Exon information for the chromosome.
-# - dmax (int): Maximum distance threshold between exons.
-#
-# Returns:
-# - sampCNVs (list): CNVs detected for the sample. Each CNV is represented as a tuple.
-def processChrom(likelihoods, transMatrix, sampID, exons, dmax):
-    # determine the start of each chromosome within the exon data
-    isFirstExon = callCNVs.transitions.flagChromStarts(exons)
-    # find indexes marking the start of each chromosome
-    startIndexes = numpy.where(isFirstExon)[0]
-    # list to store CNVs for the sample
-    sampCNVs = []
-
-    # iterate over each chromosome
-    for i in range(len(startIndexes)):
-        # list to store CNVs for the current chromosome
-        chromCNVs = []
-
-        # list to store CNVs for the sample
-        firstExOnChrom = startIndexes[i]
-        lastExOnChrom = startIndexes[i + 1] - 1 if i + 1 < len(startIndexes) else len(exons)
-        sampOneChromLikelihood = likelihoods[firstExOnChrom:lastExOnChrom, :]
-
-        # apply the Viterbi algorithm to identify CNVs for the current chromosome
-        try:
-            chromCNVs = viterbi(sampOneChromLikelihood, transMatrix, sampID, firstExOnChrom, exons, dmax)
-        except Exception as e:
-            logger.error("viterbi failed:", sampID, repr(e))
-            raise
-
-        # add identified CNVs to the sample's CNV list
-        if len(chromCNVs) != 0:
-            sampCNVs.extend(chromCNVs)
-        else:
-            logger.warning("%s: %s doesn't have any callable exons. Skipping it", sampID, exons[firstExOnChrom][0])
-    return sampCNVs
 
 
 ######################################
@@ -189,14 +143,11 @@ def countCNVs(sampCNVs):
 #    or failures during the process.
 #
 # Args:
-# - chromLikelihoods (numpy.ndarray[floats]): pseudo-emission probabilities (likelihood) of each
+# - likelihoods (numpy.ndarray[floats]): pseudo-emission probabilities (likelihood) of each
 #    state for each observation (exon) for one sample. Dim = [NbObservations, NbStates].
 # - transMatrix (numpy.ndarray[floats]): transition probabilities between states, including a
 #    void status. Dim = [NbStates + 1, NbStates + 1].
 # - sampleID [str]
-# - firstExOnChrom [int]: index of the first exon on the chromosome being processed.
-#    necessary to find the indices of the exons precisely derived from the bed based on the
-#    indices of the callable exons.
 # - exons [list of lists[str, int, int, str]]: exon infos [chr, START, END, EXONID].
 # - dmax [int]: Maximum distance threshold between exons.
 #
@@ -204,29 +155,22 @@ def countCNVs(sampCNVs):
 # - sampCNVs (list of list[int, int, int, floats, str]): A list of CNVs detected. Each CNV is
 #    represented as a list containing the CNV type, start exon index, end exon index, path probability,
 #    and sample ID.
-def viterbi(chromLikelihoods, transMatrix, sampleID, firstExOnChrom, exons, dmax):
+def viterbi(likelihoods, transMatrix, sampleID, exons, dmax):
     try:
         CNVs = []
 
-        # find indexes of exons that have been called (i.e., not marked with -1)
-        exIndexCalled = numpy.where(numpy.all(chromLikelihoods != -1, axis=1))[0]
-
-        # handle the case where no exons are callable for the chromosome
-        if len(exIndexCalled) == 0:
-            return (CNVs)
-
         # get the dimensions of the input matrix
-        NbObservations = len(exIndexCalled)
+        NbObservations = likelihoods.shape[0]
         NbStatesWithVoid = len(transMatrix)
 
         # control that the right number of hidden state
-        if NbStatesWithVoid != chromLikelihoods.shape[1] + 1:
+        if NbStatesWithVoid != likelihoods.shape[1] + 1:
             logger.error("NbStates not consistent with number of columns + 1 in chromCalls")
             raise
 
         # Transpose the input matrix in the same format as the emission matrix in the classic
         # Viterbi algorithm, dim = [NbStates * NbObservations]
-        chromLikelihoods = chromLikelihoods.transpose()
+        likelihoods = likelihoods.transpose()
 
         # Step 1: Initialize variables
         # probsPrev[i]: stores the probability of the most likely path ending in state i at the previous exon
@@ -244,13 +188,35 @@ def viterbi(chromLikelihoods, transMatrix, sampleID, firstExOnChrom, exons, dmax
         # Calculate the score of each state by considering:
         #  - the scores of previous states
         #  - transition probabilities
-        exonIndex = 0
-        while exonIndex < len(exIndexCalled):
-            distFromPrevEx = exons[exIndexCalled[exonIndex - 1]][2] - exons[exIndexCalled[exonIndex]][1] - 1
-            # Adjusts transition probabilities based on exon distance using a power law approach.
+        prevChrom = exons[0][0]
+        prevEnd = exons[0][2]
+        lastCalledExInd = -1
+        for exonIndex in range(len(exons)):
+            currentChrom = exons[exonIndex][0]
+            currentStart = exons[exonIndex][1]
+            currentEnd = exons[exonIndex][2]
+
+            if currentChrom != prevChrom:
+                tmpList = backtrack_aggregateCalls(path, lastCalledExInd, probsPrev.argmax(), max(probsPrev), sampleID)
+                CNVs.extend(tmpList)
+                # reinit
+                prevChrom = currentChrom
+                prevEnd = exons[exonIndex][2]
+                probsPrev[0] = 1
+                probsPrev[1:] = 0
+                path[0, exonIndex - 1] = 0
+                path[1:, exonIndex - 1] = 5
+
+            if likelihoods[0, exonIndex] == -1:
+                # no call, skip
+                continue
+
+            # adjusts transition probabilities.
+            distFromPrevEx = currentStart - prevEnd - 1
             adjustedTransMatrix = callCNVs.exonDistance.adjustTransMatrix(transMatrix, distFromPrevEx, dmax)
 
             for currentState in range(NbStatesWithVoid):
+                print("#### current", currentState)
                 probMax = -1
                 prevStateMax = -1
 
@@ -265,11 +231,13 @@ def viterbi(chromLikelihoods, transMatrix, sampleID, firstExOnChrom, exons, dmax
                         # calculate the probability of observing the current observation given a previous state
                         prob = (probsPrev[prevState] *
                                 adjustedTransMatrix[prevState, currentState] *
-                                chromLikelihoods[currentState - 1, exIndexCalled[exonIndex]])
+                                likelihoods[currentState - 1, exonIndex])
                         # currentState - 1 because chromLikelihoods doesn't have values for void state
 
+                        print(exonIndex, prevState, probsPrev[prevState],
+                              adjustedTransMatrix[prevState, currentState],
+                              likelihoods[currentState - 1, exonIndex], prob)
                         # Find the previous state with the maximum probability
-                        # Store the index of the previous state with the maximum probability in the "path" matrix
                         if prob >= probMax:
                             probMax = prob
                             prevStateMax = prevState
@@ -277,6 +245,7 @@ def viterbi(chromLikelihoods, transMatrix, sampleID, firstExOnChrom, exons, dmax
                     # Store the maximum probability and CN type index for the current state and observation
                     probsCurrent[currentState] = probMax
                     path[currentState, exonIndex] = prevStateMax
+            print("PROBCurrent", probsCurrent, "PATHSTATE", path[:, exonIndex])
 
             # if all LIVE states (probsCurrent > 0) at currentExon have the same
             # predecessor state and that state is CN2 : backtrack from [previous exon, CN2]
@@ -285,36 +254,36 @@ def viterbi(chromLikelihoods, transMatrix, sampleID, firstExOnChrom, exons, dmax
                 ((probsCurrent[2] == 0) or (path[2, exonIndex] == 3)) and
                 ((probsCurrent[3] == 0) or (path[3, exonIndex] == 3)) and
                 ((probsCurrent[4] == 0) or (path[4, exonIndex] == 3))):
-
+                print("RESET")
                 try:
-                    tmpList = backtrack_aggregateCalls(path, exonIndex - 1, 3, max(probsPrev), sampleID)
+                    tmpList = backtrack_aggregateCalls(path, lastCalledExInd, 3, max(probsPrev), sampleID)
                     CNVs.extend(tmpList)
                     # logger.info("successfully backtrack from %i exInd", exonIndex - 1)
                 except Exception:
-                    logger.error("sample %s, %s, exon %i, exon -1 %i", sampleID, exIndexCalled[exonIndex], exIndexCalled[exonIndex - 1])
+                    logger.error("sample %s, %s, exon %i, exon -1 %i", sampleID, exonIndex, exonIndex - 1)
                     logger.error("%f, %f, %f, %f, %f", probsCurrent[0], probsCurrent[1],
                                  probsCurrent[2], probsCurrent[3], probsCurrent[4])
                     return (CNVs)
 
-                # reset prevScores to (1,0,0,0,0), and loop again (WITHOUT incrementing exonIndex)
-                probsPrev[1:] = 0
+                # reset prevScores to (1,0,0,0,0), and loop again
                 probsPrev[0] = 1
+                probsPrev[1:] = 0
                 path[0, exonIndex - 1] = 0
                 path[1:, exonIndex - 1] = 5
+                prevEnd = currentEnd
                 continue
-
             else:
                 # Update previous probabilities and move to the next exon
                 for i in range(len(probsCurrent)):
                     probsPrev[i] = probsCurrent[i]
-                exonIndex += 1
+
+            lastCalledExInd = exonIndex
+            prevEnd = currentEnd
 
         # Final backtrack to aggregate calls for the last exon
-        tmpList = backtrack_aggregateCalls(path, exonIndex - 1, probsPrev.argmax(), max(probsPrev), sampleID)
+        tmpList = backtrack_aggregateCalls(path, lastCalledExInd, probsPrev.argmax(), max(probsPrev), sampleID)
         CNVs.extend(tmpList)
 
-        # Map CNV indexes to exons
-        mapCNVIndexToExons(CNVs, exIndexCalled, firstExOnChrom)
         return (CNVs)
 
     except Exception as e:
