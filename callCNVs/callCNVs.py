@@ -160,129 +160,129 @@ def viterbi(likelihoods, transMatrix, sampleID, exons, dmax):
         CNVs = []
 
         # get the dimensions of the input matrix
-        NbObservations = likelihoods.shape[0]
         NbStatesWithVoid = len(transMatrix)
 
-        # control that the right number of hidden state
+        # sanity
         if NbStatesWithVoid != likelihoods.shape[1] + 1:
             logger.error("NbStates not consistent with number of columns + 1 in chromCalls")
             raise
 
-        # Transpose the input matrix in the same format as the emission matrix in the classic
-        # Viterbi algorithm, dim = [NbStates * NbObservations]
-        likelihoods = likelihoods.transpose()
-
         # Step 1: Initialize variables
-        # probsPrev[i]: stores the probability of the most likely path ending in state i at the previous exon
+        # probsPrev[s]: probability of the most likely path ending in state s at the previous exon
         probsPrev = numpy.zeros(NbStatesWithVoid, dtype=numpy.float128)
         probsPrev[0] = 1
-        # probsCurrent[i]: same ending at current exon
+        # probsCurrent[s]: same ending at current exon
         probsCurrent = numpy.zeros(NbStatesWithVoid, dtype=numpy.float128)
-        # path[i,e]: state at exon e-1 that produces the highest probability ending in state i at exon e
-        # (ie, probsCurrent[i])
-        # this state is 0 (void) if the path starts here
-        path = numpy.zeros((NbStatesWithVoid, NbObservations), dtype=numpy.uint8)
-
-        # Step 2: Score propagation
-        # Iterate through each observation, current states, and previous states.
-        # Calculate the score of each state by considering:
-        #  - the scores of previous states
-        #  - transition probabilities
+        # chrom and end of previous exon
         prevChrom = exons[0][0]
-        prevEnd = exons[0][2]
-        lastCalledExInd = -1
+        prevEnd = 0
+
+        # temp data structures used by buildCNVs() and reset whenever it is called:
+        # list of indexes in "exons"
+        calledExons = []
+        # path[e][s]: state at exon e-1 (in calledExons) that produces the highest
+        # probability ending in state s at exon e (ie, probsCurrent[s])
+        path = []
+        # bestPathProbas[e][s] == proba of most likely path starting at calledExons[0]
+        # (state 0 or 3) and ending in state s at exon calledExons[e] - this is populated
+        # using probsCurrent
+        bestPathProbas = []
+        # CN2PathProbas[i] == proba of path starting at calledExons[0][3] and staying
+        # in state 3==CN2 all along
+        CN2PathProbas = []
+
+        # Step 2: viterbi forward algorithm
         for exonIndex in range(len(exons)):
-            currentChrom = exons[exonIndex][0]
-            currentStart = exons[exonIndex][1]
-            currentEnd = exons[exonIndex][2]
-
-            if currentChrom != prevChrom:
-                tmpList = backtrack_aggregateCalls(path, lastCalledExInd, probsPrev.argmax(), max(probsPrev), sampleID)
-                CNVs.extend(tmpList)
-                # reinit
-                prevChrom = currentChrom
-                prevEnd = exons[exonIndex][2]
-                probsPrev[0] = 1
-                probsPrev[1:] = 0
-                path[0, exonIndex - 1] = 0
-                path[1:, exonIndex - 1] = 5
-
-            if likelihoods[0, exonIndex] == -1:
-                # no call, skip
+            if likelihoods[exonIndex, 0] == -1:
+                # exon is no-call => skip
                 continue
 
-            # adjusts transition probabilities.
-            distFromPrevEx = currentStart - prevEnd - 1
-            adjustedTransMatrix = callCNVs.exonDistance.adjustTransMatrix(transMatrix, distFromPrevEx, dmax)
+            if exons[exonIndex][0] != prevChrom:
+                if len(calledExons) > 0:
+                    CNVs.extend(buildCNVs(calledExons, path, bestPathProbas, CN2PathProbas,
+                                          bestPathProbas.argmax(), sampleID))
+                # reinit
+                probsPrev[0] = 1
+                probsPrev[1:] = 0
+                prevChrom = exons[exonIndex][0]
+                prevEnd = 0
+                calledExons = []
+                path = []
+                bestPathProbas = []
+                CN2PathProbas = []
 
-            for currentState in range(NbStatesWithVoid):
-                print("#### current", currentState)
+            # adjust transition probabilities except for first called exon on a chrom
+            if prevEnd != 0:
+                distFromPrevEx = exons[exonIndex][1] - prevEnd - 1
+                adjustedTransMatrix = callCNVs.exonDistance.adjustTransMatrix(transMatrix, distFromPrevEx, dmax)
+            else:
+                adjustedTransMatrix = transMatrix
+
+            # calculate proba of the most likely paths ending in each state for current exon
+            # state 0 == void is never in a path except at initialisation/reset
+            probsCurrent[0] = 0
+
+            # accumulators for populating the data structures for buildCNVs(), which will only
+            # be populated after possibly calling buildCNVs()
+            bestPrevState = numpy.zeros(NbStatesWithVoid, dtype=numpy.int8)
+            CN2PathProba = 0
+
+            for currentState in range(1, NbStatesWithVoid):
+                print("#### current state: ", currentState)
                 probMax = -1
                 prevStateMax = -1
+                for prevState in range(NbStatesWithVoid):
+                    # probability of path coming from prevState to currentState
+                    prob = (probsPrev[prevState] *
+                            adjustedTransMatrix[prevState, currentState] *
+                            likelihoods[exonIndex, currentState - 1])
+                    # currentState - 1 because likelihoods don't have values for void state
 
-                # state 0 == void is never in a path except at initialisation/reset => keep defaults
-                if currentState == 0:
-                    probsCurrent[currentState] = 0
-                    path[currentState, exonIndex] = 0
-                    continue
+                    if prob >= probMax:
+                        probMax = prob
+                        prevStateMax = prevState
+                    if (currentState == 3) and (prevState == 3):
+                        CN2PathProba = prob
 
-                else:
-                    for prevState in range(NbStatesWithVoid):
-                        # calculate the probability of observing the current observation given a previous state
-                        prob = (probsPrev[prevState] *
-                                adjustedTransMatrix[prevState, currentState] *
-                                likelihoods[currentState - 1, exonIndex])
-                        # currentState - 1 because chromLikelihoods doesn't have values for void state
-
-                        print(exonIndex, prevState, probsPrev[prevState],
-                              adjustedTransMatrix[prevState, currentState],
-                              likelihoods[currentState - 1, exonIndex], prob)
-                        # Find the previous state with the maximum probability
-                        if prob >= probMax:
-                            probMax = prob
-                            prevStateMax = prevState
-
-                    # Store the maximum probability and CN type index for the current state and observation
-                    probsCurrent[currentState] = probMax
-                    path[currentState, exonIndex] = prevStateMax
-            print("PROBCurrent", probsCurrent, "PATHSTATE", path[:, exonIndex])
+                # save most likely path leading to currentState
+                probsCurrent[currentState] = probMax
+                bestPrevState[currentState] = prevStateMax
 
             # if all LIVE states (probsCurrent > 0) at currentExon have the same
             # predecessor state and that state is CN2 : backtrack from [previous exon, CN2]
             # and reset
-            if (((probsCurrent[1] == 0) or (path[1, exonIndex] == 3)) and
-                ((probsCurrent[2] == 0) or (path[2, exonIndex] == 3)) and
-                ((probsCurrent[3] == 0) or (path[3, exonIndex] == 3)) and
-                ((probsCurrent[4] == 0) or (path[4, exonIndex] == 3))):
-                print("RESET")
-                try:
-                    tmpList = backtrack_aggregateCalls(path, lastCalledExInd, 3, max(probsPrev), sampleID)
-                    CNVs.extend(tmpList)
-                    # logger.info("successfully backtrack from %i exInd", exonIndex - 1)
-                except Exception:
-                    logger.error("sample %s, %s, exon %i, exon -1 %i", sampleID, exonIndex, exonIndex - 1)
-                    logger.error("%f, %f, %f, %f, %f", probsCurrent[0], probsCurrent[1],
-                                 probsCurrent[2], probsCurrent[3], probsCurrent[4])
-                    return (CNVs)
+            if (((probsCurrent[1] == 0) or (bestPrevState[1] == 3)) and
+                ((probsCurrent[2] == 0) or (bestPrevState[2] == 3)) and
+                ((probsCurrent[3] == 0) or (bestPrevState[3] == 3)) and
+                ((probsCurrent[4] == 0) or (bestPrevState[4] == 3)) and
+                (len(calledExons) > 0)):
+                CNVs.extend(buildCNVs(calledExons, path, bestPathProbas, CN2PathProbas, 3, sampleID))
 
-                # reset prevScores to (1,0,0,0,0), and loop again
-                probsPrev[0] = 1
-                probsPrev[1:] = 0
-                path[0, exonIndex - 1] = 0
-                path[1:, exonIndex - 1] = 5
-                prevEnd = currentEnd
-                continue
-            else:
-                # Update previous probabilities and move to the next exon
-                for i in range(len(probsCurrent)):
-                    probsPrev[i] = probsCurrent[i]
+                # set prev state to void but use transitions from CN2 with a starting path proba at 1
+                bestPrevState[:] = 0
+                for state in range(1, NbStatesWithVoid):
+                    # divide by proba of path ending at CN2 for prev exon, so probsCurrent becomes
+                    # transition(CN2->state) * likelihood(state)
+                    probsCurrent[state] /= probsPrev[3]
+                # reset all buildCNVs() accumulators
+                calledExons = []
+                path = []
+                bestPathProbas = []
+                CN2PathProbas = []
 
-            lastCalledExInd = exonIndex
-            prevEnd = currentEnd
+            # Update previous probabilities and move to the next exon
+            numpy.copyto(probsPrev, probsCurrent)
+            prevEnd = exons[exonIndex][2]
+
+            calledExons.append(exonIndex)
+            path.append(bestPrevState)
+            bestPathProbas.append(probsCurrent.copy())
+            CN2PathProbas.append(CN2PathProba)
 
         # Final backtrack to aggregate calls for the last exon
-        tmpList = backtrack_aggregateCalls(path, lastCalledExInd, probsPrev.argmax(), max(probsPrev), sampleID)
-        CNVs.extend(tmpList)
+        if len(calledExons) > 0:
+            CNVs.extend(buildCNVs(calledExons, path, bestPathProbas, CN2PathProbas,
+                                  bestPathProbas.argmax(), sampleID))
 
         return (CNVs)
 
@@ -292,137 +292,67 @@ def viterbi(likelihoods, transMatrix, sampleID, exons, dmax):
 
 
 ######################################
-# backtrack_aggregateCalls
-# retrieve the most probable sequence of hidden states (CNVs) by backtracking through
-# the path matrix generated by the Viterbi algorithm.
-# aggregates consecutive exons with the same predicted CN into a single CNV call.
-#
-# Specs:
-# - Initialization: initializing necessary variables, including CNV lists and exon indices.
-# - Reverse Iteration: iterates over the exons in reverse order, starting from the last
-#    processed exon, and follows the path of states backward to the start of the chromosome.
-# - CNV Aggregation and Special Cases Handling: aggregates consecutive exons with the same CN
-#    state into a single CNV. It also handles special cases like transitions between different
-#    CN states, and extends certain CNVs (like HETDEL) to the boundaries of other types (like HVDEL)
-#    when necessary.
-# - Final CNV List: aggregated CNVs are then compiled into a final list, which is reversed to match
-#    the original chronological order of exons.
+# buildCNVs
+# Identify CNVs (= consecutive exons with the same CN) in a most-likely path, and
+# calculate the associated "qualityScore" (see below).
 #
 # Args:
-# - path (numpy.ndarray[ints]): optimal state transitions for each time step, as determined by the
-#    Viterbi algorithm. Dimensions are [NBState, NBObservations].
-# - lastExon [int]: index of the last exon traversed by the Viterbi algorithm before a reset
-#    or the end of the chromosome path.
-# - lastState [int]: state with the best probability for the last exon, indicating the end of
-#    the best path.
-# - pathProb [float]: probability of the path ending in lastState.
+# - calledExons [list of ints]: list of called exonIndexes to process here
+# - path (list of len(calledExons) ndarrays of NbStatesWithVoid ints): path[i][s] == state of
+#   exon calledExons[i-1] that produces the max proba for state s at exon calledExons[i]
+# - bestPathProbas (list of len(calledExons) ndarrays of NbStatesWithVoid floats):
+#   bestPathProbas[i][s] == proba of most likely path starting at calledExons[0]
+#   (state 0 or 3) and ending in state s at exon calledExons[i]
+# - CN2PathProbas (list of len(calledExons) floats): CN2PathProbas[i] == proba of
+#   path starting at calledExons[0][3] and staying in state 3==CN2 all along
+# - lastState [int]: state with the max probability for the last exon in calledExons
 # - sampleID [str]
 #
-# Returns a list of CNVs, a CNV == [CNType, startExon, endExon, pathProb, sampleID]
-def backtrack_aggregateCalls(path, lastExon, lastState, pathProb, sampleID):
+# Returns a list of CNVs, a CNV == [CNType, startExon, endExon, qualityScore, sampleID]:
+# - CNType is 0-3 (== CN)
+# - startExon and endExon are indexes (in the global exons list) of the first and
+#   last exons defining this CNV
+# - qualityScore = proba of most likely path between the called exons immediately
+#   preceding and immediately following the CNV, divided by the proba of
+#   the CN2-only path between the same exons
+def buildCNVs(calledExons, path, bestPathProbas, CN2PathProbas, lastState, sampleID):
     CNVs = []
-    startExon = None
-    endExon = None
-    # retention of an exon index to correctly delimit hetDELs in special cases
-    # (see following description in the code)
-    hetDelEndExon = None
 
-    # Iterate over exons in reverse order
-    nextExon = lastExon
-    nextState = lastState
+    if lastState != 3:
+        # can only happen when called with the last exon of a chrom: append bogus last
+        # exon in CN2 state, copying the path proba
+        calledExons.append(0)
+        path.append(numpy.array([0, 0, 0, lastState, 0]))
+        bestPathProbas.append(numpy.array([0, 0, 0, bestPathProbas[-1][lastState], 0]))
+        CN2PathProbas.append(CN2PathProbas[-1])
 
-    if nextState != 3:
-        endExon = nextExon
+    # build ndarray of states that form the most likely path, must start from the end
+    mostLikelyPath = numpy.zeros(len(calledExons), dtype=numpy.int8)
+    mostLikelyPath[-1] = 3
+    currentState = 3
+    for cei in range(len(calledExons) - 1, 0, -1):
+        currentState = path[cei][currentState]
+        mostLikelyPath[cei - 1] = currentState
 
-    while True:
-        try:
-            currentState = path[nextState, nextExon]
-        except Exception:
-            logger.error("nextEx=%i, lastEx=%i, lastState=%i", nextExon, lastExon, lastState)
-            toPrint = ""
-            for i in range(lastExon - 10, lastExon + 1):
-                for j in range(5):
-                    toPrint += "\t" + str(path[j, i])
-                toPrint += "\n"
-            logger.error(toPrint)
-            raise
+    # now walk through the path of most likely states, constructing CNVs as we go
+    currentState = mostLikelyPath[0]
+    exonBeforeCurrentEvent = -1
 
-        # currentState == 0, we are at the beginning of the best path,
-        # create first CNV(s) if needed
-        if currentState == 0:
-            if nextState != 3:
-                startExon = nextExon
-                CNVs.append([nextState, startExon, endExon, pathProb, sampleID])
-                if hetDelEndExon is not None:
-                    CNVs.append([2, startExon, hetDelEndExon, pathProb, sampleID])
-                    hetDelEndExon = None
-            break
-
-        elif currentState == nextState:
-            pass
-
-        elif nextState == 3:
-            endExon = nextExon - 1
-
-        elif currentState == 3:
-            startExon = nextExon
-            CNVs.append([nextState, startExon, endExon, pathProb, sampleID])
-            if hetDelEndExon is not None:
-                CNVs.append([2, startExon, hetDelEndExon, pathProb, sampleID])
-                hetDelEndExon = None
-
-        # DUPs
-        elif (currentState == 4) or (nextState == 4):
-            startExon = nextExon
-            CNVs.append([nextState, startExon, endExon, pathProb, sampleID])
-            if hetDelEndExon is not None:
-                CNVs.append([2, startExon, hetDelEndExon, pathProb, sampleID])
-                hetDelEndExon = None
-            endExon = nextExon - 1
-
-        # Special cases:
-        # If a HVDEL is followed by a HETDEL or vice versa,
-        # extend the HETDEL to the boundaries of the HVDEL.
-        # 1) HETDEL followed by HVDEL
-        elif (currentState == 2) and (nextState == 1):
-            # create HVDEL
-            startExon = nextExon
-            CNVs.append([nextState, startExon, endExon, pathProb, sampleID])
-            # keep endExon except if HVDEL was preceded by another HETDEL,
-            # in which case ...
-            if hetDelEndExon is not None:
-                endExon = hetDelEndExon
-                hetDelEndExon = None
-
-        # 2) HVDEL followed by HETDEL
-        elif (currentState == 1) and (nextState == 2):
-            hetDelEndExon = endExon
-            endExon = nextExon - 1
+    for cei in range(1, len(calledExons)):
+        if mostLikelyPath[cei] == currentState:
+            # next exon is in same state, NOOP
+            continue
         else:
-            raise Exception("not captured case")
-
-        nextState = currentState
-        nextExon -= 1
-
-    CNVs.reverse()
+            if (currentState != 0) and (currentState != 3):
+                # we changed states and current wasn't void or CN2, create CNV
+                qualityScore = (bestPathProbas[cei][mostLikelyPath[cei]] /
+                                bestPathProbas[exonBeforeCurrentEvent][mostLikelyPath[exonBeforeCurrentEvent]])
+                # divide by CN2-only path between same exons
+                qualityScore /= CN2PathProbas[cei] / CN2PathProbas[exonBeforeCurrentEvent]
+                CNVs.append([currentState - 1, calledExons[exonBeforeCurrentEvent + 1],
+                             calledExons[cei - 1], qualityScore, sampleID])
+            # in any case we changed states, update accumulators
+            currentState = mostLikelyPath[cei]
+            exonBeforeCurrentEvent = cei - 1
 
     return(CNVs)
-
-
-######################################
-# mapCNVIndexToExons
-# Map CNV indexes to "exons" indexes based on the 'exIndexCalled' list.
-#
-# Args:
-# CNVs (list of lists): A list containing CNV events, where each event is represented
-#                       as a list [start, end, state].
-# exIndexCalled (list[int]): A list containing the indexes of exons used in the Viterbi
-#                            algorithm's output.
-#
-# Returns:
-# None (The CNVs list will be modified in-place.)
-def mapCNVIndexToExons(CNVs, exIndexCalled, firstExOnChrom):
-    for event in range(len(CNVs)):
-        CNVs[event][0] = CNVs[event][0] - 1
-        CNVs[event][1] = firstExOnChrom + exIndexCalled[CNVs[event][1]]
-        CNVs[event][2] = firstExOnChrom + exIndexCalled[CNVs[event][2]]
