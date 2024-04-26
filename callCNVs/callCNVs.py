@@ -193,14 +193,18 @@ def viterbi(likelihoods, transMatrix, sampleID, exons, dmax):
 
         # Step 2: viterbi forward algorithm
         for exonIndex in range(len(exons)):
+            if exonIndex > 300:
+                break
+
             if likelihoods[exonIndex, 0] == -1:
                 # exon is no-call => skip
                 continue
 
             if exons[exonIndex][0] != prevChrom:
                 if len(calledExons) > 0:
+                    print("RESETCHROM")
                     CNVs.extend(buildCNVs(calledExons, path, bestPathProbas, CN2PathProbas,
-                                          bestPathProbas.argmax(), sampleID))
+                                          bestPathProbas[-1].argmax(), sampleID))
                 # reinit
                 probsPrev[0] = 1
                 probsPrev[1:] = 0
@@ -228,7 +232,6 @@ def viterbi(likelihoods, transMatrix, sampleID, exons, dmax):
             CN2PathProba = 0
 
             for currentState in range(1, NbStatesWithVoid):
-                print("#### current state: ", currentState)
                 probMax = -1
                 prevStateMax = -1
                 for prevState in range(NbStatesWithVoid):
@@ -237,12 +240,13 @@ def viterbi(likelihoods, transMatrix, sampleID, exons, dmax):
                             adjustedTransMatrix[prevState, currentState] *
                             likelihoods[exonIndex, currentState - 1])
                     # currentState - 1 because likelihoods don't have values for void state
-
-                    if prob >= probMax:
+                    print("prev=", prevState, ", current=", currentState, ",prob=", prob)
+                    if prob > probMax:
                         probMax = prob
                         prevStateMax = prevState
-                    if (currentState == 3) and (prevState == 3):
-                        CN2PathProba = prob
+                    if (currentState == 3) and ((prevState == 0) or (prevState == 3)):
+                        if prob > CN2PathProba:
+                            CN2PathProba = prob
 
                 # save most likely path leading to currentState
                 probsCurrent[currentState] = probMax
@@ -256,14 +260,14 @@ def viterbi(likelihoods, transMatrix, sampleID, exons, dmax):
                 ((probsCurrent[3] == 0) or (bestPrevState[3] == 3)) and
                 ((probsCurrent[4] == 0) or (bestPrevState[4] == 3)) and
                 (len(calledExons) > 0)):
+                print('RESET')
                 CNVs.extend(buildCNVs(calledExons, path, bestPathProbas, CN2PathProbas, 3, sampleID))
 
-                # set prev state to void but use transitions from CN2 with a starting path proba at 1
-                bestPrevState[:] = 0
+                # start new paths at CN2 in previous exon with a starting path proba of 1.
+                bestPrevState[1:] = 3
                 for state in range(1, NbStatesWithVoid):
-                    # divide by proba of path ending at CN2 for prev exon, so probsCurrent becomes
-                    # transition(CN2->state) * likelihood(state)
-                    probsCurrent[state] /= probsPrev[3]
+                    probsCurrent[state] = (adjustedTransMatrix[3, state] *
+                                           likelihoods[exonIndex, state - 1])
                 # reset all buildCNVs() accumulators
                 calledExons = []
                 path = []
@@ -281,8 +285,9 @@ def viterbi(likelihoods, transMatrix, sampleID, exons, dmax):
 
         # Final backtrack to aggregate calls for the last exon
         if len(calledExons) > 0:
+            print("FINALRESET")
             CNVs.extend(buildCNVs(calledExons, path, bestPathProbas, CN2PathProbas,
-                                  bestPathProbas.argmax(), sampleID))
+                                  bestPathProbas[-1].argmax(), sampleID))
 
         return (CNVs)
 
@@ -317,6 +322,12 @@ def viterbi(likelihoods, transMatrix, sampleID, exons, dmax):
 #   the CN2-only path between the same exons
 def buildCNVs(calledExons, path, bestPathProbas, CN2PathProbas, lastState, sampleID):
     CNVs = []
+
+    print("CalledEx:", calledExons)
+    print("path:", path)
+    print("bestPathProbas:", bestPathProbas)
+    print("CN2PathProbas:", CN2PathProbas)
+    print("lastState:", lastState)
 
     if lastState != 3:
         # can only happen when called with the last exon of a chrom: append bogus last
