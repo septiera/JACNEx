@@ -1,5 +1,6 @@
 import logging
 import numpy
+import math
 
 ####### JACNEx modules
 import callCNVs.priors
@@ -15,13 +16,20 @@ logger = logging.getLogger(__name__)
 # getTransMatrix
 # Calculates the transition matrix for CN states including an 'init' state, and computes
 # the CN probabilities for autosomal and gonosomal samples.
-# Methodology:
-# 1. Identifying the start of new chromosomes for both autosomal and gonosomal exons.
-# 2. Computing CN probabilities for autosomal and gonosomal samples separately.
-# 3. Updating a transition matrix based on the computed CN probabilities.
-# 4. Normalizing the transition matrix and adding an 'init' state for Hidden Markov Model(HMM)
-#    initialization.
-# The computed CN probabilities serve for CNVs quality score calculations in downstream analysis.
+# Specs:
+# 1. calculates the starts of chromosomes and computes the distances between consecutive exons within each chromosome.
+#    This is done separately for autosomal and gonosomal exons.
+# 2. calculates the maximum distance (dmax) below a specified percentile threshold and the median distance (medDist)
+#    of non-zero distances.
+#    These values are used to determine the threshold for considering exon distances in the transition matrix update.
+# 3. initializes a transition matrix, which is a 2D array of integers representing the transition probabilities
+#    between different CN states.
+# 4. update transition matrix with CN counts for autosomal and gonosomal samples separately.
+#    This update process is based on the likelihoods of CN states provided for each sample,
+#    as well as prior probabilities and exon distances.
+#    Exons with distances exceeding medDist are excluded from the transition matrix update.
+# 5. normalize the transition matrix of counts to ensure that the probabilities sum to 1.
+#    Additionally, an 'init' state is added to the transition matrix to initialize a HMM for further analysis.
 #
 # Args:
 # - likelihoods_A (dict): CN likelihoods for autosomal exons; key=sampID[str],
@@ -33,7 +41,7 @@ logger = logging.getLogger(__name__)
 # - gonosomeExons (list of lists[str, int, int, str]): gonosome exon infos
 # - priors (,p.ndarray[floats]): prior probabilities for each CN status.
 # - nbStates (int): number of CN states.
-# - transMatrixCutoff (int): percentile threshold for calculating the maximum distance between exons.
+# - transMatrixCutoff (int): inter-exon percentile threshold for initializing the transition matrix.
 #
 # Returns:
 # - transAndInit (np.ndarray[floats]): transition matrix used for the HMM, including
@@ -41,23 +49,19 @@ logger = logging.getLogger(__name__)
 # - dmax (int): maximum distance below the specified percentile threshold.
 def getTransMatrix(likelihoods_A, likelihoods_G, autosomeExons, gonosomeExons,
                    priors, nbStates, transMatrixCutoff):
-    # get the chromosome starts and exon distances
-    isFirstExon_A, distExons_A = getChromosomeStartsAndExonDistances(autosomeExons)
-    isFirstExon_G, distExons_G = getChromosomeStartsAndExonDistances(gonosomeExons)
 
-    dmax, medDist = getDistMaxAndMedianDist(distExons_A, distExons_G, transMatrixCutoff)
+    dmax, medDist = getMaxAndMedianDist(autosomeExons, gonosomeExons, transMatrixCutoff)
     logger.info("dmax below the %sth percentile threshold is : %s", transMatrixCutoff, dmax)
-    logger.info("median distance is : %s", medDist)
+    logger.info("median inter-exon distance is : %s", medDist)
 
     # initialize the transition matrix
     # 2D array [ints], expected format for a transition matrix [i; j]
     # contains all prediction counts of states
     transitions = numpy.zeros((nbStates, nbStates), dtype=int)
     # update the transition matrix with CN probabilities for autosomal samples
-    transitions = updateTransMatrix(transitions, likelihoods_A, priors, isFirstExon_A, distExons_A, medDist)
+    updateTransMatrix(transitions, likelihoods_A, priors, autosomeExons, medDist)
     # repeat the process for gonosomal samples
-    transitions = updateTransMatrix(transitions, likelihoods_G, priors, isFirstExon_G, distExons_G, medDist)
-
+    updateTransMatrix(transitions, likelihoods_G, priors, autosomeExons, medDist)
     # normalize the transition matrix and add an 'init' state
     transAndInit = formatTransMatrix(transitions, priors, nbStates)
 
@@ -68,66 +72,47 @@ def getTransMatrix(likelihoods_A, likelihoods_G, autosomeExons, gonosomeExons,
 ############################ PRIVATE FUNCTIONS ################################
 ###############################################################################
 ############################################
-# getChromosomeStartsAndExonDistances:
-# Identifies the start of each chromosome in the list of exons and calculates the distance
-# between consecutive exons within the same chromosome.
+# getMaxAndMedianDist
+# calculates two important metrics for constructing the transition matrix of a HMM:
+# - dmax (maximum distance): This value serves as a threshold for adjusting transition probabilities
+#                            in the Viterbi process.
+# - medDist (median distance): Exons separated by a distance less than or equal to medDist are
+#                              considered sufficiently close for constructing the transition matrix.
 #
 # Args:
-# - exons (list of lists): Each inner list contains information about an exon
-#                             in the format [CHR, START, END, EXON_ID].
+# - autosomeExons, gonosomeExons (list of lists[str, int, int, str]): exons infos [CHR, START, END, EXONID].
+# - transMatrixCutoff [int]: inter-exon percentile threshold for initializing the transition matrix.
 #
 # Returns:
-# - isFirstExon (np.ndarray[bool]): A boolean array where each 'True' indicates the first exon of a chromosome.
-# - exonDistances (np.ndarray[int]): An array containing the distance between consecutive exons within the same chromosome.
-def getChromosomeStartsAndExonDistances(exons):
-    # initialize a boolean array with False
-    isFirstExon = numpy.zeros(len(exons), dtype=bool)
-    distExons = numpy.zeros(len(exons), dtype=int)
+# - tuple: A tuple containing the maximum distance (dmax) and the median distance (medDist).
+def getMaxAndMedianDist(autosomeExons, gonosomeExons, transMatrixCutoff):
+    # concatenate exons from autosomes and gonosomes into a single list
+    exons = autosomeExons + gonosomeExons
+
+    # initialize a list to store distances between consecutive exons
+    distExons = []
+    # initialize variables to keep track of the previous chromosome
+    # and its end position
     prev_chr = ""
     prev_end = 0
 
-    for ei in range(len(exons)):
-        chr_name, start, end, _ = exons[ei]
-        # Check if the current exon belongs to a new chromosome
+    for exon in exons:
+        chr_name, start, end, _ = exon
+        # check if the current chromosome is different from the previous one
         if prev_chr != chr_name:
-            isFirstExon[ei] = True
             prev_chr = chr_name
             prev_end = end
-        else:
-            interExDist = start - prev_end - 1
-            # Calculate the distance between the current exon and the previous one;
-            # note that any distance equal to zero implies overlapping exons.
-            if interExDist > 0:
-                distExons[ei] = interExDist
-            prev_end = end
+            continue
+        # calculate the distance between the current exon and the previous
+        # one on the same chromosome.
+        # if exons are adjacent, the distance will be 0.
+        dist = start - prev_end - 1
+        if dist > 0:  # only positive distance
+            distExons.append(dist)
+        prev_end = end
 
-    return (isFirstExon, distExons)
-
-
-##########################################
-# getDistMax
-# calculates the maximum distance below a given percentile threshold from two lists
-# of distances between exons, ignoring zero distances.
-#
-# Args:
-# - distExons_A (np.ndarray[ints]): distances between exons for chromosome A.
-# - distExons_G (np.ndarray[ints]): distances between exons for chromosome G.
-# - transMatrixCutoff (float): percentile threshold below which to find the maximum distance.
-#
-# Returns:
-# - dmax (int): Maximum distance below the specified percentile threshold.
-# - medDist (float): Median distance of the non-zero distances.
-def getDistMaxAndMedianDist(distExons_A, distExons_G, transMatrixCutoff):
-    # Concatenate the two lists of distances
-    all_distances = numpy.concatenate([distExons_A, distExons_G])
-
-    # Remove zero distances
-    non_zero_distances = all_distances[all_distances != 0]
-
-    medDist = numpy.median(non_zero_distances)
-
-    # Sort the non-zero distances
-    sorted_distances = numpy.sort(non_zero_distances)
+    medDist = numpy.median(distExons)
+    sorted_distances = sorted(distExons)  # ascending order
 
     # Calculate the index corresponding to the specified percentile
     index = int(len(sorted_distances) * transMatrixCutoff / 100)
@@ -137,54 +122,48 @@ def getDistMaxAndMedianDist(distExons_A, distExons_G, transMatrixCutoff):
 
 #########################################
 # updateTransMatrix
-# Updates the transition matrix based on the most probable CN states
+# Updates the transition matrix in place based on the most probable CN states
 # for each exon.
 #
 # Args:
 # - transitions (np.ndarray[floats]): Transition matrix to be updated, dimensions [NBStates, NBStates].
-# - likelihoodsDict (dict): CN likelihoodss per sample, keys = sampID,
+# - likelihoodsDict (dict): CN likelihoods per sample, keys = sampID,
 #                           values = 2D numpy arrays representing CN probabilities for each exon.
 # - priors (np.ndarray): Prior probabilities for CN states.
-# - isFirstExon (np.ndarray[bool]): each 'True' indicates the first exon of a chromosome.
-# - distExons (np.ndarray[ints]): Array containing distances between exons.
-# - medDist (float): Median distance of the non-zero distances.
-#
-# Returns:
-# - transitions (np.ndarray[ints]): Updated transition matrix.
-def updateTransMatrix(transitions, likelihoodsDict, priors, isFirstExon, distExons, medDist):
-    for sampID, likelihoodArr in likelihoodsDict.items():
+# - exons (list of lists[str, int, int, str]): exons infos [CHR, START, END, EXONID].
+# - maxDistBetweenExons (int): distance cutoff
+def updateTransMatrix(transitions, likelihoodsDict, priors, exons, maxDistBetweenExons):
+    for likelihoodsArr in likelihoodsDict.values():
         # determines for each sample the most probable CN state for each exon
         # by finding the maximum probability in the CN probabilities array.
-        CNPath = callCNVs.priors.getCNPath(likelihoodArr, priors)
-        prevCN = numpy.argmax(priors)
-        accumulateDist = 0
+        CNPath = callCNVs.priors.getCNPath(likelihoodsArr, priors)
+
+        # initialize to bogus chrom
+        prevCN = -1
+        prevChrom = -1
+        prevEnd = -1
+
         for ei in range(len(CNPath)):
-            currCN = CNPath[ei]
-
-            # skip non-interpretable exons
-            if currCN == -1:
-                accumulateDist += distExons[ei]
+            # skip no-call exons
+            if CNPath[ei] == -1:
                 continue
 
-            # skip exons with distances exceeding the specified threshold (medDist)
-            # Excludes exons too far apart for meaningful transition matrix construction.
-            if (distExons[ei] + accumulateDist) > medDist:
-                prevCN = numpy.argmax(priors)
-                accumulateDist = 0
+            # if new chrom first called exon is not counted but used for init
+            if prevChrom != exons[ei][0]:
+                prevCN = CNPath[ei]
+                prevChrom = exons[ei][0]
+                prevEnd = exons[ei][2]
                 continue
 
-            # reset prevCN at the start of each new chromosome
-            if isFirstExon[ei]:
-                prevCN = numpy.argmax(priors)
-                transitions[prevCN, currCN] += 1
-                continue
+            dist = exons[ei][1] - prevEnd - 1
 
-            # updates variables
-            transitions[prevCN, currCN] += 1
-            prevCN = currCN
-            accumulateDist = 0
+            # update transitions if exons are close enough.
+            if dist <= maxDistBetweenExons:
+                transitions[prevCN, CNPath[ei]] += 1
 
-    return transitions
+            # in both cases update prevs
+            prevEnd = exons[ei][2]
+            prevCN = CNPath[ei]
 
 
 ###########################################
