@@ -36,9 +36,13 @@ def applyHMM(samples, autosomeExons, gonosomeExons, likelihoods_A, likelihoods_G
     paraSample = min(math.ceil(jobs / 2), len(samples))
     logger.info("%i samples => will process %i in parallel", len(samples), paraSample)
 
+    # we now use separate priors and transMatrix (without void state) in this module,
+    # but callers haven't been updated to do this yet
+    priors = transMatrix[0, 1:].copy()
+    transMatrixNoVoid = transMatrix[1:, 1:].copy()
     with concurrent.futures.ProcessPoolExecutor(paraSample) as pool:
-        processSamps(samples, autosomeExons, likelihoods_A, transMatrix, pool, CNVs_A, dmax)
-        processSamps(samples, gonosomeExons, likelihoods_G, transMatrix, pool, CNVs_G, dmax)
+        processSamps(samples, autosomeExons, likelihoods_A, transMatrixNoVoid, priors, pool, CNVs_A, dmax)
+        processSamps(samples, gonosomeExons, likelihoods_G, transMatrixNoVoid, priors, pool, CNVs_G, dmax)
     return (CNVs_A, CNVs_G)
 
 
@@ -59,7 +63,7 @@ def applyHMM(samples, autosomeExons, gonosomeExons, likelihoods_A, likelihoods_G
 # - pool (concurrent.futures.Executor): A concurrent executor for parallel processing.
 # - CNVs (list[str, int, int, int, floats, str]): CNV infos [CNType, exonStart, exonEnd, pathProb, sampleName]
 # - dmax (int): Maximum distance threshold between exons.
-def processSamps(samples, exons, likelihoods, transMatrix, pool, CNVs, dmax):
+def processSamps(samples, exons, likelihoods, transMatrix, priors, pool, CNVs, dmax):
     for sampID in samples:
         # check if the sample ID is present in the likelihoods dictionary
         if sampID not in likelihoods.keys():
@@ -67,7 +71,7 @@ def processSamps(samples, exons, likelihoods, transMatrix, pool, CNVs, dmax):
             continue
         # submit a task for processing the chromosome data for the current sample
         # task is submitted to the provided process pool for parallel execution
-        futureRes = pool.submit(viterbi(likelihoods[sampID], transMatrix, sampID, exons, dmax))
+        futureRes = pool.submit(viterbi(likelihoods[sampID], transMatrix, priors, sampID, exons, dmax))
         # add a callback to the future object
         # once the task is complete, the concatCNVs function will be called with the result
         # the concatCNVs function will handle the aggregation of CNVs from the result
