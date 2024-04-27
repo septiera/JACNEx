@@ -335,7 +335,7 @@ def main(argv):
         s1_countFrags.main(step1Args)
     except Exception as e:
         logger.error("%s FAILED: %s", stepNames[1], str(e))
-        if re.search(r'mismatched exons', str(e)):
+        if re.search(r'mismatched genomicWindows', str(e)):
             # specific exception string for this particular case
             raise Exception("STEP1 FAILED, use the same --bed and --padding as in previous runs or specify a new --workDir")
         else:
