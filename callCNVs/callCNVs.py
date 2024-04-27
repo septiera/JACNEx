@@ -226,7 +226,7 @@ def viterbi(likelihoods, transMatrix, priors, sampleID, exons, dmax):
                     prob = (probsPrev[prevState] *
                             adjustedTransMatrix[prevState, currentState] *
                             likelihoods[exonIndex, currentState])
-                    print("prev=", prevState, ", current=", currentState, ",prob=", prob)
+                    print("exonIndex=", exonIndex, ", prev=", prevState, ", current=", currentState, ", prob=", prob)
                     if prob > probMax:
                         probMax = prob
                         prevStateMax = prevState
@@ -236,6 +236,8 @@ def viterbi(likelihoods, transMatrix, priors, sampleID, exons, dmax):
                 # save most likely path leading to currentState
                 probsCurrent[currentState] = probMax
                 bestPrevState[currentState] = prevStateMax
+                print("Done with exon ", exonIndex, ", probsCurrent=", probsCurrent,
+                      ", bestPrevState=", bestPrevState, ", CN2PathProba=", CN2PathProba)
 
             # if all LIVE states (probsCurrent > 0) at currentExon have the same
             # predecessor state and that state is CN2 : backtrack from [previous exon, CN2]
