@@ -300,16 +300,20 @@ def viterbi(likelihoods, transMatrix, sampleID, exons, dmax):
 # buildCNVs
 # Identify CNVs (= consecutive exons with the same CN) in a most-likely path, and
 # calculate the associated "qualityScore" (see below).
+# Requirement: the called exon preceding calledExons[0] (called the "path root") must
+# be in state CN2 in every most likely path.
 #
 # Args:
 # - calledExons [list of ints]: list of called exonIndexes to process here
-# - path (list of len(calledExons) ndarrays of NbStatesWithVoid ints): path[i][s] == state of
-#   exon calledExons[i-1] that produces the max proba for state s at exon calledExons[i]
-# - bestPathProbas (list of len(calledExons) ndarrays of NbStatesWithVoid floats):
-#   bestPathProbas[i][s] == proba of most likely path starting at calledExons[0]
-#   (state 0 or 3) and ending in state s at exon calledExons[i]
-# - CN2PathProbas (list of len(calledExons) floats): CN2PathProbas[i] == proba of
-#   path starting at calledExons[0][3] and staying in state 3==CN2 all along
+# - path (list of len(calledExons) ndarrays of NbStates ints):
+#   path[e][s] == state of called exon preceding calledExons[e] that produces the max
+#   proba for state s at exon calledExons[e]
+# - bestPathProbas (list of len(calledExons) ndarrays of NbStates floats):
+#   bestPathProbas[e][s] == proba of most likely path ending in state s at exon
+#   calledExons[e] and starting at the path root
+# - CN2PathProbas (list of len(calledExons) floats): CN2FromCN2Probas[e] == proba of
+#   path ending in state CN2 at exon calledExons[e], starting at path root, and staying
+#   in state CN2 all along
 # - lastState [int]: state with the max probability for the last exon in calledExons
 # - sampleID [str]
 #
@@ -317,7 +321,7 @@ def viterbi(likelihoods, transMatrix, sampleID, exons, dmax):
 # - CNType is 0-3 (== CN)
 # - startExon and endExon are indexes (in the global exons list) of the first and
 #   last exons defining this CNV
-# - qualityScore = proba of most likely path between the called exons immediately
+# - qualityScore = proba of most likely path between the called exon immediately
 #   preceding and immediately following the CNV, divided by the proba of
 #   the CN2-only path between the same exons
 def buildCNVs(calledExons, path, bestPathProbas, CN2PathProbas, lastState, sampleID):
@@ -329,41 +333,44 @@ def buildCNVs(calledExons, path, bestPathProbas, CN2PathProbas, lastState, sampl
     print("CN2PathProbas:", CN2PathProbas)
     print("lastState:", lastState)
 
-    if lastState != 3:
+    if lastState != 2:
         # can only happen when called with the last exon of a chrom: append bogus last
         # exon in CN2 state, copying the path proba
-        calledExons.append(0)
-        path.append(numpy.array([0, 0, 0, lastState, 0]))
-        bestPathProbas.append(numpy.array([0, 0, 0, bestPathProbas[-1][lastState], 0]))
+        calledExons.append(-1)
+        path.append(numpy.array([0, 0, lastState, 0]))
+        bestPathProbas.append(numpy.array([0, 0, bestPathProbas[-1][lastState], 0]))
         CN2PathProbas.append(CN2PathProbas[-1])
 
     # build ndarray of states that form the most likely path, must start from the end
-    mostLikelyPath = numpy.zeros(len(calledExons), dtype=numpy.int8)
-    mostLikelyPath[-1] = 3
-    currentState = 3
+    mostLikelyStates = numpy.zeros(len(calledExons), dtype=numpy.int8)
+    mostLikelyStates[-1] = 2
+    currentState = 2
     for cei in range(len(calledExons) - 1, 0, -1):
         currentState = path[cei][currentState]
-        mostLikelyPath[cei - 1] = currentState
+        mostLikelyStates[cei - 1] = currentState
 
     # now walk through the path of most likely states, constructing CNVs as we go
-    currentState = mostLikelyPath[0]
-    exonBeforeCurrentEvent = -1
+    currentState = mostLikelyStates[0]
+    firstExonInCurrentState = 0
 
     for cei in range(1, len(calledExons)):
-        if mostLikelyPath[cei] == currentState:
+        if mostLikelyStates[cei] == currentState:
             # next exon is in same state, NOOP
             continue
         else:
-            if (currentState != 0) and (currentState != 3):
-                # we changed states and current wasn't void or CN2, create CNV
-                qualityScore = (bestPathProbas[cei][mostLikelyPath[cei]] /
-                                bestPathProbas[exonBeforeCurrentEvent][mostLikelyPath[exonBeforeCurrentEvent]])
-                # divide by CN2-only path between same exons
-                qualityScore /= CN2PathProbas[cei] / CN2PathProbas[exonBeforeCurrentEvent]
-                CNVs.append([currentState - 1, calledExons[exonBeforeCurrentEvent + 1],
+            if (currentState != 2):
+                # we changed states and current wasn't CN2, create CNV
+                # score = ratio between best path proba and CN2-only path proba
+                qualityScore = bestPathProbas[cei][mostLikelyStates[cei]] / CN2PathProbas[cei]
+                if firstExonInCurrentState > 0:
+                    # we want the probas of the paths starting at the exon immediately
+                    # preceding the CNV, not starting at the path root
+                    qualityScore /= bestPathProbas[firstExonInCurrentState - 1][mostLikelyStates[firstExonInCurrentState - 1]]
+                    qualityScore *= CN2PathProbas[firstExonInCurrentState - 1]
+                CNVs.append([currentState, calledExons[firstExonInCurrentState],
                              calledExons[cei - 1], qualityScore, sampleID])
             # in any case we changed states, update accumulators
-            currentState = mostLikelyPath[cei]
-            exonBeforeCurrentEvent = cei - 1
+            currentState = mostLikelyStates[cei]
+            firstExonInCurrentState = cei
 
     return(CNVs)
