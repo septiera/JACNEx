@@ -109,17 +109,15 @@ def concatCNVs(futureSampCNVExtract, CNVs):
 # Args:
 # - sampCNVs (list of lists): CNV data for a sample. Each inner list contains CNV information.
 def countCNVs(sampCNVs):
-    # Initialize a dictionary to count occurrences of each CN
-    cn_counts = {}
-    for record in sampCNVs:
-        cn = record[0]
-        cn_counts[cn] = cn_counts.get(cn, 0) + 1
+    # cnCounts[i] == number of called CNVs with CN==i
+    cnCounts = [0, 0, 0, 0]
+    for CNV in sampCNVs:
+        cn = CNV[0]
+        cnCounts[cn] += 1
 
-    # Prepare the string for each CN and its count, including CNs with 0 occurrences
-    if len(cn_counts.keys()) != 0:
-        cn_list = [f"CN{cn}:{cn_counts.get(cn, 0)}" for cn in range(max(cn_counts.keys()) + 1)]
-        cn_str = ', '.join(cn_list)
-        logger.debug("Done callCNvs for %s, %s", sampCNVs[0][4], cn_str)
+    cn_list = [f"CN{cn}:{cnCounts[cn]}" for cn in range(cnCounts)]
+    cn_str = ', '.join(cn_list)
+    logger.debug("Done callCNvs for %s: %s", sampCNVs[0][4], cn_str)
 
 
 ######################################
@@ -214,7 +212,8 @@ def viterbi(likelihoods, transMatrix, priors, sampleID, exons, dmax):
             # accumulators with current exon data for populating the buildCNVs() structures:
             # populating these must be delayed until after possible backtrack+reset with
             # previous exon data
-            bestPrevState = numpy.zeros(NbStates, dtype=numpy.int8)
+            # bestPrevState defaults to CN2
+            bestPrevState = numpy.full(NbStates, 2, dtype=numpy.int8)
             # bestPathProbas will just copy probsCurrent
             CN2PathProba = 0
 
@@ -226,7 +225,6 @@ def viterbi(likelihoods, transMatrix, priors, sampleID, exons, dmax):
                     prob = (probsPrev[prevState] *
                             adjustedTransMatrix[prevState, currentState] *
                             likelihoods[exonIndex, currentState])
-                    print("exonIndex=", exonIndex, ", prev=", prevState, ", current=", currentState, ", prob=", prob)
                     if prob > probMax:
                         probMax = prob
                         prevStateMax = prevState
@@ -235,24 +233,22 @@ def viterbi(likelihoods, transMatrix, priors, sampleID, exons, dmax):
 
                 # save most likely path leading to currentState
                 probsCurrent[currentState] = probMax
-                bestPrevState[currentState] = prevStateMax
-                print("Done with exon ", exonIndex, ", probsCurrent=", probsCurrent,
-                      ", bestPrevState=", bestPrevState, ", CN2PathProba=", CN2PathProba)
+                if probMax > 0:
+                    bestPrevState[currentState] = prevStateMax
+                # else keep default CN2 as bestPrevState
+            print("Done with exon ", exonIndex, ", probsCurrent=", probsCurrent,
+                  ", bestPrevState=", bestPrevState, ", CN2PathProba=", CN2PathProba)
 
-            # if all LIVE states (probsCurrent > 0) at currentExon have the same
-            # predecessor state and that state is CN2 : backtrack from [previous exon, CN2]
-            # and reset
-            if (((probsCurrent[0] == 0) or (bestPrevState[0] == 2)) and
-                ((probsCurrent[1] == 0) or (bestPrevState[1] == 2)) and
-                ((probsCurrent[2] == 0) or (bestPrevState[2] == 2)) and
-                ((probsCurrent[3] == 0) or (bestPrevState[3] == 2)) and
-                (len(calledExons) > 0)):
+            # if all states at currentExon have the same predecessor state and that state is CN2:
+            # backtrack from [previous exon, CN2] and reset
+            if numpy.all(bestPrevState == 2) and (len(calledExons) > 0):
                 print('RESET')
                 CNVs.extend(buildCNVs(calledExons, path, bestPathProbas, CN2PathProbas, 2, sampleID))
 
                 # start new paths at CN2 in previous exon with a starting path proba of 1.
                 bestPrevState[:] = 2
                 probsCurrent[:] = adjustedTransMatrix[2, :] * likelihoods[exonIndex, :]
+                CN2PathProba /= CN2PathProbas[-1]
                 # reset all buildCNVs() structures
                 calledExons = []
                 path = []
@@ -312,11 +308,8 @@ def viterbi(likelihoods, transMatrix, priors, sampleID, exons, dmax):
 def buildCNVs(calledExons, path, bestPathProbas, CN2PathProbas, lastState, sampleID):
     CNVs = []
 
-    print("CalledEx:", calledExons)
-    print("path:", path)
-    print("bestPathProbas:", bestPathProbas)
-    print("CN2PathProbas:", CN2PathProbas)
-    print("lastState:", lastState)
+    print("CalledEx=", calledExons, ", path=", path, ", bestPathProbas:", bestPathProbas,
+          ", CN2PathProbas=", CN2PathProbas, ", lastState=", lastState)
 
     if lastState != 2:
         # can only happen when called with the last exon of a chrom: append bogus last

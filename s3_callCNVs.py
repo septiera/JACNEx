@@ -400,7 +400,7 @@ def main(argv):
     # sys.exit()
 
     thisTime = time.time()
-    logger.debug("Done DEBUG STEP", thisTime - startTime)
+    logger.debug("Done DEBUG STEP in %.2f s", thisTime - startTime)
     startTime = thisTime
 
     sys.exit()
