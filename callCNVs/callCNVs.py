@@ -2,6 +2,7 @@ import concurrent.futures
 import logging
 import math
 import numpy
+import traceback
 
 ####### JACNEx modules
 import callCNVs.transitions
@@ -40,9 +41,24 @@ def applyHMM(samples, autosomeExons, gonosomeExons, likelihoods_A, likelihoods_G
     # but callers haven't been updated to do this yet
     priors = transMatrix[0, 1:].copy()
     transMatrixNoVoid = transMatrix[1:, 1:].copy()
-    with concurrent.futures.ProcessPoolExecutor(paraSample) as pool:
-        processSamps(samples, autosomeExons, likelihoods_A, transMatrixNoVoid, priors, pool, CNVs_A, dmax)
-        processSamps(samples, gonosomeExons, likelihoods_G, transMatrixNoVoid, priors, pool, CNVs_G, dmax)
+
+    # with concurrent.futures.ProcessPoolExecutor(paraSample) as pool:
+    #     processSamps(samples, autosomeExons, likelihoods_A, transMatrixNoVoid, priors, pool, CNVs_A, dmax)
+    #     processSamps(samples, gonosomeExons, likelihoods_G, transMatrixNoVoid, priors, pool, CNVs_G, dmax)
+    # return (CNVs_A, CNVs_G)
+
+    for sampID in samples:
+        try:
+            if sampID in likelihoods_A:
+                CNVs_A.extend(viterbi(likelihoods_A[sampID], transMatrixNoVoid, priors, sampID, autosomeExons, dmax))
+            if sampID in likelihoods_G:
+                CNVs_G.extend(viterbi(likelihoods_G[sampID], transMatrixNoVoid, priors, sampID, gonosomeExons, dmax))
+        except Exception as e:
+            logger.error("viterbi() failed for sample %s: %s", sampID, str(e))
+            traceback.print_exc()
+            raise
+    countCNVs(CNVs_A)
+    countCNVs(CNVs_G)
     return (CNVs_A, CNVs_G)
 
 
@@ -94,6 +110,7 @@ def concatCNVs(futureSampCNVExtract, CNVs):
     e = futureSampCNVExtract.exception()
     if e is not None:
         logger.warning("Failed viterbi %s", str(e))
+        raise(e)
     else:
         viterbiRes = futureSampCNVExtract.result()
         countCNVs(viterbiRes)
