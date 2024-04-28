@@ -190,7 +190,8 @@ def viterbi(likelihoods, transMatrix, priors, sampleID, exons, dmax):
                 continue
 
             if exons[exonIndex][0] != prevChrom:
-                if len(calledExons) > 0:
+                # only need to buildCNVs if at least one exon's bestPath-to-CN2 was non-CN2
+                if any((p[2] != 2) for p in path):
                     CNVs.extend(buildCNVs(calledExons, path, bestPathProbas, CN2PathProbas,
                                           bestPathProbas[-1].argmax(), sampleID))
                 # reinit
@@ -240,32 +241,33 @@ def viterbi(likelihoods, transMatrix, priors, sampleID, exons, dmax):
                   ", bestPrevState=", bestPrevState, ", CN2PathProba=", CN2PathProba)
 
             # if all states at currentExon have the same predecessor state and that state is CN2:
-            # backtrack from [previous exon, CN2] and reset
-            if numpy.all(bestPrevState == 2) and (len(calledExons) > 0):
-                print('RESET')
-                CNVs.extend(buildCNVs(calledExons, path, bestPathProbas, CN2PathProbas, 2, sampleID))
-
-                # start new paths at CN2 in previous exon with a starting path proba of 1.
-                bestPrevState[:] = 2
-                probsCurrent[:] = adjustedTransMatrix[2, :] * likelihoods[exonIndex, :]
-                CN2PathProba /= CN2PathProbas[-1]
-                # reset all buildCNVs() structures
-                calledExons = []
-                path = []
-                bestPathProbas = []
-                CN2PathProbas = []
+            # backtrack from [previous exon, CN2] if needed and reset
+            if numpy.all(bestPrevState == 2):
+                if any((p[2] != 2) for p in path):
+                    CNVs.extend(buildCNVs(calledExons, path, bestPathProbas, CN2PathProbas, 2, sampleID))
+                # else the best path is necessarily all-CN2 => there's nothing to build, but in any case
+                # adjust probas so paths start at CN2 in previous exon with a proba of 1, and reset
+                # all buildCNVs() structures
+                if len(calledExons) > 0:
+                    probsCurrent[:] /= probsPrev[2]
+                    CN2PathProba /= CN2PathProbas[-1]
+                    calledExons = []
+                    path = []
+                    bestPathProbas = []
+                    CN2PathProbas = []
+                    print("adjusted probas for exon ", exonIndex, ", new probs=", probsCurrent,
+                          ", CN2PathProba=", CN2PathProba)
 
             # OK, update all structures and move to next exon
             numpy.copyto(probsPrev, probsCurrent)
             prevEnd = exons[exonIndex][2]
-
             calledExons.append(exonIndex)
             path.append(bestPrevState)
             bestPathProbas.append(probsCurrent.copy())
             CN2PathProbas.append(CN2PathProba)
 
-        # Final backtrack for the last exons
-        if len(calledExons) > 0:
+        # Final CNVs for the last exons
+        if any((p[2] != 2) for p in path):
             print("FINALRESET")
             CNVs.extend(buildCNVs(calledExons, path, bestPathProbas, CN2PathProbas,
                                   bestPathProbas[-1].argmax(), sampleID))
