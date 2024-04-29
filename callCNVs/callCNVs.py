@@ -46,11 +46,11 @@ def applyHMM(samples, autosomeExons, gonosomeExons, likelihoods_A, likelihoods_G
     for sampID in samples:
         try:
             if sampID in likelihoods_A:
-                CNVs_A.extend(viterbi(likelihoods_A[sampID], transMatrix, priors, sampID, autosomeExons, dmax))
+                CNVs_A.extend(callCNVsOneSample(likelihoods_A[sampID], transMatrix, priors, sampID, autosomeExons, dmax))
             if sampID in likelihoods_G:
-                CNVs_G.extend(viterbi(likelihoods_G[sampID], transMatrix, priors, sampID, gonosomeExons, dmax))
+                CNVs_G.extend(callCNVsOneSample(likelihoods_G[sampID], transMatrix, priors, sampID, gonosomeExons, dmax))
         except Exception as e:
-            logger.error("viterbi() failed for sample %s: %s", sampID, str(e))
+            logger.error("callCNVsOneSample() failed for sample %s: %s", sampID, str(e))
             traceback.print_exc()
             raise
     countCNVs(CNVs_A)
@@ -83,7 +83,7 @@ def processSamps(samples, exons, likelihoods, transMatrix, priors, pool, CNVs, d
             continue
         # submit a task for processing the chromosome data for the current sample
         # task is submitted to the provided process pool for parallel execution
-        futureRes = pool.submit(viterbi(likelihoods[sampID], transMatrix, priors, sampID, exons, dmax))
+        futureRes = pool.submit(callCNVsOneSample(likelihoods[sampID], transMatrix, priors, sampID, exons, dmax))
         # add a callback to the future object
         # once the task is complete, the concatCNVs function will be called with the result
         # the concatCNVs function will handle the aggregation of CNVs from the result
@@ -97,7 +97,7 @@ def processSamps(samples, exons, likelihoods, transMatrix, priors, pool, CNVs, d
 #
 # Args:
 # - futureSampCNVExtract (concurrent.futures.Future): A Future object for an
-#    asynchronous Viterbi task.
+#    asynchronous CallCNVsOneSample task.
 # - CNVs (list): Global list to which the results are appended.
 #    Each element is a tuple representing CNV information.
 
@@ -105,7 +105,7 @@ def processSamps(samples, exons, likelihoods, transMatrix, priors, pool, CNVs, d
 def concatCNVs(futureSampCNVExtract, CNVs):
     e = futureSampCNVExtract.exception()
     if e is not None:
-        logger.warning("Failed viterbi %s", str(e))
+        logger.warning("Failed callCNVsOneSample %s", str(e))
         raise(e)
     else:
         viterbiRes = futureSampCNVExtract.result()
@@ -134,46 +134,35 @@ def countCNVs(sampCNVs):
 
 
 ######################################
-# viterbi
-# implements the Viterbi algorithm, a dynamic programming approach, for Hidden Markov
-# Models(HMMs) in the context of identifying CNVs.
-# objective is to find the most likely sequence of hidden states (CNVs) given a sequence
-# of observations (chromosome likelihoods) and the transition probabilities between states.
+# callCNVsOneSample:
+# call and return CNVs for a single sample.
+# This function implements the Viterbi algorithm to find the most likely sequence of
+# states (copy-number states) given the observations (likelihoods).
 #
-# Specs:
-# - Initialization: initializing necessary variables, including the probability matrices
-#    and the path matrix.
-# - Adjustment for Exon Distance: adjusts transition probabilities based on the distance
-#   between exons, employing a power law approach to smooth probabilities as the distance increases
-#   up to a maximum distance (dmax).
-# - Score Propagation: iterates over each observation (exon) and calculates the probabilities
-#    for each state by considering the likelihood of the current observation and the transition
-#    probabilities from previous states.
-# - Backtracking and Resetting: special condition where it backtracks and resets probabilities
-#    under certain circumstances (e.g., when all live states have the same predecessor state).
-# - Path Tracking and CNV Aggregation: tracks the most probable path for each state and observation.
-#    aggregates the CNV calls by backtracking through the path matrix at the end of the observations.
-# - Error Handling: includes error handling to log and raise exceptions in case of inconsistencies
-#    or failures during the process.
+# The underlying HMM is defined by:
+# - one state per copy number (0==homodel, 1==heterodel, 2==WT, 3==CN3+==DUP)
+# - emission likelihoods of the sample's FPM in each state and for each exon, which have
+#   been pre-calculated;
+# - transition probabilities that depend on the distance to the next exon - they begin when
+#   distance=0 at the "base" values defined in transMatrix, and are smoothly adjusted following
+#   a power law until they reach the prior probabilities at dist dmax
 #
 # Args:
 # - likelihoods (ndarray[floats] dim NbExons*NbStates): pseudo-emission probabilities
 #   (likelihoods) of each state for each exon for one sample.
 # - transMatrix (ndarray[floats] dim NbStates*NbStates): base transition probas between states
-# - priors (ndarray dim 4): prior probabilities for each state
+# - priors (ndarray dim NbStates): prior probabilities for each state
 # - sampleID [str]
 # - exons [list of lists[str, int, int, str]]: exon infos [chr, START, END, EXONID].
-# - dmax [int]: param for adjusting the transMatrix, see adjustTransMatrix()
+# - dmax [int]: param for adjustTransMatrix()
 #
 # Returns:
 # - CNVs (list of list[int, int, int, float, str]): list of called CNVs,
 #   a CNV is a list [CNVType, firstExonIndex, lastExonIndex, qualityScore, sampleID].
-def viterbi(likelihoods, transMatrix, priors, sampleID, exons, dmax):
+def callCNVsOneSample(likelihoods, sampleID, transMatrix, priors, exons, dmax):
     try:
         CNVs = []
-
         NbStates = len(transMatrix)
-        logger.info("testNBstate %i, likelihoods %i", NbStates, likelihoods.shape[1])
         # sanity
         if NbStates != likelihoods.shape[1]:
             logger.error("NbStates in transMatrix and in likelihoods inconsistent")
@@ -286,10 +275,10 @@ def viterbi(likelihoods, transMatrix, priors, sampleID, exons, dmax):
             CNVs.extend(buildCNVs(calledExons, path, bestPathProbas, CN2PathProbas,
                                   bestPathProbas[-1].argmax(), sampleID))
 
-        return (CNVs)
+        return(CNVs)
 
     except Exception as e:
-        logger.error("CNCalls failed for sample %s - error: %s - exonIndex %s", sampleID, repr(e), str(exonIndex))
+        logger.error("callCNVsOneSample failed for sample %s in exon %i: %s", sampleID, exonIndex, repr(e))
         raise Exception(sampleID)
 
 
@@ -318,8 +307,8 @@ def viterbi(likelihoods, transMatrix, priors, sampleID, exons, dmax):
 # - CNType is 0-3 (== CN)
 # - startExon and endExon are indexes (in the global exons list) of the first and
 #   last exons defining this CNV
-# - qualityScore = proba of most likely path between the called exon immediately
-#   preceding and immediately following the CNV, divided by the proba of
+# - qualityScore = log of ratio between the proba of most likely path between the called
+#   exons immediately preceding and immediately following the CNV, and the proba of
 #   the CN2-only path between the same exons
 def buildCNVs(calledExons, path, bestPathProbas, CN2PathProbas, lastState, sampleID):
     CNVs = []
@@ -354,13 +343,14 @@ def buildCNVs(calledExons, path, bestPathProbas, CN2PathProbas, lastState, sampl
         else:
             if (currentState != 2):
                 # we changed states and current wasn't CN2, create CNV
-                # score = ratio between best path proba and CN2-only path proba
+                # score = log of ratio between best path proba and CN2-only path proba
                 qualityScore = bestPathProbas[cei][mostLikelyStates[cei]] / CN2PathProbas[cei]
                 if firstExonInCurrentState > 0:
                     # we want the probas of the paths starting at the exon immediately
                     # preceding the CNV, not starting at the path root
                     qualityScore /= bestPathProbas[firstExonInCurrentState - 1][mostLikelyStates[firstExonInCurrentState - 1]]
                     qualityScore *= CN2PathProbas[firstExonInCurrentState - 1]
+                qualityScore = math.log(qualityScore)
                 CNVs.append([currentState, calledExons[firstExonInCurrentState],
                              calledExons[cei - 1], qualityScore, sampleID])
             # in any case we changed states, update accumulators
