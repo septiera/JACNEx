@@ -131,12 +131,19 @@ def calcCN2Params(autosomeFPMs, gonosomeFPMs, samples, uncaptThreshold,
 # Returns a tuple (loc, scale):
 # - hnormloc [float], hnormscale[float]: parameters of the half normall distribution
 def fitHalfNormal(intergenicsFPM):
-    # Fit a half normal distribution,
-    # enforces the "loc" parameter to be 0 because our model requires the distribution
-    # to start at zero.
-    # scale = std_deviation
-    # f(x) = (1 / (scale * sqrt(2 * pi))) * exp(-x**2 / (2 * scale**2))
-    hnormloc, hnormscale = scipy.stats.halfnorm.fit(intergenicsFPM, floc=0)
+    try:
+        # Flatten intergenicsFPM if it's a multidimensional array
+        intergenicsFPM_flat = intergenicsFPM.flatten()
+
+        # Fit a half normal distribution,
+        # enforces the "loc" parameter to be 0 because our model requires the distribution
+        # to start at zero.
+        # scale = std_deviation
+        # f(x) = (1 / (scale * sqrt(2 * pi))) * exp(-x**2 / (2 * scale**2))
+        hnormloc, hnormscale = scipy.stats.halfnorm.fit(intergenicsFPM_flat, floc=0)
+    except Exception as e:
+        logger.error("fitHalfNormal failed: %s", repr(e))
+        raise
 
     return (hnormloc, hnormscale)
 
