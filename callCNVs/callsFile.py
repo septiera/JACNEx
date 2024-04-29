@@ -11,16 +11,21 @@ logger = logging.getLogger(__name__)
 ###############################################################################
 ##########################################
 # printCallsFile
-# Args :
-# - vcf (list of lists)
-# - outFile [str]: filename that doesn't exist, it can have a path component (which must exist),
-#                  output will be gzipped if outFile ends with '.gz'
-# - scriptName [str]
-# - samples (list[strs]): sample names.
-def printCallsFile(CNVs_A, CNVs_G, qs_A, qs_G, autosomeExons, gonosomeExons, samples, padding, outFile, scriptName):
+# generate an output file in VCF format containing CNV calls for autosomes and gonosomes.
+#
+# Args:
+# - CNVs_A, CNVs_G  (list of lists[int, int, int, float, str]): [CNtype, exonIndStart, exonIndEnd,
+#                                                                qualityScore, sampID].
+# - autosomeExons, gonosomeExons (list of lists[str, int, int, str]): exons infos
+# - samples (list[str]): sample names.
+# - padding (int): padding bases used.
+# - outFile (str): Output file name. It must be non-existent and can include a path (which must exist).
+#                  The output file will be compressed in gzip format if outFile ends with '.gz'.
+# - scriptName (str): Name of the script used to generate the file.
+def printCallsFile(CNVs_A, CNVs_G, autosomeExons, gonosomeExons, samples, padding, outFile, scriptName):
 
-    vcf_A = vcfFormat(CNVs_A, qs_A, autosomeExons, samples, padding)
-    vcf_G = vcfFormat(CNVs_G, qs_G, gonosomeExons, samples, padding)
+    vcf_A = vcfFormat(CNVs_A, autosomeExons, samples, padding)
+    vcf_G = vcfFormat(CNVs_G, gonosomeExons, samples, padding)
 
     try:
         if outFile.endswith(".gz"):
@@ -70,15 +75,14 @@ def printCallsFile(CNVs_A, CNVs_G, qs_A, qs_G, autosomeExons, gonosomeExons, sam
 #
 # Args:
 # - CNVs (list): CNV information, each CNV formatted as [CNType, startExonIndex, endExonIndex,
-#    probability, sampleID].
-# - QS (list[floats]): Quality scores corresponding to each CNV.
+#    qualityScore, sampleID].
 # - exons (list): Exon information, each exon formatted as [chromosome, start, end, exonID].
 # - samples (list[strs])
 # - padding [int]: Value used to adjust start and end positions of CNVs.
 #
 # Returns:
 # vcf (list[strs]): Each string represents a line in a VCF file, formatted with CNV information.
-def vcfFormat(CNVs, QS, exons, samples, padding):
+def vcfFormat(CNVs, exons, samples, padding):
     # Define the number of columns before sample information in a VCF file
     # ["#CHROM","POS","ID","REF","ALT","QUAL","FILTER","INFO","FORMAT"]
     infoColumns = 9
@@ -93,9 +97,7 @@ def vcfFormat(CNVs, QS, exons, samples, padding):
     for cnvIndex in range(len(CNVs)):
         cnvList = CNVs[cnvIndex]
         # Unpack CNV list into variables
-        cn, startExi, endExi, prob, sampID = cnvList
-        # Retrieve quality score for current CNV
-        cnvQS = QS[cnvIndex]
+        cn, startExi, endExi, qualScore, sampID = cnvList
 
         # Get chromosome, start and end position from exons
         chrom = exons[startExi][0]
@@ -129,7 +131,7 @@ def vcfFormat(CNVs, QS, exons, samples, padding):
 
         # Determine the sample's genotype based on CN type and add quality score
         geno = "1/1" if cn == 0 else "0/1"
-        vcfLine[sampi] = f"{geno}:{cnvQS:.2f}"
+        vcfLine[sampi] = f"{geno}:{qualScore:.2e}"
 
         # Update the VCF line in the dictionary
         cnv_dict[currentCNV] = vcfLine
