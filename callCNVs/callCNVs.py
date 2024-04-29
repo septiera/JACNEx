@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 # - likelihoods_A (dict): key==sample ID, value==Likelihoods for autosomal chromosomes,
 #                         numpy.ndarray 2D [floats], dim = NbofExons * NbOfCNStates
 # - likelihoods_G (dict): key==sample ID, value==Likelihoods for gonosomal chromosomes
+# - priors (list[floats]): prior probabilities for each CN status.
 # - transMatrix (numpy.ndarray[floats]): Transition matrix for the HMM Viterbi algorithm.
 # - jobs (int): Number of jobs to run in parallel.
 # - dmax (int): Maximum distance threshold between exons.
@@ -31,16 +32,11 @@ logger = logging.getLogger(__name__)
 # Returns a tuple of two lists: The first list contains CNV information for autosomal chromosomes,
 # and the second list for gonosomal chromosomes. Each list contains tuples with CNV information:
 # [CNType, exonIndexStart, exonIndexEnd, bestPathProbabilities, sampleName].
-def applyHMM(samples, autosomeExons, gonosomeExons, likelihoods_A, likelihoods_G, transMatrix, jobs, dmax):
+def applyHMM(samples, autosomeExons, gonosomeExons, likelihoods_A, likelihoods_G, priors, transMatrix, jobs, dmax):
     CNVs_A = []
     CNVs_G = []
     paraSample = min(math.ceil(jobs / 2), len(samples))
     logger.info("%i samples => will process %i in parallel", len(samples), paraSample)
-
-    # we now use separate priors and transMatrix (without void state) in this module,
-    # but callers haven't been updated to do this yet
-    priors = transMatrix[0, 1:].copy()
-    transMatrixNoVoid = transMatrix[1:, 1:].copy()
 
     # with concurrent.futures.ProcessPoolExecutor(paraSample) as pool:
     #     processSamps(samples, autosomeExons, likelihoods_A, transMatrixNoVoid, priors, pool, CNVs_A, dmax)
@@ -50,9 +46,9 @@ def applyHMM(samples, autosomeExons, gonosomeExons, likelihoods_A, likelihoods_G
     for sampID in samples:
         try:
             if sampID in likelihoods_A:
-                CNVs_A.extend(viterbi(likelihoods_A[sampID], transMatrixNoVoid, priors, sampID, autosomeExons, dmax))
+                CNVs_A.extend(viterbi(likelihoods_A[sampID], transMatrix, priors, sampID, autosomeExons, dmax))
             if sampID in likelihoods_G:
-                CNVs_G.extend(viterbi(likelihoods_G[sampID], transMatrixNoVoid, priors, sampID, gonosomeExons, dmax))
+                CNVs_G.extend(viterbi(likelihoods_G[sampID], transMatrix, priors, sampID, gonosomeExons, dmax))
         except Exception as e:
             logger.error("viterbi() failed for sample %s: %s", sampID, str(e))
             traceback.print_exc()
@@ -177,6 +173,7 @@ def viterbi(likelihoods, transMatrix, priors, sampleID, exons, dmax):
         CNVs = []
 
         NbStates = len(transMatrix)
+        logger.info("testNBstate %i, likelihoods %i", NbStates, likelihoods.shape[1])
         # sanity
         if NbStates != likelihoods.shape[1]:
             logger.error("NbStates in transMatrix and in likelihoods inconsistent")

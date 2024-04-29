@@ -356,8 +356,8 @@ def main(argv):
     # and the sample ID.
     try:
         CNVs_A, CNVs_G = callCNVs.callCNVs.applyHMM(samples, autosomeExons, gonosomeExons,
-                                                    likelihoods_A, likelihoods_G, transMatrix,
-                                                    jobs, dmax)
+                                                    likelihoods_A, likelihoods_G, priors,
+                                                    transMatrix, jobs, dmax)
     except Exception as e:
         raise Exception("HMM.processCNVCalls failed: %s", repr(e))
 
