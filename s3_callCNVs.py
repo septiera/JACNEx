@@ -11,7 +11,6 @@ import logging
 import os
 import sys
 import time
-import traceback
 
 ####### JACNEx modules
 import countFrags.countsFile
@@ -22,7 +21,6 @@ import callCNVs.priors
 import callCNVs.likelihoods
 import callCNVs.transitions
 import callCNVs.callCNVs
-import callCNVs.qualityScores
 import callCNVs.callsFile
 
 # set up logger, using inherited config, in case we get called as a module
@@ -332,12 +330,9 @@ def main(argv):
     # and computes CN probabilities for both autosomal and gonosomal samples.
     # The function adds an 'init' state to the transition matrix, improving its use
     # in Hidden Markov Models (HMMs).
-    # The 'init' state, based on priors, helps to start and reset the HMM but doesn't
-    # represent any actual CN state.
-    # The resulting 'transMatrix' is a 2D numpy array. dim =(nbOfCNStates + 1) * (nbOfCNStates + 1)
-    # Additionally, the function calculates the maximum distance below a given percentile
-    # threshold, dmax, from the distances between exons for both autosomal and gonosomal samples.
-    # This dmax value is used in subsequent steps of the CNV calling process.
+    # The resulting 'transMatrix' is a 2D numpy array. dim =(nbOfCNStates) * (nbOfCNStates)
+    # Additionally, the function calculates the maximum distance (dmax) below a given percentile
+    # threshold (pDist)from the distances between exons for both autosomal and gonosomal samples.
     try:
         transMatrix, dmax = callCNVs.transitions.getTransMatrix(likelihoods_A, likelihoods_G, autosomeExons,
                                                                 gonosomeExons, priors, len(CNStates), pDist)
@@ -357,7 +352,7 @@ def main(argv):
     # Application of the HMM using the Viterbi algorithm. (calling step)
     # processes both autosomal and gonosomal exon data for a set of samples, yielding
     # a list of CNVs for each category. Each CNV is detailed with information including
-    # CNV type, start and end positions of the affected exons, the probability of the path,
+    # CNV type, start and end positions of the affected exons, the event quality score,
     # and the sample ID.
     try:
         CNVs_A, CNVs_G = callCNVs.callCNVs.applyHMM(samples, autosomeExons, gonosomeExons,
@@ -370,37 +365,16 @@ def main(argv):
     logger.debug("Done HMM.processCNVCalls in %.2f s", thisTime - startTime)
     startTime = thisTime
 
-    # #########
-    # # Computation of CNVs quality score
-    # # assesses the reliability of each CNV detection by comparing the path probability of the CNV
-    # # with the CN2 path probability for each exon in the CNV.
-    # try:
-    #     qs_A = callCNVs.qualityScores.calcQualityScore(CNVs_A, likelihoods_A, transMatrix)
-    #     qs_G = callCNVs.qualityScores.calcQualityScore(CNVs_G, likelihoods_G, transMatrix)
-    # except Exception as e:
-    #     traceback.print_exc()
-    #     raise Exception("getCNVsQualityScore failed: %s", repr(e))
-
-    # thisTime = time.time()
-    # logger.debug("Done getCNVsQualityScore in %.2f s", thisTime - startTime)
-    # startTime = thisTime
-
-    # #########
-    # # VCF printing
-    # try:
-    #     callCNVs.callsFile.printCallsFile(CNVs_A, CNVs_G, qs_A, qs_G, autosomeExons, gonosomeExons,
-    #                                       samples, padding, outFile, scriptName)
-    # except Exception as e:
-    #     raise Exception("printCallsFile failed: %s", repr(e))
-
-    # thisTime = time.time()
-    # logger.debug("Done printCallsFile in %.2f s", thisTime - startTime)
-    # startTime = thisTime
-
-    # sys.exit()
+    #########
+    # VCF printing
+    try:
+        callCNVs.callsFile.printCallsFile(CNVs_A, CNVs_G, autosomeExons, gonosomeExons,
+                                          samples, padding, outFile, scriptName)
+    except Exception as e:
+        raise Exception("printCallsFile failed: %s", repr(e))
 
     thisTime = time.time()
-    logger.debug("Done DEBUG STEP in %.2f s", thisTime - startTime)
+    logger.debug("Done printCallsFile in %.2f s", thisTime - startTime)
     startTime = thisTime
 
     sys.exit()
