@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 ###############################################################################
 ############################################
 # getTransMatrix
-# Calculates the transition matrix for CN states including an 'init' state, and computes
+# Calculates the transition matrix for CN states, and computes
 # the CN probabilities for autosomal and gonosomal samples.
 # Specs:
 # 1. calculates the starts of chromosomes and computes the distances between consecutive exons within each chromosome.
@@ -28,7 +28,6 @@ logger = logging.getLogger(__name__)
 #    as well as prior probabilities and exon distances.
 #    Exons with distances exceeding medDist are excluded from the transition matrix update.
 # 5. normalize the transition matrix of counts to ensure that the probabilities sum to 1.
-#    Additionally, an 'init' state is added to the transition matrix to initialize a HMM for further analysis.
 #
 # Args:
 # - likelihoods_A (dict): CN likelihoods for autosomal exons; key=sampID[str],
@@ -61,10 +60,12 @@ def getTransMatrix(likelihoods_A, likelihoods_G, autosomeExons, gonosomeExons,
     updateTransMatrix(transitions, likelihoods_A, priors, autosomeExons, medDist)
     # repeat the process for gonosomal samples
     updateTransMatrix(transitions, likelihoods_G, priors, autosomeExons, medDist)
-    # normalize the transition matrix and add an 'init' state
-    transAndInit = formatTransMatrix(transitions, priors, nbStates)
 
-    return (transAndInit, dmax)
+    # Normalize each row of the transition matrix
+    row_sums = numpy.sum(transitions, axis=1, keepdims=True)
+    normalized_arr = transitions / row_sums
+
+    return (normalized_arr, dmax)
 
 
 ######################################
@@ -198,29 +199,3 @@ def updateTransMatrix(transitions, likelihoodsDict, priors, exons, maxDistBetwee
             # in both cases update prevs
             prevEnd = exons[ei][2]
             prevCN = CNPath[ei]
-
-
-###########################################
-# formatTransMatrix
-# Formats the transition matrix by normalizing it and adding an 'init' state.
-# Normalization ensures that each row sums to one, and the 'init' state is used for initializing
-# the HMM.
-#
-# Args:
-# - transitions (numpy.ndarray): The transition matrix to be formatted, dimensions [nbStates, nbStates].
-# - priors (numpy.ndarray): Prior probabilities for CN states, used for the 'init' state.
-# - nbStates (int): Number of CN states.
-#
-# Returns:
-# - numpy.ndarray: The formatted transition matrix with normalized values and an 'init' state,
-#               dimensions [nbStates+1, nbStates+1].
-def formatTransMatrix(transitions, priors, nbStates):
-    # Normalize each row of the transition matrix
-    row_sums = numpy.sum(transitions, axis=1, keepdims=True)
-    normalized_arr = transitions / row_sums
-
-    # Add an 'init' state to the matrix
-    transAndInit = numpy.vstack((priors, normalized_arr))
-    transAndInit = numpy.hstack((numpy.zeros((nbStates + 1, 1)), transAndInit))
-
-    return transAndInit
