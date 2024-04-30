@@ -2,7 +2,6 @@ import concurrent.futures
 import logging
 import math
 import numpy
-import traceback
 
 ####### JACNEx modules
 import callCNVs.transitions
@@ -14,124 +13,51 @@ logger = logging.getLogger(__name__)
 ###############################################################################
 ############################ PUBLIC FUNCTIONS #################################
 ###############################################################################
+
 ######################################
-# applyHMM
-# Processes CNV calls for a given set of samples in parallel using the HMM Viterbi algorithm.
-# Args:
-# - samples (list[strs]): List of sample identifiers.
-# - autosomeExons (list[str, int, int, str]): exon on autosome infos [chr, START, END, EXONID].
-# - gonosomeExons (list[str, int, int, str]): exon on gonosome infos.
-# - likelihoods_A (dict): key==sample ID, value==Likelihoods for autosomal chromosomes,
-#                         numpy.ndarray 2D [floats], dim = NbofExons * NbOfCNStates
-# - likelihoods_G (dict): key==sample ID, value==Likelihoods for gonosomal chromosomes
-# - priors (list[floats]): prior probabilities for each CN status.
-# - transMatrix (numpy.ndarray[floats]): Transition matrix for the HMM Viterbi algorithm.
-# - jobs (int): Number of jobs to run in parallel.
-# - dmax (int): Maximum distance threshold between exons.
+# callAllCNVs
+# Call CNVs with callCNVsOneSample() in parallel for each sample in likelihoodsDict.
 #
-# Returns a tuple of two lists: The first list contains CNV information for autosomal chromosomes,
-# and the second list for gonosomal chromosomes. Each list contains tuples with CNV information:
-# [CNType, exonIndexStart, exonIndexEnd, bestPathProbabilities, sampleName].
-def applyHMM(samples, autosomeExons, gonosomeExons, likelihoods_A, likelihoods_G, priors, transMatrix, jobs, dmax):
-    CNVs_A = []
-    CNVs_G = []
-    paraSample = min(math.ceil(jobs / 2), len(samples))
-    logger.info("%i samples => will process %i in parallel", len(samples), paraSample)
+# Args:
+# - likelihoodsDict: key==sampleID, value==(ndarray[floats] dim NbExons*NbStates) holding the
+#   pseudo-emission probabilities (likelihoods) of each state for each exon for this sample.
+# - exons: list of NbExons exons, one exon is a list [CHR, START, END, EXONID].
+# - transMatrix (ndarray[floats] dim NbStates*NbStates): base transition probas between states
+# - priors (ndarray dim NbStates): prior probabilities for each state
+# - dmax [int]: param for adjustTransMatrix()
+# - jobs (int): Number of jobs to run in parallel.
+#
+# Returns a list of CNVs, a CNV is a list (types [int, int, int, float, str]):
+# [CNVType, firstExonIndex, lastExonIndex, qualityScore, sampleID]
+# where firstExonIndex and lastExonIndex are indexes in the provided exons list.
+def callAllCNVs(likelihoodsDict, exons, transMatrix, priors, dmax, jobs):
+    CNVs = []
 
-    # with concurrent.futures.ProcessPoolExecutor(paraSample) as pool:
-    #     processSamps(samples, autosomeExons, likelihoods_A, transMatrixNoVoid, priors, pool, CNVs_A, dmax)
-    #     processSamps(samples, gonosomeExons, likelihoods_G, transMatrixNoVoid, priors, pool, CNVs_G, dmax)
-    # return (CNVs_A, CNVs_G)
+    ##################
+    # Define nested callback for processing callCNVsOneSample() result (so CNVs is in scope).
+    # sampleDone:
+    # arg: a Future object returned by ProcessPoolExecutor.submit(callCNVsOneSample).
+    # If something went wrong, log and propagate exception, otherwise store CNVs.
+    def sampleDone(futureRes):
+        e = futureRes.exception()
+        if e is not None:
+            logger.error("callCNVsOneSample() failed for sample %s", str(e))
+            raise(e)
+        else:
+            CNVs.extend(futureRes.result())
 
-    for sampID in samples:
-        try:
-            if sampID in likelihoods_A:
-                CNVs_A.extend(callCNVsOneSample(likelihoods_A[sampID], transMatrix, priors, sampID, autosomeExons, dmax))
-            if sampID in likelihoods_G:
-                CNVs_G.extend(callCNVsOneSample(likelihoods_G[sampID], transMatrix, priors, sampID, gonosomeExons, dmax))
-        except Exception as e:
-            logger.error("callCNVsOneSample() failed for sample %s: %s", sampID, str(e))
-            traceback.print_exc()
-            raise
-    countCNVs(CNVs_A)
-    countCNVs(CNVs_G)
-    return (CNVs_A, CNVs_G)
+    ##################
+    with concurrent.futures.ProcessPoolExecutor(jobs) as pool:
+        for sampID in likelihoodsDict.keys():
+            futureRes = pool.submit(callCNVsOneSample, likelihoodsDict[sampID], sampID, exons, transMatrix, priors, dmax)
+            futureRes.add_done_callback(sampleDone)
+
+    return(CNVs)
 
 
 ###############################################################################
 ############################ PRIVATE FUNCTIONS ################################
 ###############################################################################
-######################################
-# processSamps
-# Processes a specific type of chromosome (either autosomal or gonosomal) for CNV calls.
-# This function iterates over each sample to submit CNV calling tasks to a multiprocessing pool.
-#
-# Args:
-# - samples (list[strs]): A list of sample identifiers.
-# - exons (list[str, int, int, str]): exon on autosome infos [chr, START, END, EXONID].
-# - likelihoods (dict): key==sample ID, value==Likelihoods,
-#                       numpy.ndarray 2D [floats], dim = NbofExons * NbOfCNStates
-# - transMatrix (numpy.ndarray[floats]): A transition matrix used in the HMM Viterbi algorithm.
-# - pool (concurrent.futures.Executor): A concurrent executor for parallel processing.
-# - CNVs (list[str, int, int, int, floats, str]): CNV infos [CNType, exonStart, exonEnd, pathProb, sampleName]
-# - dmax (int): Maximum distance threshold between exons.
-def processSamps(samples, exons, likelihoods, transMatrix, priors, pool, CNVs, dmax):
-    for sampID in samples:
-        # check if the sample ID is present in the likelihoods dictionary
-        if sampID not in likelihoods.keys():
-            logger.debug("no CNV calling for sample %s", sampID)
-            continue
-        # submit a task for processing the chromosome data for the current sample
-        # task is submitted to the provided process pool for parallel execution
-        futureRes = pool.submit(callCNVsOneSample(likelihoods[sampID], transMatrix, priors, sampID, exons, dmax))
-        # add a callback to the future object
-        # once the task is complete, the concatCNVs function will be called with the result
-        # the concatCNVs function will handle the aggregation of CNVs from the result
-        futureRes.add_done_callback(lambda future: concatCNVs(future, CNVs))
-
-
-######################################
-# concatCNVs
-# A callback function for processing the result of a Viterbi algorithm task.
-# Extracts the result from the Future object and appends it to a global CNVs list.
-#
-# Args:
-# - futureSampCNVExtract (concurrent.futures.Future): A Future object for an
-#    asynchronous CallCNVsOneSample task.
-# - CNVs (list): Global list to which the results are appended.
-#    Each element is a tuple representing CNV information.
-
-# No return value; updates the CNVs list in place.
-def concatCNVs(futureSampCNVExtract, CNVs):
-    e = futureSampCNVExtract.exception()
-    if e is not None:
-        logger.warning("Failed callCNVsOneSample %s", str(e))
-        raise(e)
-    else:
-        viterbiRes = futureSampCNVExtract.result()
-        countCNVs(viterbiRes)
-        # append each CNV from the result to the global CNVs list
-        for cnv in range(len(viterbiRes)):
-            CNVs.append(viterbiRes[cnv])
-
-
-######################################
-# countCNVs
-# Counts the occurrences of each CNV type called for a sample and logs the result.
-#
-# Args:
-# - sampCNVs (list of lists): CNV data for a sample. Each inner list contains CNV information.
-def countCNVs(sampCNVs):
-    # cnCounts[i] == number of called CNVs with CN==i
-    cnCounts = [0, 0, 0, 0]
-    for CNV in sampCNVs:
-        cn = CNV[0]
-        cnCounts[cn] += 1
-
-    cn_list = [f"CN{cn}:{cnCounts[cn]}" for cn in range(cnCounts)]
-    cn_str = ', '.join(cn_list)
-    logger.debug("Done callCNvs for %s: %s", sampCNVs[0][4], cn_str)
-
 
 ######################################
 # callCNVsOneSample:

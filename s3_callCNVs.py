@@ -355,14 +355,13 @@ def main(argv):
     # CNV type, start and end positions of the affected exons, the event quality score,
     # and the sample ID.
     try:
-        CNVs_A, CNVs_G = callCNVs.callCNVs.applyHMM(samples, autosomeExons, gonosomeExons,
-                                                    likelihoods_A, likelihoods_G, priors,
-                                                    transMatrix, jobs, dmax)
+        CNVs_A = callCNVs.callCNVs.callAllCNVs(likelihoods_A, autosomeExons, transMatrix, priors, dmax, jobs)
+        CNVs_G = callCNVs.callCNVs.callAllCNVs(likelihoods_G, gonosomeExons, transMatrix, priors, dmax, jobs)
     except Exception as e:
-        raise Exception("HMM.processCNVCalls failed: %s", repr(e))
+        raise Exception("callAllCNVs() failed: %s", repr(e))
 
     thisTime = time.time()
-    logger.debug("Done HMM.processCNVCalls in %.2f s", thisTime - startTime)
+    logger.debug("Done callAllCNVs() in %.2f s", thisTime - startTime)
     startTime = thisTime
 
     #########
