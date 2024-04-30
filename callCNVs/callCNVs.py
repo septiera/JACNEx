@@ -150,23 +150,26 @@ def countCNVs(sampCNVs):
 # Args:
 # - likelihoods (ndarray[floats] dim NbExons*NbStates): pseudo-emission probabilities
 #   (likelihoods) of each state for each exon for one sample.
-# - transMatrix (ndarray[floats] dim NbStates*NbStates): base transition probas between states
-# - priors (ndarray dim NbStates): prior probabilities for each state
 # - sampleID [str]
 # - exons [list of lists[str, int, int, str]]: exon infos [chr, START, END, EXONID].
+# - transMatrix (ndarray[floats] dim NbStates*NbStates): base transition probas between states
+# - priors (ndarray dim NbStates): prior probabilities for each state
 # - dmax [int]: param for adjustTransMatrix()
 #
 # Returns:
 # - CNVs (list of list[int, int, int, float, str]): list of called CNVs,
 #   a CNV is a list [CNVType, firstExonIndex, lastExonIndex, qualityScore, sampleID].
-def callCNVsOneSample(likelihoods, sampleID, transMatrix, priors, exons, dmax):
+def callCNVsOneSample(likelihoods, sampleID, exons, transMatrix, priors, dmax):
     try:
         CNVs = []
         NbStates = len(transMatrix)
         # sanity
+        if len(exons) != likelihoods.shape[0]:
+            logger.error("Numbers of exons and of rows in likelihoods inconsistent")
+            raise Exception(sampleID)
         if NbStates != likelihoods.shape[1]:
             logger.error("NbStates in transMatrix and in likelihoods inconsistent")
-            raise
+            raise Exception(sampleID)
 
         # Step 1: Initialize variables
         # probsPrev[s]: probability of the most likely path ending in state s at the previous exon,
