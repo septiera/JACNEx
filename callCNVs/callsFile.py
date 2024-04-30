@@ -131,7 +131,7 @@ def vcfFormat(CNVs, exons, samples, padding):
 
         # Determine the sample's genotype based on CN type and add quality score
         geno = "1/1" if cn == 0 else "0/1"
-        vcfLine[sampi] = f"{geno}:{qualScore:.2e}"
+        vcfLine[sampi] = f"{geno}:{qualScore:.1f}"
 
         # Update the VCF line in the dictionary
         cnv_dict[currentCNV] = vcfLine
