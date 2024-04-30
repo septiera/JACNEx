@@ -219,10 +219,10 @@ def callCNVsOneSample(likelihoods, sampleID, exons, transMatrix, priors, dmax):
 
 ######################################
 # buildCNVs
-# Identify CNVs (= consecutive exons with the same CN) in a most-likely path, and
-# calculate the associated "qualityScore" (see below).
-# Requirements: the last exon's most likely state must be CN2, and the called exon preceding
-# calledExons[0] (called the "path root") must also be in state CN2 in the most likely path
+# Identify CNVs (= consecutive exons with the same CN) in the most-likely path ending in
+# state CN2 in the last calledExon, and calculate the associated "qualityScore" (see below).
+# Requirements: the called exon preceding calledExons[0] (called the "path root") must be
+# in state CN2 in the most likely path.
 #
 # Args:
 # - calledExons [list of ints]: list of called exonIndexes to process here
@@ -248,16 +248,10 @@ def buildCNVs(calledExons, path, bestPathProbas, CN2FromCN2Probas, sampleID):
     maxQualityScore = 100
     CNVs = []
 
-    print("Sample=%s, calledExons=%s, path=%s, bestPathProbas=%s, CN2FromCN2Probas=%s",
-          sampleID, " ".join(calledExons), numpy.array2string(path),
-          numpy.array2string(bestPathProbas, precision=4),
-          numpy.array2string(CN2FromCN2Probas, precision=4))
-
-    # sanity
-    if bestPathProbas[-1].argmax() != 2:
-        logger.error("most-likely state in last exon is NOT CN2, fix the code!")
-        logger.error("sample=%s, calledExons=%s", sampleID, " ".join(calledExons))
-        raise Exception(sampleID)
+    print("Sample=%s, calledExons=%s, path=%s, bestPathProbas=%s, CN2FromCN2Probas=%s" %
+          (sampleID, " ".join(map(str, calledExons)), " ".join(map(numpy.array2string, path)),
+           " ".join(map(numpy.array2string, bestPathProbas)),
+           " ".join(map(str, CN2FromCN2Probas))))
 
     # build ndarray of states that form the most likely path, must start from the end
     mostLikelyStates = numpy.zeros(len(calledExons), dtype=numpy.int8)
