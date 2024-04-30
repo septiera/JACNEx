@@ -191,8 +191,8 @@ def findBestPrevCF(countsFilesAll, samples):
 # may be available in the log
 def main(argv):
     # string identifying the current program name (JACNEx) and version, will appear
-    # as "source=" in the VCF
-    JACNEx_version = "JACNEx dev version 2024-05-NTM"
+    # as "##source=" in the VCF
+    JACNEx_version = "JACNEx_dev_version_2024_05_NTM"
     # strings for each step, for log messages / exception names
     stepNames = ("STEP0 - CHECK/MAKE SUBDIR HIERARCHY -", "STEP1 - COUNT FRAGMENTS -",
                  "STEP2 - CLUSTER SAMPLES -", "STEP3 - CALL CNVs -")

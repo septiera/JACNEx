@@ -261,7 +261,7 @@ def buildCNVs(calledExons, path, bestPathProbas, CN2PathProbas, lastState, sampl
     maxQualityScore = 100
     CNVs = []
 
-    print("CalledEx=", calledExons, ", path=", path, ", bestPathProbas:", bestPathProbas,
+    print("Sample=", sampleID, ", CalledEx=", calledExons, ", path=", path, ", bestPathProbas:", bestPathProbas,
           ", CN2PathProbas=", CN2PathProbas, ", lastState=", lastState)
 
     if lastState != 2:
