@@ -21,8 +21,8 @@ logger = logging.getLogger(__name__)
 # - padding (int): padding bases used.
 # - outFile (str): Output file name. It must be non-existent and can include a path (which must exist).
 #                  The output file will be compressed in gzip format if outFile ends with '.gz'.
-# - scriptName (str): Name of the script used to generate the file.
-def printCallsFile(CNVs_A, CNVs_G, autosomeExons, gonosomeExons, samples, padding, outFile, scriptName):
+# - madeBy (str): Name + version of program that made the CNV calls.
+def printCallsFile(CNVs_A, CNVs_G, autosomeExons, gonosomeExons, samples, padding, outFile, madeBy):
 
     vcf_A = vcfFormat(CNVs_A, autosomeExons, samples, padding)
     vcf_G = vcfFormat(CNVs_G, gonosomeExons, samples, padding)
@@ -39,7 +39,7 @@ def printCallsFile(CNVs_A, CNVs_G, autosomeExons, gonosomeExons, samples, paddin
     # Header definition
     toPrint = """##fileformat=VCFv4.3
 ##fileDate=""" + time.strftime("%y%m%d") + """
-##source=""" + scriptName + """
+##source=""" + madeBy + """
 ##ALT=<ID=DEL,Description="Deletion">
 ##ALT=<ID=DUP,Description="Duplication">
 ##INFO=<ID=SVTYPE,Number=1,Type=String,Description="Type of structural variant">

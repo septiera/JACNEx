@@ -45,6 +45,7 @@ def parseArgs(argv):
     countsFile = ""
     clustsFile = ""
     outFile = ""
+    madeBy = ""
     # optional args with default values
     padding = 10
     transMatrixCutoff = 90
@@ -75,6 +76,7 @@ ARGUMENTS:
                     [CLUSTER_ID, SAMPLES, FIT_WITH, VALID]. File obtained from 2_clusterSamps.py.
     --out [str]: file where results will be saved, must not pre-exist, will be gzipped if it ends
                  with '.gz', can have a path component but the subdir must exist.
+    --madeBy [str]: program name + version to print as "source=" in the produced VCF.
     --padding [int] : number of bps used to pad the exon coordinates, default : """ + str(padding) + """
     --transMatrixCutoff [int]: inter-exon percentile threshold for initializing the transition matrix,
                                default : """ + str(transMatrixCutoff) + """
@@ -83,8 +85,8 @@ ARGUMENTS:
     -h , --help: display this help and exit\n"""
 
     try:
-        opts, args = getopt.gnu_getopt(argv[1:], 'h', ["help", "counts=", "clusts=", "out=", "padding=",
-                                                       "transMatrixCutoff=", "plotDir=", "jobs="])
+        opts, args = getopt.gnu_getopt(argv[1:], 'h', ["help", "counts=", "clusts=", "out=", "madeBy=",
+                                                       "padding=", "transMatrixCutoff=", "plotDir=", "jobs="])
     except getopt.GetoptError as e:
         raise Exception(e.msg + ". Try " + scriptName + " --help")
     if len(args) != 0:
@@ -100,6 +102,8 @@ ARGUMENTS:
             clustsFile = value
         elif opt in ("--out"):
             outFile = value
+        elif opt in ("--madeBy"):
+            madeBy = value
         elif opt in ("--padding"):
             padding = value
         elif opt in ("--transMatrixCutoff"):
@@ -129,6 +133,9 @@ ARGUMENTS:
         raise Exception("outFile " + outFile + " already exists")
     elif (os.path.dirname(outFile) != '') and (not os.path.isdir(os.path.dirname(outFile))):
         raise Exception("the directory where outFile " + outFile + " should be created doesn't exist")
+
+    if madeBy == "":
+        raise Exception("you must provide a madeBy string with --madeBy. Try " + scriptName + " --help")
 
     #####################################################
     # Check other args
@@ -163,7 +170,7 @@ ARGUMENTS:
         raise Exception("jobs must be a positive integer, not " + str(jobs))
 
     # AOK, return everything that's needed
-    return (countsFile, clustsFile, outFile, padding, transMatrixCutoff, plotDir, jobs)
+    return (countsFile, clustsFile, outFile, padding, transMatrixCutoff, plotDir, jobs, madeBy)
 
 
 ###############################################################################
@@ -176,7 +183,7 @@ ARGUMENTS:
 # may be available in the log
 def main(argv):
     # parse, check and preprocess arguments
-    (countsFile, clustsFile, outFile, padding, pDist, plotDir, jobs) = parseArgs(argv)
+    (countsFile, clustsFile, outFile, padding, pDist, plotDir, jobs, madeBy) = parseArgs(argv)
 
     # args seem OK, start working
     logger.debug("called with: " + " ".join(argv[1:]))
@@ -368,15 +375,13 @@ def main(argv):
     # VCF printing
     try:
         callCNVs.callsFile.printCallsFile(CNVs_A, CNVs_G, autosomeExons, gonosomeExons,
-                                          samples, padding, outFile, scriptName)
+                                          samples, padding, outFile, madeBy)
     except Exception as e:
         raise Exception("printCallsFile failed: %s", repr(e))
 
     thisTime = time.time()
     logger.debug("Done printCallsFile in %.2f s", thisTime - startTime)
     startTime = thisTime
-
-    sys.exit()
 
 
 ####################################################################################
