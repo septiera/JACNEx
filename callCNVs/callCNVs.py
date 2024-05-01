@@ -118,13 +118,7 @@ def callCNVsOneSample(likelihoods, sampleID, exons, transMatrix, priors, dmax):
 
             if exons[exonIndex][0] != prevChrom:
                 # changing chroms:
-                # append a bogus CN2 exon if CN2 isn't the last exon's most likely state
-                lastState = bestPathProbas[-1].argmax()
-                if lastState != 2:
-                    calledExons.append(-1)
-                    path.append(numpy.array([0, 0, lastState, 0]))
-                    bestPathProbas.append(numpy.array([0, 0, bestPathProbas[-1][lastState], 0]))
-                    CN2FromCN2Probas.append(1)
+                appendBogusCN2Exon(calledExons, path, bestPathProbas, CN2FromCN2Probas)
                 # build CNVs from prev if (maybe) needed
                 if any((p[2] != 2) for p in path):
                     CNVs.extend(buildCNVs(calledExons, path, bestPathProbas, CN2FromCN2Probas, sampleID))
@@ -161,18 +155,12 @@ def callCNVsOneSample(likelihoods, sampleID, exons, transMatrix, priors, dmax):
                 bestPrevState[currentState] = prevStateMax
 
             # if all best paths for current exon have zero probability (ie they all underflowed):
-            # shouldn't happen often, but if it does...
+            # shouldn't happen often, but bestPrevState would be all-twos so we need to test now
             if not probsCurrent.any():
                 logger.warning("in callCNVsOneSample(%s), all best paths to exon %i underflowed to zero proba. " +
                                "This should be very rare, if not please report it.", sampleID, exonIndex)
                 # try to build CNVs from best state in prev exon:
-                # append a bogus CN2 exon if CN2 isn't prev exon's most likely state
-                lastState = bestPathProbas[-1].argmax()
-                if lastState != 2:
-                    calledExons.append(-1)
-                    path.append(numpy.array([0, 0, lastState, 0]))
-                    bestPathProbas.append(numpy.array([0, 0, bestPathProbas[-1][lastState], 0]))
-                    CN2FromCN2Probas.append(1)
+                appendBogusCN2Exon(calledExons, path, bestPathProbas, CN2FromCN2Probas)
                 if any((p[2] != 2) for p in path):
                     CNVs.extend(buildCNVs(calledExons, path, bestPathProbas, CN2FromCN2Probas, sampleID))
                 # reinit with CN2 as path root in prev exon
@@ -201,12 +189,7 @@ def callCNVsOneSample(likelihoods, sampleID, exons, transMatrix, priors, dmax):
             CN2FromCN2Probas.append(adjustedTransMatrix[2, 2] * likelihoods[exonIndex, 2])
 
         # Final CNVs for the last exons
-        lastState = bestPathProbas[-1].argmax()
-        if lastState != 2:
-            calledExons.append(-1)
-            path.append(numpy.array([0, 0, lastState, 0]))
-            bestPathProbas.append(numpy.array([0, 0, bestPathProbas[-1][lastState], 0]))
-            CN2FromCN2Probas.append(1)
+        appendBogusCN2Exon(calledExons, path, bestPathProbas, CN2FromCN2Probas)
         if any((p[2] != 2) for p in path):
             CNVs.extend(buildCNVs(calledExons, path, bestPathProbas, CN2FromCN2Probas, sampleID))
 
@@ -215,6 +198,21 @@ def callCNVsOneSample(likelihoods, sampleID, exons, transMatrix, priors, dmax):
     except Exception as e:
         logger.error("callCNVsOneSample failed for sample %s in exon %i: %s", sampleID, exonIndex, repr(e))
         raise Exception(sampleID)
+
+
+######################################
+# appendBogusExon:
+# append a bogus exon if CN2 isn't the last calledExon's most likely state.
+# This bogus exon is built so that the best path ending in its CN2 state is
+# almost identical to the best path ending in calledExon[-1]'s most likely state
+# (ie same path except for the appended CN2, same bestPathProbas, same score).
+def appendBogusCN2Exon(calledExons, path, bestPathProbas, CN2FromCN2Probas):
+    lastState = bestPathProbas[-1].argmax()
+    if lastState != 2:
+        calledExons.append(-1)
+        path.append(numpy.array([0, 0, lastState, 0]))
+        bestPathProbas.append(numpy.array([0, 0, bestPathProbas[-1][lastState], 0]))
+        CN2FromCN2Probas.append(1)
 
 
 ######################################
