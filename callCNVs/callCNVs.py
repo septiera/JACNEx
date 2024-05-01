@@ -199,9 +199,9 @@ def appendBogusCN2Exon(calledExons, path, bestPathProbas, CN2FromCN2Probas):
     lastState = bestPathProbas[-1].argmax()
     if lastState != 2:
         calledExons.append(-1)
-        path.append(numpy.array([0, 0, lastState, 0]))
-        bestPathProbas.append(numpy.array([0, 0, bestPathProbas[-1][lastState], 0]))
-        CN2FromCN2Probas.append(1)
+        path.append(numpy.array([0, 0, lastState, 0], dtype=numpy.int8))
+        bestPathProbas.append(numpy.array([0, 0, bestPathProbas[-1][lastState], 0], dtype=numpy.float128))
+        CN2FromCN2Probas.append(1.0)
 
 
 ######################################
