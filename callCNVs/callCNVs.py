@@ -154,23 +154,18 @@ def callCNVsOneSample(likelihoods, sampleID, exons, transMatrix, priors, dmax):
                 probsCurrent[currentState] = probMax
                 bestPrevState[currentState] = prevStateMax
 
-            # if all best paths for current exon have zero probability (ie they all underflowed):
-            # shouldn't happen often, but bestPrevState would be all-twos so we need to test now
+            # if all best paths for current exon have zero probability (ie they all underflowed)
             if not probsCurrent.any():
                 logger.warning("in callCNVsOneSample(%s), all best paths to exon %i underflowed to zero proba. " +
                                "This should be very rare, if not please report it.", sampleID, exonIndex)
-                # try to build CNVs from best state in prev exon:
+                # we'll try to build CNVs from whichever state was most likely in the last exon
                 appendBogusCN2Exon(calledExons, path, bestPathProbas, CN2FromCN2Probas)
-                if any((p[2] != 2) for p in path):
-                    CNVs.extend(buildCNVs(calledExons, path, bestPathProbas, CN2FromCN2Probas, sampleID))
-                # reinit with CN2 as path root in prev exon
-                probsCurrent[:] = adjustedTransMatrix[2, :] * likelihoods[exonIndex, :]
+                # make sure we will backtrack-and-reset (should already be all-2s, but whatever)
                 bestPrevState[:] = 2
-                (calledExons, path, bestPathProbas, CN2FromCN2Probas) = ([], [], [], [])
 
-            # else if all states at currentExon have the same predecessor state and that state is CN2:
-            # backtrack from [previous exon, CN2] if needed and reset
-            elif numpy.all(bestPrevState == 2):
+            # if all states at currentExon have the same predecessor state and that state is CN2:
+            # backtrack from [previous exon, CN2] and reset
+            if numpy.all(bestPrevState == 2):
                 # only need to buildCNVs if at least one exon's bestPath-to-CN2 was non-CN2,
                 # else the best path is necessarily all-CN2 => there's nothing to build
                 if any((p[2] != 2) for p in path):
