@@ -119,9 +119,7 @@ def callCNVsOneSample(likelihoods, sampleID, exons, transMatrix, priors, dmax):
             if exons[exonIndex][0] != prevChrom:
                 # changing chroms:
                 appendBogusCN2Exon(calledExons, path, bestPathProbas, CN2FromCN2Probas)
-                # build CNVs from prev if (maybe) needed
-                if any((p[2] != 2) for p in path):
-                    CNVs.extend(buildCNVs(calledExons, path, bestPathProbas, CN2FromCN2Probas, sampleID))
+                CNVs.extend(buildCNVs(calledExons, path, bestPathProbas, CN2FromCN2Probas, sampleID))
                 # reinit with CN2 as path root
                 probsPrev[:] = 0
                 probsPrev[2] = 1
@@ -166,10 +164,7 @@ def callCNVsOneSample(likelihoods, sampleID, exons, transMatrix, priors, dmax):
             # if all states at currentExon have the same predecessor state and that state is CN2:
             # backtrack from [previous exon, CN2] and reset
             if numpy.all(bestPrevState == 2):
-                # only need to buildCNVs if at least one exon's bestPath-to-CN2 was non-CN2,
-                # else the best path is necessarily all-CN2 => there's nothing to build
-                if any((p[2] != 2) for p in path):
-                    CNVs.extend(buildCNVs(calledExons, path, bestPathProbas, CN2FromCN2Probas, sampleID))
+                CNVs.extend(buildCNVs(calledExons, path, bestPathProbas, CN2FromCN2Probas, sampleID))
                 # reinit with CN2 as path root in prev exon
                 probsCurrent[:] = adjustedTransMatrix[2, :] * likelihoods[exonIndex, :]
                 # bestPrevState is already all-2's
@@ -185,8 +180,7 @@ def callCNVsOneSample(likelihoods, sampleID, exons, transMatrix, priors, dmax):
 
         # Final CNVs for the last exons
         appendBogusCN2Exon(calledExons, path, bestPathProbas, CN2FromCN2Probas)
-        if any((p[2] != 2) for p in path):
-            CNVs.extend(buildCNVs(calledExons, path, bestPathProbas, CN2FromCN2Probas, sampleID))
+        CNVs.extend(buildCNVs(calledExons, path, bestPathProbas, CN2FromCN2Probas, sampleID))
 
         return(CNVs)
 
@@ -242,6 +236,12 @@ def buildCNVs(calledExons, path, bestPathProbas, CN2FromCN2Probas, sampleID):
     # max quality score produce, hard-coded here
     maxQualityScore = 100
     CNVs = []
+
+    # if each exon's bestPath-to-CN2 comes from CN2 in prev exon,
+    # the best path is necessarily all-CN2 => there's nothing to build
+    # (NOTE this test is also true if calledExons is empty)
+    if all((p[2] == 2) for p in path):
+        return(CNVs)
 
     # build ndarray of states that form the most likely path, must start from the end
     mostLikelyStates = numpy.zeros(len(calledExons), dtype=numpy.int8)
