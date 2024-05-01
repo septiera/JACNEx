@@ -19,11 +19,11 @@ logger = logging.getLogger(__name__)
 # Call CNVs with callCNVsOneSample() in parallel for each sample in likelihoodsDict.
 #
 # Args:
-# - likelihoodsDict: key==sampleID, value==(ndarray[floats] dim NbExons*NbStates) holding the
+# - likelihoodsDict: key==sampleID, value==(ndarray[floats] dim nbExons*nbStates) holding the
 #   pseudo-emission probabilities (likelihoods) of each state for each exon for this sample.
-# - exons: list of NbExons exons, one exon is a list [CHR, START, END, EXONID].
-# - transMatrix (ndarray[floats] dim NbStates*NbStates): base transition probas between states
-# - priors (ndarray dim NbStates): prior probabilities for each state
+# - exons: list of nbExons exons, one exon is a list [CHR, START, END, EXONID].
+# - transMatrix (ndarray[floats] dim nbStates*nbStates): base transition probas between states
+# - priors (ndarray dim nbStates): prior probabilities for each state
 # - dmax [int]: param for adjustTransMatrix()
 # - jobs (int): Number of jobs to run in parallel.
 #
@@ -74,12 +74,12 @@ def callAllCNVs(likelihoodsDict, exons, transMatrix, priors, dmax, jobs):
 #   a power law until they reach the prior probabilities at dist dmax
 #
 # Args:
-# - likelihoods (ndarray[floats] dim NbExons*NbStates): pseudo-emission probabilities
+# - likelihoods (ndarray[floats] dim nbExons*nbStates): pseudo-emission probabilities
 #   (likelihoods) of each state for each exon for one sample.
 # - sampleID [str]
 # - exons [list of lists[str, int, int, str]]: exon infos [chr, START, END, EXONID].
-# - transMatrix (ndarray[floats] dim NbStates*NbStates): base transition probas between states
-# - priors (ndarray dim NbStates): prior probabilities for each state
+# - transMatrix (ndarray[floats] dim nbStates*nbStates): base transition probas between states
+# - priors (ndarray dim nbStates): prior probabilities for each state
 # - dmax [int]: param for adjustTransMatrix()
 #
 # Returns:
@@ -88,19 +88,19 @@ def callAllCNVs(likelihoodsDict, exons, transMatrix, priors, dmax, jobs):
 def callCNVsOneSample(likelihoods, sampleID, exons, transMatrix, priors, dmax):
     try:
         CNVs = []
-        NbStates = len(transMatrix)
+        nbStates = len(transMatrix)
         # sanity
         if len(exons) != likelihoods.shape[0]:
             logger.error("Numbers of exons and of rows in likelihoods inconsistent")
             raise Exception(sampleID)
-        if NbStates != likelihoods.shape[1]:
-            logger.error("NbStates in transMatrix and in likelihoods inconsistent")
+        if nbStates != likelihoods.shape[1]:
+            logger.error("nbStates in transMatrix and in likelihoods inconsistent")
             raise Exception(sampleID)
 
         # Step 1: Initialize variables
         # probsPrev[s]: probability of the most likely path ending in state s at previous exon,
         # initialize path root at CN2
-        probsPrev = numpy.zeros(NbStates, dtype=numpy.float128)
+        probsPrev = numpy.zeros(nbStates, dtype=numpy.float128)
         probsPrev[2] = 1
         # chrom and end of previous exon - init at -dmax so first exon uses the priors
         prevChrom = exons[0][0]
@@ -129,19 +129,19 @@ def callCNVsOneSample(likelihoods, sampleID, exons, transMatrix, priors, dmax):
 
             # accumulators with current exon data for populating the buildCNVs() structures
             # bestPrevState defaults to CN2
-            bestPrevState = numpy.full(NbStates, 2, dtype=numpy.int8)
+            bestPrevState = numpy.full(nbStates, 2, dtype=numpy.int8)
             # probsCurrent[s]: probability of the most likely path ending in state s at the current exon
-            probsCurrent = numpy.zeros(NbStates, dtype=numpy.float128)
+            probsCurrent = numpy.zeros(nbStates, dtype=numpy.float128)
 
             # adjust transition probabilities
             distFromPrevEx = exons[exonIndex][1] - prevEnd - 1
             adjustedTransMatrix = callCNVs.transitions.adjustTransMatrix(transMatrix, priors, distFromPrevEx, dmax)
 
             # calculate proba of the most likely paths ending in each state for current exon
-            for currentState in range(NbStates):
+            for currentState in range(nbStates):
                 probMax = 0
                 prevStateMax = 2
-                for prevState in range(NbStates):
+                for prevState in range(nbStates):
                     # probability of path coming from prevState to currentState
                     prob = (probsPrev[prevState] *
                             adjustedTransMatrix[prevState, currentState] *
@@ -215,10 +215,10 @@ def appendBogusCN2Exon(calledExons, path, bestPathProbas, CN2FromCN2Probas):
 #
 # Args:
 # - calledExons [list of ints]: list of called exonIndexes to process here
-# - path (list of len(calledExons) ndarrays of NbStates ints):
+# - path (list of len(calledExons) ndarrays of nbStates ints):
 #   path[e][s] == state of called exon preceding calledExons[e] that produces the max
 #   proba for state s at exon calledExons[e]
-# - bestPathProbas (list of len(calledExons) ndarrays of NbStates floats):
+# - bestPathProbas (list of len(calledExons) ndarrays of nbStates floats):
 #   bestPathProbas[e][s] == proba of most likely path ending in state s at exon
 #   calledExons[e] and starting at the path root
 # - CN2FromCN2Probas (list of len(calledExons) floats): CN2FromCN2Probas[e] == proba of
