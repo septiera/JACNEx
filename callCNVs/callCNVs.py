@@ -240,9 +240,9 @@ def callCNVsOneSample(likelihoods, sampleID, exons, transMatrix, priors, dmax):
 # - CNType is 0-3 (== CN)
 # - startExon and endExon are indexes (in the global exons list) of the first and
 #   last exons defining this CNV
-# - qualityScore = log of ratio between the proba of most likely path between the called
+# - qualityScore = log10 of ratio between the proba of most likely path between the called
 #   exons immediately preceding and immediately following the CNV, and the proba of
-#   the CN2-only path between the same exons, maxed out at maxQualityScore
+#   the CN2-only path between the same exons, capped at maxQualityScore
 def buildCNVs(calledExons, path, bestPathProbas, CN2FromCN2Probas, sampleID):
     # max quality score produce, hard-coded here
     maxQualityScore = 100
@@ -273,7 +273,7 @@ def buildCNVs(calledExons, path, bestPathProbas, CN2FromCN2Probas, sampleID):
         else:
             if (currentState != 2):
                 # we are changing states and current wasn't CN2, create CNV
-                # score = log of ratio between best path proba and CN2-only path proba,
+                # score = log10 of ratio between best path proba and CN2-only path proba,
                 # use maxQualityScore if CN2-only path proba underflows to zero
                 qualityScore = maxQualityScore
                 CN2PathProba *= CN2FromCN2Probas[cei]
@@ -283,7 +283,7 @@ def buildCNVs(calledExons, path, bestPathProbas, CN2FromCN2Probas, sampleID):
                         # we want the proba of the path starting at the exon immediately
                         # preceding the CNV, not starting at the path root
                         qualityScore /= bestPathProbas[firstExonInCurrentState - 1][mostLikelyStates[firstExonInCurrentState - 1]]
-                    qualityScore = math.log(qualityScore)
+                    qualityScore = math.log10(qualityScore)
                     qualityScore = min(qualityScore, maxQualityScore)
 
                 CNVs.append([currentState, calledExons[firstExonInCurrentState],
