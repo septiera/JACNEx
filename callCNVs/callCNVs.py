@@ -252,7 +252,7 @@ def buildCNVs(calledExons, path, bestPathProbas, CN2FromCN2Probas, sampleID):
         mostLikelyStates[cei - 1] = currentState
 
     # sanity: path root == CN2
-    if currentState != 2:
+    if path[0][currentState] != 2:
         logger.error("in buildCNVs(), sanity check failed: path root != CN2")
         raise Exception(sampleID)
 
