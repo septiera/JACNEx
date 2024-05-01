@@ -221,8 +221,10 @@ def callCNVsOneSample(likelihoods, sampleID, exons, transMatrix, priors, dmax):
 # buildCNVs
 # Identify CNVs (= consecutive exons with the same CN) in the most-likely path ending in
 # state CN2 in the last calledExon, and calculate the associated "qualityScore" (see below).
-# Requirements: the called exon preceding calledExons[0] (called the "path root") must be
-# in state CN2 in the most likely path.
+# Requirements: the called exon preceding calledExons[0] (called the "path root") must be in 
+# state CN2 in the most likely path
+# NOTE: the best-path-ends-in-CN2 precondition means that in the NEXT exon, all best paths 
+# came from CN2 in calledExons[-1]; but it's perfectly possible that path[-1].argmax() != 2
 #
 # Args:
 # - calledExons [list of ints]: list of called exonIndexes to process here
@@ -248,11 +250,6 @@ def buildCNVs(calledExons, path, bestPathProbas, CN2FromCN2Probas, sampleID):
     maxQualityScore = 100
     CNVs = []
 
-    print("Sample=%s, calledExons=%s, path=%s, bestPathProbas=%s, CN2FromCN2Probas=%s" %
-          (sampleID, " ".join(map(str, calledExons)), " ".join(map(numpy.array2string, path)),
-           " ".join(map(numpy.array2string, bestPathProbas)),
-           " ".join(map(str, CN2FromCN2Probas))))
-
     # build ndarray of states that form the most likely path, must start from the end
     mostLikelyStates = numpy.zeros(len(calledExons), dtype=numpy.int8)
     mostLikelyStates[-1] = 2
@@ -260,6 +257,11 @@ def buildCNVs(calledExons, path, bestPathProbas, CN2FromCN2Probas, sampleID):
     for cei in range(len(calledExons) - 1, 0, -1):
         currentState = path[cei][currentState]
         mostLikelyStates[cei - 1] = currentState
+
+    # sanity: path root == CN2
+    if currentState != 2:
+        logger.error("in buildCNVs(), sanity check failed: path root != CN2")
+        raise Exception(sampleID)
 
     # now walk through the path of most likely states, constructing CNVs as we go
     firstExonInCurrentState = 0
@@ -292,5 +294,11 @@ def buildCNVs(calledExons, path, bestPathProbas, CN2FromCN2Probas, sampleID):
             firstExonInCurrentState = cei
             currentState = mostLikelyStates[cei]
             CN2PathProba = CN2FromCN2Probas[cei]
+
+    if len(CNVs) > 0:
+        print("Sample=%s, calledExons=%s, path=%s, bestPathProbas=%s, CN2FromCN2Probas=%s" %
+              (sampleID, str(calledExons), " ".join(map(numpy.array2string, path)),
+               " ".join(map(numpy.array2string, bestPathProbas)), str(CN2FromCN2Probas)))
+        print("Produced CNVs: %s" % str(CNVs))
 
     return(CNVs)
