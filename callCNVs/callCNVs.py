@@ -208,9 +208,9 @@ def appendBogusCN2Exon(calledExons, path, bestPathProbas, CN2FromCN2Probas):
 # buildCNVs
 # Identify CNVs (= consecutive exons with the same CN) in the most-likely path ending in
 # state CN2 in the last calledExon, and calculate the associated "qualityScore" (see below).
-# Requirements: the called exon preceding calledExons[0] (called the "path root") must be in 
+# Requirements: the called exon preceding calledExons[0] (called the "path root") must be in
 # state CN2 in the most likely path
-# NOTE: the best-path-ends-in-CN2 precondition means that in the NEXT exon, all best paths 
+# NOTE: the best-path-ends-in-CN2 precondition means that in the NEXT exon, all best paths
 # came from CN2 in calledExons[-1]; but it's perfectly possible that path[-1].argmax() != 2
 #
 # Args:
@@ -288,10 +288,11 @@ def buildCNVs(calledExons, path, bestPathProbas, CN2FromCN2Probas, sampleID):
             currentState = mostLikelyStates[cei]
             CN2PathProba = CN2FromCN2Probas[cei]
 
-    if len(CNVs) > 0:
-        print("Sample=%s, calledExons=%s, path=%s, bestPathProbas=%s, CN2FromCN2Probas=%s" %
-              (sampleID, str(calledExons), " ".join(map(numpy.array2string, path)),
-               " ".join(map(numpy.array2string, bestPathProbas)), str(CN2FromCN2Probas)))
-        print("Produced CNVs: %s" % str(CNVs))
+    # for debugging but careful, the prints are in a random order from the various parallel processes:
+    # if len(CNVs) > 0:
+    #     print("Sample=%s, calledExons=%s, path=%s, bestPathProbas=%s, CN2FromCN2Probas=%s" %
+    #           (sampleID, str(calledExons), " ".join(map(numpy.array2string, path)),
+    #            " ".join(map(numpy.array2string, bestPathProbas)), str(CN2FromCN2Probas)))
+    #     print("Produced CNVs: %s" % str(CNVs))
 
     return(CNVs)
