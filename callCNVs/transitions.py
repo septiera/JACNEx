@@ -1,9 +1,6 @@
 import logging
 import numpy
 
-####### JACNEx modules
-import callCNVs.priors
-
 # set up logger, using inherited config
 logger = logging.getLogger(__name__)
 
@@ -171,21 +168,21 @@ def updateTransMatrix(transitions, likelihoodsDict, priors, exons, maxDistBetwee
     for likelihoodsArr in likelihoodsDict.values():
         # determines for each sample the most probable CN state for each exon
         # by finding the maximum probability in the CN probabilities array.
-        CNPath = callCNVs.priors.getCNPath(likelihoodsArr, priors)
+        bestStates = (priors * likelihoodsArr).argmax(axis=1)
 
         # initialize to bogus chrom
         prevCN = -1
         prevChrom = -1
         prevEnd = -1
 
-        for ei in range(len(CNPath)):
+        for ei in range(len(bestStates)):
             # skip no-call exons
-            if CNPath[ei] == -1:
+            if likelihoodsArr[ei][0] == -1:
                 continue
 
             # if new chrom first called exon is not counted but used for init
             if prevChrom != exons[ei][0]:
-                prevCN = CNPath[ei]
+                prevCN = bestStates[ei]
                 prevChrom = exons[ei][0]
                 prevEnd = exons[ei][2]
                 continue
@@ -194,8 +191,8 @@ def updateTransMatrix(transitions, likelihoodsDict, priors, exons, maxDistBetwee
 
             # update transitions if exons are close enough.
             if dist <= maxDistBetweenExons:
-                transitions[prevCN, CNPath[ei]] += 1
+                transitions[prevCN, bestStates[ei]] += 1
 
             # in both cases update prevs
             prevEnd = exons[ei][2]
-            prevCN = CNPath[ei]
+            prevCN = bestStates[ei]

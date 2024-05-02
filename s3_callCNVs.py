@@ -320,17 +320,22 @@ def main(argv):
     # Bayesian theory provides a robust framework for this adjustment, facilitating convergence between
     # previous and current priors.
     try:
-        priors = callCNVs.priors.getPriors(likelihoods_A, likelihoods_G, jobs)
+        # temp trick for comparing with AS implem: merge auto and gono likelihoodDicts, appending _G to
+        # gono sampleIDs
+        likelihoods = likelihoods_A.copy()
+        for k in likelihoods_G.keys():
+            likelihoods[k + "_G"] = likelihoods_G[k]
+        priors = callCNVs.priors.calcPriors(likelihoods, jobs)
     except Exception as e:
-        raise Exception("getPriorsfailed: %s", repr(e))
+        raise Exception("calcPriors failed: %s", repr(e))
 
     thisTime = time.time()
-    logger.debug("Done getPriors in %.2f s", thisTime - startTime)
+    logger.debug("Done calcPriors in %.2f s", thisTime - startTime)
     startTime = thisTime
 
     ####### DEBUG PRINT
-    formatted_priors = "\t".join(["%.3e" % x for x in priors])
-    logger.debug("Initialisation Matrix:\n%s", formatted_priors)
+    formatted_priors = " ".join(["%.3e" % x for x in priors])
+    logger.debug("Priors: %s", formatted_priors)
 
     #########
     # - generates a transition matrix for CN states from likelihood data,
