@@ -19,12 +19,12 @@ logger = logging.getLogger(__name__)
 # decimals in scentific notation for each proba) or after maxIter iterations.
 #
 # Args:
-# - likelihoodsDict: key==sampleID, value==(ndarray[floats] dim NbExons*NbStates)
+# - likelihoodsDict: key==sampleID, value==(ndarray[floats] dim nbExons*nbStates)
 #   holding the likelihoods of each state for each exon for this sample (no-call
 #   exons should have all likelihoods == -1)
-# - jobs (int): Number of jobs to run in parallel
+# - jobs (int): number of jobs to run in parallel
 #
-# Returns priors (ndarray of NbStates floats): prior probabilities for each state.
+# Returns priors (ndarray of nbStates floats): prior probabilities for each state.
 def calcPriors(likelihoodsDict, jobs):
     # max number of iterations, hard-coded
     maxIter = 20
@@ -72,10 +72,10 @@ def calcPriors(likelihoodsDict, jobs):
 # vector of priors. Samples are processed in parallel.
 #
 # Args:
-# - likelihoodsDict: key==sampleID, value==(ndarray[floats] dim NbExons*NbStates)
+# - likelihoodsDict: key==sampleID, value==(ndarray[floats] dim nbExons*nbStates)
 #   holding the likelihoods of each state for each exon for this sample
-# - priors (ndarray of NbStates floats): initial prior probabilities for each state
-# - jobs (int): Number of jobs to run in parallel.
+# - priors (ndarray of nbStates floats): initial prior probabilities for each state
+# - jobs (int): number of jobs to run in parallel.
 #
 # Returns posteriors, same type as priors.
 def calcPosteriors(likelihoodsDict, priors, jobs):
@@ -110,11 +110,11 @@ def calcPosteriors(likelihoodsDict, priors, jobs):
 # count for each CN state the number of exons whose most likely a posteriori state is CN.
 #
 # Args:
-# - likelihoods (ndarray[floats] dim NbExons*NbStates): likelihoods of each state
+# - likelihoods (ndarray[floats] dim nbExons*nbStates): likelihoods of each state
 #   for each exon for one sample
-# - priors (ndarray of NbStates floats): initial prior probabilities for each state
+# - priors (ndarray of nbStates floats): initial prior probabilities for each state
 #
-# Returns the counts as an ndarray of NbStates uint64s
+# Returns the counts as an ndarray of nbStates uint64s
 def countMostLikelyStates(likelihoods, priors):
     counts = numpy.zeros(len(priors), dtype=numpy.uint64)
     bestStates = (priors * likelihoods).argmax(axis=1)
