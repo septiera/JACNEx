@@ -121,6 +121,6 @@ def countMostLikelyStates(likelihoods, priors):
 
     for ei in range(len(bestStates)):
         # ignore NOCALL (ie all likelihoods == -1) exons
-        if likelihoods[ei][0] >= 0:
+        if likelihoods[ei, 0] >= 0:
             counts[bestStates[ei]] += 1
     return(counts)
