@@ -1,3 +1,4 @@
+import concurrent.futures
 import logging
 import numpy
 
@@ -21,33 +22,40 @@ logger = logging.getLogger(__name__)
 # - exons: list of nbExons exons, one exon is a list [CHR, START, END, EXONID]
 # - priors (ndarray dim nbStates): prior probabilities for each state
 # - maxIED (int): max inter-exon distance for a pair of consecutive called exons
-#   to be used here
+#   to contribute to the baseTransMatrix.
+# - jobs (int): number of jobs to run in parallel.
 #
 # Returns transMatrix (ndarray[floats] dim nbStates*nbStates): base transition
 # probas between states
-def buildBaseTransMatrix(likelihoodsDict, exons, priors, maxIED):
+def buildBaseTransMatrix(likelihoodsDict, exons, priors, maxIED, jobs):
+    nbStates = len(priors)
+    # count transitions between valid, close-enough exons in all samples
+    countsAllSamples = numpy.zeros((nbStates, nbStates), dtype=numpy.uint64)
 
-    ##### TODO I AM HERE
+    ##################
+    # Define nested callback for processing countMostLikelyTransitions() result.
+    # sampleDone:
+    # args: a Future object returned by ProcessPoolExecutor.submit(countMostLikelyTransitions),
+    # and an ndarray that will be updated in-place (ie countsAllSamples).
+    # If something went wrong, log and propagate exception.
+    def sampleDone(futureRes, counts):
+        e = futureRes.exception()
+        if e is not None:
+            logger.error("countMostLikelyTransitions() failed for sample %s", str(e))
+            raise(e)
+        else:
+            counts += futureRes.result()
 
+    ##################
+    with concurrent.futures.ProcessPoolExecutor(jobs) as pool:
+        for sampID in likelihoodsDict.keys():
+            futureRes = pool.submit(countMostLikelyTransitions, likelihoodsDict[sampID],
+                                    exons, priors, maxIED)
+            futureRes.add_done_callback(lambda f: sampleDone(f, countsAllSamples))
 
-    dmax, medDist = getMaxAndMedianDist(autosomeExons, gonosomeExons, transMatrixCutoff)
-    logger.info("dmax below the %sth percentile threshold is : %s", transMatrixCutoff, dmax)
-    logger.info("median inter-exon distance is : %s", medDist)
-
-    # initialize the transition matrix
-    # 2D array [ints], expected format for a transition matrix [i; j]
-    # contains all prediction counts of states
-    transitions = numpy.zeros((nbStates, nbStates), dtype=int)
-    # update the transition matrix with CN probabilities for autosomal samples
-    updateTransMatrix(transitions, likelihoods_A, priors, autosomeExons, medDist)
-    # repeat the process for gonosomal samples
-    updateTransMatrix(transitions, likelihoods_G, priors, autosomeExons, medDist)
-
-    # Normalize each row of the transition matrix
-    row_sums = numpy.sum(transitions, axis=1, keepdims=True)
-    normalized_arr = transitions / row_sums
-
-    return (normalized_arr, dmax)
+    # Normalize each row to obtain the transition matrix
+    baseTransMat = countsAllSamples.astype(numpy.float128) / countsAllSamples.sum(axis=1)
+    return(baseTransMat)
 
 
 ######################################
@@ -75,7 +83,6 @@ def adjustTransMatrix(transMatrix, priors, d, dmax):
         # use priors
         for prevState in range(len(transMatrix)):
             newTrans[prevState] = priors
-
     else:
         # newTrans[p->i](x) = trans[p->i] + (prior[i] - trans[p->i]) * (x/d_max)^N
         for state in range(len(transMatrix)):
@@ -88,96 +95,41 @@ def adjustTransMatrix(transMatrix, priors, d, dmax):
 ###############################################################################
 ############################ PRIVATE FUNCTIONS ################################
 ###############################################################################
-############################################
-# getMaxAndMedianDist
-# calculates two important metrics for constructing the transition matrix of a HMM:
-# - dmax (maximum distance): This value serves as a threshold for adjusting transition probabilities
-#                            in the Viterbi process.
-# - medDist (median distance): Exons separated by a distance less than or equal to medDist are
-#                              considered sufficiently close for constructing the transition matrix.
+
+######################################
+# countMostLikelyTransitions:
+# Using the states that maximize the posterior probability (ie prior * likelihood),
+# count the number of state transitions between valid, close-enough exons
 #
 # Args:
-# - autosomeExons, gonosomeExons (list of lists[str, int, int, str]): exons infos [CHR, START, END, EXONID].
-# - transMatrixCutoff [int]: inter-exon percentile threshold for initializing the transition matrix.
+# - likelihoods (ndarray[floats] dim NbExons*NbStates): likelihoods of each state
+#   for each exon for one sample
+# - exons: list of nbExons exons, one exon is a list [CHR, START, END, EXONID]
+# - priors (ndarray dim nbStates): prior probabilities for each state
+# - maxIED (int): max inter-exon distance for a transition to count
 #
-# Returns:
-# - tuple: A tuple containing the maximum distance (dmax) and the median distance (medDist).
-def getMaxAndMedianDist(autosomeExons, gonosomeExons, transMatrixCutoff):
-    # concatenate exons from autosomes and gonosomes into a single list
-    exons = autosomeExons + gonosomeExons
+# Returns counts (ndarray[uint64] size nbStates*nbStates): numbers of (accepted)
+# transitions between states
+def countMostLikelyTransitions(likelihoods, exons, priors, maxIED):
+    nbStates = len(priors)
+    counts = numpy.zeros((nbStates, nbStates), dtype=numpy.uint64)
+    bestStates = (priors * likelihoods).argmax(axis=1)
 
-    # initialize a list to store distances between consecutive exons
-    distExons = []
-    # initialize variables to keep track of the previous chromosome
-    # and its end position
-    prev_chr = ""
-    prev_end = 0
-
-    for exon in exons:
-        chr_name, start, end, _ = exon
-        # check if the current chromosome is different from the previous one
-        if prev_chr != chr_name:
-            prev_chr = chr_name
-            prev_end = end
+    prevChrom = ""
+    prevEnd = 0
+    prevState = 2
+    for ei in range(len(exons)):
+        # ignore NOCALL (ie all likelihoods == -1) exons
+        if likelihoods[ei, 0] < 0:
             continue
-        # calculate the distance between the current exon and the previous
-        # one on the same chromosome.
-        # if exons are adjacent, the distance will be 0.
-        dist = start - prev_end - 1
-        if dist > 0:  # only positive distance
-            distExons.append(dist)
-        prev_end = end
-
-    medDist = numpy.median(distExons)
-    sorted_distances = sorted(distExons)  # ascending order
-
-    # Calculate the index corresponding to the specified percentile
-    index = int(len(sorted_distances) * transMatrixCutoff / 100)
-
-    return (sorted_distances[index], medDist)
-
-
-#########################################
-# updateTransMatrix
-# Updates the transition matrix in place based on the most probable CN states
-# for each exon.
-#
-# Args:
-# - transitions (np.ndarray[floats]): Transition matrix to be updated, dimensions [NBStates, NBStates].
-# - likelihoodsDict (dict): CN likelihoods per sample, keys = sampID,
-#                           values = 2D numpy arrays representing CN probabilities for each exon.
-# - priors (np.ndarray): Prior probabilities for CN states.
-# - exons (list of lists[str, int, int, str]): exons infos [CHR, START, END, EXONID].
-# - maxDistBetweenExons (int): distance cutoff
-def updateTransMatrix(transitions, likelihoodsDict, priors, exons, maxDistBetweenExons):
-    for likelihoodsArr in likelihoodsDict.values():
-        # determines for each sample the most probable CN state for each exon
-        # by finding the maximum probability in the CN probabilities array.
-        bestStates = (priors * likelihoodsArr).argmax(axis=1)
-
-        # initialize to bogus chrom
-        prevCN = -1
-        prevChrom = -1
-        prevEnd = -1
-
-        for ei in range(len(bestStates)):
-            # skip no-call exons
-            if likelihoodsArr[ei][0] == -1:
-                continue
-
-            # if new chrom first called exon is not counted but used for init
-            if prevChrom != exons[ei][0]:
-                prevCN = bestStates[ei]
+        else:
+            if exons[ei][0] != prevChrom:
+                # changed chrom
                 prevChrom = exons[ei][0]
-                prevEnd = exons[ei][2]
-                continue
-
-            dist = exons[ei][1] - prevEnd - 1
-
-            # update transitions if exons are close enough.
-            if dist <= maxDistBetweenExons:
-                transitions[prevCN, bestStates[ei]] += 1
-
-            # in both cases update prevs
+            elif exons[ei][1] - prevEnd <= maxIED:
+                counts[prevState, bestStates[ei]] += 1
+            # in all cases, update prevs
             prevEnd = exons[ei][2]
-            prevCN = bestStates[ei]
+            prevState = bestStates[ei]
+
+    return(counts)
