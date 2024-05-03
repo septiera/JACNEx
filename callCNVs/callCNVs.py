@@ -19,9 +19,10 @@ logger = logging.getLogger(__name__)
 # Call CNVs with callCNVsOneSample() in parallel for each sample in likelihoodsDict.
 #
 # Args:
-# - likelihoodsDict: key==sampleID, value==(ndarray[floats] dim nbExons*nbStates) holding the
-#   pseudo-emission probabilities (likelihoods) of each state for each exon for this sample.
-# - exons: list of nbExons exons, one exon is a list [CHR, START, END, EXONID].
+# - likelihoodsDict: key==sampleID, value==(ndarray[floats] dim NbExons*NbStates)
+#   holding the likelihoods of each state for each exon for this sample (no-call
+#   exons should have all likelihoods == -1)
+# - exons: list of nbExons exons, one exon is a list [CHR, START, END, EXONID]
 # - transMatrix (ndarray[floats] dim nbStates*nbStates): base transition probas between states
 # - priors (ndarray dim nbStates): prior probabilities for each state
 # - dmax [int]: param for adjustTransMatrix()

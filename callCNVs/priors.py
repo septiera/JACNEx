@@ -20,7 +20,8 @@ logger = logging.getLogger(__name__)
 #
 # Args:
 # - likelihoodsDict: key==sampleID, value==(ndarray[floats] dim NbExons*NbStates)
-#   holding the likelihoods of each state for each exon for this sample
+#   holding the likelihoods of each state for each exon for this sample (no-call
+#   exons should have all likelihoods == -1)
 # - jobs (int): Number of jobs to run in parallel
 #
 # Returns priors (ndarray of NbStates floats): prior probabilities for each state.
