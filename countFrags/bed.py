@@ -144,6 +144,44 @@ def sortExonsOrBPs(data):
     return()
 
 
+####################################################
+# getInterExonDistCutoffs:
+# calculates two important metrics for building the base transition matrix and
+# for adjusting the transition probas: baseTransMatMaxIED and adjustTransMatDMax.
+# These are defined by the *Quantile values hard-coded below, which should be fine.
+# See buildBaseTransMatrix() and adjustTransMatrix() in transitions.py for details
+# on how these metrics are used.
+#
+# Args:
+# - exons: list of nbExons exons, one exon is a list [CHR, START, END, EXONID]
+#
+# Returns the tuple (baseTransMatMaxIED, adjustTransMatDMax).
+def getInterExonDistCutoffs(exons):
+    # baseTransMatQuantile: inter-exon distance quantile to use as cutoff when building
+    # the base transition matrix, hard-coded here. See buildBaseTransMatrix()
+    baseTransMatQuantile = 0.5
+    # adjustTransMatQuantile: inter-exon distance quantile to use as dmax when adjusting
+    # the transition probas from baseTransMat to priors, hard-coded here. See adjustTransMatrix()
+    adjustTransMatQuantile = 0.9
+
+    interExonDistances = numpy.zeros(len(exons), dtype=int)
+
+    prevChrom = ""
+    prevEnd = 0
+    for ei in range(len(exons)):
+        if exons[ei][0] != prevChrom:
+            # changed chrom, keeping the default IED==0, doesn't matter
+            prevChrom = exons[ei][0]
+        else:
+            interExonDistances[ei] = exons[ei][1] - prevEnd
+        # in all cases, update prevEnd
+        prevEnd = exons[ei][2]
+
+    baseTransMatMaxIED = int(numpy.quantile(interExonDistances, baseTransMatQuantile))
+    adjustTransMatDMax = int(numpy.quantile(interExonDistances, adjustTransMatQuantile))
+    return(baseTransMatMaxIED, adjustTransMatDMax)
+
+
 ###############################################################################
 ############################ PRIVATE FUNCTIONS ################################
 ###############################################################################
