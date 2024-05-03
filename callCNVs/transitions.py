@@ -9,41 +9,26 @@ logger = logging.getLogger(__name__)
 ############################ PUBLIC FUNCTIONS #################################
 ###############################################################################
 ############################################
-# getTransMatrix
-# Calculates the transition matrix for CN states, and computes
-# the CN probabilities for autosomal and gonosomal samples.
-# Specs:
-# 1. calculates the starts of chromosomes and computes the distances between consecutive exons within each chromosome.
-#    This is done separately for autosomal and gonosomal exons.
-# 2. calculates the maximum distance (dmax) below a specified percentile threshold and the median distance (medDist)
-#    of non-zero distances.
-#    These values are used to determine the threshold for considering exon distances in the transition matrix update.
-# 3. initializes a transition matrix, which is a 2D array of integers representing the transition probabilities
-#    between different CN states.
-# 4. update transition matrix with CN counts for autosomal and gonosomal samples separately.
-#    This update process is based on the likelihoods of CN states provided for each sample,
-#    as well as prior probabilities and exon distances.
-#    Exons with distances exceeding medDist are excluded from the transition matrix update.
-# 5. normalize the transition matrix of counts to ensure that the probabilities sum to 1.
+# buildBaseTransMatrix
+# Build the base transition matrix, using the states that maximize
+# the posterior probability (ie prior * likelihood) for each
+# pair of called exons that are "close enough" (maxIED).
 #
 # Args:
-# - likelihoods_A (dict): CN likelihoods for autosomal exons; key=sampID[str],
-#                         values=numpy.ndarray of likelihoods[floats].
-#                         dim = NbExonsOnAutosomes * NbOfCNStates
-# - likelihoods_G (dict): CN likelihoods for gonosomal exons.
-# - autosomeExons (list of lists[str, int, int, str]): autosome exon infos;
-#                                                      [CHR,START,END,EXONID]
-# - gonosomeExons (list of lists[str, int, int, str]): gonosome exon infos
-# - priors (,p.ndarray[floats]): prior probabilities for each CN status.
-# - nbStates (int): number of CN states.
-# - transMatrixCutoff (int): inter-exon percentile threshold for initializing the transition matrix.
+# - likelihoodsDict: key==sampleID, value==(ndarray[floats] dim NbExons*NbStates)
+#   holding the likelihoods of each state for each exon for this sample (no-call
+#   exons should have all likelihoods == -1)
+# - exons: list of nbExons exons, one exon is a list [CHR, START, END, EXONID]
+# - priors (ndarray dim nbStates): prior probabilities for each state
+# - maxIED (int): max inter-exon distance for a pair of consecutive called exons
+#   to be used here
 #
-# Returns:
-# - transAndInit (np.ndarray[floats]): transition matrix used for the HMM, including
-#                                      the "init" state. dim = [nbStates+1, nbStates+1]
-# - dmax (int): maximum distance below the specified percentile threshold.
-def getTransMatrix(likelihoods_A, likelihoods_G, autosomeExons, gonosomeExons,
-                   priors, nbStates, transMatrixCutoff):
+# Returns transMatrix (ndarray[floats] dim nbStates*nbStates): base transition
+# probas between states
+def buildBaseTransMatrix(likelihoodsDict, exons, priors, maxIED):
+
+    ##### TODO I AM HERE
+
 
     dmax, medDist = getMaxAndMedianDist(autosomeExons, gonosomeExons, transMatrixCutoff)
     logger.info("dmax below the %sth percentile threshold is : %s", transMatrixCutoff, dmax)
