@@ -14,6 +14,7 @@ import time
 
 ####### JACNEx modules
 import countFrags.countsFile
+import countFrags.bed
 import clusterSamps.clustFile
 import callCNVs.exonProfiling
 import callCNVs.rescaling
@@ -219,6 +220,14 @@ def main(argv):
     logger.debug("Done parseClustsFile, in %.2f s", thisTime - startTime)
     startTime = thisTime
 
+    ###################
+    # calculate metrics for building and adjusting the transition matrix.
+    # These will be used later, but we calculate them now because they are
+    # cluster-independant.
+    allExons = autosomeExons.copy()
+    allExons.extend(gonosomeExons)
+    (baseTransMatMaxIED, adjustTransMatDMax) = countFrags.bed.getInterExonDistCutoffs(allExons)
+
     ####################
     # Exon profiling:
     # To assign specific CN profiles to each exon, applies continuous statistical distributions
@@ -312,6 +321,12 @@ def main(argv):
     logger.debug("Done calcLikelihoods in %.2f s", thisTime - startTime)
     startTime = thisTime
 
+    # temp trick for comparing with AS implem: merge auto and gono likelihoodDicts, appending _G to
+    # gono sampleIDs
+    likelihoodsDict = likelihoods_A.copy()
+    for k in likelihoods_G.keys():
+        likelihoodsDict[k + "_G"] = likelihoods_G[k]
+
     #########
     # Obtain priors probabilities using likelihood data for each CN.
     # The process follows Bayesian principles, which involve updating prior probabilities based on observed data.
@@ -320,22 +335,15 @@ def main(argv):
     # Bayesian theory provides a robust framework for this adjustment, facilitating convergence between
     # previous and current priors.
     try:
-        # temp trick for comparing with AS implem: merge auto and gono likelihoodDicts, appending _G to
-        # gono sampleIDs
-        likelihoods = likelihoods_A.copy()
-        for k in likelihoods_G.keys():
-            likelihoods[k + "_G"] = likelihoods_G[k]
-        priors = callCNVs.priors.calcPriors(likelihoods, jobs)
+        priors = callCNVs.priors.calcPriors(likelihoodsDict, jobs)
     except Exception as e:
         raise Exception("calcPriors failed: %s", repr(e))
 
+    formatted_priors = "  ".join(["%.2e" % x for x in priors])
+    logger.info("Calculated priors: %s", formatted_priors)
     thisTime = time.time()
     logger.debug("Done calcPriors in %.2f s", thisTime - startTime)
     startTime = thisTime
-
-    ####### DEBUG PRINT
-    formatted_priors = " ".join(["%.3e" % x for x in priors])
-    logger.debug("Priors: %s", formatted_priors)
 
     #########
     # - generates a transition matrix for CN states from likelihood data,
@@ -343,11 +351,9 @@ def main(argv):
     # The function adds an 'init' state to the transition matrix, improving its use
     # in Hidden Markov Models (HMMs).
     # The resulting 'transMatrix' is a 2D numpy array. dim =(nbOfCNStates) * (nbOfCNStates)
-    # Additionally, the function calculates the maximum distance (dmax) below a given percentile
-    # threshold (pDist)from the distances between exons for both autosomal and gonosomal samples.
     try:
-        transMatrix, dmax = callCNVs.transitions.getTransMatrix(likelihoods_A, likelihoods_G, autosomeExons,
-                                                                gonosomeExons, priors, len(CNStates), pDist)
+        transMatrix = callCNVs.transitions.buildBaseTransMatrix(likelihoodsDict, allExons,
+                                                                priors, baseTransMatMaxIED, jobs)
     except Exception as e:
         raise Exception("getTransMatrix failed: %s", repr(e))
 
@@ -367,8 +373,10 @@ def main(argv):
     # CNV type, start and end positions of the affected exons, the event quality score,
     # and the sample ID.
     try:
-        CNVs_A = callCNVs.callCNVs.callAllCNVs(likelihoods_A, autosomeExons, transMatrix, priors, dmax, jobs)
-        CNVs_G = callCNVs.callCNVs.callAllCNVs(likelihoods_G, gonosomeExons, transMatrix, priors, dmax, jobs)
+        CNVs_A = callCNVs.callCNVs.callAllCNVs(likelihoods_A, autosomeExons, transMatrix,
+                                               priors, adjustTransMatDMax, jobs)
+        CNVs_G = callCNVs.callCNVs.callAllCNVs(likelihoods_G, gonosomeExons, transMatrix,
+                                               priors, adjustTransMatDMax, jobs)
     except Exception as e:
         raise Exception("callAllCNVs() failed: %s", repr(e))
 
