@@ -1,4 +1,3 @@
-import concurrent.futures
 import logging
 import numpy
 
@@ -23,35 +22,32 @@ logger = logging.getLogger(__name__)
 # - priors (ndarray dim nbStates): prior probabilities for each state
 # - maxIED (int): max inter-exon distance for a pair of consecutive called exons
 #   to contribute to the baseTransMatrix.
-# - jobs (int): number of jobs to run in parallel.
 #
 # Returns transMatrix (ndarray[floats] dim nbStates*nbStates): base transition
 # probas between states
-def buildBaseTransMatrix(likelihoodsDict, exons, priors, maxIED, jobs):
+def buildBaseTransMatrix(likelihoodsDict, exons, priors, maxIED):
     nbStates = len(priors)
     # count transitions between valid, close-enough exons in all samples
     countsAllSamples = numpy.zeros((nbStates, nbStates), dtype=numpy.uint64)
 
-    ##################
-    # Define nested callback for processing countMostLikelyTransitions() result.
-    # sampleDone:
-    # args: a Future object returned by ProcessPoolExecutor.submit(countMostLikelyTransitions),
-    # and an ndarray that will be updated in-place (ie countsAllSamples).
-    # If something went wrong, log and propagate exception.
-    def sampleDone(futureRes, counts):
-        e = futureRes.exception()
-        if e is not None:
-            logger.error("countMostLikelyTransitions() failed for sample %s", str(e))
-            raise(e)
-        else:
-            counts += futureRes.result()
-
-    ##################
-    with concurrent.futures.ProcessPoolExecutor(jobs) as pool:
-        for likelihoods in likelihoodsDict.values():
-            futureRes = pool.submit(countMostLikelyTransitions, likelihoods,
-                                    exons, priors, maxIED)
-            futureRes.add_done_callback(lambda f: sampleDone(f, countsAllSamples))
+    for likelihoods in likelihoodsDict.values():
+        bestStates = (priors * likelihoods).argmax(axis=1)
+        prevChrom = ""
+        prevEnd = 0
+        prevState = 2
+        for ei in range(len(exons)):
+            # ignore NOCALL (ie all likelihoods == -1) exons
+            if likelihoods[ei, 0] < 0:
+                continue
+            else:
+                if exons[ei][0] != prevChrom:
+                    # changed chrom
+                    prevChrom = exons[ei][0]
+                elif exons[ei][1] - prevEnd <= maxIED:
+                    countsAllSamples[prevState, bestStates[ei]] += 1
+                # in all cases, update prevs
+                prevEnd = exons[ei][2]
+                prevState = bestStates[ei]
 
     # Normalize each row to obtain the transition matrix
     baseTransMat = countsAllSamples.astype(numpy.float128)
@@ -92,46 +88,3 @@ def adjustTransMatrix(transMatrix, priors, d, dmax):
                                   (priors[state] - transMatrix[:, state]) * (d / dmax) ** N)
 
     return newTrans
-
-
-###############################################################################
-############################ PRIVATE FUNCTIONS ################################
-###############################################################################
-
-######################################
-# countMostLikelyTransitions:
-# Using the states that maximize the posterior probability (ie prior * likelihood),
-# count the number of state transitions between valid, close-enough exons
-#
-# Args:
-# - likelihoods (ndarray[floats] dim NbExons*NbStates): likelihoods of each state
-#   for each exon for one sample
-# - exons: list of nbExons exons, one exon is a list [CHR, START, END, EXONID]
-# - priors (ndarray dim nbStates): prior probabilities for each state
-# - maxIED (int): max inter-exon distance for a transition to count
-#
-# Returns counts (ndarray[uint64] size nbStates*nbStates): numbers of (accepted)
-# transitions between states
-def countMostLikelyTransitions(likelihoods, exons, priors, maxIED):
-    nbStates = len(priors)
-    counts = numpy.zeros((nbStates, nbStates), dtype=numpy.uint64)
-    bestStates = (priors * likelihoods).argmax(axis=1)
-
-    prevChrom = ""
-    prevEnd = 0
-    prevState = 2
-    for ei in range(len(exons)):
-        # ignore NOCALL (ie all likelihoods == -1) exons
-        if likelihoods[ei, 0] < 0:
-            continue
-        else:
-            if exons[ei][0] != prevChrom:
-                # changed chrom
-                prevChrom = exons[ei][0]
-            elif exons[ei][1] - prevEnd <= maxIED:
-                counts[prevState, bestStates[ei]] += 1
-            # in all cases, update prevs
-            prevEnd = exons[ei][2]
-            prevState = bestStates[ei]
-
-    return(counts)

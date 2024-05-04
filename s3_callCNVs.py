@@ -358,12 +358,12 @@ def main(argv):
     # The resulting 'transMatrix' is a 2D numpy array. dim =(nbOfCNStates) * (nbOfCNStates)
     try:
         transMatrix = callCNVs.transitions.buildBaseTransMatrix(likelihoodsDict, allExons,
-                                                                priors, baseTransMatMaxIED, jobs)
+                                                                priors, baseTransMatMaxIED)
     except Exception as e:
-        raise Exception("getTransMatrix failed: %s", repr(e))
+        raise Exception("buildBaseTransMatrix failed: %s", repr(e))
 
     thisTime = time.time()
-    logger.debug("Done getTransMatrix, in %.2fs", thisTime - startTime)
+    logger.debug("Done buildBaseTransMatrix, in %.2fs", thisTime - startTime)
     startTime = thisTime
 
     ######## DEBUG PRINT
