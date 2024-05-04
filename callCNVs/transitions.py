@@ -48,13 +48,15 @@ def buildBaseTransMatrix(likelihoodsDict, exons, priors, maxIED, jobs):
 
     ##################
     with concurrent.futures.ProcessPoolExecutor(jobs) as pool:
-        for sampID in likelihoodsDict.keys():
-            futureRes = pool.submit(countMostLikelyTransitions, likelihoodsDict[sampID],
+        for likelihoods in likelihoodsDict.values():
+            futureRes = pool.submit(countMostLikelyTransitions, likelihoods,
                                     exons, priors, maxIED)
             futureRes.add_done_callback(lambda f: sampleDone(f, countsAllSamples))
 
     # Normalize each row to obtain the transition matrix
-    baseTransMat = countsAllSamples.astype(numpy.float128) / countsAllSamples.sum(axis=1)
+    baseTransMat = countsAllSamples.astype(numpy.float128)
+    for i in range(nbStates):
+        baseTransMat[i, :] /= countsAllSamples[i, :].sum()
     return(baseTransMat)
 
 

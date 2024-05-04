@@ -8,6 +8,7 @@
 ###############################################################################################
 import getopt
 import logging
+import numpy
 import os
 import sys
 import time
@@ -321,11 +322,15 @@ def main(argv):
     logger.debug("Done calcLikelihoods in %.2f s", thisTime - startTime)
     startTime = thisTime
 
-    # temp trick for comparing with AS implem: merge auto and gono likelihoodDicts, appending _G to
-    # gono sampleIDs
-    likelihoodsDict = likelihoods_A.copy()
-    for k in likelihoods_G.keys():
-        likelihoodsDict[k + "_G"] = likelihoods_G[k]
+    # temp trick for comparing with AS implem: merge auto and gono likelihoodDicts, stacking the
+    # gonosome likelihoods below thed autosome likelihoods for each sample
+    likelihoodsDict = {}
+    for s in likelihoods_A.keys():
+        if s in likelihoods_G:
+            likelihoodsDict[s] = numpy.vstack((likelihoods_A[s], likelihoods_G[s]))
+        else:
+            likelihoodsDict[s] = numpy.vstack((likelihoods_A[s],
+                                               numpy.full((len(gonosomeExons), len(CNStates)), -1)))
 
     #########
     # Obtain priors probabilities using likelihood data for each CN.
@@ -373,10 +378,8 @@ def main(argv):
     # CNV type, start and end positions of the affected exons, the event quality score,
     # and the sample ID.
     try:
-        CNVs_A = callCNVs.callCNVs.callAllCNVs(likelihoods_A, autosomeExons, transMatrix,
-                                               priors, adjustTransMatDMax, jobs)
-        CNVs_G = callCNVs.callCNVs.callAllCNVs(likelihoods_G, gonosomeExons, transMatrix,
-                                               priors, adjustTransMatDMax, jobs)
+        CNVs = callCNVs.callCNVs.callAllCNVs(likelihoodsDict, allExons, transMatrix,
+                                             priors, adjustTransMatDMax, jobs)
     except Exception as e:
         raise Exception("callAllCNVs() failed: %s", repr(e))
 
@@ -387,8 +390,7 @@ def main(argv):
     #########
     # VCF printing
     try:
-        callCNVs.callsFile.printCallsFile(CNVs_A, CNVs_G, autosomeExons, gonosomeExons,
-                                          samples, padding, outFile, madeBy)
+        callCNVs.callsFile.printCallsFile(CNVs, allExons, samples, padding, outFile, madeBy)
     except Exception as e:
         raise Exception("printCallsFile failed: %s", repr(e))
 

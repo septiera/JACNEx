@@ -14,18 +14,17 @@ logger = logging.getLogger(__name__)
 # generate an output file in VCF format containing CNV calls for autosomes and gonosomes.
 #
 # Args:
-# - CNVs_A, CNVs_G  (list of lists[int, int, int, float, str]): [CNtype, exonIndStart, exonIndEnd,
-#                                                                qualityScore, sampID].
-# - autosomeExons, gonosomeExons (list of lists[str, int, int, str]): exons infos
+# - CNVs (list of lists[int, int, int, float, str]): [CNtype, exonIndStart, exonIndEnd,
+#                                                     qualityScore, sampID].
+# - exons (list of lists[str, int, int, str]): exons infos
 # - samples (list[str]): sample names.
 # - padding (int): padding bases used.
 # - outFile (str): Output file name. It must be non-existent and can include a path (which must exist).
 #                  The output file will be compressed in gzip format if outFile ends with '.gz'.
 # - madeBy (str): Name + version of program that made the CNV calls.
-def printCallsFile(CNVs_A, CNVs_G, autosomeExons, gonosomeExons, samples, padding, outFile, madeBy):
+def printCallsFile(CNVs, exons, samples, padding, outFile, madeBy):
 
-    vcf_A = vcfFormat(CNVs_A, autosomeExons, samples, padding)
-    vcf_G = vcfFormat(CNVs_G, gonosomeExons, samples, padding)
+    vcf = vcfFormat(CNVs, exons, samples, padding)
 
     try:
         if outFile.endswith(".gz"):
@@ -54,13 +53,8 @@ def printCallsFile(CNVs_A, CNVs_G, autosomeExons, gonosomeExons, samples, paddin
     outFH.write('\n')
 
     #### fill results
-    for cnvIndex in range(len(vcf_A)):
-        toPrint = '\t'.join(str(x) for x in vcf_A[cnvIndex])
-        toPrint += "\n"
-        outFH.write(toPrint)
-
-    for cnvIndex in range(len(vcf_G)):
-        toPrint = '\t'.join(str(x) for x in vcf_G[cnvIndex])
+    for cnvIndex in range(len(vcf)):
+        toPrint = '\t'.join(str(x) for x in vcf[cnvIndex])
         toPrint += "\n"
         outFH.write(toPrint)
     outFH.close()
