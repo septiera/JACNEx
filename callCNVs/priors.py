@@ -5,6 +5,9 @@ import numpy
 # set up logger, using inherited config
 logger = logging.getLogger(__name__)
 
+# override inherited level
+logger.setLevel(logging.DEBUG)
+
 
 ###############################################################################
 ############################ PUBLIC FUNCTIONS #################################
@@ -45,7 +48,6 @@ def calcPriors(likelihoodsDict, jobs):
         priors = calcPosteriors(likelihoodsDict, priors, jobs)
         formattedPriors = " ".join(["%.2e" % x for x in priors])
         debugString = "Priors at iteration " + str(i + 1) + ":\t" + formattedPriors
-        logger.debug(debugString)
         noConvergeString += "\n" + debugString
         # Check for convergence
         if formattedPriors == formattedPriorsPrev:
@@ -55,7 +57,7 @@ def calcPriors(likelihoodsDict, jobs):
             formattedPriorsPrev = formattedPriors
 
     if converged:
-        logger.info("Priors converged after %i iterations", converged)
+        logger.debug("Priors converged after %i iterations:%s", converged, noConvergeString)
     else:
         logger.warning("Priors did not converge after %i iterations:%s", maxIter, noConvergeString)
         logger.warning("Try increasing maxIter in calcPriors(), and/or file an issue on github")
