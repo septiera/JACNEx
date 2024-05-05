@@ -101,8 +101,8 @@ def calcPosteriors(likelihoodsDict, priors, jobs):
 
     ##################
     with concurrent.futures.ProcessPoolExecutor(jobs) as pool:
-        for sampID in likelihoodsDict.keys():
-            futureRes = pool.submit(countMostLikelyStates, likelihoodsDict[sampID], priors)
+        for likelihoods in likelihoodsDict.values():
+            futureRes = pool.submit(countMostLikelyStates, likelihoods, priors)
             futureRes.add_done_callback(lambda f: sampleDone(f, countsPerState))
 
     posteriors = countsPerState.astype(numpy.float128) / countsPerState.sum()
