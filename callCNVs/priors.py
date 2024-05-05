@@ -38,8 +38,8 @@ def calcPriors(likelihoodsDict, jobs):
     formattedPriorsPrev = ""
     # text including priors at each step, for logging in case we don't converge
     noConvergeString = ""
-    # flag, true if we converged
-    converged = False
+    # number of iterations to converge, 0 if we never converged
+    converged = 0
 
     for i in range(maxIter):
         priors = calcPosteriors(likelihoodsDict, priors, jobs)
@@ -49,12 +49,14 @@ def calcPriors(likelihoodsDict, jobs):
         noConvergeString += "\n" + debugString
         # Check for convergence
         if formattedPriors == formattedPriorsPrev:
-            converged = True
+            converged = i + 1
             break
         else:
             formattedPriorsPrev = formattedPriors
 
-    if not converged:
+    if converged:
+        logger.info("Priors converged after %i iterations", converged)
+    else:
         logger.warning("Priors did not converge after %i iterations:%s", maxIter, noConvergeString)
         logger.warning("Try increasing maxIter in calcPriors(), and/or file an issue on github")
     # whether we converged or not, return last computed priors
