@@ -8,12 +8,14 @@
 ###############################################################################################
 import getopt
 import logging
+import numpy
 import os
 import sys
 import time
 
 ####### JACNEx modules
 import countFrags.countsFile
+import countFrags.bed
 import clusterSamps.clustFile
 import callCNVs.exonProfiling
 import callCNVs.rescaling
@@ -45,6 +47,7 @@ def parseArgs(argv):
     countsFile = ""
     clustsFile = ""
     outFile = ""
+    madeBy = ""
     # optional args with default values
     padding = 10
     transMatrixCutoff = 90
@@ -75,6 +78,7 @@ ARGUMENTS:
                     [CLUSTER_ID, SAMPLES, FIT_WITH, VALID]. File obtained from 2_clusterSamps.py.
     --out [str]: file where results will be saved, must not pre-exist, will be gzipped if it ends
                  with '.gz', can have a path component but the subdir must exist.
+    --madeBy [str]: program name + version to print as "source=" in the produced VCF.
     --padding [int] : number of bps used to pad the exon coordinates, default : """ + str(padding) + """
     --transMatrixCutoff [int]: inter-exon percentile threshold for initializing the transition matrix,
                                default : """ + str(transMatrixCutoff) + """
@@ -83,8 +87,8 @@ ARGUMENTS:
     -h , --help: display this help and exit\n"""
 
     try:
-        opts, args = getopt.gnu_getopt(argv[1:], 'h', ["help", "counts=", "clusts=", "out=", "padding=",
-                                                       "transMatrixCutoff=", "plotDir=", "jobs="])
+        opts, args = getopt.gnu_getopt(argv[1:], 'h', ["help", "counts=", "clusts=", "out=", "madeBy=",
+                                                       "padding=", "transMatrixCutoff=", "plotDir=", "jobs="])
     except getopt.GetoptError as e:
         raise Exception(e.msg + ". Try " + scriptName + " --help")
     if len(args) != 0:
@@ -100,6 +104,8 @@ ARGUMENTS:
             clustsFile = value
         elif opt in ("--out"):
             outFile = value
+        elif opt in ("--madeBy"):
+            madeBy = value
         elif opt in ("--padding"):
             padding = value
         elif opt in ("--transMatrixCutoff"):
@@ -129,6 +135,9 @@ ARGUMENTS:
         raise Exception("outFile " + outFile + " already exists")
     elif (os.path.dirname(outFile) != '') and (not os.path.isdir(os.path.dirname(outFile))):
         raise Exception("the directory where outFile " + outFile + " should be created doesn't exist")
+
+    if madeBy == "":
+        raise Exception("you must provide a madeBy string with --madeBy. Try " + scriptName + " --help")
 
     #####################################################
     # Check other args
@@ -163,7 +172,7 @@ ARGUMENTS:
         raise Exception("jobs must be a positive integer, not " + str(jobs))
 
     # AOK, return everything that's needed
-    return (countsFile, clustsFile, outFile, padding, transMatrixCutoff, plotDir, jobs)
+    return (countsFile, clustsFile, outFile, padding, transMatrixCutoff, plotDir, jobs, madeBy)
 
 
 ###############################################################################
@@ -176,7 +185,7 @@ ARGUMENTS:
 # may be available in the log
 def main(argv):
     # parse, check and preprocess arguments
-    (countsFile, clustsFile, outFile, padding, pDist, plotDir, jobs) = parseArgs(argv)
+    (countsFile, clustsFile, outFile, padding, pDist, plotDir, jobs, madeBy) = parseArgs(argv)
 
     # args seem OK, start working
     logger.debug("called with: " + " ".join(argv[1:]))
@@ -211,6 +220,14 @@ def main(argv):
     thisTime = time.time()
     logger.debug("Done parseClustsFile, in %.2f s", thisTime - startTime)
     startTime = thisTime
+
+    ###################
+    # calculate metrics for building and adjusting the transition matrix.
+    # These will be used later, but we calculate them now because they are
+    # cluster-independant.
+    allExons = autosomeExons.copy()
+    allExons.extend(gonosomeExons)
+    (baseTransMatMaxIED, adjustTransMatDMax) = countFrags.bed.getInterExonDistCutoffs(allExons)
 
     ####################
     # Exon profiling:
@@ -305,6 +322,16 @@ def main(argv):
     logger.debug("Done calcLikelihoods in %.2f s", thisTime - startTime)
     startTime = thisTime
 
+    # temp trick for comparing with AS implem: merge auto and gono likelihoodDicts, stacking the
+    # gonosome likelihoods below thed autosome likelihoods for each sample
+    likelihoodsDict = {}
+    for s in likelihoods_A.keys():
+        if s in likelihoods_G:
+            likelihoodsDict[s] = numpy.vstack((likelihoods_A[s], likelihoods_G[s]))
+        else:
+            likelihoodsDict[s] = numpy.vstack((likelihoods_A[s],
+                                               numpy.full((len(gonosomeExons), len(CNStates)), -1)))
+
     #########
     # Obtain priors probabilities using likelihood data for each CN.
     # The process follows Bayesian principles, which involve updating prior probabilities based on observed data.
@@ -313,17 +340,15 @@ def main(argv):
     # Bayesian theory provides a robust framework for this adjustment, facilitating convergence between
     # previous and current priors.
     try:
-        priors = callCNVs.priors.getPriors(likelihoods_A, likelihoods_G, jobs)
+        priors = callCNVs.priors.calcPriors(likelihoodsDict, jobs)
     except Exception as e:
-        raise Exception("getPriorsfailed: %s", repr(e))
+        raise Exception("calcPriors failed: %s", repr(e))
 
+    formatted_priors = "  ".join(["%.2e" % x for x in priors])
+    logger.info("Calculated priors: %s", formatted_priors)
     thisTime = time.time()
-    logger.debug("Done getPriors in %.2f s", thisTime - startTime)
+    logger.debug("Done calcPriors in %.2f s", thisTime - startTime)
     startTime = thisTime
-
-    ####### DEBUG PRINT
-    formatted_priors = "\t".join(["%.3e" % x for x in priors])
-    logger.debug("Initialisation Matrix:\n%s", formatted_priors)
 
     #########
     # - generates a transition matrix for CN states from likelihood data,
@@ -331,16 +356,14 @@ def main(argv):
     # The function adds an 'init' state to the transition matrix, improving its use
     # in Hidden Markov Models (HMMs).
     # The resulting 'transMatrix' is a 2D numpy array. dim =(nbOfCNStates) * (nbOfCNStates)
-    # Additionally, the function calculates the maximum distance (dmax) below a given percentile
-    # threshold (pDist)from the distances between exons for both autosomal and gonosomal samples.
     try:
-        transMatrix, dmax = callCNVs.transitions.getTransMatrix(likelihoods_A, likelihoods_G, autosomeExons,
-                                                                gonosomeExons, priors, len(CNStates), pDist)
+        transMatrix = callCNVs.transitions.buildBaseTransMatrix(likelihoodsDict, allExons,
+                                                                priors, baseTransMatMaxIED)
     except Exception as e:
-        raise Exception("getTransMatrix failed: %s", repr(e))
+        raise Exception("buildBaseTransMatrix failed: %s", repr(e))
 
     thisTime = time.time()
-    logger.debug("Done getTransMatrix, in %.2fs", thisTime - startTime)
+    logger.debug("Done buildBaseTransMatrix, in %.2fs", thisTime - startTime)
     startTime = thisTime
 
     ######## DEBUG PRINT
@@ -355,29 +378,25 @@ def main(argv):
     # CNV type, start and end positions of the affected exons, the event quality score,
     # and the sample ID.
     try:
-        CNVs_A, CNVs_G = callCNVs.callCNVs.applyHMM(samples, autosomeExons, gonosomeExons,
-                                                    likelihoods_A, likelihoods_G, priors,
-                                                    transMatrix, jobs, dmax)
+        CNVs = callCNVs.callCNVs.callAllCNVs(likelihoodsDict, allExons, transMatrix,
+                                             priors, adjustTransMatDMax, jobs)
     except Exception as e:
-        raise Exception("HMM.processCNVCalls failed: %s", repr(e))
+        raise Exception("callAllCNVs() failed: %s", repr(e))
 
     thisTime = time.time()
-    logger.debug("Done HMM.processCNVCalls in %.2f s", thisTime - startTime)
+    logger.debug("Done callAllCNVs() in %.2f s", thisTime - startTime)
     startTime = thisTime
 
     #########
     # VCF printing
     try:
-        callCNVs.callsFile.printCallsFile(CNVs_A, CNVs_G, autosomeExons, gonosomeExons,
-                                          samples, padding, outFile, scriptName)
+        callCNVs.callsFile.printCallsFile(CNVs, allExons, samples, padding, outFile, madeBy)
     except Exception as e:
         raise Exception("printCallsFile failed: %s", repr(e))
 
     thisTime = time.time()
     logger.debug("Done printCallsFile in %.2f s", thisTime - startTime)
     startTime = thisTime
-
-    sys.exit()
 
 
 ####################################################################################

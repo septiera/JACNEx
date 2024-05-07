@@ -153,7 +153,7 @@ def plotDendrogram(linkageMatrix, samples, clust2samps, fitWith, clustIsValid, t
         if n2c[nodei].startswith('V:'):
             n2c[nodei] = clust
             for ci in range(2):
-                child = int(linkageMatrix[nodei][ci])
+                child = int(linkageMatrix[nodei, ci])
                 if child >= numSamples:
                     setVirtualsToClust(n2c, child - numSamples, clust)
 

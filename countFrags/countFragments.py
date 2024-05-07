@@ -83,7 +83,7 @@ def initExonNCLs(exons):
 # Return a 3-element tuple (sampleIndex, sampleCounts, breakPointsTSV) where:
 # - sampleCounts is a 1D numpy int array dim = nbOfExons allocated here and filled with
 #   the counts for this sample,
-# - breakPointsTSV is a single string storing a TSV file with:
+# - breakPointsTSV is a single string storing data in TSV format with:
 #   CHR START END CNVTYPE COUNT-QNAMES QNAMES
 #   where CHR-START-END are the coordinates of the putative CNV, CNVTYPE is 'DEL' or 'DUP',
 #   COUNT-QNAMES is the number of QNAMEs that support this CNV, and QNAMES is the

@@ -151,7 +151,7 @@ def linkage2clusters(linkageMatrix, chromType, samples, minSize):
     #   ie BLzscore <= maxZscoreToMerge, or
     # - child is small (< minSize) and child's brother wants to merge.
     # current startDist heurisitic: 10% of highest node
-    startDist = linkageMatrix[-1][2] * 0.1
+    startDist = linkageMatrix[-1, 2] * 0.1
     maxZscoreToMerge = 3
     logger.debug("in buildClusters, using startDist = %.2f", startDist)
 
@@ -196,7 +196,7 @@ def linkage2clusters(linkageMatrix, chromType, samples, minSize):
                 # it can change its mind
                 sizeCi = 1
                 if children[ci] >= numSamples:
-                    sizeCi = linkageMatrix[children[ci] - numSamples][3]
+                    sizeCi = linkageMatrix[children[ci] - numSamples, 3]
                 if (not clustFitWith[children[ci]]) and (sizeCi < minSize):
                     wantsToMerge[ci] = True
 
@@ -303,9 +303,9 @@ def calcBLzscores(linkageMatrix, minSize):
                 BLs[ni].append(dist)
             else:
                 child -= numSamples
-                thisBL = dist - linkageMatrix[child][2]
+                thisBL = dist - linkageMatrix[child, 2]
                 childBLs = BLs[child]
-                weight = max(minSize / linkageMatrix[child][3], 1)
+                weight = max(minSize / linkageMatrix[child, 3], 1)
                 thisZscore = (thisBL - weight * statistics.mean(childBLs)) / (statistics.stdev(childBLs) + 1)
                 BLzscores[ni].append(thisZscore)
                 BLs[ni].append(thisBL)

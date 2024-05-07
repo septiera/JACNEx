@@ -1,190 +1,130 @@
+import concurrent.futures
 import logging
 import numpy
-import math
-import concurrent.futures
 
 # set up logger, using inherited config
 logger = logging.getLogger(__name__)
+
+# override inherited level
+logger.setLevel(logging.DEBUG)
 
 
 ###############################################################################
 ############################ PUBLIC FUNCTIONS #################################
 ###############################################################################
 ############################################
-# getPriors
-# Refines initialization probabilities for a HMM using likelihood data.
-# Methodology:
-# - At the beginning of each iteration, the initialization probabilities are
-# updated based on exon likelihood data and copy number type.
-# - The new probabilities are compared to the probabilities from the previous
-# iteration to determine if convergence has been achieved.
-# - If the new probabilities match the previous ones (or if the difference is
-# below a predefined threshold), convergence is assumed, and the probabilities are returned.
-# - Otherwise, the process repeats with the new probabilities until convergence is
-# reached or the maximum number of iterations is reached.
+# calcPriors:
+# calculate prior probabilities for each CN state.
+# Algorithm starts by counting the states that maximize the likelihood, and
+# then iteratively recalculates the priors by counting the states that maximize
+# the posterior probability (ie prior * likelihood).
+# This procedure ends when convergence is reached (approximately, ie using 2
+# decimals in scentific notation for each proba) or after maxIter iterations.
 #
 # Args:
-# - likelihoods_A, likelihoods_G (dict[str:np.ndarray]): likelihood data for autosomal and gonosomal exons.
-#                                                        Keys == sample IDs, values == numpy arrays of
-#                                                        dim (nbExons * nbCNType).
-# - jobs [int]: number of parallel jobs to run.
+# - likelihoodsDict: key==sampleID, value==(ndarray[floats] dim nbExons*nbStates)
+#   holding the likelihoods of each state for each exon for this sample (no-call
+#   exons should have all likelihoods == -1)
+# - jobs (int): number of jobs to run in parallel
 #
-# Returns:
-# - priors (numpy.ndarray[floats]): initialization probabilities for each CN type.
-def getPriors(likelihoods_A, likelihoods_G, jobs):
-    # Initialize the previous priors and format for convergence check
-    priorsPrev = []
-    formatPriorsPrev = ""
-    maxIter = 20  # Maximum number of iterations allowed for convergence
+# Returns priors (ndarray of nbStates floats): prior probabilities for each state.
+def calcPriors(likelihoodsDict, jobs):
+    # max number of iterations, hard-coded
+    maxIter = 20
 
-    # Iterate through a maximum of 'maxIter' iterations
+    # need nbStates, super ugly but it seems "this is the python way"
+    nbStates = next(iter(likelihoodsDict.values())).shape[1]
+    # priors start at 1 (ie we will initially count states with max likelihood)
+    priors = numpy.ones(nbStates, dtype=numpy.float128)
+
+    # to check for (approximate) convergence
+    formattedPriorsPrev = ""
+    # text including priors at each step, for logging in case we don't converge
+    noConvergeString = ""
+    # number of iterations to converge, 0 if we never converged
+    converged = 0
+
     for i in range(maxIter):
-        # Update priors using likelihood data and previous priors
-        priors = sumAndGetProbCNCounts(likelihoods_A, likelihoods_G, jobs, priorsPrev)
-        # Format the priors for convergence check
-        formatPriors = "\t".join(["%.2e" % x for x in priors])
-        logger.info("Initialisation Matrix (Iteration n°{}):\n{}".format(i + 1, formatPriors))
+        priors = calcPosteriors(likelihoodsDict, priors, jobs)
+        formattedPriors = " ".join(["%.2e" % x for x in priors])
+        debugString = "Priors at iteration " + str(i + 1) + ":\t" + formattedPriors
+        noConvergeString += "\n" + debugString
+        # Check for convergence
+        if formattedPriors == formattedPriorsPrev:
+            converged = i + 1
+            break
+        else:
+            formattedPriorsPrev = formattedPriors
 
-        # Check for convergence by comparing formatted priors with the previous iteration
-        if formatPriors == formatPriorsPrev:
-            return priors
-
-        # Update the previous formatted priors and priors list for the next iteration
-        formatPriorsPrev = formatPriors
-        priorsPrev = priors
-
-    # If convergence is not achieved within the specified iterations, log a warning
-    # and return the last computed priors (even if convergence was not achieved)
-    logger.warning("No convergence after %d iterations", maxIter)
+    if converged:
+        logger.debug("Priors converged after %i iterations:%s", converged, noConvergeString)
+    else:
+        logger.warning("Priors did not converge after %i iterations:%s", maxIter, noConvergeString)
+        logger.warning("Try increasing maxIter in calcPriors(), and/or file an issue on github")
+    # whether we converged or not, return last computed priors
     return priors
 
 
 ###############################################################################
 ############################ PRIVATE FUNCTIONS ################################
 ###############################################################################
+
 ####################
-# sumAndGetProbCNCounts
-# Methodology:
-# - Counts the maximum likelihood CNs separately for autosomal and gonosomal exons.
-# - Combines these counts to obtain the overall CN counts.
-# - Normalizes these counts to derive the initialization probabilities.
-# - Returns the computed priors.
+# calcPosteriors:
+# Given a likelihoodsDict and vector of prior probabilities, calculate and return
+# the vector of posterior probabilities, which can be considered as an updated
+# vector of priors. Samples are processed in parallel.
 #
 # Args:
-# - likelihoods_A, likelihoods_G (numpy.ndarray): Likelihood data
-# - jobs [int]: number of parallel jobs to run.
-# - priors_prev (numpy.ndarray[float]): prior probabilities from the previous iteration.
+# - likelihoodsDict: key==sampleID, value==(ndarray[floats] dim nbExons*nbStates)
+#   holding the likelihoods of each state for each exon for this sample
+# - priors (ndarray of nbStates floats): initial prior probabilities for each state
+# - jobs (int): number of jobs to run in parallel.
 #
-# Returns:
-# - priors (numpy.ndarray[floats]): Initialization probabilities for the HMM.
-def sumAndGetProbCNCounts(likelihoods_A, likelihoods_G, jobs, priorsPrev):
-    # Count the maximum likelihoods for autosomal exons
-    likelihoodsCounts_A = parallelizeCNCounts(likelihoods_A, priorsPrev, jobs)
-    # Count the maximum likelihoods for gonosomal exons
-    likelihoodsCounts_G = parallelizeCNCounts(likelihoods_G, priorsPrev, jobs)
-    # Combine the counts from autosomal and gonosomal exons
-    priorsCounts = likelihoodsCounts_A + likelihoodsCounts_G
-    # Compute the probabilities by normalizing the counts (float128 not supported by numba)
-    priors = priorsCounts.astype(numpy.float128) / priorsCounts.sum()
-    return priors
+# Returns posteriors, same type as priors.
+def calcPosteriors(likelihoodsDict, priors, jobs):
+    countsPerState = numpy.zeros(len(priors), dtype=numpy.uint64)
+
+    ##################
+    # Define nested callback for processing countMostLikelyStates() result.
+    # sampleDone:
+    # args: a Future object returned by ProcessPoolExecutor.submit(countMostLikelyStates),
+    # and an ndarray that will be updated in-place (ie countsPerState).
+    # If something went wrong, log and propagate exception, otherwise update countsPerState.
+    def sampleDone(futureRes, counts):
+        e = futureRes.exception()
+        if e is not None:
+            logger.error("countMostLikelyStates() failed for sample %s", str(e))
+            raise(e)
+        else:
+            counts += futureRes.result()
+
+    ##################
+    with concurrent.futures.ProcessPoolExecutor(jobs) as pool:
+        for likelihoods in likelihoodsDict.values():
+            futureRes = pool.submit(countMostLikelyStates, likelihoods, priors)
+            futureRes.add_done_callback(lambda f: sampleDone(f, countsPerState))
+
+    posteriors = countsPerState.astype(numpy.float128) / countsPerState.sum()
+    return(posteriors)
 
 
-############################################
-# parallelizeCNCounts
-# Perform parallelized counting of the most probable CN type across all samples.
-# Methodology:
-# - Distributes tasks across multiple jobs for efficiency.
-# - Each sample's likelihood array is processed asynchronously.
-# - Combines results to obtain counts of CNs with the highest likelihood.
-#
-# Args:
-# - likelihoodDict (dict[str:np.ndarray]): keys == sampleID and values = numpy array
-#                                          containing likelihood values for CNs and exons.
-# - priorsPrev (numpy.ndarray[floats]): Prior probabilities from the previous iteration.
-# - jobs [int]: number of parallel jobs to run.
-#
-# Returns:
-# - count_array (numpy.ndarray[ints]): count of exons with the highest likelihood value
-#                                      for each CN index across all samples.
-def parallelizeCNCounts(likelihoodDict, priorsPrev, jobs):
-
-    # Initialize an array to store the count of CNs with the highest likelihood value for each CN index
-    maxCNIndex = numpy.zeros((likelihoodDict[list(likelihoodDict.keys())[0]].shape[1],), dtype=int)
-
-    # determine the number of samples to process in parallel, based on available jobs
-    paraSamp = min(math.ceil(jobs / 2), len(likelihoodDict.keys()))
-
-    # Create a thread pool executor with the specified number of jobs
-    with concurrent.futures.ThreadPoolExecutor(paraSamp) as pool:
-        # Iterate over each numpy array in the dictionary
-        futures = []
-        for sampID, arr in likelihoodDict.items():
-            # Submit a task to the pool to process each array asynchronously
-            future = pool.submit(getCNCounts, arr, priorsPrev)
-            futures.append(future)
-
-        # Wait for all tasks to complete
-        for future in concurrent.futures.as_completed(futures):
-            # Retrieve the result of each completed task
-            CN_counts = future.result()
-            # Accumulate the counts
-            maxCNIndex += CN_counts
-
-    return maxCNIndex
-
-
-#######################
-# getCNCounts
-# Process the likelihood array to count the occurrences of the most probable CN type.
+####################
+# countMostLikelyStates:
+# count for each CN state the number of exons whose most likely a posteriori state is CN.
 #
 # Args:
-# - likelihoodArr (numpy.ndarray[floats]):containing likelihood values for each CNs types and exons.
-# - priors (numpy.ndarray): Prior probabilities from the previous iteration.
+# - likelihoods (ndarray[floats] dim nbExons*nbStates): likelihoods of each state
+#   for each exon for one sample
+# - priors (ndarray of nbStates floats): initial prior probabilities for each state
 #
-# Returns:
-# - CN_counts (numpy.ndarray[ints]): exon occurrences of the most probable CN type.
-def getCNCounts(likelihoodArr, priorsPrev):
-    CN_counts = numpy.zeros(likelihoodArr.shape[1], dtype=int)
+# Returns the counts as an ndarray of nbStates uint64s
+def countMostLikelyStates(likelihoods, priors):
+    counts = numpy.zeros(len(priors), dtype=numpy.uint64)
+    bestStates = (priors * likelihoods).argmax(axis=1)
 
-    # Calculate the most probable CN path for the given likelihood array and priors.
-    CNPath = getCNPath(likelihoodArr, priorsPrev)
-
-    # Increment the count for each occurrence of the most probable CN type.
-    for cn in CNPath:
-        if cn == -1:
-            continue
-        CN_counts[cn] += 1
-
-    return CN_counts
-
-
-######################
-# getCNPath
-# Determines the most probable copy number type for each exon based on likelihoods and priors.
-#
-# Args:
-# - likelihoodArr (numpy.ndarray[floats]):containing likelihood values for each CNs types and exons.
-# - priorsPrev (numpy.ndarray[floats]): Prior probabilities from the previous iteration
-#
-# Returns:
-# - CNPath (numpy.ndarray[ints]): containing the most probable CN type for each exon,
-#                                 with -1 indicating non-interpretable data (nocall).
-def getCNPath(likelihoodArr, priorsPrev):
-    # Create a copy of the array to avoid modifying the original array
-    arr_copy = numpy.copy(likelihoodArr)
-
-    # Identify exons with non-interpretable data
-    isSkipped = numpy.any(arr_copy == -1, axis=1)
-
-    # Apply priors if available
-    if len(priorsPrev) != 0:
-        arr_copy *= priorsPrev
-
-    # Determine the most probable CN type for each exon
-    CNPath = numpy.argmax(arr_copy, axis=1)
-
-    # WARN: Marks non-interpretable data with -1 but retains them in the list for the transition
-    # calculation step to maintain the exon order for identifying chromosome changes.
-    CNPath[isSkipped] = -1
-
-    return CNPath
+    for ei in range(len(bestStates)):
+        # ignore NOCALL (ie all likelihoods == -1) exons
+        if likelihoods[ei, 0] >= 0:
+            counts[bestStates[ei]] += 1
+    return(counts)
