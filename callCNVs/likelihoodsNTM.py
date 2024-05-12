@@ -2,6 +2,9 @@ import logging
 import numpy
 import scipy.stats
 
+####### JACNEx modules
+import callCNVs.robustGaussianFit
+
 
 # set up logger, using inherited config
 logger = logging.getLogger(__name__)
@@ -62,3 +65,66 @@ def calcLikelihoodsCN0(FPMs, likelihoods, CN0scale):
     for si in range(FPMs.shape[1]):
         likelihoods[si, :, 0] = scipy.stats.halfnorm.pdf(FPMs[:, si], scale=CN0scale)
 
+
+############################################
+# fitCN2andCalcLikelihoods:
+# for each exon (==row of FPMsOfCluster):
+# - try to fit a normal distribution to the dominant component of the FPMs (this is
+#   our model of CN2, we assume that most samples are CN2)
+# - if fitting fails one of the QC criteria, exon is NOCALL => set likelihoods to -1
+# - else calculate likelihoods for CN1, CN2, CN3+
+#
+# Args:
+# - intergenicFPMs numpy 2D-array of floats, size=len(intergenics)] * len(samples),
+#   holding the FPM-normalized counts for intergenic pseudo-exons
+#
+# Returns (CN0scale, fpmThreshold):
+# - CN0scale is the scale parameter of the fitted half-normal distribution
+# - fpmThreshold is the FPM threshold up to which data looks like it could very possibly
+#   have been produced by the CN0 model (set to fracPPF of the inverse CDF == quantile
+#   function). This will be used later for filtering NOCALL exons.
+def fitCN2andCalcLikelihoods():
+    return
+
+
+###############################################################################
+############################ PRIVATE FUNCTIONS ################################
+###############################################################################
+
+############################################
+# fitCN2:
+# Try to fit a normal distribution to the dominant component of FPMsOfExon
+# (this is our model of CN2, we assume that most samples are CN2), and apply
+# the following QC criteria, testing if:
+# - exon isn't captured (median FPM <= fpmThreshold)
+# - fitting fails (exon is very atypical, can't make any calls)
+# - CN2 model isn't supported by 50% or more of the samples
+# - CN2 Gaussian can't be clearly distinguished from CN0 model
+#
+# If one of the QC criteria fails, raise an exception;
+# otherwise return (mu,sigma) == mean and stdev of the CN2 model
+def fitCN2(FPMsOfExon, fpmThreshold):
+    if numpy.median(FPMsOfExon) <= fpmThreshold:
+        raise Exception("uncaptured exon")
+
+    try:
+        (mu, sigma) = callCNVs.robustGaussianFit.robustGaussianFit(FPMsOfExon)
+    except Exception as e:
+        if str(e) != "cannot fit":
+            logger.warning("robustGaussianFit failed unexpectedly: %s", repr(e))
+        raise
+
+    # require at least minSamps samples within sdLim sigmas of mu
+    minSamps = len(FPMsOfExon) * 0.5
+    sdLim = 2
+    samplesUnderCN2 = numpy.sum(numpy.logical_and(FPMsOfExon - mu - sdLim * sigma < 0,
+                                                  FPMsOfExon - mu + sdLim * sigma > 0))
+    if samplesUnderCN2 < minSamps:
+        raise Exception("low support for CN2")
+
+    # require CN2 to be at least minZscore sigmas from fpmThreshold
+    minZscore = 3
+    if (mu - minZscore * sigma) <= fpmThreshold:
+        raise Exception("CN2 too close to CN0")
+
+    return(mu, sigma)
