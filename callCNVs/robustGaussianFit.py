@@ -4,7 +4,7 @@
 # Copyright (c) 2022 hmiemad
 #
 # MIT License
-# 
+#
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
 # in the Software without restriction, including without limitation the rights
@@ -100,4 +100,7 @@ def robustGaussianFit(X, mu=None, sigma=None, bandwidth=2.0, eps=1.0e-5):
         var = numpy.average(numpy.square(X[Window] - mu))
         sigma_0, sigma = sigma, numpy.sqrt(var) / bandwidth_truncated_normal_sigma
 
+    if sigma == 0:
+        # set to 5% on each side of the mean
+        sigma = mu * 0.05
     return (mu, sigma)
