@@ -19,7 +19,8 @@ logger = logging.getLogger(__name__)
 #   nbSamples * nbExons * nbStates: likelihoods[s,e,cn] will store the likehood
 #   of state cn for exon e in sample s
 def allocateLikelihoods(nbSamples, nbExons, nbStates):
-    return(numpy.full((nbSamples, nbExons, nbStates), fill_value=-1, dtype=numpy.float64, order='F'))
+    return(numpy.full((nbSamples, nbExons, nbStates), fill_value=-1,
+                      dtype=numpy.float64, order='F'))
 
 
 ############################################
@@ -69,10 +70,12 @@ def calcLikelihoodsCN0(FPMs, likelihoods, CN0scale):
 ############################################
 # fitCN2andCalcLikelihoods:
 # for each exon (==row of FPMsOfCluster):
-# - try to fit a normal distribution to the dominant component of the FPMs (this is
+# - fit a normal distribution to the dominant component of the FPMs (this is
 #   our model of CN2, we assume that most samples are CN2)
-# - if fitting fails one of the QC criteria, exon is NOCALL => set likelihoods to -1
-# - else calculate likelihoods for CN1, CN2, CN3+
+# - if fitting fails one of the QC criteria, exon is NOCALL => set likelihoods to -1;
+# - else:
+#   - rescale FPMS so CN2 mean == 1 (goal: have comparable likelihoods between exons)
+#   - calculate likelihoods for CN1, CN2, CN3+
 #
 # Args:
 # - intergenicFPMs numpy 2D-array of floats, size=len(intergenics)] * len(samples),
@@ -83,7 +86,7 @@ def calcLikelihoodsCN0(FPMs, likelihoods, CN0scale):
 # - fpmThreshold is the FPM threshold up to which data looks like it could very possibly
 #   have been produced by the CN0 model (set to fracPPF of the inverse CDF == quantile
 #   function). This will be used later for filtering NOCALL exons.
-def fitCN2andCalcLikelihoods():
+def fitCN2andCalcLikelihoods(FPMsOfCluster):
     return
 
 
