@@ -114,7 +114,7 @@ def fitCN2andCalcLikelihoods(FPMsOfCluster, samplesOfInterest, likelihoods, fpmT
         likelihoods[:, :, 1] = 0
 
     for ei in range(nbExons):
-        (cn2Mu, cn2Sigma) = fitCN2(FPMsOfCluster[ei, :], fpmThreshold)
+        (cn2Mu, cn2Sigma) = fitCN2(FPMsOfCluster[ei, :], fpmThreshold, isHaploid)
         if cn2Mu < 0:
             # exon is NOCALL for the whole cluster, squash likelihoods to -1
             likelihoods[:, ei, :] = -1.0
@@ -158,7 +158,8 @@ def fitCN2andCalcLikelihoods(FPMsOfCluster, samplesOfInterest, likelihoods, fpmT
 # - exon isn't captured (median FPM <= fpmThreshold)
 # - fitting fails (exon is very atypical, can't make any calls)
 # - CN2 model isn't supported by 50% or more of the samples
-# - CN2 Gaussian can't be clearly distinguished from CN0 model
+# - CN1 Gaussian (or CN2 Gaussian if isHaploid) can't be clearly distinguished
+#   from CN0 model (see minZscore)
 #
 # If all QC criteria pass, return (mu,sigma) == mean and stdev of the CN2 model;
 # otherwise return (E, 0) where E<0 depends on the first criteria that failed:
@@ -166,7 +167,7 @@ def fitCN2andCalcLikelihoods(FPMsOfCluster, samplesOfInterest, likelihoods, fpmT
 # E==-2 if robustGaussianFit failed
 # E==-3 if low support for CN2 model
 # E==-4 if CN2 is too close to CN0
-def fitCN2(FPMsOfExon, fpmThreshold):
+def fitCN2(FPMsOfExon, fpmThreshold, isHaploid):
     if numpy.median(FPMsOfExon) <= fpmThreshold:
         # uncaptured exon
         return(-1, 0)
@@ -189,10 +190,11 @@ def fitCN2(FPMsOfExon, fpmThreshold):
         # low support for CN2
         return(-3, 0)
 
-    # require CN2 to be at least minZscore sigmas from fpmThreshold
+    # require CN1 (CN2 if haploid) to be at least minZscore sigmas from fpmThreshold
     minZscore = 3
-    if (mu - minZscore * sigma) <= fpmThreshold:
-        # CN2 too close to CN0
+    if ((not isHaploid and ((mu / 2 - minZscore * sigma) <= fpmThreshold)) or
+        (isHaploid and ((mu - minZscore * sigma) <= fpmThreshold))):
+        # CN1 / CN2 too close to CN0
         return(-4, 0)
 
     return(mu, sigma)
