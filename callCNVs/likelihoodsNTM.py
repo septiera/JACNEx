@@ -73,12 +73,8 @@ def calcLikelihoodsCN0(FPMs, likelihoods, CN0scale):
 # for each exon (==row of FPMsOfCluster):
 # - fit a normal distribution to the dominant component of the FPMs (this is
 #   our model of CN2, we assume that most samples are CN2)
-# - if one of the fitCN2() QC criteria, exon is NOCALL => set likelihoods to -1;
-# - else:
-#   - rescale FPMS and CN2 model so new CN2 mean == 1 (idea: pdfs integrate to 1, so
-#     without this rescaling high-FPM exons have small likelihoods compared to
-#     low-FPM exons, resulting in smaller scores for CNVs that span them)
-#   - calculate likelihoods for CN1, CN2, CN3+
+# - if one of the fitCN2() QC criteria fails, exon is NOCALL => set likelihoods to -1;
+# - else calculate likelihoods for CN1, CN2, CN3+
 #
 # Args:
 # - FPMsOfCluster: 2D-array of floats, FPMsOfCluster[e,s] is the FPM count for
@@ -94,8 +90,7 @@ def calcLikelihoodsCN0(FPMs, likelihoods, CN0scale):
 #
 # Returns (CN2Means):
 # - CN2means: 1D-array of nbExons floats, CN2means[e] is the fitted mean of
-#   the CN2 model (before rescaling) of exon e for the cluster, or -1 if exon
-#   is NOCALL
+#   the CN2 model of exon e for the cluster, or -1 if exon is NOCALL
 def fitCN2andCalcLikelihoods(FPMsOfCluster, samplesOfInterest, likelihoods, fpmThreshold, isHaploid):
     # sanity
     nbExons = FPMsOfCluster.shape[0]
@@ -122,26 +117,23 @@ def fitCN2andCalcLikelihoods(FPMsOfCluster, samplesOfInterest, likelihoods, fpmT
             # fitCN2(), based on the cn2Mu values, but no time now
             continue
 
-        # save CN2 mean before rescaling
         CN2means[ei] = cn2Mu
-        # now rescale CN2 sigma and FPMs of SOIs
-        cn2SigmaRescaled = cn2Sigma / cn2Mu
-        fpmsRescaled = FPMsOfCluster[ei, samplesOfInterest] / cn2Mu
 
-        # CN1: shift the CN2 Gaussian so mean==0.5 (a single copy rather than 2)
-        cn1Dist = statistics.NormalDist(mu=0.5, sigma=cn2SigmaRescaled)
+        # CN1: shift the CN2 Gaussian so mean==cn2Mu/2 (a single copy rather than 2)
+        cn1Mu = cn2Mu / 2
+        cn1Dist = statistics.NormalDist(mu=cn1Mu, sigma=cn2Sigma)
 
         # CN2 model: the fitted Gaussian
-        cn2Dist = statistics.NormalDist(mu=1.0, sigma=cn2SigmaRescaled)
+        cn2Dist = statistics.NormalDist(mu=cn2Mu, sigma=cn2Sigma)
 
         # CN3 model, as defined in cn3Dist()
-        cn3Dist = cn3Distrib(1.0, cn2SigmaRescaled, isHaploid)
+        cn3Dist = cn3Distrib(cn2Mu, cn2Sigma, isHaploid)
 
         for si in range(nbSOIs):
             if not isHaploid:
-                likelihoods[si, ei, 1] = cn1Dist.pdf(fpmsRescaled[si])
-            likelihoods[si, ei, 2] = cn2Dist.pdf(fpmsRescaled[si])
-            likelihoods[si, ei, 3] = cn3Dist.pdf(fpmsRescaled[si])
+                likelihoods[si, ei, 1] = cn1Dist.pdf(FPMsOfCluster[ei, si])
+            likelihoods[si, ei, 2] = cn2Dist.pdf(FPMsOfCluster[ei, si])
+            likelihoods[si, ei, 3] = cn3Dist.pdf(FPMsOfCluster[ei, si])
 
     return(CN2means)
 
