@@ -17,10 +17,8 @@ import time
 import countFrags.countsFile
 import countFrags.bed
 import clusterSamps.clustFile
-import callCNVs.exonProfiling
-import callCNVs.rescaling
 import callCNVs.priors
-import callCNVs.likelihoods
+import callCNVs.likelihoodsNTM
 import callCNVs.transitions
 import callCNVs.callCNVs
 import callCNVs.callsFile
