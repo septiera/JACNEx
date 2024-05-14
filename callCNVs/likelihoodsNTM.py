@@ -203,12 +203,14 @@ def fitCN2(FPMsOfExon, fpmThreshold, isHaploid):
 ############################################
 # cn3Distrib:
 # build a statistical model of CN3+, based on the CN2 mu and sigma.
-# CN3+ is modeled as a Gamma distribution (as implemented by AS) for now, although
-# it's empirical and I'm not sure it behaves as expected after rescaling?
+# CN3+ is modeled as a LogNormal that aims to:
+# - captures data around 1.5x the CN2 mean (2x if isHaploid)
+# - avoids overlapping too much with the CN2
+# The LogNormal is heavy-tailed, which is nice because we are modeling CN3+ not CN3.
 #
 # Args:
 # - (mu, sigma) of the CN2 model
-# - isHaploid boolean (if isHaploid, CN3+ should look for 2x mu FPM rather than 1.5x)
+# - isHaploid boolean (if isHaploid, CN3+ models data starting at 2x mu FPM rather than 1.5x)
 #
 # Return an object with a pdf() method - currently a "frozen" scipy distribution, but
 # it could be some other object (eg statistics.NormalDist).
