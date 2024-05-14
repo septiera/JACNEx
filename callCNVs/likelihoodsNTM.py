@@ -135,7 +135,7 @@ def fitCN2andCalcLikelihoods(FPMsOfCluster, samplesOfInterest, likelihoods, fpmT
         cn2Dist = statistics.NormalDist(mu=1.0, sigma=cn2SigmaRescaled)
 
         # CN3 model, as defined in cn3Dist()
-        cn3Dist = cn3Distrib(1.0, cn2SigmaRescaled)
+        cn3Dist = cn3Distrib(1.0, cn2SigmaRescaled, isHaploid)
 
         for si in range(nbSOIs):
             if not isHaploid:
@@ -206,11 +206,17 @@ def fitCN2(FPMsOfExon, fpmThreshold, isHaploid):
 # CN3+ is modeled as a Gamma distribution (as implemented by AS) for now, although
 # it's empirical and I'm not sure it behaves as expected after rescaling?
 #
-# Args: (mu, sigma) of the CN2 model
+# Args:
+# - (mu, sigma) of the CN2 model
+# - isHaploid boolean (if isHaploid, CN3+ should look for 2x mu FPM rather than 1.5x)
 #
 # Return an object with a pdf() method - currently a "frozen" scipy distribution, but
 # it could be some other object (eg statistics.NormalDist).
-def cn3Distrib(mu, sigma):
+def cn3Distrib(mu, sigma, isHaploid):
+    ### NOTES: planning to switch to a LogNormal distribution, AS is currently
+    ### studying this - we need to decide how we set the LogNormal params
+    ### ALSO we want to take isHaploid into account
+
     # The 'shape' parameter is hard-coded here, based on empirical testing.
     # A higher 'shape' concentrates the distribution around the mean and reduces the spread
     shape = 6
