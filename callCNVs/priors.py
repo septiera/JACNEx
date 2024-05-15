@@ -22,18 +22,17 @@ logger.setLevel(logging.DEBUG)
 # decimals in scentific notation for each proba) or after maxIter iterations.
 #
 # Args:
-# - likelihoodsDict: key==sampleID, value==(ndarray[floats] dim nbExons*nbStates)
-#   holding the likelihoods of each state for each exon for this sample (no-call
-#   exons should have all likelihoods == -1)
+# - likelihoods: numpy 3D-array of floats of size nbSamples * nbExons * nbStates,
+#   likelihoods[s,e,cn] is the likehood of state cn for exon e in sample s
+#   (NOCALL exons must have all likelihoods == -1)
 # - jobs (int): number of jobs to run in parallel
 #
 # Returns priors (ndarray of nbStates floats): prior probabilities for each state.
-def calcPriors(likelihoodsDict, jobs):
+def calcPriors(likelihoods, jobs):
     # max number of iterations, hard-coded
     maxIter = 20
 
-    # need nbStates, super ugly but it seems "this is the python way"
-    nbStates = next(iter(likelihoodsDict.values())).shape[1]
+    nbStates = likelihoods.shape[2]
     # priors start at 1 (ie we will initially count states with max likelihood)
     priors = numpy.ones(nbStates, dtype=numpy.float128)
 
@@ -45,7 +44,7 @@ def calcPriors(likelihoodsDict, jobs):
     converged = 0
 
     for i in range(maxIter):
-        priors = calcPosteriors(likelihoodsDict, priors, jobs)
+        priors = calcPosteriors(likelihoods, priors, jobs)
         formattedPriors = " ".join(["%.2e" % x for x in priors])
         debugString = "Priors at iteration " + str(i + 1) + ":\t" + formattedPriors
         noConvergeString += "\n" + debugString
@@ -71,18 +70,18 @@ def calcPriors(likelihoodsDict, jobs):
 
 ####################
 # calcPosteriors:
-# Given a likelihoodsDict and vector of prior probabilities, calculate and return
-# the vector of posterior probabilities, which can be considered as an updated
-# vector of priors. Samples are processed in parallel.
+# Given likelihoods and prior probabilities for each state, calculate the
+# posterior probabilities for each state. These can then be considered as an
+# updated vector of priors. Samples are processed in parallel.
 #
 # Args:
-# - likelihoodsDict: key==sampleID, value==(ndarray[floats] dim nbExons*nbStates)
-#   holding the likelihoods of each state for each exon for this sample
+# - likelihoods: numpy 3D-array of floats of size nbSamples * nbExons * nbStates,
+#   likelihoods[s,e,cn] is the likehood of state cn for exon e in sample s
 # - priors (ndarray of nbStates floats): initial prior probabilities for each state
 # - jobs (int): number of jobs to run in parallel.
 #
 # Returns posteriors, same type as priors.
-def calcPosteriors(likelihoodsDict, priors, jobs):
+def calcPosteriors(likelihoods, priors, jobs):
     countsPerState = numpy.zeros(len(priors), dtype=numpy.uint64)
 
     ##################
@@ -101,8 +100,8 @@ def calcPosteriors(likelihoodsDict, priors, jobs):
 
     ##################
     with concurrent.futures.ProcessPoolExecutor(jobs) as pool:
-        for likelihoods in likelihoodsDict.values():
-            futureRes = pool.submit(countMostLikelyStates, likelihoods, priors)
+        for si in range(likelihoods.shape[0]):
+            futureRes = pool.submit(countMostLikelyStates, likelihoods[si, :, :], priors)
             futureRes.add_done_callback(lambda f: sampleDone(f, countsPerState))
 
     posteriors = countsPerState.astype(numpy.float128) / countsPerState.sum()
