@@ -11,20 +11,24 @@ logger = logging.getLogger(__name__)
 ###############################################################################
 ##########################################
 # printCallsFile
-# generate an output file in VCF format containing CNV calls for autosomes and gonosomes.
+# print CNVs in VCF format. The CNVs must belong to a single cluster.
 #
 # Args:
 # - CNVs (list of lists[int, int, int, float, str]): [CNtype, exonIndStart, exonIndEnd,
 #                                                     qualityScore, sampID].
+# - FPMs: 2D-array of floats, size = nbExons * nbSamples, FPMs[e,s] is the FPM
+#   count for exon e in sample s
+# - CN2means: 1D-array of nbExons floats, CN2means[e] is the fitted mean of
+#   the CN2 model of exon e for the cluster, or -1 if exon is NOCALL
 # - exons (list of lists[str, int, int, str]): exons infos
 # - samples (list[str]): sample names.
 # - padding (int): padding bases used.
 # - outFile (str): Output file name. It must be non-existent and can include a path (which must exist).
 #                  The output file will be compressed in gzip format if outFile ends with '.gz'.
 # - madeBy (str): Name + version of program that made the CNV calls.
-def printCallsFile(CNVs, exons, samples, padding, outFile, madeBy):
+def printCallsFile(CNVs, FPMs, CN2Means, exons, samples, padding, outFile, madeBy):
 
-    vcf = vcfFormat(CNVs, exons, samples, padding)
+    vcf = vcfFormat(CNVs, FPMs, CN2Means, exons, samples, padding)
 
     try:
         if outFile.endswith(".gz"):
@@ -70,13 +74,17 @@ def printCallsFile(CNVs, exons, samples, padding, outFile, madeBy):
 # Args:
 # - CNVs (list): CNV information, each CNV formatted as [CNType, startExonIndex, endExonIndex,
 #    qualityScore, sampleID].
+# - FPMs: 2D-array of floats, size = nbExons * nbSamples, FPMs[e,s] is the FPM
+#   count for exon e in sample s
+# - CN2means: 1D-array of nbExons floats, CN2means[e] is the fitted mean of
+#   the CN2 model of exon e for the cluster, or -1 if exon is NOCALL
 # - exons (list): Exon information, each exon formatted as [chromosome, start, end, exonID].
 # - samples (list[strs])
 # - padding [int]: Value used to adjust start and end positions of CNVs.
 #
 # Returns:
 # vcf (list[strs]): Each string represents a line in a VCF file, formatted with CNV information.
-def vcfFormat(CNVs, exons, samples, padding):
+def vcfFormat(CNVs, FPMs, CN2Means, exons, samples, padding):
     # Define the number of columns before sample information in a VCF file
     # ["#CHROM","POS","ID","REF","ALT","QUAL","FILTER","INFO","FORMAT"]
     infoColumns = 9
@@ -126,6 +134,7 @@ def vcfFormat(CNVs, exons, samples, padding):
         # Determine the sample's genotype based on CN type and add quality score
         geno = "1/1" if cn == 0 else "0/1"
         vcfLine[sampi] = f"{geno}:{qualScore:.1f}"
+        ### TODO calculate FragRatio (using CN2Mean and FPMs) and append it
 
         # Update the VCF line in the dictionary
         cnv_dict[currentCNV] = vcfLine
