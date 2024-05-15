@@ -19,9 +19,10 @@ logger = logging.getLogger(__name__)
 # Call CNVs with callCNVsOneSample() in parallel for each sample in likelihoodsDict.
 #
 # Args:
-# - likelihoodsDict: key==sampleID, value==(ndarray[floats] dim NbExons*NbStates)
-#   holding the likelihoods of each state for each exon for this sample (no-call
-#   exons should have all likelihoods == -1)
+# - likelihoods: numpy 3D-array of floats of size nbSamples * nbExons * nbStates,
+#   likelihoods[s,e,cn] is the likehood of state cn for exon e in sample s
+#   (NOCALL exons must have all likelihoods == -1)
+# - samples: list of nbSamples sampleIDs (==strings)
 # - exons: list of nbExons exons, one exon is a list [CHR, START, END, EXONID]
 # - transMatrix (ndarray[floats] dim nbStates*nbStates): base transition probas between states
 # - priors (ndarray dim nbStates): prior probabilities for each state
@@ -31,7 +32,7 @@ logger = logging.getLogger(__name__)
 # Returns a list of CNVs, a CNV is a list (types [int, int, int, float, str]):
 # [CNVType, firstExonIndex, lastExonIndex, qualityScore, sampleID]
 # where firstExonIndex and lastExonIndex are indexes in the provided exons list.
-def callAllCNVs(likelihoodsDict, exons, transMatrix, priors, dmax, jobs):
+def callAllCNVs(likelihoods, samples, exons, transMatrix, priors, dmax, jobs):
     CNVs = []
 
     ##################
@@ -49,8 +50,9 @@ def callAllCNVs(likelihoodsDict, exons, transMatrix, priors, dmax, jobs):
 
     ##################
     with concurrent.futures.ProcessPoolExecutor(jobs) as pool:
-        for sampID in likelihoodsDict.keys():
-            futureRes = pool.submit(callCNVsOneSample, likelihoodsDict[sampID], sampID, exons, transMatrix, priors, dmax)
+        for si in range(len(samples)):
+            futureRes = pool.submit(callCNVsOneSample, likelihoods[si, :, :], samples[si], exons,
+                                    transMatrix, priors, dmax)
             futureRes.add_done_callback(sampleDone)
 
     return(CNVs)
