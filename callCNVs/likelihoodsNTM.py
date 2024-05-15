@@ -33,16 +33,17 @@ def allocateLikelihoods(nbSamples, nbExons, nbStates):
 # - intergenicFPMs numpy 2D-array of floats, size=len(intergenics)] * len(samples),
 #   holding the FPM-normalized counts for intergenic pseudo-exons
 #
-# Returns (CN0scale, fpmThreshold):
+# Returns (CN0scale, fpmCn0):
 # - CN0scale is the scale parameter of the fitted half-normal distribution
-# - fpmThreshold is the FPM threshold up to which data looks like it could very possibly
+# - fpmCn0 is the FPM threshold up to which data looks like it could very possibly
 #   have been produced by the CN0 model (set to fracPPF of the inverse CDF == quantile
 #   function). This will be used later for filtering NOCALL exons.
 def fitCNO(intergenicFPMs):
+    # fracPPF hard-coded here, should be fine and universal
     fracPPF = 0.95
     (hnormloc, hnormscale) = scipy.stats.halfnorm.fit(intergenicFPMs.ravel(), floc=0)
-    fpmThreshold = scipy.stats.halfnorm.ppf(fracPPF, loc=0, scale=hnormscale)
-    return (hnormscale, fpmThreshold)
+    fpmCn0 = scipy.stats.halfnorm.ppf(fracPPF, loc=0, scale=hnormscale)
+    return (hnormscale, fpmCn0)
 
 
 ############################################
@@ -85,13 +86,14 @@ def calcLikelihoodsCN0(FPMs, likelihoods, CN0scale):
 # - likelihoods: numpy 3D-array of floats (pre-allocated) of size
 #   nbSamplesOfInterest * nbExons (==nbRows in FPMsOfCluster) * nbStates;
 #   likelihoods[s,e,cn] is the likehood of state cn for exon e in sample s
+# - fpmCn0: up to this FPM value, data "looks like it's from CN0"
 # - isHaploid: bool, if True this cluster of samples is assumed to be haploid
 #   for all chromosomes where the exons are located (eg chrX and xhrY in men).
 #
 # Returns (CN2Means):
 # - CN2means: 1D-array of nbExons floats, CN2means[e] is the fitted mean of
 #   the CN2 model of exon e for the cluster, or -1 if exon is NOCALL
-def fitCN2andCalcLikelihoods(FPMsOfCluster, samplesOfInterest, likelihoods, fpmThreshold, isHaploid):
+def fitCN2andCalcLikelihoods(FPMsOfCluster, samplesOfInterest, likelihoods, fpmCn0, isHaploid):
     # sanity
     nbExons = FPMsOfCluster.shape[0]
     nbSamplesTotal = FPMsOfCluster.shape[1]
@@ -109,7 +111,7 @@ def fitCN2andCalcLikelihoods(FPMsOfCluster, samplesOfInterest, likelihoods, fpmT
         likelihoods[:, :, 1] = 0
 
     for ei in range(nbExons):
-        (cn2Mu, cn2Sigma) = fitCN2(FPMsOfCluster[ei, :], fpmThreshold, isHaploid)
+        (cn2Mu, cn2Sigma) = fitCN2(FPMsOfCluster[ei, :], fpmCn0, isHaploid)
         if cn2Mu < 0:
             # exon is NOCALL for the whole cluster, squash likelihoods to -1
             likelihoods[:, ei, :] = -1.0
@@ -147,7 +149,7 @@ def fitCN2andCalcLikelihoods(FPMsOfCluster, samplesOfInterest, likelihoods, fpmT
 # Try to fit a normal distribution to the dominant component of FPMsOfExon
 # (this is our model of CN2, we assume that most samples are CN2), and apply
 # the following QC criteria, testing if:
-# - exon isn't captured (median FPM <= fpmThreshold)
+# - exon isn't captured (median FPM <= fpmCn0)
 # - fitting fails (exon is very atypical, can't make any calls)
 # - CN2 model isn't supported by 50% or more of the samples
 # - CN1 Gaussian (or CN2 Gaussian if isHaploid) can't be clearly distinguished
@@ -158,9 +160,9 @@ def fitCN2andCalcLikelihoods(FPMsOfCluster, samplesOfInterest, likelihoods, fpmT
 # E==-1 if exon isn't captured
 # E==-2 if robustGaussianFit failed
 # E==-3 if low support for CN2 model
-# E==-4 if CN2 is too close to CN0
-def fitCN2(FPMsOfExon, fpmThreshold, isHaploid):
-    if numpy.median(FPMsOfExon) <= fpmThreshold:
+# E==-4 if CN1 (CN2 if isHaploid) is too close to CN0
+def fitCN2(FPMsOfExon, fpmCn0, isHaploid):
+    if numpy.median(FPMsOfExon) <= fpmCn0:
         # uncaptured exon
         return(-1, 0)
 
@@ -182,10 +184,10 @@ def fitCN2(FPMsOfExon, fpmThreshold, isHaploid):
         # low support for CN2
         return(-3, 0)
 
-    # require CN1 (CN2 if haploid) to be at least minZscore sigmas from fpmThreshold
+    # require CN1 (CN2 if haploid) to be at least minZscore sigmas from fpmCn0
     minZscore = 3
-    if ((not isHaploid and ((mu / 2 - minZscore * sigma) <= fpmThreshold)) or
-        (isHaploid and ((mu - minZscore * sigma) <= fpmThreshold))):
+    if ((not isHaploid and ((mu / 2 - minZscore * sigma) <= fpmCn0)) or
+        (isHaploid and ((mu - minZscore * sigma) <= fpmCn0))):
         # CN1 / CN2 too close to CN0
         return(-4, 0)
 
