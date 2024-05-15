@@ -15,9 +15,9 @@ logger = logging.getLogger(__name__)
 # pair of called exons that are "close enough" (maxIED).
 #
 # Args:
-# - likelihoodsDict: key==sampleID, value==(ndarray[floats] dim NbExons*NbStates)
-#   holding the likelihoods of each state for each exon for this sample (no-call
-#   exons should have all likelihoods == -1)
+# - likelihoods: numpy 3D-array of floats of size nbSamples * nbExons * nbStates,
+#   likelihoods[s,e,cn] is the likehood of state cn for exon e in sample s
+#   (NOCALL exons must have all likelihoods == -1)
 # - exons: list of nbExons exons, one exon is a list [CHR, START, END, EXONID]
 # - priors (ndarray dim nbStates): prior probabilities for each state
 # - maxIED (int): max inter-exon distance for a pair of consecutive called exons
@@ -25,19 +25,19 @@ logger = logging.getLogger(__name__)
 #
 # Returns transMatrix (ndarray[floats] dim nbStates*nbStates): base transition
 # probas between states
-def buildBaseTransMatrix(likelihoodsDict, exons, priors, maxIED):
+def buildBaseTransMatrix(likelihoods, exons, priors, maxIED):
     nbStates = len(priors)
     # count transitions between valid, close-enough exons in all samples
     countsAllSamples = numpy.zeros((nbStates, nbStates), dtype=numpy.uint64)
 
-    for likelihoods in likelihoodsDict.values():
-        bestStates = (priors * likelihoods).argmax(axis=1)
+    for si in range(likelihoods.shape[0]):
+        bestStates = (priors * likelihoods[si, :, :]).argmax(axis=1)
         prevChrom = ""
         prevEnd = 0
         prevState = 2
         for ei in range(len(exons)):
             # ignore NOCALL (ie all likelihoods == -1) exons
-            if likelihoods[ei, 0] < 0:
+            if likelihoods[si, ei, 0] < 0:
                 continue
             else:
                 if exons[ei][0] != prevChrom:
