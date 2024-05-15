@@ -87,13 +87,14 @@ def calcLikelihoodsCN0(FPMs, likelihoods, CN0scale):
 #   nbSamplesOfInterest * nbExons (==nbRows in FPMsOfCluster) * nbStates;
 #   likelihoods[s,e,cn] is the likehood of state cn for exon e in sample s
 # - fpmCn0: up to this FPM value, data "looks like it's from CN0"
+# - clusterID: string, for logging
 # - isHaploid: bool, if True this cluster of samples is assumed to be haploid
 #   for all chromosomes where the exons are located (eg chrX and xhrY in men).
 #
 # Returns (CN2Means):
 # - CN2means: 1D-array of nbExons floats, CN2means[e] is the fitted mean of
 #   the CN2 model of exon e for the cluster, or -1 if exon is NOCALL
-def fitCN2andCalcLikelihoods(FPMsOfCluster, samplesOfInterest, likelihoods, fpmCn0, isHaploid):
+def fitCN2andCalcLikelihoods(FPMsOfCluster, samplesOfInterest, likelihoods, fpmCn0, clusterID, isHaploid):
     # sanity
     nbExons = FPMsOfCluster.shape[0]
     nbSamplesTotal = FPMsOfCluster.shape[1]
@@ -106,6 +107,10 @@ def fitCN2andCalcLikelihoods(FPMsOfCluster, samplesOfInterest, likelihoods, fpmC
 
     CN2means = numpy.full(nbExons, fill_value=-1, dtype=numpy.float64)
 
+    # exonStatus: count the number of exons that passed (exonStatus[0]) or failed
+    # (exonStatus[1..4]) the fitCN2() QC criteria
+    exonStatus = numpy.zeros(5, dtype=float)
+
     if isHaploid:
         # set all likelihoods of CN1 to zero
         likelihoods[:, :, 1] = 0
@@ -115,27 +120,36 @@ def fitCN2andCalcLikelihoods(FPMsOfCluster, samplesOfInterest, likelihoods, fpmC
         if cn2Mu < 0:
             # exon is NOCALL for the whole cluster, squash likelihoods to -1
             likelihoods[:, ei, :] = -1.0
-            # we could also calculate statistics on which QC criteria failed in
-            # fitCN2(), based on the cn2Mu values, but no time now
+            exonStatus[round(-cn2Mu)] += 1
             continue
 
-        CN2means[ei] = cn2Mu
+        else:
+            CN2means[ei] = cn2Mu
+            exonStatus[0] += 1
 
-        # CN1: shift the CN2 Gaussian so mean==cn2Mu/2 (a single copy rather than 2)
-        cn1Mu = cn2Mu / 2
-        cn1Dist = statistics.NormalDist(mu=cn1Mu, sigma=cn2Sigma)
+            # CN1: shift the CN2 Gaussian so mean==cn2Mu/2 (a single copy rather than 2)
+            cn1Mu = cn2Mu / 2
+            cn1Dist = statistics.NormalDist(mu=cn1Mu, sigma=cn2Sigma)
 
-        # CN2 model: the fitted Gaussian
-        cn2Dist = statistics.NormalDist(mu=cn2Mu, sigma=cn2Sigma)
+            # CN2 model: the fitted Gaussian
+            cn2Dist = statistics.NormalDist(mu=cn2Mu, sigma=cn2Sigma)
 
-        # CN3 model, as defined in cn3Dist()
-        cn3Dist = cn3Distrib(cn2Mu, cn2Sigma, isHaploid)
+            # CN3 model, as defined in cn3Dist()
+            cn3Dist = cn3Distrib(cn2Mu, cn2Sigma, isHaploid)
 
-        for si in range(nbSOIs):
-            if not isHaploid:
-                likelihoods[si, ei, 1] = cn1Dist.pdf(FPMsOfCluster[ei, si])
-            likelihoods[si, ei, 2] = cn2Dist.pdf(FPMsOfCluster[ei, si])
-            likelihoods[si, ei, 3] = cn3Dist.pdf(FPMsOfCluster[ei, si])
+            for si in range(nbSOIs):
+                if not isHaploid:
+                    likelihoods[si, ei, 1] = cn1Dist.pdf(FPMsOfCluster[ei, si])
+                likelihoods[si, ei, 2] = cn2Dist.pdf(FPMsOfCluster[ei, si])
+                likelihoods[si, ei, 3] = cn3Dist.pdf(FPMsOfCluster[ei, si])
+
+    # log exon statuses (as percentages)
+    exonStatus *= (100 / exonStatus.sum())
+    toPrint = "exon statuses for cluster " + clusterID + ": "
+    toPrint += "%.1f%% CALLED, " % exonStatus[0]
+    toPrint += "%.1f%% NOT-CAPTURED, %.1f%% FIT-CN2-FAILED, " % (exonStatus[1], exonStatus[2])
+    toPrint += "%.1f%% CN2-LOW-SUPPORT, %.1f%% CN0-TOO-CLOSE, " % (exonStatus[3], exonStatus[4])
+    logger.info("%s", toPrint)
 
     return(CN2means)
 
