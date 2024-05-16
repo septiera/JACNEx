@@ -1,9 +1,8 @@
 ###############################################################################################
 ######################## JACNEx step 3: exon filtering and calling ############################
 ###############################################################################################
-# Given a TSV of exon fragment counts produced by 1_countFrags.py
-# and a TSV with clustering information produced by 2_clusterSamps.py:
-# It operates as the third step in the CNV analysis pipeline, emphasizing exon filtering and CNV calling.
+# Given fragment counts produced by 1_countFrags.py and clusters of samples produced by
+# 2_clusterSamps.py, call CNVs.
 # See usage for details.
 ###############################################################################################
 import getopt
@@ -14,14 +13,14 @@ import sys
 import time
 
 ####### JACNEx modules
-import countFrags.countsFile
 import countFrags.bed
+import countFrags.countsFile
 import clusterSamps.clustFile
-import callCNVs.priors
-import callCNVs.likelihoodsNTM
-import callCNVs.transitions
-import callCNVs.callCNVs
 import callCNVs.callsFile
+import callCNVs.likelihoods
+import callCNVs.priors
+import callCNVs.transitions
+import callCNVs.viterbi
 
 # set up logger, using inherited config, in case we get called as a module
 logger = logging.getLogger(__name__)
@@ -173,9 +172,6 @@ ARGUMENTS:
     return (countsFile, clustsFile, outFile, padding, transMatrixCutoff, plotDir, jobs, madeBy)
 
 
-###############################################################################
-############################ PUBLIC FUNCTIONS #################################
-###############################################################################
 ####################################################
 # main function
 # Arg: list of strings, eg sys.argv
@@ -376,8 +372,8 @@ def main(argv):
     # CNV type, start and end positions of the affected exons, the event quality score,
     # and the sample ID.
     try:
-        CNVs = callCNVs.callCNVs.callAllCNVs(likelihoodsDict, allExons, transMatrix,
-                                             priors, adjustTransMatDMax, jobs)
+        CNVs = callCNVs.viterbi.viterbiAllSamples(likelihoods, allExons, transMatrix,
+                                                  priors, adjustTransMatDMax, jobs)
     except Exception as e:
         raise Exception("callAllCNVs() failed: %s", repr(e))
 
@@ -396,6 +392,41 @@ def main(argv):
     logger.debug("Done printCallsFile in %.2f s", thisTime - startTime)
     startTime = thisTime
 
+
+###############################################################################
+########################### PRIVATE FUNCTIONS #################################
+###############################################################################
+####################################################
+# callCNVsOneCluster:
+# call CNVs for each sample in one cluster. Results are produced as a single
+# VCF file for the cluster.
+#
+# Args:
+# -
+#
+# Returns:
+#
+def callCNVsOneCluster():
+    likelihoods = allocateLikelihoods(nbSamples, nbExons, nbStates)
+    # fit CN0 model using intergenic pseudo-exon FPMs for all samples
+    # in cluster (including FITWITHs)
+    (CN0scale, fpmCn0) = fitCNO(intergenicFPMs)
+    # use the fitted model to calculate CN0 likelihoods for all exons and
+    # samplesOfInterest (not FITWITHs)
+    calcLikelihoodsCN0(FPMsOfCluster, samplesOfInterest, likelihoods, CN0scale)
+
+    # for each exon: fit CN2 model using all samples in cluster (including
+    # FITWITHs), and calculate CN1-CN2-CN3 likelihoods for samplesOfInterest
+    for ei in range(nbExons):
+        CN2Means = fitCN2andCalcLikelihoods(FPMsOfCluster, samplesOfInterest,
+                                            likelihoods, fpmCn0, clusterID, isHaploid)
+
+    # calculate priors (maxing the posterior probas iteratively until convergence)
+    priors = calcPriors(likelihoods, jobs)
+
+    # build matrix of base transition probas
+    buildBaseTransMatrix(likelihoods, exons, priors, maxIED)
+    
 
 ####################################################################################
 ######################################## Main ######################################

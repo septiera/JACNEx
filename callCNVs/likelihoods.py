@@ -17,8 +17,8 @@ logger = logging.getLogger(__name__)
 ############################################
 # allocateLikelihoods:
 # Allocate, initialize to -1 and return a numpy 3D-array of floats of size
-#   nbSamples * nbExons * nbStates: likelihoods[s,e,cn] will store the likehood
-#   of state cn for exon e in sample s
+#   nbSamples * nbExons * nbStates: likelihoods[s,e,cn] will store the
+#   likelihood of state cn for exon e in sample s
 def allocateLikelihoods(nbSamples, nbExons, nbStates):
     return(numpy.full((nbSamples, nbExons, nbStates), fill_value=-1,
                       dtype=numpy.float64, order='F'))
@@ -58,7 +58,7 @@ def fitCNO(intergenicFPMs):
 #   what order
 # - likelihoods: numpy 3D-array of floats (pre-allocated) of size
 #   nbSamples (==nbColumns in FPMs) * nbExons (==nbRows in FPMs) * nbStates;
-#   likelihoods[s,e,cn] is the likehood of state cn for exon e in sample s
+#   likelihoods[s,e,cn] is the likelihood of state cn for exon e in sample s
 #   (same s and e indexes as in FPMs)
 # - CN0scale (float): scale param of the half-normal distribution that fits the
 #   CN0 data, as returned by fitCN0
@@ -85,7 +85,7 @@ def calcLikelihoodsCN0(FPMs, likelihoods, CN0scale):
 #   value==True if the sample is in the cluster of interest (vs being in a FITWITH cluster)
 # - likelihoods: numpy 3D-array of floats (pre-allocated) of size
 #   nbSamplesOfInterest * nbExons (==nbRows in FPMsOfCluster) * nbStates;
-#   likelihoods[s,e,cn] is the likehood of state cn for exon e in sample s
+#   likelihoods[s,e,cn] is the likelihood of state cn for exon e in sample s
 # - fpmCn0: up to this FPM value, data "looks like it's from CN0"
 # - clusterID: string, for logging
 # - isHaploid: bool, if True this cluster of samples is assumed to be haploid
