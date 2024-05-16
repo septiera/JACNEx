@@ -30,7 +30,7 @@ def allocateLikelihoods(nbSamples, nbExons, nbStates):
 # in intergenicFPMs.
 #
 # Args:
-# - intergenicFPMs numpy 2D-array of floats, size=len(intergenics)] * len(samples),
+# - intergenicFPMs numpy 2D-array of floats, size=len(intergenics) * len(samples),
 #   holding the FPM-normalized counts for intergenic pseudo-exons
 #
 # Returns (CN0scale, fpmCn0):
@@ -53,54 +53,58 @@ def fitCNO(intergenicFPMs):
 # Results are stored in likelihoods.
 #
 # Args:
-# - FPMs: numpy 2D-array of floats, FPMs[e,s] is the FPM-normalized count for exon
-#   e in sample s - the caller must know what samples and exons are present and in
-#   what order
-# - likelihoods: numpy 3D-array of floats (pre-allocated) of size
-#   nbSamples (==nbColumns in FPMs) * nbExons (==nbRows in FPMs) * nbStates;
-#   likelihoods[s,e,cn] is the likelihood of state cn for exon e in sample s
-#   (same s and e indexes as in FPMs)
+# - FPMs: numpy 2D-array of floats of size nbExons * nbSamples, FPMs[e,s] is
+#   the FPM-normalized count for exon e in sample s
+# - likelihoods: numpy 3D-array of floats of size nbSamples * nbExons * nbStates
+#   (nbSamples and nbExons same as in FPMs), likelihoods[s,e,cn] is the likelihood
+#   of state cn for exon e in sample s
 # - CN0scale (float): scale param of the half-normal distribution that fits the
 #   CN0 data, as returned by fitCN0
 #
 # Returns nothing, likelihoods is updated in-place.
 def calcLikelihoodsCN0(FPMs, likelihoods, CN0scale):
-    for si in range(FPMs.shape[1]):
+    # sanity:
+    nbExons = FPMs.shape[0]
+    nbSamples = FPMs.shape[1]
+    if (nbExons != likelihoods.shape[1]) or (nbSamples != likelihoods.shape[0]):
+        logger.error("sanity check failed in calcLikelihoodsCN0(), impossible!")
+        raise Exception("calcLikelihoodsCN0 sanity check failed")
+
+    for si in range(nbSamples):
         likelihoods[si, :, 0] = scipy.stats.halfnorm.pdf(FPMs[:, si], scale=CN0scale)
 
 
 ############################################
 # fitCN2andCalcLikelihoods:
-# for each exon (==row of FPMsOfCluster):
+# for each exon (==row of FPMs):
 # - fit a normal distribution to the dominant component of the FPMs (this is
 #   our model of CN2, we assume that most samples are CN2)
 # - if one of the fitCN2() QC criteria fails, exon is NOCALL => set likelihoods to -1;
-# - else calculate likelihoods for CN1, CN2, CN3+
+# - else calculate and fill likelihoods for CN1, CN2, CN3+
 #
 # Args:
-# - FPMsOfCluster: 2D-array of floats, FPMsOfCluster[e,s] is the FPM count for
-#   exon e in sample s, the samples must include those in FITWITH clusters (in
-#   addition to the samples in the current cluster of interest)
-# - samplesOfInterest: 1D-array of bools, size = number of samples in FPMsOfCluster,
-#   value==True if the sample is in the cluster of interest (vs being in a FITWITH cluster)
-# - likelihoods: numpy 3D-array of floats (pre-allocated) of size
-#   nbSamplesOfInterest * nbExons (==nbRows in FPMsOfCluster) * nbStates;
-#   likelihoods[s,e,cn] is the likelihood of state cn for exon e in sample s
+# - FPMs: 2D-array of floats of size nbSamples * nbExons, FPMs[e,s] is the FPM count
+#   for exon e in sample s; it includes counts for the samplesOfInterest, but also for
+#   the samples in FITWITH clusters (these are used for fitting the CN2)
+# - samplesOfInterest: 1D-array of bools of size nbSamples, value==True iff the sample
+#   is in the cluster of interest (vs being in a FITWITH cluster)
+# - likelihoods: numpy 3D-array of floats of size nbSamplesOfInterest * nbExons * nbStates,
+#   likelihoods[s,e,cn] is the likelihood of state cn for exon e in sample s, will be
+#   filled in-place
 # - fpmCn0: up to this FPM value, data "looks like it's from CN0"
 # - clusterID: string, for logging
 # - isHaploid: bool, if True this cluster of samples is assumed to be haploid
-#   for all chromosomes where the exons are located (eg chrX and xhrY in men).
+#   for all chromosomes where the exons are located (eg chrX and chrY in men).
 #
-# Returns (CN2Means):
-# - CN2means: 1D-array of nbExons floats, CN2means[e] is the fitted mean of
+# Returns (CN2Means): 1D-array of nbExons floats, CN2means[e] is the fitted mean of
 #   the CN2 model of exon e for the cluster, or -1 if exon is NOCALL
-def fitCN2andCalcLikelihoods(FPMsOfCluster, samplesOfInterest, likelihoods, fpmCn0, clusterID, isHaploid):
+def fitCN2andCalcLikelihoods(FPMs, samplesOfInterest, likelihoods, fpmCn0, clusterID, isHaploid):
     # sanity
-    nbExons = FPMsOfCluster.shape[0]
-    nbSamplesTotal = FPMsOfCluster.shape[1]
+    nbExons = FPMs.shape[0]
+    nbSamples = FPMs.shape[1]
     nbSOIs = samplesOfInterest.sum()
     if ((nbExons != likelihoods.shape[1]) or
-        (nbSamplesTotal != samplesOfInterest.shape[0]) or
+        (nbSamples != samplesOfInterest.shape[0]) or
         (nbSOIs != likelihoods.shape[0])):
         logger.error("sanity check failed in fitCN2andCalcLikelihoods(), impossible!")
         raise Exception("fitCN2andCalcLikelihoods sanity check failed")
@@ -108,7 +112,7 @@ def fitCN2andCalcLikelihoods(FPMsOfCluster, samplesOfInterest, likelihoods, fpmC
     CN2means = numpy.full(nbExons, fill_value=-1, dtype=numpy.float64)
 
     # exonStatus: count the number of exons that passed (exonStatus[0]) or failed
-    # (exonStatus[1..4]) the fitCN2() QC criteria
+    # (exonStatus[1..4]) the fitCN2() QC criteria. This is just for logging.
     exonStatus = numpy.zeros(5, dtype=float)
 
     if isHaploid:
@@ -116,7 +120,7 @@ def fitCN2andCalcLikelihoods(FPMsOfCluster, samplesOfInterest, likelihoods, fpmC
         likelihoods[:, :, 1] = 0
 
     for ei in range(nbExons):
-        (cn2Mu, cn2Sigma) = fitCN2(FPMsOfCluster[ei, :], fpmCn0, isHaploid)
+        (cn2Mu, cn2Sigma) = fitCN2(FPMs[ei, :], fpmCn0, isHaploid)
         if cn2Mu < 0:
             # exon is NOCALL for the whole cluster, squash likelihoods to -1
             likelihoods[:, ei, :] = -1.0
@@ -134,14 +138,18 @@ def fitCN2andCalcLikelihoods(FPMsOfCluster, samplesOfInterest, likelihoods, fpmC
             # CN2 model: the fitted Gaussian
             cn2Dist = statistics.NormalDist(mu=cn2Mu, sigma=cn2Sigma)
 
-            # CN3 model, as defined in cn3Dist()
+            # CN3 model, as defined in cn3Distib()
             cn3Dist = cn3Distrib(cn2Mu, cn2Sigma, isHaploid)
 
-            for si in range(nbSOIs):
-                if not isHaploid:
-                    likelihoods[si, ei, 1] = cn1Dist.pdf(FPMsOfCluster[ei, si])
-                likelihoods[si, ei, 2] = cn2Dist.pdf(FPMsOfCluster[ei, si])
-                likelihoods[si, ei, 3] = cn3Dist.pdf(FPMsOfCluster[ei, si])
+            soi = 0
+            for si in range(nbSamples):
+                if samplesOfInterest[si]:
+                    if not isHaploid:
+                        likelihoods[soi, ei, 1] = cn1Dist.pdf(FPMs[ei, si])
+                    # else keep CN1 likelihood at zero as set above
+                    likelihoods[soi, ei, 2] = cn2Dist.pdf(FPMs[ei, si])
+                    likelihoods[soi, ei, 3] = cn3Dist.pdf(FPMs[ei, si])
+                    soi += 1
 
     # log exon statuses (as percentages)
     exonStatus *= (100 / exonStatus.sum())
