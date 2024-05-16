@@ -15,8 +15,9 @@ logger = logging.getLogger(__name__)
 ###############################################################################
 
 ######################################
-# callAllCNVs
-# Call CNVs with callCNVsOneSample() in parallel for each sample in likelihoodsDict.
+# viterbiAllSamples:
+# given a fully specified HMM, Call CNVs with viterbiOneSample() in parallel for
+# each sample in samples (==nbSamples in likelihoods).
 #
 # Args:
 # - likelihoods: numpy 3D-array of floats of size nbSamples * nbExons * nbStates,
@@ -32,18 +33,32 @@ logger = logging.getLogger(__name__)
 # Returns a list of CNVs, a CNV is a list (types [int, int, int, float, str]):
 # [CNVType, firstExonIndex, lastExonIndex, qualityScore, sampleID]
 # where firstExonIndex and lastExonIndex are indexes in the provided exons list.
-def callAllCNVs(likelihoods, samples, exons, transMatrix, priors, dmax, jobs):
+def viterbiAllSamples(likelihoods, samples, exons, transMatrix, priors, dmax, jobs):
     CNVs = []
 
+    # sanity checks
+    if len(samples) != likelihoods.shape[0]:
+        logger.error("SANITY: numbers of samples and of rows in likelihoods inconsistent")
+        raise Exception("viterbiAllSamples sanity-check failed")
+    if len(exons) != likelihoods.shape[1]:
+        logger.error("SANITY: numbers of exons and of cols in likelihoods inconsistent")
+        raise Exception("viterbiAllSamples sanity-check failed")
+    if len(transMatrix) != likelihoods.shape[2]:
+        logger.error("SANITY: numbers of states in transMatrix and in likelihoods inconsistent")
+        raise Exception("viterbiAllSamples sanity-check failed")
+    if len(transMatrix) != len(priors):
+        logger.error("SANITY: numbers of states in transMatrix and in priors inconsistent")
+        raise Exception("viterbiAllSamples sanity-check failed")
+
     ##################
-    # Define nested callback for processing callCNVsOneSample() result (so CNVs is in scope).
+    # Define nested callback for processing viterbiOneSample() result (so CNVs is in scope).
     # sampleDone:
-    # arg: a Future object returned by ProcessPoolExecutor.submit(callCNVsOneSample).
+    # arg: a Future object returned by ProcessPoolExecutor.submit(viterbiOneSample).
     # If something went wrong, log and propagate exception, otherwise store CNVs.
     def sampleDone(futureRes):
         e = futureRes.exception()
         if e is not None:
-            logger.error("callCNVsOneSample() failed for sample %s", str(e))
+            logger.error("viterbiOneSample() failed for sample %s", str(e))
             raise(e)
         else:
             CNVs.extend(futureRes.result())
@@ -51,8 +66,8 @@ def callAllCNVs(likelihoods, samples, exons, transMatrix, priors, dmax, jobs):
     ##################
     with concurrent.futures.ProcessPoolExecutor(jobs) as pool:
         for si in range(len(samples)):
-            futureRes = pool.submit(callCNVsOneSample, likelihoods[si, :, :], samples[si], exons,
-                                    transMatrix, priors, dmax)
+            futureRes = pool.submit(viterbiOneSample, likelihoods[si, :, :], samples[si],
+                                    exons, transMatrix, priors, dmax)
             futureRes.add_done_callback(sampleDone)
 
     return(CNVs)
@@ -63,22 +78,22 @@ def callAllCNVs(likelihoods, samples, exons, transMatrix, priors, dmax, jobs):
 ###############################################################################
 
 ######################################
-# callCNVsOneSample:
-# call and return CNVs for a single sample.
-# This function implements the Viterbi algorithm to find the most likely sequence of
-# states (copy-number states) given the observations (likelihoods).
+# viterbiOneSample:
+# given a fully specified HMM, this function calls CNVs for one sample: it
+# implements the Viterbi algorithm to find the most likely sequence of copy-number
+# states that explain the observations (likelihoods).
 #
 # The underlying HMM is defined by:
 # - one state per copy number (0==homodel, 1==heterodel, 2==WT, 3==CN3+==DUP)
-# - emission likelihoods of the sample's FPM in each state and for each exon, which have
-#   been pre-calculated;
+# - prior propabilities for each state;
 # - transition probabilities that depend on the distance to the next exon - they begin when
 #   distance=0 at the "base" values defined in transMatrix, and are smoothly adjusted following
-#   a power law until they reach the prior probabilities at dist dmax
+#   a power law until they reach the prior probabilities at dist dmax;
+# - emission likelihoods of the sample's FPM in each state and for each exon.
 #
 # Args:
-# - likelihoods (ndarray[floats] dim nbExons*nbStates): pseudo-emission probabilities
-#   (likelihoods) of each state for each exon for one sample.
+# - likelihoods (ndarray[floats] dim nbExons*nbStates): emission likelihoods of
+#   each state for each exon for one sample.
 # - sampleID [str]
 # - exons [list of lists[str, int, int, str]]: exon infos [chr, START, END, EXONID].
 # - transMatrix (ndarray[floats] dim nbStates*nbStates): base transition probas between states
@@ -88,17 +103,10 @@ def callAllCNVs(likelihoods, samples, exons, transMatrix, priors, dmax, jobs):
 # Returns:
 # - CNVs (list of list[int, int, int, float, str]): list of called CNVs,
 #   a CNV is a list [CNVType, firstExonIndex, lastExonIndex, qualityScore, sampleID].
-def callCNVsOneSample(likelihoods, sampleID, exons, transMatrix, priors, dmax):
+def viterbiOneSample(likelihoods, sampleID, exons, transMatrix, priors, dmax):
     try:
         CNVs = []
         nbStates = len(transMatrix)
-        # sanity
-        if len(exons) != likelihoods.shape[0]:
-            logger.error("Numbers of exons and of rows in likelihoods inconsistent")
-            raise Exception(sampleID)
-        if nbStates != likelihoods.shape[1]:
-            logger.error("nbStates in transMatrix and in likelihoods inconsistent")
-            raise Exception(sampleID)
 
         # Step 1: Initialize variables
         # probsPrev[s]: probability of the most likely path ending in state s at previous exon,
@@ -157,7 +165,7 @@ def callCNVsOneSample(likelihoods, sampleID, exons, transMatrix, priors, dmax):
 
             # if all best paths for current exon have zero probability (ie they all underflowed)
             if not probsCurrent.any():
-                logger.warning("in callCNVsOneSample(%s), all best paths to exon %i underflowed to zero proba. " +
+                logger.warning("for sample %s, all best paths to exon %i underflowed to zero proba. " +
                                "This should be very rare, if not please report it.", sampleID, exonIndex)
                 # we'll try to build CNVs from whichever state was most likely in the last exon
                 appendBogusCN2Exon(calledExons, path, bestPathProbas, CN2FromCN2Probas)
@@ -188,7 +196,7 @@ def callCNVsOneSample(likelihoods, sampleID, exons, transMatrix, priors, dmax):
         return(CNVs)
 
     except Exception as e:
-        logger.error("callCNVsOneSample failed for sample %s in exon %i: %s", sampleID, exonIndex, repr(e))
+        logger.error("failed for sample %s in exon %i: %s", sampleID, exonIndex, repr(e))
         raise Exception(sampleID)
 
 
