@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 #   likelihood of state cn for exon e in sample s
 def allocateLikelihoods(nbSamples, nbExons, nbStates):
     return(numpy.full((nbSamples, nbExons, nbStates), fill_value=-1,
-                      dtype=numpy.float64, order='F'))
+                      dtype=numpy.float64, order='C'))
 
 
 ############################################
@@ -30,7 +30,7 @@ def allocateLikelihoods(nbSamples, nbExons, nbStates):
 # in intergenicFPMs.
 #
 # Args:
-# - intergenicFPMs numpy 2D-array of floats, size=len(intergenics) * len(samples),
+# - intergenicFPMs numpy 2D-array of floats of size nbIntergenics * nbSamples
 #   holding the FPM-normalized counts for intergenic pseudo-exons
 #
 # Returns (CN0scale, fpmCn0):
@@ -48,30 +48,38 @@ def fitCNO(intergenicFPMs):
 
 ############################################
 # calcLikelihoodsCN0:
-# calculate the likelihood of state CN0 for each exon + sample present in FPMs.
+# calculate the likelihood of state CN0 for each exon in each sampleOfInterest
+# present in FPMs.
 # CN0 is modeled as a half-normal distrib with mode=0 and scale=CN0scale.
 # Results are stored in likelihoods.
 #
 # Args:
 # - FPMs: numpy 2D-array of floats of size nbExons * nbSamples, FPMs[e,s] is
 #   the FPM-normalized count for exon e in sample s
-# - likelihoods: numpy 3D-array of floats of size nbSamples * nbExons * nbStates
-#   (nbSamples and nbExons same as in FPMs), likelihoods[s,e,cn] is the likelihood
-#   of state cn for exon e in sample s
+# - samplesOfInterest: 1D-array of bools of size nbSamples, value==True iff the sample
+#   is in the cluster of interest (vs being in a FITWITH cluster)
+# - likelihoods: numpy 3D-array of floats of size nbSamplesOfInterest * nbExons * nbStates,
+#   likelihoods[s,e,cn] is the likelihood of state cn for exon e in sample s, will be
+#   filled in-place for CN0
 # - CN0scale (float): scale param of the half-normal distribution that fits the
 #   CN0 data, as returned by fitCN0
 #
 # Returns nothing, likelihoods is updated in-place.
-def calcLikelihoodsCN0(FPMs, likelihoods, CN0scale):
+def calcLikelihoodsCN0(FPMs, samplesOfInterest, likelihoods, CN0scale):
     # sanity:
     nbExons = FPMs.shape[0]
     nbSamples = FPMs.shape[1]
-    if (nbExons != likelihoods.shape[1]) or (nbSamples != likelihoods.shape[0]):
+    nbSOIs = samplesOfInterest.sum()
+    if ((nbExons != likelihoods.shape[1]) or (nbSamples != samplesOfInterest.shape[0]) or
+        (nbSOIs != likelihoods.shape[0])):
         logger.error("sanity check failed in calcLikelihoodsCN0(), impossible!")
         raise Exception("calcLikelihoodsCN0 sanity check failed")
 
+    soi = 0
     for si in range(nbSamples):
-        likelihoods[si, :, 0] = scipy.stats.halfnorm.pdf(FPMs[:, si], scale=CN0scale)
+        if samplesOfInterest[si]:
+            likelihoods[soi, :, 0] = scipy.stats.halfnorm.pdf(FPMs[:, si], scale=CN0scale)
+            soi += 1
 
 
 ############################################
@@ -83,7 +91,7 @@ def calcLikelihoodsCN0(FPMs, likelihoods, CN0scale):
 # - else calculate and fill likelihoods for CN1, CN2, CN3+
 #
 # Args:
-# - FPMs: 2D-array of floats of size nbSamples * nbExons, FPMs[e,s] is the FPM count
+# - FPMs: 2D-array of floats of size nbExons * nbSamples, FPMs[e,s] is the FPM count
 #   for exon e in sample s; it includes counts for the samplesOfInterest, but also for
 #   the samples in FITWITH clusters (these are used for fitting the CN2)
 # - samplesOfInterest: 1D-array of bools of size nbSamples, value==True iff the sample
@@ -103,8 +111,7 @@ def fitCN2andCalcLikelihoods(FPMs, samplesOfInterest, likelihoods, fpmCn0, clust
     nbExons = FPMs.shape[0]
     nbSamples = FPMs.shape[1]
     nbSOIs = samplesOfInterest.sum()
-    if ((nbExons != likelihoods.shape[1]) or
-        (nbSamples != samplesOfInterest.shape[0]) or
+    if ((nbExons != likelihoods.shape[1]) or (nbSamples != samplesOfInterest.shape[0]) or
         (nbSOIs != likelihoods.shape[0])):
         logger.error("sanity check failed in fitCN2andCalcLikelihoods(), impossible!")
         raise Exception("fitCN2andCalcLikelihoods sanity check failed")
