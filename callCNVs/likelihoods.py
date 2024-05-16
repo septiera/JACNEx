@@ -212,30 +212,24 @@ def fitCN2(FPMsOfExon, fpmCn0, isHaploid):
 # cn3Distrib:
 # build a statistical model of CN3+, based on the CN2 mu and sigma.
 # CN3+ is modeled as a LogNormal that aims to:
-# - captures data around 1.5x the CN2 mean (2x if isHaploid)
+# - captures data around 1.5x the CN2 mean (2x if isHaploid) and beyond
 # - avoids overlapping too much with the CN2
 # The LogNormal is heavy-tailed, which is nice because we are modeling CN3+ not CN3.
 #
 # Args:
-# - (mu, sigma) of the CN2 model
-# - isHaploid boolean (if isHaploid, CN3+ models data starting at 2x mu FPM rather than 1.5x)
+# - (cn2Mu, cn2Sigma) of the CN2 model
+# - isHaploid boolean (NOTE: currently not used)
 #
 # Return an object with a pdf() method - currently a "frozen" scipy distribution, but
 # it could be some other object (eg statistics.NormalDist).
-def cn3Distrib(mu, sigma, isHaploid):
-    ### NOTES: planning to switch to a LogNormal distribution, AS is currently
-    ### studying this - we need to decide how we set the LogNormal params
-    ### ALSO we want to take isHaploid into account
+def cn3Distrib(cn2Mu, cn2Sigma, isHaploid):
+    # LogNormal parameters set empirically
+    # scipy shape == sigma
+    shape = 0.5
+    # scipy scale == exp(mu), we want mu=ln(cn2Mu)
+    scale = cn2Mu
+    # scipy loc shifts the distrib, we want avoid overlapping too much with CN2
+    loc = cn2Mu + 2 * cn2Sigma
 
-    # The 'shape' parameter is hard-coded here, based on empirical testing.
-    # A higher 'shape' concentrates the distribution around the mean and reduces the spread
-    shape = 6
-    # The 'loc' parameter shifts the gamma distribution to avoid significant overlap
-    # with the Gaussian CN2 distribution
-    loc = mu + sigma
-    # The 'scale' parameter: the logarithm helps to reduce the scale of values, making the model more
-    # adaptable and stable, especially if loc varies over a wide range.
-    scale = numpy.log10(loc + 1)
-
-    cn3dist = scipy.stats.gamma(shape, loc=loc, scale=scale)
+    cn3dist = scipy.stats.lognorm(shape, loc=loc, scale=scale)
     return(cn3dist)
