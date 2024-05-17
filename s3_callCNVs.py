@@ -285,6 +285,34 @@ def main(argv):
 ########################### PRIVATE FUNCTIONS #################################
 ###############################################################################
 ####################################################
+# checkRegionsToPlot:
+# do basic syntactic sanity-check of regionsToPlot, which should be a comma-separated
+# list of sampleID:chr:start-end .
+# If AOK, return a list of lists [str, str, int, int] holding [sampleID, chrom, start, end];
+# else raise exception.
+def checkRegionsToPlot(regionsToPlot):
+    regions = []
+    RTPs = regionsToPlot.split(',')
+    for rtp in RTPs:
+        rtpList = rtp.split(':')
+        if len(rtpList) != 3:
+            raise Exception("badly formatted regionToPlot, need 3 ':'-separated fields: " + rtp)
+        startEnd = rtpList[2].split('-')
+        if len(startEnd) != 2:
+            raise Exception("badly formatted regionToPlot, need coords as start-end: " + rtp)
+        (start, end) = startEnd
+        try:
+            start = int(start)
+            end = int(end)
+            if (start < 0) or (start > end):
+                raise Exception()
+        except Exception:
+            raise Exception("badly formatted regionToPlot, must have 0 <= start <= end: " + rtp)
+        regions.append([rtpList[0], rtpList[1], start, end])
+    return(regions)
+
+
+####################################################
 # callCNVsOneCluster:
 # call CNVs for each sample in one cluster. Results are produced as a single
 # VCF file for the cluster.
