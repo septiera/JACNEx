@@ -74,13 +74,17 @@ Step 1 optional arguments, defaults should be OK:
    --samtools [str] : samtools binary (with path if not in $PATH), default: """ + samtools + """
 
 Step 2 optional arguments, defaults should be OK:
-   --minSamps [int]: blablabla, default : """ + minSamps + """
+   --minSamps [int]:  min number of samples for a cluster to be valid, default : """ + minSamps + """
+
+Step 3 optional arguments:
+   --regionsToPlot [str]: comma-separated list of sampleID:chr:start-end for which exon-profile
+               plots should be produced, eg "grex003:chr2:270000-290000,grex007:chrX:620000-660000"
 """
 
     try:
         opts, args = getopt.gnu_getopt(argv[1:], 'h', ["bams=", "bams-from=", "bed=", "workDir=", "jobs=",
                                                        "help", "tmp=", "padding=", "maxGap=", "samtools=",
-                                                       "minSamps="])
+                                                       "minSamps=", "regionsToPlot"])
     except getopt.GetoptError as e:
         raise Exception(e.msg + ". Try " + scriptName + " --help")
     if len(args) != 0:
@@ -99,6 +103,8 @@ Step 2 optional arguments, defaults should be OK:
             step3Args.extend([opt, value])
         elif opt in ("--minSamps"):
             step2Args.extend([opt, value])
+        elif (opt in ("--regionsToPlot")):
+            step3Args.extend([opt, value])
         else:
             raise Exception("unhandled option " + opt)
 
@@ -221,7 +227,7 @@ def main(argv):
             raise Exception(stepNames[0] + " BPDir " + BPDir + " doesn't exist and can't be mkdir'd")
 
     # step2: clusterFiles are saved (date-stamped and gzipped) in clustersDir
-    clustersDir = workDir + '/ClusterFiles/'
+    clustersDir = workDir + '/Clusters/'
     if not os.path.isdir(clustersDir):
         try:
             os.mkdir(clustersDir)
@@ -236,7 +242,8 @@ def main(argv):
         except Exception:
             raise Exception(stepNames[0] + " callsDir " + callsDir + "doesn't exist and can't be mkdir'd")
 
-    # QC plots from step2 and step3 go in date-stamped subdirs of plotDir
+    # QC plots from step2 (and step3 if --regionsToPlot was provided) go in date-stamped
+    # subdirs of plotDir
     plotDir = workDir + '/QCPlots/'
     if not os.path.isdir(plotDir):
         try:
@@ -284,13 +291,10 @@ def main(argv):
 
         #########
         # complement step2Args and check them
-        thisPlotDir = plotDir + 'QCPlots_' + dateStamp
-        if os.path.isdir(thisPlotDir):
-            raise Exception(stepNames[2] + " plotDir " + thisPlotDir + " already exists")
-        step2Args.extend(["--plotDir", thisPlotDir])
+        step2Args.extend(["--plotDir", plotDir])
 
         # new clustersFile to create
-        clustersFile = clustersDir + '/clustersFile_' + dateStamp + '.tsv.gz'
+        clustersFile = clustersDir + '/clusters_' + dateStamp + '.tsv.gz'
         if os.path.isfile(clustersFile):
             raise Exception(stepNames[2] + " clustersFile " + clustersFile + " already exists")
         step2Args.extend(["--out", clustersFile])
@@ -307,12 +311,13 @@ def main(argv):
 
         #########
         # complement step3Args and check them
-        step3Args.extend(["--madeBy", JACNEx_version])
+        if "--regionsToPlot" in step3Args:
+            thisPlotDir = plotDir + '/exonProfiles_' + dateStamp
+            if os.path.isdir(thisPlotDir):
+                raise Exception(stepNames[3] + " plotDir " + thisPlotDir + " already exists")
+            step3Args.extend(["--plotDir", thisPlotDir])
 
-        thisPlotDir = plotDir + 'exonFilteringPieCharts_' + dateStamp
-        if os.path.isdir(thisPlotDir):
-            raise Exception(stepNames[3] + " plotDir " + thisPlotDir + " already exists")
-        step3Args.extend(["--plotDir", thisPlotDir])
+        step3Args.extend(["--madeBy", JACNEx_version])
 
         # new callsFile to create
         callsFile = callsDir + '/callsFile_' + dateStamp + '.vcf.gz'
