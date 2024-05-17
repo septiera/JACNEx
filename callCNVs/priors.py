@@ -5,9 +5,6 @@ import numpy
 # set up logger, using inherited config
 logger = logging.getLogger(__name__)
 
-# override inherited level
-logger.setLevel(logging.DEBUG)
-
 
 ###############################################################################
 ############################ PUBLIC FUNCTIONS #################################

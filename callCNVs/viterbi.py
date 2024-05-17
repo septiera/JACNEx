@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 # - transMatrix (ndarray[floats] dim nbStates*nbStates): base transition probas between states
 # - priors (ndarray dim nbStates): prior probabilities for each state
 # - dmax [int]: param for adjustTransMatrix()
-# - jobs (int): Number of jobs to run in parallel.
+# - jobs (int): Number of samples to process in parallel.
 #
 # Returns a list of CNVs, a CNV is a list (types [int, int, int, float, str]):
 # [CNVType, firstExonIndex, lastExonIndex, qualityScore, sampleID]

@@ -42,7 +42,7 @@ def extractCountsFromPrev(genomicWindows, SOIs, prevCountsFile):
     countsArray = numpy.zeros((len(genomicWindows), len(SOIs)), dtype=numpy.uint32, order='F')
     # countsFilled: same size and order as sampleNames, value will be set
     # to True iff counts were filled from countsFile
-    countsFilled = numpy.array([False] * len(SOIs))
+    countsFilled = numpy.zeros(len(SOIs), dtype=bool)
 
     if (prevCountsFile != ''):
         # we have a prevCounts file, parse it
@@ -133,9 +133,9 @@ def parseAndNormalizeCounts(countsFile):
     sumOfCountsTotal[sumOfCountsTotal == 0] = 1
 
     # Second pass: populate *FPMs, normalizing the counts on the fly
-    autosomeFPMs = numpy.zeros((len(autosomeExons), len(samples)), dtype=numpy.float32)
-    gonosomeFPMs = numpy.zeros((len(gonosomeExons), len(samples)), dtype=numpy.float32)
-    intergenicFPMs = numpy.zeros((len(intergenics), len(samples)), dtype=numpy.float32)
+    autosomeFPMs = numpy.zeros((len(autosomeExons), len(samples)), dtype=numpy.float32, order='F')
+    gonosomeFPMs = numpy.zeros((len(gonosomeExons), len(samples)), dtype=numpy.float32, order='F')
+    intergenicFPMs = numpy.zeros((len(intergenics), len(samples)), dtype=numpy.float32, order='F')
     # indexes of next auto / gono / intergenic window to populate
     nextAutoIndex = 0
     nextGonoIndex = 0
