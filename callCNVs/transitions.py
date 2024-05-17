@@ -52,7 +52,10 @@ def buildBaseTransMatrix(likelihoods, exons, priors, maxIED):
     # Normalize each row to obtain the transition matrix
     baseTransMat = countsAllSamples.astype(numpy.float128)
     for i in range(nbStates):
-        baseTransMat[i, :] /= countsAllSamples[i, :].sum()
+        rowSum = countsAllSamples[i, :].sum()
+        if rowSum > 0:
+            baseTransMat[i, :] /= rowSum
+        # else the row is all-zeroes, nothing to do
     return(baseTransMat)
 
 
