@@ -47,7 +47,8 @@ def parseArgs(argv):
     madeBy = ""
     # optional args with default values
     padding = 10
-    plotDir = "./plotDir/"
+    regionsToPlot = ""
+    plotDir = ""
     # jobs default: 80% of available cores
     jobs = round(0.8 * len(os.sched_getaffinity(0)))
 
@@ -65,7 +66,8 @@ Performs several critical operations:
     f) Outputs the CNV calls in VCF format.
 The script utilizes multiprocessing for efficient computation and is structured to handle
 errors and exceptions effectively, providing clear error messages for troubleshooting.
-In addition, pie chart summarising exon filtering are produced as pdf files in plotDir.
+In addition, plots of FPMs and CN0-CN3+ models for specified samples+exons (if any) are
+produced in plotDir.
 
 ARGUMENTS:
     --counts [str]: TSV file, first 4 columns hold the exon definitions, subsequent columns
@@ -75,14 +77,16 @@ ARGUMENTS:
     --out [str]: file where results will be saved, must not pre-exist, will be gzipped if it ends
                  with '.gz', can have a path component but the subdir must exist.
     --madeBy [str]: program name + version to print as "source=" in the produced VCF.
-    --padding [int] : number of bps used to pad the exon coordinates, default : """ + str(padding) + """
-    --plotDir [str]: subdir (created if needed) where plot files will be produced, default:  """ + plotDir + """
+    --padding [int]: number of bps used to pad the exon coordinates, default : """ + str(padding) + """
+    --regionsToPlot [str, optional]: comma-separated list of sampleID:chr:start-end for which exon-profile
+               plots will be produced, eg "grex003:chr2:270000-290000,grex007:chrX:620000-660000"
+    --plotDir [str]: subdir (created if needed) where exon-profile plots will be produced
     --jobs [int]: cores that we can use, defaults to 80% of available cores ie """ + str(jobs) + "\n" + """
     -h , --help: display this help and exit\n"""
 
     try:
         opts, args = getopt.gnu_getopt(argv[1:], 'h', ["help", "counts=", "clusts=", "out=", "madeBy=",
-                                                       "padding=", "plotDir=", "jobs="])
+                                                       "padding=", "regionsToPlot=", "plotDir=", "jobs="])
     except getopt.GetoptError as e:
         raise Exception(e.msg + ". Try " + scriptName + " --help")
     if len(args) != 0:
@@ -102,6 +106,8 @@ ARGUMENTS:
             madeBy = value
         elif opt in ("--padding"):
             padding = value
+        elif (opt in ("--regionsToPlot")):
+            regionsToPlot = value
         elif (opt in ("--plotDir")):
             plotDir = value
         elif opt in ("--jobs"):
@@ -140,13 +146,6 @@ ARGUMENTS:
     except Exception:
         raise Exception("padding must be a non-negative integer, not " + str(padding))
 
-    # test plotdir last so we don't mkdir unless all other args are OK
-    if not os.path.isdir(plotDir):
-        try:
-            os.mkdir(plotDir)
-        except Exception as e:
-            raise Exception("plotDir " + plotDir + " doesn't exist and can't be mkdir'd: " + str(e))
-
     try:
         jobs = int(jobs)
         if (jobs <= 0):
@@ -154,8 +153,24 @@ ARGUMENTS:
     except Exception:
         raise Exception("jobs must be a positive integer, not " + str(jobs))
 
+    if regionsToPlot != "" and plotDir == "":
+        raise Exception("you cannot provide --regionsToPlot without --plotDir")
+    elif regionsToPlot == "" and plotDir != "":
+        raise Exception("you cannot provide --plotDir without --regionsToPlot")
+    elif regionsToPlot != "":
+        # regionsToPlot: basic syntax check, discarding results;
+        # if check fails, it raises an exception that just propagates to caller
+        checkRegionsToPlot(regionsToPlot)
+
+        # test plotdir last so we don't mkdir unless all other args are OK
+        if not os.path.isdir(plotDir):
+            try:
+                os.mkdir(plotDir)
+            except Exception as e:
+                raise Exception("plotDir " + plotDir + " doesn't exist and can't be mkdir'd: " + str(e))
+
     # AOK, return everything that's needed
-    return (countsFile, clustsFile, outFile, padding, plotDir, jobs, madeBy)
+    return (countsFile, clustsFile, outFile, padding, regionsToPlot, plotDir, jobs, madeBy)
 
 
 ####################################################
@@ -165,7 +180,7 @@ ARGUMENTS:
 # may be available in the log
 def main(argv):
     # parse, check and preprocess arguments
-    (countsFile, clustsFile, outFile, padding, plotDir, jobs, madeBy) = parseArgs(argv)
+    (countsFile, clustsFile, outFile, padding, regionsToPlot, plotDir, jobs, madeBy) = parseArgs(argv)
 
     # args seem OK, start working
     logger.debug("called with: " + " ".join(argv[1:]))
