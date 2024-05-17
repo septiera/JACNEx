@@ -47,7 +47,6 @@ def parseArgs(argv):
     madeBy = ""
     # optional args with default values
     padding = 10
-    transMatrixCutoff = 90
     plotDir = "./plotDir/"
     # jobs default: 80% of available cores
     jobs = round(0.8 * len(os.sched_getaffinity(0)))
@@ -77,15 +76,13 @@ ARGUMENTS:
                  with '.gz', can have a path component but the subdir must exist.
     --madeBy [str]: program name + version to print as "source=" in the produced VCF.
     --padding [int] : number of bps used to pad the exon coordinates, default : """ + str(padding) + """
-    --transMatrixCutoff [int]: inter-exon percentile threshold for initializing the transition matrix,
-                               default : """ + str(transMatrixCutoff) + """
     --plotDir [str]: subdir (created if needed) where plot files will be produced, default:  """ + plotDir + """
     --jobs [int]: cores that we can use, defaults to 80% of available cores ie """ + str(jobs) + "\n" + """
     -h , --help: display this help and exit\n"""
 
     try:
         opts, args = getopt.gnu_getopt(argv[1:], 'h', ["help", "counts=", "clusts=", "out=", "madeBy=",
-                                                       "padding=", "transMatrixCutoff=", "plotDir=", "jobs="])
+                                                       "padding=", "plotDir=", "jobs="])
     except getopt.GetoptError as e:
         raise Exception(e.msg + ". Try " + scriptName + " --help")
     if len(args) != 0:
@@ -105,8 +102,6 @@ ARGUMENTS:
             madeBy = value
         elif opt in ("--padding"):
             padding = value
-        elif opt in ("--transMatrixCutoff"):
-            transMatrixCutoff = value
         elif (opt in ("--plotDir")):
             plotDir = value
         elif opt in ("--jobs"):
@@ -145,15 +140,6 @@ ARGUMENTS:
     except Exception:
         raise Exception("padding must be a non-negative integer, not " + str(padding))
 
-    try:
-        transMatrixCutoff = int(transMatrixCutoff)
-        if (transMatrixCutoff < 10):
-            raise Exception()
-        elif (transMatrixCutoff < 50):
-            logger.warning("transMatrixCutoff smaller than 50 may be insufficient?")
-    except Exception:
-        raise Exception("transMatrixCutoff must be greater than 10, not " + str(transMatrixCutoff))
-
     # test plotdir last so we don't mkdir unless all other args are OK
     if not os.path.isdir(plotDir):
         try:
@@ -169,7 +155,7 @@ ARGUMENTS:
         raise Exception("jobs must be a positive integer, not " + str(jobs))
 
     # AOK, return everything that's needed
-    return (countsFile, clustsFile, outFile, padding, transMatrixCutoff, plotDir, jobs, madeBy)
+    return (countsFile, clustsFile, outFile, padding, plotDir, jobs, madeBy)
 
 
 ####################################################
@@ -179,7 +165,7 @@ ARGUMENTS:
 # may be available in the log
 def main(argv):
     # parse, check and preprocess arguments
-    (countsFile, clustsFile, outFile, padding, pDist, plotDir, jobs, madeBy) = parseArgs(argv)
+    (countsFile, clustsFile, outFile, padding, plotDir, jobs, madeBy) = parseArgs(argv)
 
     # args seem OK, start working
     logger.debug("called with: " + " ".join(argv[1:]))
@@ -223,174 +209,76 @@ def main(argv):
     allExons.extend(gonosomeExons)
     (baseTransMatMaxIED, adjustTransMatDMax) = countFrags.bed.getInterExonDistCutoffs(allExons)
 
-    ####################
-    # Exon profiling:
-    # To assign specific CN profiles to each exon, applies continuous statistical distributions
-    # to approximate CN profiles for each sample cluster and individual exon.
+    ###################
+    # call CNVs independently for each valid cluster
+    for clusterID in sorted(clust2samps.keys()):
+        if not clustIsValid[clusterID]:
+            logger.info("cluster %s is INVALID, skipping it", clusterID)
+            continue
 
-    # For the CN0 profile (homodeletion represented by uncaptured exon), the script uses data from
-    # intergenic pseudo-exons.
-    # Calculates key parameters of the best-fit half-Gaussian distribution for CN0 profiles
-    # from 111 tested continuous distributions (scipy.stats.rv_continuous).
-    # Determines a threshold (uncaptThreshold) to identify exons that are not captured
-    # in the sequencing process, distinguishing them from captured exons.
-    try:
-        (hnorm_loc, hnorm_scale, uncaptThreshold) = callCNVs.exonProfiling.calcCN0Params(intergenicFPMs)
-    except Exception as e:
-        raise Exception("calcCN0Params failed: %s", repr(e))
+        # samplesInClust: temp dict, key==sampleID, value==1 if sample is in cluster
+        # clusterID and value==2 if sample is in a FITWITH cluster for clusterID
+        samplesInClust = {}
+        for s in clust2samps[clusterID]:
+            samplesInClust[s] = 1
+        for fw in fitWith[clusterID]:
+            for s in clust2samps[fw]:
+                samplesInClust[s] = 2
+        # OK we know how many samples are in clusterID + FITWITHs -> allocate
+        # samplesOfInterest with True's, we will just need to set to FALSE
+        # samples that belong to FITWITHs
+        samplesOfInterest = numpy.ones(len(samplesInClust.keys()), dtype=bool)
+        # sampleIndexes: 1D-array of indexes (in samples) of the sampleIDs that belong
+        # to clusterID or its FITWITHs. Init to len(samples) for sanity-checking
+        sampleIndexes = numpy.full(len(samplesInClust.keys()), len(samples), dtype=int)
+        # clustSamples: list of sampleIDs in this cluster, in the same order as in samples
+        clustSamples = []
+        siClust = 0
+        for si in range(len(samples)):
+            if samples[si] in samplesInClust:
+                sampleIndexes[siClust] = si
+                if samplesInClust[samples[si]] == 2:
+                    samplesOfInterest[siClust] = False
+                else:
+                    clustSamples.append(samples[si])
+                siClust += 1
 
-    thisTime = time.time()
-    logger.debug("Done calcCN0Params, loc=%.2f, scale=%.2f, uncaptThreshold=%.2f in %.2f s",
-                 hnorm_loc, hnorm_scale, uncaptThreshold, thisTime - startTime)
-    startTime = thisTime
+        # extract FPMs for the samples in cluster+FitWith
+        clustIntergenicFPMs = intergenicFPMs[:, sampleIndexes]
 
-    # For the CN2 profile, performs robust fitting of a Gaussian distribution to determine
-    # the CN2 profile, representing the normal or diploid state of exons.
-    # Focuses on capturing the predominant signal, filtering out noise or less significant data.
-    # Implements a distinct approach for autosomes and gonosomes to enhance accuracy.
-    # Specific clusters and corresponding FPM data are used for each, accounting for the
-    # unique characteristics of autosomal and gonosomal exons.
-    # Calculates parameters for the Gaussian distribution representing CN2 profiles for each cluster.
-    # The CN1 (single copy loss) and CN3+ (copy gain) profiles are deduced from the parameters
-    # of the Gaussian distribution established for CN2. Based on the assumption that CN1 and
-    # CN3 represent deviations from the CN2 state.
-    try:
-        (CN2Params_A, CN2Params_G) = callCNVs.exonProfiling.calcCN2Params(autosomeFPMs, gonosomeFPMs, samples,
-                                                                          uncaptThreshold, clust2samps, fitWith,
-                                                                          clustIsValid, plotDir, jobs)
-    except Exception as e:
-        raise Exception("calcCN2Params failed: %s", repr(e))
-
-    thisTime = time.time()
-    logger.debug("Done calcCN2Params in %.2f s", thisTime - startTime)
-    startTime = thisTime
-
-    ####################
-    # Rescaling:
-    # Rescaling FPMs ensure consistency across samples.
-    # FPM values can vary due to factors like sequencing depth, necessitating rescaling for comparability.
-    # Additionally, rescaling is crucial for adjusting parameters of probability distributions,
-    # like the standard deviation of the half-normal distribution and standard deviation of the main normal distribution.
-    # This adjustment ensures that statistical assumptions remain valid and models accurately reflect
-    # data characteristics, enhancing the accuracy of subsequent analyses.
-    # dictionaries params_A and params_G follow the same format as CN2Params but contain different data
-    # [stdCN2/meanCN2, stdCN0/meanCN2].
-    # The arrays FPMsrescal_A and FPMsrescal_G have the same dimensions as the original arrays autosomeFPMs and gonosomeFPMs,
-    # respectively.
-    try:
-        (params_A, params_G, FPMsrescal_A, FPMsrescal_G) = callCNVs.rescaling.rescaleClusterFPMAndParams(autosomeFPMs, gonosomeFPMs,
-                                                                                                         CN2Params_A, CN2Params_G,
-                                                                                                         hnorm_scale, samples,
-                                                                                                         clust2samps, fitWith,
-                                                                                                         clustIsValid)
-    except Exception as e:
-        raise Exception("rescaleClusterFPMAndParams failed: %s", repr(e))
-
-    thisTime = time.time()
-    logger.debug("Done rescaleClusterFPMAndParams in %.2f s", thisTime - startTime)
-    startTime = thisTime
-
-    ########################
-    # Build HMM input datas:
-    # determines copy states (e.g., diploid, deletion, duplication) for each genome region and sample
-    # based on probabilistic data and state transitions, enabling the detection of significant genomic variations.
-
-    # - States to be emitted by the HMM corresponding to different types of copy numbers.
-    CNStates = ["CN0", "CN1", "CN2", "CN3"]
-
-    ####################
-    # - Calculates the likelihoods for each sample in a genomic dataset,
-    # considering both autosomal and gonosomal data. It uses FPM data.
-    # The function applies continuous distribution parameters (specifically designed to
-    # describe the CN profile for each exon) to compute the likelihoods. These likelihoods
-    # are essentially Pseudo Emission Probabilities, at the exon level in different samples.
-    # The calculation is performed in parallel for efficiency, handling autosomes and gonosomes separately.
-    try:
-        (likelihoods_A, likelihoods_G) = callCNVs.likelihoods.calcLikelihoods(samples, FPMsrescal_A, FPMsrescal_G,
-                                                                              clust2samps, clustIsValid, params_A,
-                                                                              params_G, CNStates, jobs)
-    except Exception as e:
-        raise Exception("calcLikelihoods failed: %s", repr(e))
-
-    thisTime = time.time()
-    logger.debug("Done calcLikelihoods in %.2f s", thisTime - startTime)
-    startTime = thisTime
-
-    # temp trick for comparing with AS implem: merge auto and gono likelihoodDicts, stacking the
-    # gonosome likelihoods below thed autosome likelihoods for each sample
-    likelihoodsDict = {}
-    for s in likelihoods_A.keys():
-        if s in likelihoods_G:
-            likelihoodsDict[s] = numpy.vstack((likelihoods_A[s], likelihoods_G[s]))
+        if clusterID.startswith("A_"):
+            clustExonFPMs = autosomeFPMs[:, sampleIndexes]
+            clustExons = autosomeExons
         else:
-            likelihoodsDict[s] = numpy.vstack((likelihoods_A[s],
-                                               numpy.full((len(gonosomeExons), len(CNStates)), -1)))
+            clustExonFPMs = gonosomeFPMs[:, sampleIndexes]
+            clustExons = gonosomeExons
 
-    #########
-    # Obtain priors probabilities using likelihood data for each CN.
-    # The process follows Bayesian principles, which involve updating prior probabilities based on observed data.
-    # This ensures that the estimation of prior probabilities aligns with the evidence provided by likelihood
-    # data for each CN.
-    # Bayesian theory provides a robust framework for this adjustment, facilitating convergence between
-    # previous and current priors.
-    try:
-        priors = callCNVs.priors.calcPriors(likelihoodsDict, jobs)
-    except Exception as e:
-        raise Exception("calcPriors failed: %s", repr(e))
+        # by default, assume samples from this cluster are diploid for the chroms
+        # that carry the clustExons
+        isHaploid = False
+        if clusterID.startswith("G_"):
+            # TODO: assign gender to Gonosome clusters:
+            # if cluster is Male, its samples are haploid (for chrX and chrY, which
+            #    carry the gonosomeExons) => set isHaploid=True;
+            # if Female, the samples are diploid for chrX and don't have any chrY
+            #    => keep default isHaploid=False and hopefully we don't get many CNV
+            #       calls on chrY
+            # for now, default to Male for testing
+            isHaploid = True
 
-    formatted_priors = "  ".join(["%.2e" % x for x in priors])
-    logger.info("Calculated priors: %s", formatted_priors)
-    thisTime = time.time()
-    logger.debug("Done calcPriors in %.2f s", thisTime - startTime)
-    startTime = thisTime
+        (CNVs, CN2Means) = callCNVsOneCluster(
+            clustExonFPMs, clustIntergenicFPMs, samplesOfInterest, clustSamples,
+            clustExons, clusterID, isHaploid, baseTransMatMaxIED, adjustTransMatDMax, jobs)
 
-    #########
-    # - generates a transition matrix for CN states from likelihood data,
-    # and computes CN probabilities for both autosomal and gonosomal samples.
-    # The function adds an 'init' state to the transition matrix, improving its use
-    # in Hidden Markov Models (HMMs).
-    # The resulting 'transMatrix' is a 2D numpy array. dim =(nbOfCNStates) * (nbOfCNStates)
-    try:
-        transMatrix = callCNVs.transitions.buildBaseTransMatrix(likelihoodsDict, allExons,
-                                                                priors, baseTransMatMaxIED)
-    except Exception as e:
-        raise Exception("buildBaseTransMatrix failed: %s", repr(e))
+        # print CNVs for this cluster as a VCF file
+        # TEMP dirty-patching outFile, TODO do this correctly
+        clustOutFile = outFile.replace('/callsFile_', '/callsFile_' + clusterID + '_')
+
+        callCNVs.callsFile.printCallsFile(CNVs, clustExonFPMs, CN2Means, clustExons, clustSamples,
+                                          padding, clustOutFile, madeBy)
 
     thisTime = time.time()
-    logger.debug("Done buildBaseTransMatrix, in %.2fs", thisTime - startTime)
-    startTime = thisTime
-
-    ######## DEBUG PRINT
-    formatted_matrix = "\n".join(["\t".join([f"{cell:.2e}" for cell in row]) for row in transMatrix])
-    logger.debug("Transition Matrix:\n%s", formatted_matrix)
-    ########
-
-    #########
-    # Application of the HMM using the Viterbi algorithm. (calling step)
-    # processes both autosomal and gonosomal exon data for a set of samples, yielding
-    # a list of CNVs for each category. Each CNV is detailed with information including
-    # CNV type, start and end positions of the affected exons, the event quality score,
-    # and the sample ID.
-    try:
-        CNVs = callCNVs.viterbi.viterbiAllSamples(likelihoods, allExons, transMatrix,
-                                                  priors, adjustTransMatDMax, jobs)
-    except Exception as e:
-        raise Exception("callAllCNVs() failed: %s", repr(e))
-
-    thisTime = time.time()
-    logger.debug("Done callAllCNVs() in %.2f s", thisTime - startTime)
-    startTime = thisTime
-
-    #########
-    # VCF printing
-    try:
-        callCNVs.callsFile.printCallsFile(CNVs, allExons, samples, padding, outFile, madeBy)
-    except Exception as e:
-        raise Exception("printCallsFile failed: %s", repr(e))
-
-    thisTime = time.time()
-    logger.debug("Done printCallsFile in %.2f s", thisTime - startTime)
-    startTime = thisTime
+    logger.info("all clusters done,  in %.1fs", thisTime - startTime)
 
 
 ###############################################################################
@@ -402,31 +290,93 @@ def main(argv):
 # VCF file for the cluster.
 #
 # Args:
-# -
+# - exonFPMs: 2D-array of floats of size nbExons * nbSamples, FPMs[e,s] is the FPM
+#   count for exon e in sample s (includes samples in FITWITH clusters, these are
+#   used for fitting the CN2)
+# - intergenicFPMs: 2D-array of floats of size nbIntergenics * nbSamples,
+#   intergenicFPMs[i,s] is the FPM count for intergenic pseudo-exon i in sample s
+# - samplesOfInterest: 1D-array of bools of size nbSamples, value==True iff the sample
+#   is in the cluster of interest (vs being in a FITWITH cluster)
+# - sampleIDs: list of nbSOIs sampleIDs (==strings), must be in the same order
+#   as the corresponding samplesOfInterest columns in exonFPMs
+# - exons: list of nbExons exons, one exon is a list [CHR, START, END, EXONID]
+# - clusterID: string, for logging
+# - isHaploid: bool, if True this cluster of samples is assumed to be haploid
+#   for all chromosomes where the exons are located (eg chrX and chrY in men)
+# - baseTransMatMaxIED, adjustTransMatDMax: params for building and adjusting the
+#   transition matrix
+# - jobs: number of jobs for the parallelized steps (currently calcPriors() and
+#   viterbiAllSamples())
 #
-# Returns:
-#
-def callCNVsOneCluster():
-    likelihoods = allocateLikelihoods(nbSamples, nbExons, nbStates)
-    # fit CN0 model using intergenic pseudo-exon FPMs for all samples
-    # in cluster (including FITWITHs)
-    (CN0scale, fpmCn0) = fitCNO(intergenicFPMs)
-    # use the fitted model to calculate CN0 likelihoods for all exons and
-    # samplesOfInterest (not FITWITHs)
-    calcLikelihoodsCN0(FPMsOfCluster, samplesOfInterest, likelihoods, CN0scale)
+# Returns (CNVs, CN2Means):
+# - CNVs is a list of CNVs, a CNV is a list (types [int, int, int, float, str]):
+#      [CNVType, firstExonIndex, lastExonIndex, qualityScore, sampleID]
+#      where firstExonIndex and lastExonIndex are indexes in the provided exons list;
+# - CN2Means is a 1D-array of nbExons floats, CN2Means[e] is the fitted mean of
+#   the CN2 model of exon e for the cluster, or -1 if exon is NOCALL
+def callCNVsOneCluster(exonFPMs, intergenicFPMs, samplesOfInterest, sampleIDs, exons,
+                       clusterID, isHaploid, baseTransMatMaxIED, adjustTransMatDMax, jobs):
+    logger.info("cluster %s - starting to work", clusterID)
+    startTime = time.time()
+    startTimeCluster = startTime
+
+    nbSOIs = samplesOfInterest.sum()
+    nbExons = len(exons)
+    nbStates = 4
+    likelihoods = callCNVs.likelihoods.allocateLikelihoods(nbSOIs, nbExons, nbStates)
+
+    # fit CN0 model using intergenic pseudo-exon FPMs for all samples (including
+    # FITWITHs).
+    # Currently CN0 is modeled with a half-normal distribution (parameter: CN0scale).
+    # Also return fpmCn0, an FPM value up to which data looks like it (probably) comes
+    # from CN0. This will be useful later for identifying NOCALL exons.
+    (CN0scale, fpmCn0) = callCNVs.likelihoods.fitCNO(intergenicFPMs)
+    thisTime = time.time()
+    logger.debug("cluster %s - done fitCN0 -> CN0Scale=%.2f fpmCn0=%.2f, in %.1fs",
+                 clusterID, CN0scale, fpmCn0, thisTime - startTime)
+    startTime = thisTime
+
+    # use the fitted model to calculate CN0 likelihoods for all exons in all
+    # samples of interest
+    callCNVs.likelihoods.calcLikelihoodsCN0(exonFPMs, samplesOfInterest, likelihoods, CN0scale)
+    thisTime = time.time()
+    logger.debug("cluster %s - done calcLikelihoodsCN0 in %.1fs", clusterID, thisTime - startTime)
+    startTime = thisTime
 
     # for each exon: fit CN2 model using all samples in cluster (including
-    # FITWITHs), and calculate CN1-CN2-CN3 likelihoods for samplesOfInterest
-    for ei in range(nbExons):
-        CN2Means = fitCN2andCalcLikelihoods(FPMsOfCluster, samplesOfInterest,
-                                            likelihoods, fpmCn0, clusterID, isHaploid)
+    # FITWITHs), and calculate CN1-CN2-CN3 likelihoods for samplesOfInterest.
+    CN2Means = callCNVs.likelihoods.fitCN2andCalcLikelihoods(exonFPMs, samplesOfInterest,
+                                                             likelihoods, fpmCn0, clusterID, isHaploid)
+    thisTime = time.time()
+    logger.debug("cluster %s - done fitCN2andCalcLikelihoods in %.1fs", clusterID, thisTime - startTime)
+    startTime = thisTime
 
     # calculate priors (maxing the posterior probas iteratively until convergence)
-    priors = calcPriors(likelihoods, jobs)
+    priors = callCNVs.priors.calcPriors(likelihoods, jobs)
+    formattedPriors = "  ".join(["%.2e" % x for x in priors])
+    logger.debug("cluster %s - priors = %s", clusterID, formattedPriors)
+    thisTime = time.time()
+    logger.debug("cluster %s - done calcPriors in %.1fs", clusterID, thisTime - startTime)
+    startTime = thisTime
 
     # build matrix of base transition probas
-    buildBaseTransMatrix(likelihoods, exons, priors, maxIED)
-    
+    transMatrix = callCNVs.transitions.buildBaseTransMatrix(likelihoods, exons, priors, baseTransMatMaxIED)
+    formattedMatrix = "\n".join(["\t".join([f"{cell:.2e}" for cell in row]) for row in transMatrix])
+    logger.debug("cluster %s - base transition matrix =\n%s", clusterID, formattedMatrix)
+    thisTime = time.time()
+    logger.debug("cluster %s - done buildBaseTransMatrix in %.1fs", clusterID, thisTime - startTime)
+    startTime = thisTime
+
+    # call CNVs with the Viterbi algorithm
+    CNVs = callCNVs.viterbi.viterbiAllSamples(likelihoods, sampleIDs, exons, transMatrix,
+                                              priors, adjustTransMatDMax, jobs)
+    thisTime = time.time()
+    logger.debug("cluster %s - done viterbiAllSamples in %.1fs", clusterID, thisTime - startTime)
+    startTime = thisTime
+
+    logger.info("cluster %s - all done, total time: %.1fs", clusterID, thisTime - startTimeCluster)
+    return(CNVs, CN2Means)
+
 
 ####################################################################################
 ######################################## Main ######################################
