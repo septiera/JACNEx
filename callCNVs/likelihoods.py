@@ -104,7 +104,7 @@ def calcLikelihoodsCN0(FPMs, samplesOfInterest, likelihoods, CN0scale):
 # - isHaploid: bool, if True this cluster of samples is assumed to be haploid
 #   for all chromosomes where the exons are located (eg chrX and chrY in men).
 #
-# Returns (CN2Means): 1D-array of nbExons floats, CN2means[e] is the fitted mean of
+# Returns CN2means: 1D-array of nbExons floats, CN2means[e] is the fitted mean of
 #   the CN2 model of exon e for the cluster, or -1 if exon is NOCALL
 def fitCN2andCalcLikelihoods(FPMs, samplesOfInterest, likelihoods, fpmCn0, clusterID, isHaploid):
     # sanity
@@ -160,10 +160,10 @@ def fitCN2andCalcLikelihoods(FPMs, samplesOfInterest, likelihoods, fpmCn0, clust
 
     # log exon statuses (as percentages)
     exonStatus *= (100 / exonStatus.sum())
-    toPrint = "exon statuses for cluster " + clusterID + ": "
+    toPrint = "exon QC summary for cluster " + clusterID + ":\n"
     toPrint += "%.1f%% CALLED, " % exonStatus[0]
     toPrint += "%.1f%% NOT-CAPTURED, %.1f%% FIT-CN2-FAILED, " % (exonStatus[1], exonStatus[2])
-    toPrint += "%.1f%% CN2-LOW-SUPPORT, %.1f%% CN0-TOO-CLOSE, " % (exonStatus[3], exonStatus[4])
+    toPrint += "%.1f%% CN2-LOW-SUPPORT, %.1f%% CN0-TOO-CLOSE" % (exonStatus[3], exonStatus[4])
     logger.info("%s", toPrint)
 
     return(CN2means)
