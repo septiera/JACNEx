@@ -217,6 +217,56 @@ def main(argv):
     startTime = thisTime
 
     ###################
+    # sanity-check each regionsToPlot:
+    # - does the sampleID exist?
+    # - does the chrom exist? In auto or gono?
+    # - are there any exons in the coords?
+    # If NO to any, log the issue and ignore this regionToPlot;
+    # if YES to all, populate clust2regions: key==clusterID,
+    # value==list of lists [sampleID,exonIndex], where exonIndex is the index
+    # in the cluster's exons (auto or gono)
+    clust2regions = {}
+    if regionsToPlot != "":
+        autosomeExonNCLs = countFrags.bed.buildExonNCLs(autosomeExons)
+        gonosomeExonNCLs = countFrags.bed.buildExonNCLs(gonosomeExons)
+        for region in checkRegionsToPlot(regionsToPlot):
+            (sampleID, chrom, start, end) = region
+            regionStr = sampleID + ':' + chrom + ':' + start + '-' + end
+            if sampleID not in samp2clusts:
+                logger.warning("ignoring bad regionToPlot %s, sample doesn't exist", regionStr)
+                continue
+            if chrom in autosomeExonNCLs:
+                clustType = 'A_'
+                exonNCLs = autosomeExonNCLs
+            elif chrom in gonosomeExonNCLs:
+                clustType = 'G_'
+                exonNCLs = gonosomeExonNCLs
+            else:
+                logger.warning("ignoring bad regionToPlot %s, chrom doesn't exist", regionStr)
+                continue
+
+            clusterID = ""
+            for clust in samp2clusts[sampleID]:
+                if clust.startswith(clustType):
+                    clusterID = clust
+                    break
+
+            if not clustIsValid[clusterID]:
+                logger.warning("ignoring regionToPlot %s, sample belongs to invalid cluster %s",
+                               regionStr, clusterID)
+                continue
+
+            overlappedExons = exonNCLs[chrom].find_overlap(start, end)
+            if not overlappedExons:
+                logger.warning("ignoring regionToPlot %s, region doesn't overlap any exons", regionStr)
+                continue
+            if clusterID not in clust2regions:
+                clust2regions[clusterID] = []
+            for exon in overlappedExons:
+                exonIndex = exon[2]
+                clust2regions[clusterID].append([sampleID, exonIndex])
+
+    ###################
     # calculate metrics for building and adjusting the transition matrix.
     # These will be used later, but we calculate them now because they are
     # cluster-independant.
@@ -258,7 +308,7 @@ def main(argv):
                     clustSamples.append(samples[si])
                 siClust += 1
 
-        # extract FPMs for the samples in cluster+FitWith
+        # extract FPMs for the samples in cluster+FitWith (this actually makes a copy)
         clustIntergenicFPMs = intergenicFPMs[:, sampleIndexes]
 
         if clusterID.startswith("A_"):
@@ -282,8 +332,9 @@ def main(argv):
             isHaploid = True
 
         (CNVs, CN2Means) = callCNVsOneCluster(
-            clustExonFPMs, clustIntergenicFPMs, samplesOfInterest, clustSamples,
-            clustExons, clusterID, isHaploid, baseTransMatMaxIED, adjustTransMatDMax, jobs)
+            clustExonFPMs, clustIntergenicFPMs, samplesOfInterest, clustSamples, clustExons,
+            clust2regions[clusterID], plotDir, clusterID, isHaploid, baseTransMatMaxIED,
+            adjustTransMatDMax, jobs)
 
         # print CNVs for this cluster as a VCF file
         # TEMP dirty-patching outFile, TODO do this correctly
@@ -343,6 +394,9 @@ def checkRegionsToPlot(regionsToPlot):
 # - sampleIDs: list of nbSOIs sampleIDs (==strings), must be in the same order
 #   as the corresponding samplesOfInterest columns in exonFPMs
 # - exons: list of nbExons exons, one exon is a list [CHR, START, END, EXONID]
+# - regionsToPlot: list of lists [sampleID,exonIndex] for which we need to plot
+#   the FPMs and CN0-CN3+ models
+# - plotDir: subdir where plots will be created (if any)
 # - clusterID: string, for logging
 # - isHaploid: bool, if True this cluster of samples is assumed to be haploid
 #   for all chromosomes where the exons are located (eg chrX and chrY in men)
@@ -357,8 +411,8 @@ def checkRegionsToPlot(regionsToPlot):
 #      where firstExonIndex and lastExonIndex are indexes in the provided exons list;
 # - CN2Means is a 1D-array of nbExons floats, CN2Means[e] is the fitted mean of
 #   the CN2 model of exon e for the cluster, or -1 if exon is NOCALL
-def callCNVsOneCluster(exonFPMs, intergenicFPMs, samplesOfInterest, sampleIDs, exons,
-                       clusterID, isHaploid, baseTransMatMaxIED, adjustTransMatDMax, jobs):
+def callCNVsOneCluster(exonFPMs, intergenicFPMs, samplesOfInterest, sampleIDs, exons, regionsToPlot,
+                       plotDir, clusterID, isHaploid, baseTransMatMaxIED, adjustTransMatDMax, jobs):
     logger.info("cluster %s - starting to work", clusterID)
     startTime = time.time()
     startTimeCluster = startTime
@@ -388,8 +442,8 @@ def callCNVsOneCluster(exonFPMs, intergenicFPMs, samplesOfInterest, sampleIDs, e
 
     # for each exon: fit CN2 model using all samples in cluster (including
     # FITWITHs), and calculate CN1-CN2-CN3 likelihoods for samplesOfInterest.
-    CN2Means = callCNVs.likelihoods.fitCN2andCalcLikelihoods(exonFPMs, samplesOfInterest,
-                                                             likelihoods, fpmCn0, clusterID, isHaploid)
+    CN2Means = callCNVs.likelihoods.fitCN2andCalcLikelihoods(
+        exonFPMs, samplesOfInterest, likelihoods, fpmCn0, regionsToPlot, plotDir, clusterID, isHaploid)
     thisTime = time.time()
     logger.debug("cluster %s - done fitCN2andCalcLikelihoods in %.1fs", clusterID, thisTime - startTime)
     startTime = thisTime
