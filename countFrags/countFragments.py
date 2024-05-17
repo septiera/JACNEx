@@ -1,6 +1,5 @@
 import concurrent.futures
 import logging
-import ncls  # similar to interval trees but faster (https://github.com/biocore-ntnu/ncls)
 import numba  # make python faster
 import numpy
 import os
@@ -41,28 +40,7 @@ def initExonNCLs(exons):
     if exonNCLs:
         logger.error("initExonNCLs called but exonNCLs already initialized, fix your code")
         raise Exception("initExonNCLs() called twice")
-    # for each chrom, build 3 lists with same length: starts, ends, indexes (in
-    # the complete exons list). key is the CHR
-    starts = {}
-    ends = {}
-    indexes = {}
-    for i in range(len(exons)):
-        # exons[i] is a list: CHR, START, END, EXON_ID
-        chrom = exons[i][0]
-        if chrom not in starts:
-            # first time we see chrom, initialize with empty lists
-            starts[chrom] = []
-            ends[chrom] = []
-            indexes[chrom] = []
-        # in all cases, append current values to the lists
-        starts[chrom].append(exons[i][1])
-        ends[chrom].append(exons[i][2])
-        indexes[chrom].append(i)
-
-    # populate global dictionary of NCLs, one per chromosome
-    for chrom in starts.keys():
-        ncl = ncls.NCLS(starts[chrom], ends[chrom], indexes[chrom])
-        exonNCLs[chrom] = ncl
+    exonNCLs = countFrags.bed.buildExonNCLs(exons)
 
 
 ####################################################
