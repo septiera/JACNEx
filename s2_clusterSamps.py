@@ -157,7 +157,7 @@ def main(argv):
     if dendroFileRoot.endswith(".gz"):
         dendroFileRoot = os.path.splitext(dendroFileRoot)[0]
     dendroFileRoot = os.path.splitext(dendroFileRoot)[0]
-    dendroFileRoot = "dendrogram_" + dendroFileRoot
+    dendroFileRoot = dendroFileRoot + "_dendrogram"
     dendroFileRoot = os.path.join(plotDir, dendroFileRoot)
 
     # autosomes
