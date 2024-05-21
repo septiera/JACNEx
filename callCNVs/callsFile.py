@@ -48,7 +48,8 @@ def printCallsFile(CNVs, FPMs, CN2Means, exons, samples, padding, outFile, madeB
 ##INFO=<ID=SVTYPE,Number=1,Type=String,Description="Type of structural variant">
 ##INFO=<ID=END,Number=1,Type=Integer,Description="End position of the variant described in this record">
 ##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype (always 0/1 for duplications)">
-##FORMAT=<ID=QS,Number=1,Type=Float,Description="Call quality score">"""
+##FORMAT=<ID=GQ,Number=1,Type=Float,Description="Genotype quality score">
+##FORMAT=<ID=FR,Number=1,Type=Float,Description="Fragment count ratio">"""
     toPrint += "\n"
     outFH.write(toPrint)
 
@@ -121,7 +122,7 @@ def vcfFormat(CNVs, FPMs, CN2Means, exons, samples, padding):
         # Check if CNV is already processed, otherwise create a new VCF line
         if currentCNV not in cnv_dict:
             # Format the VCF line
-            vcfLine = [chrom, pos, ".", ".", alt, ".", ".", f"SVTYPE={svtype};END={end}", "GT:QS"]
+            vcfLine = [chrom, pos, ".", ".", alt, ".", ".", f"SVTYPE={svtype};END={end}", "GT:GQ:FR"]
 
             # Initialize genotype annotations for all samples
             format = ["0/0"] * len(samples)
@@ -133,8 +134,16 @@ def vcfFormat(CNVs, FPMs, CN2Means, exons, samples, padding):
 
         # Determine the sample's genotype based on CN type and add quality score
         geno = "1/1" if cn == 0 else "0/1"
-        vcfLine[sampi] = f"{geno}:{qualScore:.1f}"
-        ### TODO calculate FragRatio (using CN2Mean and FPMs) and append it
+        # calculate FragRatio: average of FPM ratios over all called exons in the CNV
+        fragRat = 0
+        numExons = 0
+        for ei in range(startExi, endExi + 1):
+            if CN2Means[ei] > 0:
+                fragRat += FPMs[ei, sampi] / CN2Means[ei]
+                numExons += 1
+            # else exon ei is NOCALL, ignore it
+        fragRat /= numExons
+        vcfLine[sampi] = f"{geno}:{qualScore:.1f}:{fragRat:.2f}"
 
         # Update the VCF line in the dictionary
         cnv_dict[currentCNV] = vcfLine
