@@ -1,7 +1,6 @@
 import logging
 import numpy
 import scipy.stats
-import statistics
 
 ####### JACNEx modules
 import callCNVs.robustGaussianFit
@@ -130,6 +129,11 @@ def fitCN2andCalcLikelihoods(FPMs, samplesOfInterest, likelihoods, fpmCn0,
     # (exonStatus[1..4]) the fitCN2() QC criteria. This is just for logging.
     exonStatus = numpy.zeros(5, dtype=float)
 
+    # create a view with all FPMs, then squash with the FPMs of SOIs if needed
+    FPMsSOIs = FPMs
+    if nbSamples != nbSOIs:
+        FPMsSOIs = FPMs[:, samplesOfInterest]
+
     if isHaploid:
         # set all likelihoods of CN1 to zero
         likelihoods[:, :, 1] = 0
@@ -148,27 +152,24 @@ def fitCN2andCalcLikelihoods(FPMs, samplesOfInterest, likelihoods, fpmCn0,
 
             # CN1: shift the CN2 Gaussian so mean==cn2Mu/2 (a single copy rather than 2)
             cn1Mu = cn2Mu / 2
-            cn1Dist = statistics.NormalDist(mu=cn1Mu, sigma=cn2Sigma)
-
+            # tried statistics.normalDist to avoid scipy but it's super slow:
+            # cn1Dist = statistics.NormalDist(mu=cn1Mu, sigma=cn2Sigma)
+            cn1Dist = scipy.stats.norm(loc=cn1Mu, scale=cn2Sigma)
             # CN2 model: the fitted Gaussian
-            cn2Dist = statistics.NormalDist(mu=cn2Mu, sigma=cn2Sigma)
-
+            # cn2Dist = statistics.NormalDist(mu=cn2Mu, sigma=cn2Sigma)
+            cn2Dist = scipy.stats.norm(loc=cn2Mu, scale=cn2Sigma)
             # CN3 model, as defined in cn3Distib()
             cn3Dist = cn3Distrib(cn2Mu, cn2Sigma, isHaploid)
 
-            soi = 0
-            for si in range(nbSamples):
-                if samplesOfInterest[si]:
-                    if not isHaploid:
-                        likelihoods[soi, ei, 1] = cn1Dist.pdf(FPMs[ei, si])
-                    # else keep CN1 likelihood at zero as set above
-                    likelihoods[soi, ei, 2] = cn2Dist.pdf(FPMs[ei, si])
-                    likelihoods[soi, ei, 3] = cn3Dist.pdf(FPMs[ei, si])
-                    soi += 1
+            if not isHaploid:
+                likelihoods[:, ei, 1] = cn1Dist.pdf(FPMsSOIs[ei, :])
+            # else keep CN1 likelihood at zero as set above
+            likelihoods[:, ei, 2] = cn2Dist.pdf(FPMsSOIs[ei, :])
+            likelihoods[:, ei, 3] = cn3Dist.pdf(FPMsSOIs[ei, :])
 
     # log exon statuses (as percentages)
     exonStatus *= (100 / exonStatus.sum())
-    toPrint = "exon QC summary for cluster " + clusterID + ":\n"
+    toPrint = "exon QC summary for cluster " + clusterID + ":\n\t"
     toPrint += "%.1f%% CALLED, " % exonStatus[0]
     toPrint += "%.1f%% NOT-CAPTURED, %.1f%% FIT-CN2-FAILED, " % (exonStatus[1], exonStatus[2])
     toPrint += "%.1f%% CN2-LOW-SUPPORT, %.1f%% CN0-TOO-CLOSE" % (exonStatus[3], exonStatus[4])
@@ -242,10 +243,11 @@ def fitCN2(FPMsOfExon, fpmCn0, isHaploid):
 #
 # Args:
 # - (cn2Mu, cn2Sigma) of the CN2 model
-# - isHaploid boolean (NOTE: currently not used)
+# - isHaploid boolean (NOTE: currently not used - TODO)
 #
-# Return an object with a pdf() method - currently a "frozen" scipy distribution, but
-# it could be some other object (eg statistics.NormalDist).
+# Return an object with a pdf() method that accepts a 1D numpy.ndarray as input and
+# returns a 1D array of the same size containing the PDF values - currently we
+# use a "frozen" scipy distribution, but it could be some other object
 def cn3Distrib(cn2Mu, cn2Sigma, isHaploid):
     # LogNormal parameters set empirically
     # scipy shape == sigma
