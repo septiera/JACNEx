@@ -79,7 +79,9 @@ def calcPriors(likelihoods, jobs):
 #
 # Returns posteriors, same type as priors.
 def calcPosteriors(likelihoods, priors, jobs):
-    countsPerState = numpy.zeros(len(priors), dtype=numpy.uint64)
+    # init counts with a pseudo-count of one (avoid issues if no counts at all), this
+    # won't matter for haploids since their CN1 likelihoods are zero
+    countsPerState = numpy.ones(len(priors), dtype=numpy.uint64)
 
     ##################
     # Define nested callback for processing countMostLikelyStates() result.

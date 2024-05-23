@@ -27,8 +27,10 @@ logger = logging.getLogger(__name__)
 # probas between states
 def buildBaseTransMatrix(likelihoods, exons, priors, maxIED):
     nbStates = len(priors)
-    # count transitions between valid, close-enough exons in all samples
-    countsAllSamples = numpy.zeros((nbStates, nbStates), dtype=numpy.uint64)
+    # count transitions between valid, close-enough exons in all samples, and
+    # init counts with a pseudo-count of one (avoid issues if no counts at all),
+    #  this won't matter for haploids since their CN1 likelihoods are zero
+    countsAllSamples = numpy.ones((nbStates, nbStates), dtype=numpy.uint64)
 
     for si in range(likelihoods.shape[0]):
         bestStates = (priors * likelihoods[si, :, :]).argmax(axis=1)
