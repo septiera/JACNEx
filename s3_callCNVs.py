@@ -220,14 +220,6 @@ def main(argv):
                                             samp2clusts, clustIsValid)
 
     ###################
-    # calculate metrics for building and adjusting the transition matrix.
-    # These will be used later, but we calculate them now because they are
-    # cluster-independant.
-    allExons = autosomeExons.copy()
-    allExons.extend(gonosomeExons)
-    (baseTransMatMaxIED, adjustTransMatDMax) = countFrags.bed.getInterExonDistCutoffs(allExons)
-
-    ###################
     # call CNVs independently for each valid cluster
     for clusterID in sorted(clust2samps.keys()):
         if not clustIsValid[clusterID]:
@@ -298,9 +290,8 @@ def main(argv):
             isHaploid = True
 
         (CNVs, CN2Means) = callCNVsOneCluster(
-            clustExonFPMs, clustIntergenicFPMs, samplesOfInterest, clustSamples, clustExons,
-            exonsToPlot, plotDir, clusterID, isHaploid, baseTransMatMaxIED,
-            adjustTransMatDMax, jobs)
+            clustExonFPMs, clustIntergenicFPMs, samplesOfInterest, clustSamples,
+            clustExons, exonsToPlot, plotDir, clusterID, isHaploid, jobs)
 
         # print CNVs for this cluster as a VCF file
         # TEMP dirty-patching outFile, TODO do this correctly
@@ -424,15 +415,13 @@ def preprocessRegionsToPlot(regionsToPlot, autosomeExons, gonosomeExons, samp2cl
 # - clusterID: string, for logging
 # - isHaploid: bool, if True this cluster of samples is assumed to be haploid
 #   for all chromosomes where the exons are located (eg chrX and chrY in men)
-# - baseTransMatMaxIED, adjustTransMatDMax: params for building and adjusting the
-#   transition matrix
 # - jobs: number of jobs for the parallelized steps (currently calcPriors() and
 #   viterbiAllSamples())
 #
 # Returns (CNVs, CN2Means): as returned by viterbiAllSamples() and fitCN2andCalcLikelihoods(),
 #   and as expected by printCallsFile()
 def callCNVsOneCluster(exonFPMs, intergenicFPMs, samplesOfInterest, sampleIDs, exons, exonsToPlot,
-                       plotDir, clusterID, isHaploid, baseTransMatMaxIED, adjustTransMatDMax, jobs):
+                       plotDir, clusterID, isHaploid, jobs):
     logger.info("cluster %s - starting to work", clusterID)
     startTime = time.time()
     startTimeCluster = startTime
@@ -475,6 +464,10 @@ def callCNVsOneCluster(exonFPMs, intergenicFPMs, samplesOfInterest, sampleIDs, e
     thisTime = time.time()
     logger.debug("cluster %s - done calcPriors in %.1fs", clusterID, thisTime - startTime)
     startTime = thisTime
+
+    # calculate metrics for building and adjusting the transition matrix, ignoring
+    # NOCALL exons (just pass the likelihoods of the first sample state CN0)
+    (baseTransMatMaxIED, adjustTransMatDMax) = countFrags.bed.getIEDCutoffs(exons, likelihoods[0, :, 0])
 
     # build matrix of base transition probas
     transMatrix = callCNVs.transitions.buildBaseTransMatrix(likelihoods, exons, priors, baseTransMatMaxIED)

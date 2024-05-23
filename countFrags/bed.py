@@ -146,7 +146,7 @@ def sortExonsOrBPs(data):
 
 
 ####################################################
-# getInterExonDistCutoffs:
+# getIEDCutoffs:
 # calculates two important metrics for building the base transition matrix and
 # for adjusting the transition probas: baseTransMatMaxIED and adjustTransMatDMax.
 # These are defined by the *Quantile values hard-coded below, which should be fine.
@@ -155,9 +155,10 @@ def sortExonsOrBPs(data):
 #
 # Args:
 # - exons: list of nbExons exons, one exon is a list [CHR, START, END, EXONID]
+# -likelihoods: 1D numpy.ndarray size=len(exons) value==-1 if exon is NOCALL
 #
 # Returns the tuple (baseTransMatMaxIED, adjustTransMatDMax).
-def getInterExonDistCutoffs(exons):
+def getIEDCutoffs(exons, likelihoods):
     # baseTransMatQuantile: inter-exon distance quantile to use as cutoff when building
     # the base transition matrix, hard-coded here. See buildBaseTransMatrix()
     baseTransMatQuantile = 0.5
@@ -169,18 +170,25 @@ def getInterExonDistCutoffs(exons):
 
     prevChrom = ""
     prevEnd = 0
+    nextIEDindex = 0
     for ei in range(len(exons)):
-        if exons[ei][0] != prevChrom:
-            # changed chrom, keeping the default IED==0, doesn't matter
+        if likelihoods[ei] == -1:
+            # NOCALL, skip exon
+            continue
+        elif exons[ei][0] != prevChrom:
+            # changed chrom, no IED
             prevChrom = exons[ei][0]
+            prevEnd = exons[ei][2]
         else:
-            interExonDistances[ei] = exons[ei][1] - prevEnd
-        # in all cases, update prevEnd
-        prevEnd = exons[ei][2]
+            interExonDistances[nextIEDindex] = exons[ei][1] - prevEnd
+            nextIEDindex += 1
+            prevEnd = exons[ei][2]
 
-    baseTransMatMaxIED = int(numpy.quantile(interExonDistances, baseTransMatQuantile))
-    adjustTransMatDMax = int(numpy.quantile(interExonDistances, adjustTransMatQuantile))
-    return(baseTransMatMaxIED, adjustTransMatDMax)
+    # resize to ignore NOCALL exons and first exons on chorms
+    interExonDistances.resize(nextIEDindex, refcheck=False)
+
+    # calculate quantiles and round to int
+    return(numpy.quantile(interExonDistances, (baseTransMatQuantile, adjustTransMatQuantile)).astype(int))
 
 
 ####################################################
