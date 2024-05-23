@@ -135,12 +135,12 @@ def fitCN2andCalcLikelihoods(FPMs, samplesOfInterest, likelihoods, fpmCn0,
         likelihoods[:, :, 1] = 0
 
     for ei in range(nbExons):
-        (cn2Mu, cn2Sigma) = fitCN2(FPMs[ei, :], fpmCn0, isHaploid)
-        if cn2Mu < 0:
+        (status, cn2Mu, cn2Sigma) = fitCN2(FPMs[ei, :], fpmCn0, isHaploid)
+
+        if status < 0:
             # exon is NOCALL for the whole cluster, squash likelihoods to -1
             likelihoods[:, ei, :] = -1.0
-            exonStatus[round(-cn2Mu)] += 1
-            continue
+            exonStatus[-status] += 1
 
         else:
             CN2means[ei] = cn2Mu
@@ -192,8 +192,9 @@ def fitCN2andCalcLikelihoods(FPMs, samplesOfInterest, likelihoods, fpmCn0,
 # - CN1 Gaussian (or CN2 Gaussian if isHaploid) can't be clearly distinguished
 #   from CN0 model (see minZscore)
 #
-# If all QC criteria pass, return (mu,sigma) == mean and stdev of the CN2 model;
-# otherwise return (E, 0) where E<0 depends on the first criteria that failed:
+# Return (E, mu, sigma): E is the status/error code, mu and sigma are the mean
+# and stdev of the CN2 model (set to (0,0) if we couldn't fit CN2, ie E==-1 or -2);
+# E==0  if all QC criteria pass
 # E==-1 if exon isn't captured
 # E==-2 if robustGaussianFit failed
 # E==-3 if low support for CN2 model
@@ -201,7 +202,7 @@ def fitCN2andCalcLikelihoods(FPMs, samplesOfInterest, likelihoods, fpmCn0,
 def fitCN2(FPMsOfExon, fpmCn0, isHaploid):
     if numpy.median(FPMsOfExon) <= fpmCn0:
         # uncaptured exon
-        return(-1, 0)
+        return(-1, 0, 0)
 
     try:
         (mu, sigma) = callCNVs.robustGaussianFit.robustGaussianFit(FPMsOfExon)
@@ -210,7 +211,7 @@ def fitCN2(FPMsOfExon, fpmCn0, isHaploid):
             logger.warning("robustGaussianFit failed unexpectedly: %s", repr(e))
             raise
         else:
-            return(-2, 0)
+            return(-2, 0, 0)
 
     # require at least minSamps samples within sdLim sigmas of mu
     minSamps = len(FPMsOfExon) * 0.5
@@ -219,16 +220,16 @@ def fitCN2(FPMsOfExon, fpmCn0, isHaploid):
                                                   FPMsOfExon - mu + sdLim * sigma > 0))
     if samplesUnderCN2 < minSamps:
         # low support for CN2
-        return(-3, 0)
+        return(-3, mu, sigma)
 
     # require CN1 (CN2 if haploid) to be at least minZscore sigmas from fpmCn0
     minZscore = 3
     if ((not isHaploid and ((mu / 2 - minZscore * sigma) <= fpmCn0)) or
         (isHaploid and ((mu - minZscore * sigma) <= fpmCn0))):
         # CN1 / CN2 too close to CN0
-        return(-4, 0)
+        return(-4, mu, sigma)
 
-    return(mu, sigma)
+    return(0, mu, sigma)
 
 
 ############################################
