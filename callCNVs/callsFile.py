@@ -132,8 +132,6 @@ def vcfFormat(CNVs, FPMs, CN2Means, exons, samples, padding):
             # Retrieve existing VCF line from dictionary
             vcfLine = cnv_dict[currentCNV]
 
-        # Determine the sample's genotype based on CN type and add quality score
-        geno = "1/1" if cn == 0 else "0/1"
         # calculate FragRatio: average of FPM ratios over all called exons in the CNV
         fragRat = 0
         numExons = 0
@@ -143,6 +141,20 @@ def vcfFormat(CNVs, FPMs, CN2Means, exons, samples, padding):
                 numExons += 1
             # else exon ei is NOCALL, ignore it
         fragRat /= numExons
+
+        # sample's genotype, depending on fragRat for DUPs: at a diploid locus we
+        # expect fragRat ~1.5 for HET-DUPs and starting at ~2 for CN=4+ (which we
+        # will call HV-DUPs, although maybe CN=3 on one allele and CN=1 on the other)...
+        # [NOTE: at a haploid locus we expect ~2 for a hemizygous DUP but we're OK
+        # to call thosez HV-DUP]
+        # => hard-coded arbitrary cutoff between 1.5 and 2, closer to 2 to be conservative
+        minFragRatDupHomo = 1.9
+        geno = "1/1"
+        if (cn == 1):
+            geno = "0/1"
+        elif (cn == 3) and (fragRat < minFragRatDupHomo):
+            geno = "0/1"
+
         vcfLine[sampi] = f"{geno}:{qualScore:.1f}:{fragRat:.2f}"
 
         # Update the VCF line in the dictionary
