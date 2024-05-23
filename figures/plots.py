@@ -229,6 +229,10 @@ def plotDendrogram(linkageMatrix, samples, clust2samps, fitWith, clustIsValid, t
     pdf.close()
 
 
+def plotExon(BLABLABLA, TODO):
+    return()
+
+
 #############################################################
 # plotPieChart:
 # Generate and save a pie chart representing the distribution of exon status

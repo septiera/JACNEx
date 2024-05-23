@@ -4,7 +4,7 @@ import scipy.stats
 
 ####### JACNEx modules
 import callCNVs.robustGaussianFit
-
+import figures.plots
 
 # set up logger, using inherited config
 logger = logging.getLogger(__name__)
@@ -99,8 +99,8 @@ def calcLikelihoodsCN0(FPMs, samplesOfInterest, likelihoods, CN0scale):
 #   likelihoods[s,e,cn] is the likelihood of state cn for exon e in sample s, will be
 #   filled in-place
 # - fpmCn0: up to this FPM value, data "looks like it's from CN0"
-# - regionsToPlot: list of lists [sampleID,exonIndex] for which we need to plot
-#   the FPMs and CN0-CN3+ models
+# - exonsToPlot: Dict with key==exonIndex, value==list of lists[sampleIndex, sampleID] for
+#   which we need to plot the FPMs and CN0-CN3+ models
 # - plotDir: subdir where plots will be created (if any)
 # - clusterID: string, for logging
 # - isHaploid: bool, if True this cluster of samples is assumed to be haploid
@@ -109,7 +109,7 @@ def calcLikelihoodsCN0(FPMs, samplesOfInterest, likelihoods, CN0scale):
 # Returns CN2means: 1D-array of nbExons floats, CN2means[e] is the fitted mean of
 #   the CN2 model of exon e for the cluster, or -1 if exon is NOCALL
 def fitCN2andCalcLikelihoods(FPMs, samplesOfInterest, likelihoods, fpmCn0,
-                             regionsToPlot, plotDir, clusterID, isHaploid):
+                             exonsToPlot, plotDir, clusterID, isHaploid):
     # sanity
     nbExons = FPMs.shape[0]
     nbSamples = FPMs.shape[1]
@@ -120,10 +120,6 @@ def fitCN2andCalcLikelihoods(FPMs, samplesOfInterest, likelihoods, fpmCn0,
         raise Exception("fitCN2andCalcLikelihoods sanity check failed")
 
     CN2means = numpy.full(nbExons, fill_value=-1, dtype=numpy.float64)
-
-    # TODO: preprocess regionsToPlot (build Dict, key==exonIndex, value==??)
-    # and call a plotExonProfile() function when needed
-    exonToPlot = {}
 
     # exonStatus: count the number of exons that passed (exonStatus[0]) or failed
     # (exonStatus[1..4]) the fitCN2() QC criteria. This is just for logging.
@@ -166,6 +162,10 @@ def fitCN2andCalcLikelihoods(FPMs, samplesOfInterest, likelihoods, fpmCn0,
             # else keep CN1 likelihood at zero as set above
             likelihoods[:, ei, 2] = cn2Dist.pdf(FPMsSOIs[ei, :])
             likelihoods[:, ei, 3] = cn3Dist.pdf(FPMsSOIs[ei, :])
+
+        # in all cases, plot the exon if requested
+        if ei in exonsToPlot:
+            figures.plots.plotExon(exonsToPlot[ei], FPMs, cn1Dist, cn2Dist, cn3Dist, fpmCn0)
 
     # log exon statuses (as percentages)
     exonStatus *= (100 / exonStatus.sum())
