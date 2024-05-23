@@ -14,8 +14,8 @@ logger = logging.getLogger(__name__)
 # print CNVs in VCF format. The CNVs must belong to a single cluster.
 #
 # Args:
-# - CNVs (list of lists[int, int, int, float, str]): [CNtype, exonIndStart, exonIndEnd,
-#                                                     qualityScore, sampID].
+# - CNVs (list of lists[int, int, int, float, int]): [CNtype, exonIndStart, exonIndEnd,
+#                                                     qualityScore, sampIndex].
 # - FPMs: 2D-array of floats, size = nbExons * nbSamples, FPMs[e,s] is the FPM
 #   count for exon e in sample s
 # - CN2means: 1D-array of nbExons floats, CN2means[e] is the fitted mean of
@@ -74,7 +74,7 @@ def printCallsFile(CNVs, FPMs, CN2Means, exons, samples, padding, outFile, madeB
 #
 # Args:
 # - CNVs (list): CNV information, each CNV formatted as [CNType, startExonIndex, endExonIndex,
-#    qualityScore, sampleID].
+#    qualityScore, sampleIndex].
 # - FPMs: 2D-array of floats, size = nbExons * nbSamples, FPMs[e,s] is the FPM
 #   count for exon e in sample s
 # - CN2means: 1D-array of nbExons floats, CN2means[e] is the fitted mean of
@@ -100,7 +100,7 @@ def vcfFormat(CNVs, FPMs, CN2Means, exons, samples, padding):
     for cnvIndex in range(len(CNVs)):
         cnvList = CNVs[cnvIndex]
         # Unpack CNV list into variables
-        cn, startExi, endExi, qualScore, sampID = cnvList
+        cn, startExi, endExi, qualScore, sampleIndex = cnvList
 
         # Get chromosome, start and end position from exons
         chrom = exons[startExi][0]
@@ -117,7 +117,7 @@ def vcfFormat(CNVs, FPMs, CN2Means, exons, samples, padding):
         currentCNV = (chrom, pos, end, svtype)
 
         # Calculate sample index in VCF line
-        sampi = samples.index(sampID) + infoColumns
+        sampi = sampleIndex + infoColumns
 
         # Check if CNV is already processed, otherwise create a new VCF line
         if currentCNV not in cnv_dict:
@@ -139,7 +139,7 @@ def vcfFormat(CNVs, FPMs, CN2Means, exons, samples, padding):
         numExons = 0
         for ei in range(startExi, endExi + 1):
             if CN2Means[ei] > 0:
-                fragRat += FPMs[ei, sampi] / CN2Means[ei]
+                fragRat += FPMs[ei, sampleIndex] / CN2Means[ei]
                 numExons += 1
             # else exon ei is NOCALL, ignore it
         fragRat /= numExons

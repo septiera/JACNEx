@@ -429,12 +429,8 @@ def preprocessRegionsToPlot(regionsToPlot, autosomeExons, gonosomeExons, samp2cl
 # - jobs: number of jobs for the parallelized steps (currently calcPriors() and
 #   viterbiAllSamples())
 #
-# Returns (CNVs, CN2Means):
-# - CNVs is a list of CNVs, a CNV is a list (types [int, int, int, float, str]):
-#      [CNVType, firstExonIndex, lastExonIndex, qualityScore, sampleID]
-#      where firstExonIndex and lastExonIndex are indexes in the provided exons list;
-# - CN2Means is a 1D-array of nbExons floats, CN2Means[e] is the fitted mean of
-#   the CN2 model of exon e for the cluster, or -1 if exon is NOCALL
+# Returns (CNVs, CN2Means): as returned by viterbiAllSamples() and fitCN2andCalcLikelihoods(),
+#   and as expected by printCallsFile()
 def callCNVsOneCluster(exonFPMs, intergenicFPMs, samplesOfInterest, sampleIDs, exons, exonsToPlot,
                        plotDir, clusterID, isHaploid, baseTransMatMaxIED, adjustTransMatDMax, jobs):
     logger.info("cluster %s - starting to work", clusterID)

@@ -30,9 +30,10 @@ logger = logging.getLogger(__name__)
 # - dmax [int]: param for adjustTransMatrix()
 # - jobs (int): Number of samples to process in parallel.
 #
-# Returns a list of CNVs, a CNV is a list (types [int, int, int, float, str]):
-# [CNVType, firstExonIndex, lastExonIndex, qualityScore, sampleID]
-# where firstExonIndex and lastExonIndex are indexes in the provided exons list.
+# Returns a list of CNVs, a CNV is a list (types [int, int, int, float, int]):
+# [CNVType, firstExonIndex, lastExonIndex, qualityScore, sampleIndex]
+# where firstExonIndex and lastExonIndex are indexes in the provided exons,
+# and sampleIndex is the index in the provided samples
 def viterbiAllSamples(likelihoods, samples, exons, transMatrix, priors, dmax, jobs):
     CNVs = []
 
@@ -66,7 +67,7 @@ def viterbiAllSamples(likelihoods, samples, exons, transMatrix, priors, dmax, jo
     ##################
     with concurrent.futures.ProcessPoolExecutor(jobs) as pool:
         for si in range(len(samples)):
-            futureRes = pool.submit(viterbiOneSample, likelihoods[si, :, :], samples[si],
+            futureRes = pool.submit(viterbiOneSample, likelihoods[si, :, :], si, samples[si],
                                     exons, transMatrix, priors, dmax)
             futureRes.add_done_callback(sampleDone)
 
@@ -94,16 +95,17 @@ def viterbiAllSamples(likelihoods, samples, exons, transMatrix, priors, dmax, jo
 # Args:
 # - likelihoods (ndarray[floats] dim nbExons*nbStates): emission likelihoods of
 #   each state for each exon for one sample.
-# - sampleID [str]
+# - sampleIndex [int] (for returned CNVs)
+# - sampleID [str] (for log messages)
 # - exons [list of lists[str, int, int, str]]: exon infos [chr, START, END, EXONID].
 # - transMatrix (ndarray[floats] dim nbStates*nbStates): base transition probas between states
 # - priors (ndarray dim nbStates): prior probabilities for each state
 # - dmax [int]: param for adjustTransMatrix()
 #
 # Returns:
-# - CNVs (list of list[int, int, int, float, str]): list of called CNVs,
-#   a CNV is a list [CNVType, firstExonIndex, lastExonIndex, qualityScore, sampleID].
-def viterbiOneSample(likelihoods, sampleID, exons, transMatrix, priors, dmax):
+# - CNVs (list of list[int, int, int, float, int]): list of called CNVs,
+#   a CNV is a list [CNVType, firstExonIndex, lastExonIndex, qualityScore, sampleIndex].
+def viterbiOneSample(likelihoods, sampleIndex, sampleID, exons, transMatrix, priors, dmax):
     try:
         CNVs = []
         nbStates = len(transMatrix)
@@ -130,7 +132,7 @@ def viterbiOneSample(likelihoods, sampleID, exons, transMatrix, priors, dmax):
             if exons[exonIndex][0] != prevChrom:
                 # changing chroms:
                 appendBogusCN2Exon(calledExons, path, bestPathProbas, CN2FromCN2Probas)
-                CNVs.extend(buildCNVs(calledExons, path, bestPathProbas, CN2FromCN2Probas, sampleID))
+                CNVs.extend(buildCNVs(calledExons, path, bestPathProbas, CN2FromCN2Probas, sampleIndex))
                 # reinit with CN2 as path root
                 probsPrev[:] = 0
                 probsPrev[2] = 1
@@ -175,7 +177,7 @@ def viterbiOneSample(likelihoods, sampleID, exons, transMatrix, priors, dmax):
             # if all states at currentExon have the same predecessor state and that state is CN2:
             # backtrack from [previous exon, CN2] and reset
             if numpy.all(bestPrevState == 2):
-                CNVs.extend(buildCNVs(calledExons, path, bestPathProbas, CN2FromCN2Probas, sampleID))
+                CNVs.extend(buildCNVs(calledExons, path, bestPathProbas, CN2FromCN2Probas, sampleIndex))
                 # reinit with CN2 as path root in prev exon
                 probsCurrent[:] = adjustedTransMatrix[2, :] * likelihoods[exonIndex, :]
                 # bestPrevState is already all-2's
@@ -191,7 +193,7 @@ def viterbiOneSample(likelihoods, sampleID, exons, transMatrix, priors, dmax):
 
         # Final CNVs for the last exons
         appendBogusCN2Exon(calledExons, path, bestPathProbas, CN2FromCN2Probas)
-        CNVs.extend(buildCNVs(calledExons, path, bestPathProbas, CN2FromCN2Probas, sampleID))
+        CNVs.extend(buildCNVs(calledExons, path, bestPathProbas, CN2FromCN2Probas, sampleIndex))
 
         return(CNVs)
 
@@ -234,16 +236,16 @@ def appendBogusCN2Exon(calledExons, path, bestPathProbas, CN2FromCN2Probas):
 #   calledExons[e] and starting at the path root
 # - CN2FromCN2Probas (list of len(calledExons) floats): CN2FromCN2Probas[e] == proba of
 #   the transition to CN2 in calledExons[e] from CN2 in previous exon
-# - sampleID [str]
+# - sampleIndex [int]
 #
-# Returns a list of CNVs, a CNV == [CNType, startExon, endExon, qualityScore, sampleID]:
+# Returns a list of CNVs, a CNV == [CNType, startExon, endExon, qualityScore, sampleIndex]:
 # - CNType is 0-3 (== CN)
 # - startExon and endExon are indexes (in the global exons list) of the first and
 #   last exons defining this CNV
 # - qualityScore = log10 of ratio between the proba of most likely path between the called
 #   exons immediately preceding and immediately following the CNV, and the proba of
 #   the CN2-only path between the same exons, capped at maxQualityScore
-def buildCNVs(calledExons, path, bestPathProbas, CN2FromCN2Probas, sampleID):
+def buildCNVs(calledExons, path, bestPathProbas, CN2FromCN2Probas, sampleIndex):
     # max quality score produce, hard-coded here
     maxQualityScore = 100
     CNVs = []
@@ -265,7 +267,7 @@ def buildCNVs(calledExons, path, bestPathProbas, CN2FromCN2Probas, sampleID):
     # sanity: path root == CN2
     if path[0][currentState] != 2:
         logger.error("in buildCNVs(), sanity check failed: path root != CN2")
-        raise Exception(sampleID)
+        raise Exception(sampleIndex)
 
     # now walk through the path of most likely states, constructing CNVs as we go
     firstExonInCurrentState = 0
@@ -293,17 +295,10 @@ def buildCNVs(calledExons, path, bestPathProbas, CN2FromCN2Probas, sampleID):
                     qualityScore = min(qualityScore, maxQualityScore)
 
                 CNVs.append([currentState, calledExons[firstExonInCurrentState],
-                             calledExons[cei - 1], qualityScore, sampleID])
+                             calledExons[cei - 1], qualityScore, sampleIndex])
             # in any case we changed states, update accumulators
             firstExonInCurrentState = cei
             currentState = mostLikelyStates[cei]
             CN2PathProba = CN2FromCN2Probas[cei]
-
-    # for debugging but careful, the prints are in a random order from the various parallel processes:
-    # if len(CNVs) > 0:
-    #     print("Sample=%s, calledExons=%s, path=%s, bestPathProbas=%s, CN2FromCN2Probas=%s" %
-    #           (sampleID, str(calledExons), " ".join(map(numpy.array2string, path)),
-    #            " ".join(map(numpy.array2string, bestPathProbas)), str(CN2FromCN2Probas)))
-    #     print("Produced CNVs: %s" % str(CNVs))
 
     return(CNVs)
