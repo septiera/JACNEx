@@ -146,7 +146,7 @@ def sortExonsOrBPs(data):
 
 
 ####################################################
-# getIEDCutoffs:
+# calcIEDCutoffs:
 # calculates two important metrics for building the base transition matrix and
 # for adjusting the transition probas: baseTransMatMaxIED and adjustTransMatDMax.
 # These are defined by the *Quantile values hard-coded below, which should be fine.
@@ -158,7 +158,7 @@ def sortExonsOrBPs(data):
 # -likelihoods: 1D numpy.ndarray size=len(exons) value==-1 if exon is NOCALL
 #
 # Returns the tuple (baseTransMatMaxIED, adjustTransMatDMax).
-def getIEDCutoffs(exons, likelihoods):
+def calcIEDCutoffs(exons, likelihoods):
     # baseTransMatQuantile: inter-exon distance quantile to use as cutoff when building
     # the base transition matrix, hard-coded here. See buildBaseTransMatrix()
     baseTransMatQuantile = 0.5

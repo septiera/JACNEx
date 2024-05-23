@@ -467,7 +467,7 @@ def callCNVsOneCluster(exonFPMs, intergenicFPMs, samplesOfInterest, sampleIDs, e
 
     # calculate metrics for building and adjusting the transition matrix, ignoring
     # NOCALL exons (just pass the likelihoods of the first sample state CN0)
-    (baseTransMatMaxIED, adjustTransMatDMax) = countFrags.bed.getIEDCutoffs(exons, likelihoods[0, :, 0])
+    (baseTransMatMaxIED, adjustTransMatDMax) = countFrags.bed.calcIEDCutoffs(exons, likelihoods[0, :, 0])
 
     # build matrix of base transition probas
     transMatrix = callCNVs.transitions.buildBaseTransMatrix(likelihoods, exons, priors, baseTransMatMaxIED)
