@@ -1,4 +1,5 @@
 import logging
+import math
 import numpy
 import scipy.stats
 
@@ -147,25 +148,22 @@ def fitCN2andCalcLikelihoods(FPMs, samplesOfInterest, likelihoods, fpmCn0,
             exonStatus[0] += 1
 
             # CN1: shift the CN2 Gaussian so mean==cn2Mu/2 (a single copy rather than 2)
-            cn1Mu = cn2Mu / 2
-            # tried statistics.normalDist to avoid scipy but it's super slow:
-            # cn1Dist = statistics.NormalDist(mu=cn1Mu, sigma=cn2Sigma)
-            cn1Dist = scipy.stats.norm(loc=cn1Mu, scale=cn2Sigma)
+            if not isHaploid:
+                likelihoods[:, ei, 1] = gaussianPDF(FPMsSOIs[ei, :], cn2Mu / 2, cn2Sigma)
+            # else keep CN1 likelihood at zero as set above
+
             # CN2 model: the fitted Gaussian
-            # cn2Dist = statistics.NormalDist(mu=cn2Mu, sigma=cn2Sigma)
-            cn2Dist = scipy.stats.norm(loc=cn2Mu, scale=cn2Sigma)
+            likelihoods[:, ei, 2] = gaussianPDF(FPMsSOIs[ei, :], cn2Mu, cn2Sigma)
+            # NOTE: I tried statistics.normalDist to avoid scipy but it's super slow:
+            # cn1Dist = statistics.NormalDist(mu=cn1Mu, sigma=cn2Sigma)
+
             # CN3 model, as defined in cn3Distib()
             cn3Dist = cn3Distrib(cn2Mu, cn2Sigma, isHaploid)
-
-            if not isHaploid:
-                likelihoods[:, ei, 1] = cn1Dist.pdf(FPMsSOIs[ei, :])
-            # else keep CN1 likelihood at zero as set above
-            likelihoods[:, ei, 2] = cn2Dist.pdf(FPMsSOIs[ei, :])
             likelihoods[:, ei, 3] = cn3Dist.pdf(FPMsSOIs[ei, :])
 
         # in all cases, plot the exon if requested
         if ei in exonsToPlot:
-            figures.plots.plotExon(exonsToPlot[ei], FPMs, cn1Dist, cn2Dist, cn3Dist, fpmCn0)
+            figures.plots.plotExon(exonsToPlot[ei], FPMs, cn2Mu, cn2Sigma, cn3Dist, fpmCn0)
 
     # log exon statuses (as percentages)
     exonStatus *= (100 / exonStatus.sum())
@@ -259,3 +257,16 @@ def cn3Distrib(cn2Mu, cn2Sigma, isHaploid):
 
     cn3dist = scipy.stats.lognorm(shape, loc=loc, scale=scale)
     return(cn3dist)
+
+
+############################################
+# Precompute sqrt(2*pi), used tons of times in gaussianPDF()
+SQRT_2PI = math.sqrt(2 * math.pi)
+
+
+############################################
+# Compute the value of a Gaussian probability density function at x
+# given mu and sigma.
+## @vectorize(['float32(float32, float32, float32)'], target='cuda')
+def gaussianPDF(x, mu, sigma):
+    return numpy.exp(-0.5 * ((x - mu) / sigma)**2) / (sigma * SQRT_2PI)
