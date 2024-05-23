@@ -471,8 +471,8 @@ def callCNVsOneCluster(exonFPMs, intergenicFPMs, samplesOfInterest, sampleIDs, e
 
     # build matrix of base transition probas
     transMatrix = callCNVs.transitions.buildBaseTransMatrix(likelihoods, exons, priors, baseTransMatMaxIED)
-    formattedMatrix = "\n".join(["\t".join([f"{cell:.2e}" for cell in row]) for row in transMatrix])
-    logger.debug("cluster %s - base transition matrix =\n%s", clusterID, formattedMatrix)
+    formattedMatrix = "\n\t".join(["\t".join([f"{cell:.2e}" for cell in row]) for row in transMatrix])
+    logger.debug("cluster %s - base transition matrix =\n\t%s", clusterID, formattedMatrix)
     thisTime = time.time()
     logger.debug("cluster %s - done buildBaseTransMatrix in %.1fs", clusterID, thisTime - startTime)
     startTime = thisTime
