@@ -7,6 +7,7 @@ import os
 import re
 import sys
 import tempfile
+import traceback
 
 ####### JACNEx modules
 import s1_countFrags
@@ -286,7 +287,7 @@ def main(argv):
         (countsFilePrev, commonSamples) = findBestPrevCF(countsFilesAll, samples)
         if commonSamples != 0:
             logger.info("will reuse best matching countsFile (%i common samples): %s",
-                        commonSamples, countsFilePrev)
+                        commonSamples, os.path.basename(countsFilePrev))
             step1Args.extend(["--counts", countsFilePrev])
 
         #########
@@ -349,7 +350,7 @@ def main(argv):
             # specific exception string for this particular case
             raise Exception("STEP1 FAILED, use the same --bed and --padding as in previous runs or specify a new --workDir")
         else:
-            raise Exception("STEP2 FAILED, check log")
+            raise Exception("STEP1 FAILED, check log")
 
     # countsFile wasn't created if it would be identical to countsFilePrev, if this
     # is the case just use countsFilePrev downstream
@@ -400,4 +401,6 @@ if __name__ == '__main__':
     except Exception as e:
         # details on the issue should be in the exception name, print it to stderr and die
         sys.stderr.write("ERROR in " + scriptName + " : " + str(e) + "\n")
+        # actually while we debug things I want the tracebacks
+        traceback.print_exc()
         sys.exit(1)
