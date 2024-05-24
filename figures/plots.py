@@ -229,7 +229,21 @@ def plotDendrogram(linkageMatrix, samples, clust2samps, fitWith, clustIsValid, t
     pdf.close()
 
 
-def plotExon(BLABLABLA, TODO):
+#############################################################
+# plotExons:
+# for each exon of interest (keys of exonsToPlot), plot:
+# - the FPMs (as a histogram)
+# - vertical lines at fpmCn0 and for each requested sample
+# - the CN0-CN3+ models, except:
+#   - only CN0 if we couldn't fit CN2, ie Ecode==-1 or -2
+#   - not CN1 if isHaploid
+#
+# Args:
+# - exonsToPlot: Dict with key==exonIndex, value==list of lists[sampleIndex, sampleID] for
+#   which we need to plot the FPMs and CN0-CN3+ models
+# - plotDir: subdir where plots will be created (if any)
+def plotExons(plotDir, exonsToPlot, FPMsSOIs, CN0scale, Ecodes, CN2means, CN2sigmas, fpmCn0, isHaploid):
+    # TODO
     return()
 
 
