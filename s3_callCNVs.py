@@ -21,6 +21,7 @@ import callCNVs.likelihoods
 import callCNVs.priors
 import callCNVs.transitions
 import callCNVs.viterbi
+import figures.plots
 
 # set up logger, using inherited config, in case we get called as a module
 logger = logging.getLogger(__name__)
@@ -289,7 +290,7 @@ def main(argv):
             # for now, default to Male for testing
             isHaploid = True
 
-        (CNVs, CN2Means) = callCNVsOneCluster(
+        (CNVs, CN2means) = callCNVsOneCluster(
             clustExonFPMs, clustIntergenicFPMs, samplesOfInterest, clustSamples,
             clustExons, exonsToPlot, plotDir, clusterID, isHaploid, jobs)
 
@@ -297,7 +298,7 @@ def main(argv):
         # TEMP dirty-patching outFile, TODO do this correctly
         clustOutFile = outFile.replace('/callsFile_', '/callsFile_' + clusterID + '_')
 
-        callCNVs.callsFile.printCallsFile(CNVs, clustExonFPMs, CN2Means, clustExons, clustSamples,
+        callCNVs.callsFile.printCallsFile(CNVs, clustExonFPMs, CN2means, clustExons, clustSamples,
                                           padding, clustOutFile, madeBy)
 
     thisTime = time.time()
@@ -418,7 +419,7 @@ def preprocessRegionsToPlot(regionsToPlot, autosomeExons, gonosomeExons, samp2cl
 # - jobs: number of jobs for the parallelized steps (currently calcPriors() and
 #   viterbiAllSamples())
 #
-# Returns (CNVs, CN2Means): as returned by viterbiAllSamples() and fitCN2andCalcLikelihoods(),
+# Returns (CNVs, CN2means): as returned by viterbiAllSamples() and fitCN2(),
 #   and as expected by printCallsFile()
 def callCNVsOneCluster(exonFPMs, intergenicFPMs, samplesOfInterest, sampleIDs, exons, exonsToPlot,
                        plotDir, clusterID, isHaploid, jobs):
@@ -442,20 +443,26 @@ def callCNVsOneCluster(exonFPMs, intergenicFPMs, samplesOfInterest, sampleIDs, e
                  clusterID, CN0scale, fpmCn0, thisTime - startTime)
     startTime = thisTime
 
-    # use the fitted model to calculate CN0 likelihoods for all exons in all
-    # samples of interest
-    callCNVs.likelihoods.calcLikelihoodsCN0(exonFPMs, samplesOfInterest, likelihoods, CN0scale)
+    # fit CN2 model for each exon using all samples in cluster (including FITWITHs)
+    (Ecodes, CN2means, CN2sigmas) = callCNVs.likelihoods.fitCN2(exonFPMs, clusterID, fpmCn0, isHaploid)
     thisTime = time.time()
-    logger.debug("cluster %s - done calcLikelihoodsCN0 in %.1fs", clusterID, thisTime - startTime)
+    logger.debug("cluster %s - done fitCN2 in %.1fs", clusterID, thisTime - startTime)
     startTime = thisTime
 
-    # for each exon: fit CN2 model using all samples in cluster (including
-    # FITWITHs), and calculate CN1-CN2-CN3 likelihoods for samplesOfInterest.
-    CN2Means = callCNVs.likelihoods.fitCN2andCalcLikelihoods(
-        exonFPMs, samplesOfInterest, likelihoods, fpmCn0, exonsToPlot, plotDir, clusterID, isHaploid)
+    # we only want to calculate likelihoods for the samples if interest (not the FITWITHs)
+    # => create a view with all FPMs, then squash with the FPMs of SOIs if needed
+    FPMsSOIs = exonFPMs
+    if nbSOIs != exonFPMs.shape[1]:
+        FPMsSOIs = exonFPMs[:, samplesOfInterest]
+
+    # use the fitted models to calculate likelihoods for all exons in all SOIs
+    callCNVs.likelihoods.calcLikelihoods(likelihoods, FPMsSOIs, CN0scale, Ecodes, CN2means, CN2sigmas, isHaploid)
     thisTime = time.time()
-    logger.debug("cluster %s - done fitCN2andCalcLikelihoods in %.1fs", clusterID, thisTime - startTime)
+    logger.debug("cluster %s - done calcLikelihoods in %.1fs", clusterID, thisTime - startTime)
     startTime = thisTime
+
+    # plot exonsToPlot if any
+    figures.plots.plotExons(plotDir, exonsToPlot, FPMsSOIs, CN0scale, Ecodes, CN2means, CN2sigmas, fpmCn0, isHaploid)
 
     # calculate priors (maxing the posterior probas iteratively until convergence)
     priors = callCNVs.priors.calcPriors(likelihoods, jobs)
@@ -466,8 +473,8 @@ def callCNVsOneCluster(exonFPMs, intergenicFPMs, samplesOfInterest, sampleIDs, e
     startTime = thisTime
 
     # calculate metrics for building and adjusting the transition matrix, ignoring
-    # NOCALL exons (just pass the likelihoods of the first sample state CN0)
-    (baseTransMatMaxIED, adjustTransMatDMax) = countFrags.bed.calcIEDCutoffs(exons, likelihoods[0, :, 0])
+    # NOCALL exons (Ecodes < 0)
+    (baseTransMatMaxIED, adjustTransMatDMax) = countFrags.bed.calcIEDCutoffs(exons, Ecodes)
 
     # build matrix of base transition probas
     transMatrix = callCNVs.transitions.buildBaseTransMatrix(likelihoods, exons, priors, baseTransMatMaxIED)
@@ -485,7 +492,7 @@ def callCNVsOneCluster(exonFPMs, intergenicFPMs, samplesOfInterest, sampleIDs, e
     startTime = thisTime
 
     logger.info("cluster %s - all done, total time: %.1fs", clusterID, thisTime - startTimeCluster)
-    return(CNVs, CN2Means)
+    return(CNVs, CN2means)
 
 
 ####################################################################################

@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 # - FPMs: 2D-array of floats, size = nbExons * nbSamples, FPMs[e,s] is the FPM
 #   count for exon e in sample s
 # - CN2means: 1D-array of nbExons floats, CN2means[e] is the fitted mean of
-#   the CN2 model of exon e for the cluster, or -1 if exon is NOCALL
+#   the CN2 model of exon e for the cluster, or 0 if exon is NOCALL
 # - exons (list of lists[str, int, int, str]): exons infos
 # - samples (list[str]): sample names.
 # - padding (int): padding bases used.
@@ -78,7 +78,7 @@ def printCallsFile(CNVs, FPMs, CN2Means, exons, samples, padding, outFile, madeB
 # - FPMs: 2D-array of floats, size = nbExons * nbSamples, FPMs[e,s] is the FPM
 #   count for exon e in sample s
 # - CN2means: 1D-array of nbExons floats, CN2means[e] is the fitted mean of
-#   the CN2 model of exon e for the cluster, or -1 if exon is NOCALL
+#   the CN2 model of exon e for the cluster, or 0 if exon is NOCALL
 # - exons (list): Exon information, each exon formatted as [chromosome, start, end, exonID].
 # - samples (list[strs])
 # - padding [int]: Value used to adjust start and end positions of CNVs.
