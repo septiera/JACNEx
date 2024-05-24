@@ -14,16 +14,6 @@ logger = logging.getLogger(__name__)
 ############################ PUBLIC FUNCTIONS #################################
 ###############################################################################
 ############################################
-# allocateLikelihoods:
-# Allocate, initialize to -1 and return a numpy 3D-array of floats of size
-#   nbSamples * nbExons * nbStates: likelihoods[s,e,cn] will store the
-#   likelihood of state cn for exon e in sample s
-def allocateLikelihoods(nbSamples, nbExons, nbStates):
-    return(numpy.full((nbSamples, nbExons, nbStates), fill_value=-1,
-                      dtype=numpy.float64, order='C'))
-
-
-############################################
 # fitCNO:
 # fit a half-normal distribution with mode=0 (ie loc=0 for scipy) to all FPMs
 # in intergenicFPMs.
@@ -151,24 +141,26 @@ def fitCN2(FPMs, clusterID, fpmCn0, isHaploid):
 # - else exon is NOCALL => set likelihoods to -1
 #
 # Args:
-# - likelihoods: numpy 3D-array of floats of size nbSamples * nbExons * nbStates,
-#   likelihoods[s,e,cn] is the likelihood of state cn for exon e in sample s, will be
-#   filled in-place
 # - FPMs: 2D-array of floats of size nbExons * nbSamples, FPMs[e,s] is the FPM count
 #   for exon e in sample s
 # - CN0scale: as returned by fitCN0()
 # - Ecodes, CN2means, CN2sigmas: as returned by fitCN2()
 # - isHaploid: used in CN3+ model
 #
-# Returns nothing, likelihoods is updated in-place.
-def calcLikelihoods(likelihoods, FPMs, CN0scale, Ecodes, CN2means, CN2sigmas, isHaploid):
+# Returns likelihoods (allocated here):
+#   numpy 3D-array of floats of size nbSamples * nbExons * nbStates,
+#   likelihoods[s,e,cn] is the likelihood of state cn for exon e in sample s
+def calcLikelihoods(FPMs, CN0scale, Ecodes, CN2means, CN2sigmas, isHaploid):
     # sanity:
     nbExons = FPMs.shape[0]
     nbSamples = FPMs.shape[1]
-    if ((nbExons != likelihoods.shape[1]) or (nbSamples != likelihoods.shape[0]) or
-        (nbExons != len(Ecodes))):
+    if nbExons != len(Ecodes):
         logger.error("sanity check failed in calcLikelihoods(), impossible!")
         raise Exception("calcLikelihoods sanity check failed")
+
+    # allocate 3D-array (hard-coded: 4 states CN0, CN1, CN2, CN3+)
+    likelihoods = numpy.full((nbSamples, nbExons, 4), fill_value=-1,
+                             dtype=numpy.float64, order='C')
 
     # CN0 model: half-normal distribution with mode=0
     # NOTE: calculating for all exons for speed, will need to reset to -1 for NOCALL exons
@@ -196,11 +188,12 @@ def calcLikelihoods(likelihoods, FPMs, CN0scale, Ecodes, CN2means, CN2sigmas, is
             # CN3 model, as defined in cn3PDF()
             likelihoods[:, ei, 3] = cn3PDF(FPMs[ei, :], CN2means[ei], CN2sigmas[ei], isHaploid)
 
+    return(likelihoods)
+
 
 ###############################################################################
 ############################ PRIVATE FUNCTIONS ################################
 ###############################################################################
-
 ############################################
 # Precompute sqrt(2*pi), used tons of times in gaussianPDF()
 SQRT_2PI = math.sqrt(2 * math.pi)

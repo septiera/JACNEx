@@ -427,11 +427,6 @@ def callCNVsOneCluster(exonFPMs, intergenicFPMs, samplesOfInterest, sampleIDs, e
     startTime = time.time()
     startTimeCluster = startTime
 
-    nbSOIs = samplesOfInterest.sum()
-    nbExons = len(exons)
-    nbStates = 4
-    likelihoods = callCNVs.likelihoods.allocateLikelihoods(nbSOIs, nbExons, nbStates)
-
     # fit CN0 model using intergenic pseudo-exon FPMs for all samples (including
     # FITWITHs).
     # Currently CN0 is modeled with a half-normal distribution (parameter: CN0scale).
@@ -452,11 +447,11 @@ def callCNVsOneCluster(exonFPMs, intergenicFPMs, samplesOfInterest, sampleIDs, e
     # we only want to calculate likelihoods for the samples if interest (not the FITWITHs)
     # => create a view with all FPMs, then squash with the FPMs of SOIs if needed
     FPMsSOIs = exonFPMs
-    if nbSOIs != exonFPMs.shape[1]:
+    if exonFPMs.shape[1] != samplesOfInterest.sum():
         FPMsSOIs = exonFPMs[:, samplesOfInterest]
 
     # use the fitted models to calculate likelihoods for all exons in all SOIs
-    callCNVs.likelihoods.calcLikelihoods(likelihoods, FPMsSOIs, CN0scale, Ecodes, CN2means, CN2sigmas, isHaploid)
+    likelihoods = callCNVs.likelihoods.calcLikelihoods(FPMsSOIs, CN0scale, Ecodes, CN2means, CN2sigmas, isHaploid)
     thisTime = time.time()
     logger.debug("cluster %s - done calcLikelihoods in %.1fs", clusterID, thisTime - startTime)
     startTime = thisTime
