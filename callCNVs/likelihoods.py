@@ -157,13 +157,13 @@ def fitCN2andCalcLikelihoods(FPMs, samplesOfInterest, likelihoods, fpmCn0,
             # NOTE: I tried statistics.normalDist to avoid scipy but it's super slow:
             # cn1Dist = statistics.NormalDist(mu=cn1Mu, sigma=cn2Sigma)
 
-            # CN3 model, as defined in cn3Distib()
-            cn3Dist = cn3Distrib(cn2Mu, cn2Sigma, isHaploid)
-            likelihoods[:, ei, 3] = cn3Dist.pdf(FPMsSOIs[ei, :])
+            # CN3 model, as defined in cn3PDF()
+            likelihoods[:, ei, 3] = cn3PDF(FPMsSOIs[ei, :], cn2Mu, cn2Sigma, isHaploid)
 
         # in all cases, plot the exon if requested
         if ei in exonsToPlot:
-            figures.plots.plotExon(exonsToPlot[ei], FPMs, cn2Mu, cn2Sigma, cn3Dist, fpmCn0)
+            figures.plots.plotExon(exonsToPlot[ei], exonsToPlot[ei], FPMsSOIs[ei, :],
+                                   cn2Mu, cn2Sigma, isHaploid, fpmCn0)
 
     # log exon statuses (as percentages)
     exonStatus *= (100 / exonStatus.sum())
@@ -265,8 +265,40 @@ SQRT_2PI = math.sqrt(2 * math.pi)
 
 
 ############################################
-# Compute the value of a Gaussian probability density function at x
-# given mu and sigma.
-## @vectorize(['float32(float32, float32, float32)'], target='cuda')
+# Calculate the likelihoods (==values of the PDF) of a Gaussian distribution
+# of parameters mu and sigma, at x (1D numpy.ndarray of floats).
+# Returns a 1D numpy.ndarray, same size as x
 def gaussianPDF(x, mu, sigma):
     return numpy.exp(-0.5 * ((x - mu) / sigma)**2) / (sigma * SQRT_2PI)
+
+
+############################################
+# Calculate the likelihoods (==values of the PDF) of our statistical model
+# of CN3+, based on the CN2 mu and sigma, at x (1D numpy.ndarray of floats).
+#
+# CN3+ is currently modeled as a LogNormal that aims to:
+# - capture data around 1.5x the CN2 mean (2x if isHaploid) and beyond;
+# - avoid overlapping too much with the CN2.
+# The LogNormal is heavy-tailed, which is nice because we are modeling CN3+ not CN3.
+#
+# Args:
+# - x: 1D numpy.ndarray of the FPMs for which we want to calculate the likelihoods
+# - (cn2Mu, cn2Sigma) of the CN2 model
+# - isHaploid boolean (NOTE: currently not used - TODO)
+#
+# Returns a 1D numpy.ndarray, same size as x
+def cn3PDF(x, cn2Mu, cn2Sigma, isHaploid):
+    # LogNormal parameters set empirically
+    sigma = 0.5
+    mu = math.log(cn2Mu)
+    # shift the whole distribution by "loc" to avoid overlapping too much with CN2
+    loc = cn2Mu + 2 * cn2Sigma
+    # mask values <= loc to avoid doing any computations on them, this also copies the data
+    xm = numpy.ma.masked_less_equal(x, loc)
+    xm -= loc
+    # the formula for the pdf of a LogNormal is pretty simple (see wikipedia), but
+    # the order of operations is important to avoid overflows/underflows. The following
+    # works for us and is reasonably fast
+    res = numpy.ma.log(xm)
+    res = numpy.ma.exp(-(((res - mu) / sigma)**2 / 2) - res - numpy.ma.log(sigma * SQRT_2PI))
+    return (res.filled(fill_value=0.0))
