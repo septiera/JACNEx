@@ -154,7 +154,7 @@ def fitCN2andCalcLikelihoods(FPMs, samplesOfInterest, likelihoods, fpmCn0,
 
             # CN2 model: the fitted Gaussian
             likelihoods[:, ei, 2] = gaussianPDF(FPMsSOIs[ei, :], cn2Mu, cn2Sigma)
-            # NOTE: I tried statistics.normalDist to avoid scipy but it's super slow:
+            # NOTE: I tried statistics.normalDist but it's super slow:
             # cn1Dist = statistics.NormalDist(mu=cn1Mu, sigma=cn2Sigma)
 
             # CN3 model, as defined in cn3PDF()
