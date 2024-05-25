@@ -155,10 +155,10 @@ def sortExonsOrBPs(data):
 #
 # Args:
 # - exons: list of nbExons exons, one exon is a list [CHR, START, END, EXONID]
-# -likelihoods: 1D numpy.ndarray size=len(exons) value==-1 if exon is NOCALL
+# -Ecodes: 1D numpy.ndarray size=len(exons) value < 0 if exon is NOCALL
 #
 # Returns the tuple (baseTransMatMaxIED, adjustTransMatDMax).
-def calcIEDCutoffs(exons, likelihoods):
+def calcIEDCutoffs(exons, Ecodes):
     # baseTransMatQuantile: inter-exon distance quantile to use as cutoff when building
     # the base transition matrix, hard-coded here. See buildBaseTransMatrix()
     baseTransMatQuantile = 0.5
@@ -172,7 +172,7 @@ def calcIEDCutoffs(exons, likelihoods):
     prevEnd = 0
     nextIEDindex = 0
     for ei in range(len(exons)):
-        if likelihoods[ei] == -1:
+        if Ecodes[ei] < 0:
             # NOCALL, skip exon
             continue
         elif exons[ei][0] != prevChrom:
