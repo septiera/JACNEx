@@ -51,10 +51,14 @@ def truncated_integral_and_sigma(x):
     return numpy.sqrt(1 - n * x / e)
 
 
+#############################################################
+# Precompute truncated_integral_and_sigma with the default bandwidth of 2.0
+TRUNCINTSIG = truncated_integral_and_sigma(2.0)
+
+
 ###############################################################################
 ############################ PUBLIC FUNCTIONS #################################
 ###############################################################################
-
 #############################################################
 def robustGaussianFit(X, mu=None, sigma=None, bandwidth=2.0, eps=1.0e-5):
     """
@@ -84,7 +88,10 @@ def robustGaussianFit(X, mu=None, sigma=None, bandwidth=2.0, eps=1.0e-5):
         sigma = numpy.std(X) / 3
     sigma_0 = sigma + 1
 
-    bandwidth_truncated_normal_sigma = truncated_integral_and_sigma(bandwidth)
+    # use pre-calculated value if possible
+    bandwidth_truncated_normal_sigma = TRUNCINTSIG
+    if bandwidth != 2.0:
+        bandwidth_truncated_normal_sigma = truncated_integral_and_sigma(bandwidth)
 
     while abs(mu - mu_0) + abs(sigma - sigma_0) > eps:
         # loop until tolerence is reached
