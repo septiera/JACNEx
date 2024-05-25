@@ -253,22 +253,11 @@ def parseCountsFile(countsFile):
 #   - prev2new is a 1D np array of ints of size len(prevCounts), prev2new[i] is
 #    the column index in countsArray where counts for prev sample i (in prevCounts) must
 #    be stored, or -1 if sample i must be discarded
-@numba.njit(parallel=True)
+@numba.njit
 def prevCountsVec2CountsArray(countsArray, exonIndex, prevCounts, prev2new):
     for i in numba.prange(len(prev2new)):
         if prev2new[i] != -1:
             countsArray[exonIndex, prev2new[i]] = prevCounts[i]
-
-
-#################################################
-# countsVec2array
-# fill countsArray[exonIndex] with counts from countsVector (same order)
-# Args:
-#   - countsArray is an int numpy array to populate
-#   - exonIndex is the index of the current exon
-#   - countsVector contains the counts for exon exonIndex, in a 1D np array
-def countsVec2array(countsArray, exonIndex, countsVector):
-    countsArray[exonIndex, :] = countsVector[:]
 
 
 #################################################
