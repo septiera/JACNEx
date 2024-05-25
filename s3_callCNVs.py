@@ -419,8 +419,8 @@ def preprocessRegionsToPlot(regionsToPlot, autosomeExons, gonosomeExons, samp2cl
 # - jobs: number of jobs for the parallelized steps (currently calcPriors() and
 #   viterbiAllSamples())
 #
-# Returns (CNVs, CN2means): as returned by viterbiAllSamples() and fitCN2(),
-#   and as expected by printCallsFile()
+# Returns (CNVs, CN2means): as expected by printCallsFile(), ie as returned by
+#   viterbiAllSamples() and fitCN2() except CN2means is set to 0 for NOCALL exons
 def callCNVsOneCluster(exonFPMs, intergenicFPMs, samplesOfInterest, sampleIDs, exons, exonsToPlot,
                        plotDir, clusterID, isHaploid, jobs):
     logger.info("cluster %s - starting to work", clusterID)
@@ -443,6 +443,9 @@ def callCNVsOneCluster(exonFPMs, intergenicFPMs, samplesOfInterest, sampleIDs, e
     thisTime = time.time()
     logger.debug("cluster %s - done fitCN2 in %.1fs", clusterID, thisTime - startTime)
     startTime = thisTime
+
+    # log stats with the percentages of exons in each QC class
+    logExonStats(Ecodes, clusterID)
 
     # we only want to calculate likelihoods for the samples if interest (not the FITWITHs)
     # => create a view with all FPMs, then squash with the FPMs of SOIs if needed
@@ -484,10 +487,30 @@ def callCNVsOneCluster(exonFPMs, intergenicFPMs, samplesOfInterest, sampleIDs, e
                                               priors, adjustTransMatDMax, jobs)
     thisTime = time.time()
     logger.debug("cluster %s - done viterbiAllSamples in %.1fs", clusterID, thisTime - startTime)
-    startTime = thisTime
+
+    # set CN2means of NOCALL exons to 0
+    CN2means[Ecodes < 0] = 0
 
     logger.info("cluster %s - all done, total time: %.1fs", clusterID, thisTime - startTimeCluster)
     return(CNVs, CN2means)
+
+
+####################################################
+# logExonStats:
+# log stats with the percentages of exons in each QC class
+def logExonStats(Ecodes, clusterID):
+    # log exon statuses (as percentages)
+    totalCnt = Ecodes.shape[0]
+    # statusCnt: number of exons that passed (statusCnt[0]) or failed (statusCnt[1..4]) the QC criteria
+    statusCnt = numpy.zeros(5, dtype=float)
+    for s in range(5):
+        statusCnt[s] = numpy.count_nonzero(Ecodes == -s)
+    statusCnt *= (100 / totalCnt)
+    toPrint = "exon QC summary for cluster " + clusterID + ":\n\t"
+    toPrint += "%.1f%% CALLED, " % statusCnt[0]
+    toPrint += "%.1f%% NOT-CAPTURED, %.1f%% FIT-CN2-FAILED, " % (statusCnt[1], statusCnt[2])
+    toPrint += "%.1f%% CN2-LOW-SUPPORT, %.1f%% CN0-TOO-CLOSE" % (statusCnt[3], statusCnt[4])
+    logger.info("%s", toPrint)
 
 
 ####################################################################################

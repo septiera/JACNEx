@@ -66,19 +66,14 @@ def fitCN2(FPMs, clusterID, fpmCn0, isHaploid):
     nbExons = FPMs.shape[0]
     nbSamples = FPMs.shape[1]
 
-    Ecodes = numpy.zeros(nbExons, dtype=int)
+    Ecodes = numpy.zeros(nbExons, dtype=numpy.byte)
     CN2means = numpy.zeros(nbExons, dtype=numpy.float64)
     CN2sigmas = numpy.zeros(nbExons, dtype=numpy.float64)
-
-    # statusCnt: count the number of exons that passed (statusCnt[0]) or failed
-    # (statusCnt[1..4]) the QC criteria. This is just for logging.
-    statusCnt = numpy.zeros(5, dtype=float)
 
     for ei in range(nbExons):
         if numpy.median(FPMs[ei, :]) <= fpmCn0:
             # uncaptured exon
             Ecodes[ei] = -1
-            statusCnt[1] += 1
             continue
 
         try:
@@ -90,7 +85,6 @@ def fitCN2(FPMs, clusterID, fpmCn0, isHaploid):
             else:
                 # cannot robustly fit Gaussian, but in an expected way
                 Ecodes[ei] = -2
-                statusCnt[2] += 1
                 continue
 
         # if we get here, (mu, sigma) are OK:
@@ -104,7 +98,6 @@ def fitCN2(FPMs, clusterID, fpmCn0, isHaploid):
         if samplesUnderCN2 < minSamps:
             # low support for CN2
             Ecodes[ei] = -3
-            statusCnt[3] += 1
             continue
 
         # require CN1 (CN2 if haploid) to be at least minZscore sigmas from fpmCn0
@@ -113,24 +106,10 @@ def fitCN2(FPMs, clusterID, fpmCn0, isHaploid):
             (isHaploid and ((mu - minZscore * sigma) <= fpmCn0))):
             # CN1 / CN2 too close to CN0
             Ecodes[ei] = -4
-            statusCnt[4] += 1
             continue
 
-        # if we get here exon is good, but nothing more to do, just count
-        statusCnt[0] += 1
+        # if we get here exon is good, but there's nothing more to do
 
-    # log exon statuses (as percentages)
-    totalCnt = statusCnt.sum()
-    # sanity:
-    if totalCnt != nbExons:
-        logger.error("sanity check failed in fitCN2(): totalCnt==%.f vs nbExons==%i", totalCnt, nbExons)
-        raise Exception("fitCN2 sanity check failed")
-    statusCnt *= (100 / totalCnt)
-    toPrint = "exon QC summary for cluster " + clusterID + ":\n\t"
-    toPrint += "%.1f%% CALLED, " % statusCnt[0]
-    toPrint += "%.1f%% NOT-CAPTURED, %.1f%% FIT-CN2-FAILED, " % (statusCnt[1], statusCnt[2])
-    toPrint += "%.1f%% CN2-LOW-SUPPORT, %.1f%% CN0-TOO-CLOSE" % (statusCnt[3], statusCnt[4])
-    logger.info("%s", toPrint)
     return(Ecodes, CN2means, CN2sigmas)
 
 
