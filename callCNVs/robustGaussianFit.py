@@ -24,6 +24,7 @@
 # SOFTWARE.
 
 import math
+import numba
 import numpy
 
 
@@ -32,6 +33,7 @@ import numpy
 ###############################################################################
 
 #############################################################
+@numba.njit
 def normal_erf(x, mu=0, sigma=1, depth=50):
     ele = 1.0
     normal = 1.0
@@ -47,6 +49,7 @@ def normal_erf(x, mu=0, sigma=1, depth=50):
 
 
 #############################################################
+@numba.njit
 def truncated_integral_and_sigma(x):
     n, e = normal_erf(x)
     return math.sqrt(1 - n * x / e)
@@ -61,6 +64,7 @@ TRUNCINTSIG = truncated_integral_and_sigma(2.0)
 ############################ PUBLIC FUNCTIONS #################################
 ###############################################################################
 #############################################################
+@numba.njit
 def robustGaussianFit(X, mu=None, sigma=None, bandwidth=2.0, eps=1.0e-5):
     """
     Fits a single principal gaussian component around a starting guess point
