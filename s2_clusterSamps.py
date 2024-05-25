@@ -99,10 +99,10 @@ ARGUMENTS:
     # Check other args
     try:
         minSamps = int(minSamps)
-        if (minSamps <= 0):
+        if (minSamps <= 1):
             raise Exception()
     except Exception:
-        raise Exception("minSamps must be a positive integer, not " + str(minSamps))
+        raise Exception("minSamps must be an integer > 1, not " + str(minSamps))
 
     # test plotdir last so we don't mkdir unless all other args are OK
     if not os.path.isdir(plotDir):
@@ -141,6 +141,14 @@ def main(argv):
     thisTime = time.time()
     logger.info("done parseAndNormalizeCounts, in %.2fs", thisTime - startTime)
     startTime = thisTime
+
+    ###################
+    # cannot make any useful clusters if too few samples, in fact sklearn.decomposition
+    # (PCA) dies with an ugly message if called with a single sample
+    if len(samples) < minSamps:
+        logger.error("JACNEx requires at least minSamps (%i) samples, you provided %i, aborting",
+                     minSamps, len(samples))
+        raise Exception("JACNEx needs more samples to go beyond counting")
 
     ###################
     # Clustering:
