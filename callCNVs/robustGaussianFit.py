@@ -23,6 +23,7 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
+import math
 import numpy
 
 
@@ -37,18 +38,18 @@ def normal_erf(x, mu=0, sigma=1, depth=50):
     x = (x - mu) / sigma
     erf = x
     for i in range(1, depth):
-        ele = - ele * x * x / 2.0 / i
-        normal = normal + ele
-        erf = erf + ele * x / (2.0 * i + 1)
+        ele *= -x**2 / 2.0 / i
+        normal += ele
+        erf += ele * x / (2.0 * i + 1)
 
-    return (numpy.clip(normal / numpy.sqrt(2.0 * numpy.pi) / sigma, 0, None),
-            numpy.clip(erf / numpy.sqrt(2.0 * numpy.pi) / sigma, -0.5, 0.5))
+    return (max(normal / math.sqrt(2 * math.pi) / sigma, 0),
+            min(max(erf / math.sqrt(2 * math.pi) / sigma, -0.5), 0.5))
 
 
 #############################################################
 def truncated_integral_and_sigma(x):
     n, e = normal_erf(x)
-    return numpy.sqrt(1 - n * x / e)
+    return math.sqrt(1 - n * x / e)
 
 
 #############################################################
@@ -73,14 +74,14 @@ def robustGaussianFit(X, mu=None, sigma=None, bandwidth=2.0, eps=1.0e-5):
         eps (float, optional): Convergence tolerance. Defaults to 1.0e-5.
 
     Returns:
-        mu,sigma: mean and stdev of the gaussian component
+        mu,sigma: mean and stdev of the gaussian component, or (0,0) if something failed
     """
 
     if mu is None:
         # median is an approach as robust and naïve as possible to Expectation
         mu = numpy.median(X)
         if mu == 0:
-            raise Exception("cannot fit")
+            return(0, 0)
     mu_0 = mu + 1
 
     if sigma is None:
@@ -102,7 +103,7 @@ def robustGaussianFit(X, mu=None, sigma=None, bandwidth=2.0, eps=1.0e-5):
         """
         Window = numpy.logical_and(X - mu - bandwidth * sigma < 0, X - mu + bandwidth * sigma > 0)
         if not Window.any():
-            raise Exception("cannot fit")
+            return(0, 0)
         mu_0, mu = mu, numpy.average(X[Window])
         var = numpy.average(numpy.square(X[Window] - mu))
         sigma_0, sigma = sigma, numpy.sqrt(var) / bandwidth_truncated_normal_sigma
