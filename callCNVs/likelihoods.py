@@ -76,16 +76,11 @@ def fitCN2(FPMs, clusterID, fpmCn0, isHaploid):
             Ecodes[ei] = -1
             continue
 
-        try:
-            (mu, sigma) = callCNVs.robustGaussianFit.robustGaussianFit(FPMs[ei, :])
-        except Exception as e:
-            if str(e) != "cannot fit":
-                logger.warning("robustGaussianFit failed unexpectedly: %s", repr(e))
-                raise
-            else:
-                # cannot robustly fit Gaussian, but in an expected way
-                Ecodes[ei] = -2
-                continue
+        (mu, sigma) = callCNVs.robustGaussianFit.robustGaussianFit(FPMs[ei, :])
+        if mu == 0:
+            # cannot robustly fit Gaussian
+            Ecodes[ei] = -2
+            continue
 
         # if we get here, (mu, sigma) are OK:
         (CN2means[ei], CN2sigmas[ei]) = (mu, sigma)
