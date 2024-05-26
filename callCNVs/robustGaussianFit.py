@@ -33,7 +33,6 @@ import numpy
 ###############################################################################
 
 #############################################################
-@numba.njit
 def normal_erf(x, mu=0, sigma=1, depth=50):
     ele = 1.0
     normal = 1.0
@@ -49,7 +48,6 @@ def normal_erf(x, mu=0, sigma=1, depth=50):
 
 
 #############################################################
-@numba.njit
 def truncated_integral_and_sigma(x):
     n, e = normal_erf(x)
     return math.sqrt(1 - n * x / e)
@@ -93,24 +91,27 @@ def robustGaussianFit(X, mu=None, sigma=None, bandwidth=2.0, eps=1.0e-5):
         sigma = numpy.std(X) / 3
     sigma_0 = sigma + 1
 
-    # use pre-calculated value if possible
-    bandwidth_truncated_normal_sigma = TRUNCINTSIG
+    # use pre-calculated value
     if bandwidth != 2.0:
-        bandwidth_truncated_normal_sigma = truncated_integral_and_sigma(bandwidth)
+        raise Exception('need precomputed TRUNCINTSIG, if you change the bandwidth you must change the code')
+        # bandwidth_truncated_normal_sigma = truncated_integral_and_sigma(bandwidth)
 
     while abs(mu - mu_0) + abs(sigma - sigma_0) > eps:
         # loop until tolerence is reached
         """
         create a uniform window on X around mu of width 2*bandwidth*sigma
         find the mean of that window to shift the window to most expected local value
-        measure the standard deviation of the window and divide by the sddev of a truncated gaussian distribution
+        measure the standard deviation of the window and divide by the stddev of a truncated gaussian distribution
         """
         Window = numpy.logical_and(X - mu - bandwidth * sigma < 0, X - mu + bandwidth * sigma > 0)
         if not Window.any():
             return(0, 0)
-        mu_0, mu = mu, numpy.average(X[Window])
-        var = numpy.average(numpy.square(X[Window] - mu))
-        sigma_0, sigma = sigma, numpy.sqrt(var) / bandwidth_truncated_normal_sigma
+        mu_0 = mu
+        mu = numpy.average(X[Window])
+        sigma_0 = sigma
+        sigma = numpy.std(X[Window]) / TRUNCINTSIG
+        # var = numpy.average(numpy.square(X[Window] - mu))
+        # sigma = numpy.sqrt(var) / bandwidth_truncated_normal_sigma
 
     if sigma == 0:
         # set to 5% on each side of the mean
