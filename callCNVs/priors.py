@@ -1,4 +1,3 @@
-import concurrent.futures
 import logging
 import numba
 import numpy
@@ -23,10 +22,9 @@ logger = logging.getLogger(__name__)
 # - likelihoods: numpy 3D-array of floats of size nbSamples * nbExons * nbStates,
 #   likelihoods[s,e,cn] is the likehood of state cn for exon e in sample s
 #   (NOCALL exons must have all likelihoods == -1)
-# - jobs (int): number of jobs to run in parallel
 #
 # Returns priors (ndarray of nbStates floats): prior probabilities for each state.
-def calcPriors(likelihoods, jobs):
+def calcPriors(likelihoods):
     # max number of iterations, hard-coded
     maxIter = 20
 
@@ -42,7 +40,7 @@ def calcPriors(likelihoods, jobs):
     converged = 0
 
     for i in range(maxIter):
-        priors = calcPosteriors(likelihoods, priors, jobs)
+        priors = calcPosteriors(likelihoods, priors)
         formattedPriors = " ".join(["%.2e" % x for x in priors])
         debugString = "Priors at iteration " + str(i + 1) + ":\t" + formattedPriors
         noConvergeString += "\n" + debugString
@@ -70,61 +68,25 @@ def calcPriors(likelihoods, jobs):
 # calcPosteriors:
 # Given likelihoods and prior probabilities for each state, calculate the
 # posterior probabilities for each state. These can then be considered as an
-# updated vector of priors. Samples are processed in parallel.
+# updated vector of priors.
 #
 # Args:
 # - likelihoods: numpy 3D-array of floats of size nbSamples * nbExons * nbStates,
 #   likelihoods[s,e,cn] is the likehood of state cn for exon e in sample s
 # - priors (ndarray of nbStates floats): initial prior probabilities for each state
-# - jobs (int): number of jobs to run in parallel.
 #
 # Returns posteriors, same type as priors.
-def calcPosteriors(likelihoods, priors, jobs):
+@numba.njit
+def calcPosteriors(likelihoods, priors):
     # init counts with a pseudo-count of one (avoid issues if no counts at all), this
     # won't matter for haploids since their CN1 likelihoods are zero
     countsPerState = numpy.ones(len(priors), dtype=numpy.uint64)
 
-    ##################
-    # Define nested callback for processing countMostLikelyStates() result.
-    # sampleDone:
-    # args: a Future object returned by ProcessPoolExecutor.submit(countMostLikelyStates),
-    # and an ndarray that will be updated in-place (ie countsPerState).
-    # If something went wrong, log and propagate exception, otherwise update countsPerState.
-    def sampleDone(futureRes, counts):
-        e = futureRes.exception()
-        if e is not None:
-            logger.error("countMostLikelyStates() failed for sample %s", str(e))
-            raise(e)
-        else:
-            counts += futureRes.result()
-
-    ##################
-    with concurrent.futures.ProcessPoolExecutor(jobs) as pool:
-        for si in range(likelihoods.shape[0]):
-            futureRes = pool.submit(countMostLikelyStates, likelihoods[si, :, :], priors)
-            futureRes.add_done_callback(lambda f: sampleDone(f, countsPerState))
+    calledExons = likelihoods[0, :, 0] >= 0
+    calledExonLikelihoods = likelihoods[:, calledExons, :]
+    bestStates = (priors * calledExonLikelihoods).argmax(axis=2)
+    for bs in bestStates.ravel():
+        countsPerState[bs] += 1
 
     posteriors = countsPerState.astype(numpy.float64) / countsPerState.sum()
     return(posteriors)
-
-
-####################
-# countMostLikelyStates:
-# count for each CN state the number of exons whose most likely a posteriori state is CN.
-#
-# Args:
-# - likelihoods (ndarray[floats] dim nbExons*nbStates): likelihoods of each state
-#   for each exon for one sample
-# - priors (ndarray of nbStates floats): initial prior probabilities for each state
-#
-# Returns the counts as an ndarray of nbStates uint64s
-@numba.njit
-def countMostLikelyStates(likelihoods, priors):
-    counts = numpy.zeros(len(priors), dtype=numpy.uint64)
-    bestStates = (priors * likelihoods).argmax(axis=1)
-
-    for ei in range(len(bestStates)):
-        # ignore NOCALL (ie all likelihoods == -1) exons
-        if likelihoods[ei, 0] >= 0:
-            counts[bestStates[ei]] += 1
-    return(counts)

@@ -416,8 +416,7 @@ def preprocessRegionsToPlot(regionsToPlot, autosomeExons, gonosomeExons, samp2cl
 # - clusterID: string, for logging
 # - isHaploid: bool, if True this cluster of samples is assumed to be haploid
 #   for all chromosomes where the exons are located (eg chrX and chrY in men)
-# - jobs: number of jobs for the parallelized steps (currently calcPriors() and
-#   viterbiAllSamples())
+# - jobs: number of jobs for the parallelized steps (currently viterbiAllSamples())
 #
 # Returns (CNVs, CN2means): as expected by printCallsFile(), ie as returned by
 #   viterbiAllSamples() and fitCN2() except CN2means is set to 0 for NOCALL exons
@@ -463,7 +462,7 @@ def callCNVsOneCluster(exonFPMs, intergenicFPMs, samplesOfInterest, sampleIDs, e
     figures.plots.plotExons(plotDir, exonsToPlot, FPMsSOIs, CN0scale, Ecodes, CN2means, CN2sigmas, fpmCn0, isHaploid)
 
     # calculate priors (maxing the posterior probas iteratively until convergence)
-    priors = callCNVs.priors.calcPriors(likelihoods, jobs)
+    priors = callCNVs.priors.calcPriors(likelihoods)
     formattedPriors = "  ".join(["%.2e" % x for x in priors])
     logger.debug("cluster %s - priors = %s", clusterID, formattedPriors)
     thisTime = time.time()
