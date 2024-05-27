@@ -1,5 +1,6 @@
 import concurrent.futures
 import logging
+import numba
 import numpy
 
 # set up logger, using inherited config
@@ -117,6 +118,7 @@ def calcPosteriors(likelihoods, priors, jobs):
 # - priors (ndarray of nbStates floats): initial prior probabilities for each state
 #
 # Returns the counts as an ndarray of nbStates uint64s
+@numba.njit
 def countMostLikelyStates(likelihoods, priors):
     counts = numpy.zeros(len(priors), dtype=numpy.uint64)
     bestStates = (priors * likelihoods).argmax(axis=1)
