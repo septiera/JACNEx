@@ -31,7 +31,7 @@ def calcPriors(likelihoods, jobs):
 
     nbStates = likelihoods.shape[2]
     # priors start at 1 (ie we will initially count states with max likelihood)
-    priors = numpy.ones(nbStates, dtype=numpy.float128)
+    priors = numpy.ones(nbStates, dtype=numpy.float64)
 
     # to check for (approximate) convergence
     formattedPriorsPrev = ""
@@ -103,7 +103,7 @@ def calcPosteriors(likelihoods, priors, jobs):
             futureRes = pool.submit(countMostLikelyStates, likelihoods[si, :, :], priors)
             futureRes.add_done_callback(lambda f: sampleDone(f, countsPerState))
 
-    posteriors = countsPerState.astype(numpy.float128) / countsPerState.sum()
+    posteriors = countsPerState.astype(numpy.float64) / countsPerState.sum()
     return(posteriors)
 
 
