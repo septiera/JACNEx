@@ -32,24 +32,24 @@ def buildBaseTransMatrix(likelihoods, exons, priors, maxIED):
     #  this won't matter for haploids since their CN1 likelihoods are zero
     countsAllSamples = numpy.ones((nbStates, nbStates), dtype=numpy.uint64)
 
-    for si in range(likelihoods.shape[0]):
-        bestStates = (priors * likelihoods[si, :, :]).argmax(axis=1)
-        prevChrom = ""
-        prevEnd = 0
-        prevState = 2
-        for ei in range(len(exons)):
-            # ignore NOCALL (ie all likelihoods == -1) exons
-            if likelihoods[si, ei, 0] < 0:
-                continue
-            else:
-                if exons[ei][0] != prevChrom:
-                    # changed chrom
-                    prevChrom = exons[ei][0]
-                elif exons[ei][1] - prevEnd <= maxIED:
-                    countsAllSamples[prevState, bestStates[ei]] += 1
-                # in all cases, update prevs
-                prevEnd = exons[ei][2]
-                prevState = bestStates[ei]
+    bestStates = (priors * likelihoods).argmax(axis=2)
+    prevChrom = ""
+    prevEnd = 0
+    prevExind = 0
+    for ei in range(len(exons)):
+        # ignore NOCALL (ie all likelihoods == -1) exons
+        if likelihoods[0, ei, 0] < 0:
+            continue
+        else:
+            if exons[ei][0] != prevChrom:
+                # changed chrom
+                prevChrom = exons[ei][0]
+            elif exons[ei][1] - prevEnd <= maxIED:
+                for si in range(likelihoods.shape[0]):
+                    countsAllSamples[bestStates[si, prevExind], bestStates[si, ei]] += 1
+            # in all cases, update prevs
+            prevEnd = exons[ei][2]
+            prevExind = ei
 
     # Normalize each row to obtain the transition matrix
     baseTransMat = countsAllSamples.astype(numpy.float64)
