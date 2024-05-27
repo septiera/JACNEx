@@ -109,8 +109,8 @@ def parseAndNormalizeCounts(countsFile):
     intergenics = []
     # windowType==0 for intergenic pseudo-exons, 1 for gonosome exons, 2 for autosome exons
     windowType = numpy.zeros(len(genomicWindows), dtype=numpy.uint8)
-    sumOfCountsAuto = numpy.zeros(len(samples), dtype=numpy.uint32)
-    sumOfCountsTotal = numpy.zeros(len(samples), dtype=numpy.uint32)
+    sumOfCountsAuto = numpy.zeros(len(samples), dtype=numpy.uint64)
+    sumOfCountsTotal = numpy.zeros(len(samples), dtype=numpy.uint64)
     sexChroms = sexChromosomes()
 
     for i in range(len(genomicWindows)):
@@ -133,9 +133,9 @@ def parseAndNormalizeCounts(countsFile):
     sumOfCountsTotal[sumOfCountsTotal == 0] = 1
 
     # Second pass: populate *FPMs, normalizing the counts on the fly
-    autosomeFPMs = numpy.zeros((len(autosomeExons), len(samples)), dtype=numpy.float32, order='F')
-    gonosomeFPMs = numpy.zeros((len(gonosomeExons), len(samples)), dtype=numpy.float32, order='F')
-    intergenicFPMs = numpy.zeros((len(intergenics), len(samples)), dtype=numpy.float32, order='F')
+    autosomeFPMs = numpy.zeros((len(autosomeExons), len(samples)), dtype=numpy.float64, order='F')
+    gonosomeFPMs = numpy.zeros((len(gonosomeExons), len(samples)), dtype=numpy.float64, order='F')
+    intergenicFPMs = numpy.zeros((len(intergenics), len(samples)), dtype=numpy.float64, order='F')
     # indexes of next auto / gono / intergenic window to populate
     nextAutoIndex = 0
     nextGonoIndex = 0

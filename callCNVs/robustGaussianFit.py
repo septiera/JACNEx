@@ -33,7 +33,7 @@ import numpy
 ###############################################################################
 
 #############################################################
-def normal_erf(x, mu=0, sigma=1, depth=50):
+def normal_erf(x, mu=0.0, sigma=1.0, depth=50):
     ele = 1.0
     normal = 1.0
     x = (x - mu) / sigma
@@ -103,15 +103,13 @@ def robustGaussianFit(X, mu=None, sigma=None, bandwidth=2.0, eps=1.0e-5):
         find the mean of that window to shift the window to most expected local value
         measure the standard deviation of the window and divide by the stddev of a truncated gaussian distribution
         """
-        Window = numpy.logical_and(X - mu - bandwidth * sigma < 0, X - mu + bandwidth * sigma > 0)
-        if not Window.any():
+        window = numpy.logical_and(X - mu - bandwidth * sigma < 0, X - mu + bandwidth * sigma > 0)
+        if not window.any():
             return(0, 0)
         mu_0 = mu
-        mu = numpy.average(X[Window])
+        mu = numpy.average(X[window])
         sigma_0 = sigma
-        sigma = numpy.std(X[Window]) / TRUNCINTSIG
-        # var = numpy.average(numpy.square(X[Window] - mu))
-        # sigma = numpy.sqrt(var) / bandwidth_truncated_normal_sigma
+        sigma = numpy.std(X[window]) / TRUNCINTSIG
 
     if sigma == 0:
         # set to 5% on each side of the mean
