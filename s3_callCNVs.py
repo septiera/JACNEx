@@ -44,9 +44,10 @@ def parseArgs(argv):
     # mandatory args
     countsFile = ""
     clustsFile = ""
-    outFile = ""
+    outFileRoot = ""
     madeBy = ""
     # optional args with default values
+    minGQ = 2.0
     padding = 10
     regionsToPlot = ""
     plotDir = ""
@@ -75,8 +76,9 @@ ARGUMENTS:
                     hold the fragment counts. File obtained from 1_countFrags.py.
     --clusts [str]: TSV file, contains 4 columns hold the sample cluster definitions.
                     [CLUSTER_ID, SAMPLES, FIT_WITH, VALID]. File obtained from 2_clusterSamps.py.
-    --out [str]: file where results will be saved, must not pre-exist, will be gzipped if it ends
+    --outFileRoot [str]: file where results will be saved, must not pre-exist, will be gzipped if it ends
                  with '.gz', can have a path component but the subdir must exist.
+    --minGQ [float]: minimum Genotype Quality score, default : """ + minGQ + """
     --madeBy [str]: program name + version to print as "source=" in the produced VCF.
     --padding [int]: number of bps used to pad the exon coordinates, default : """ + str(padding) + """
     --regionsToPlot [str, optional]: comma-separated list of sampleID:chr:start-end for which exon-profile
@@ -86,8 +88,8 @@ ARGUMENTS:
     -h , --help: display this help and exit\n"""
 
     try:
-        opts, args = getopt.gnu_getopt(argv[1:], 'h', ["help", "counts=", "clusts=", "out=", "madeBy=",
-                                                       "padding=", "regionsToPlot=", "plotDir=", "jobs="])
+        opts, args = getopt.gnu_getopt(argv[1:], 'h', ["help", "counts=", "clusts=", "outFileRoot=", "minGQ=",
+                                                       "madeBy=", "padding=", "regionsToPlot=", "plotDir=", "jobs="])
     except getopt.GetoptError as e:
         raise Exception(e.msg + ". Try " + scriptName + " --help")
     if len(args) != 0:
@@ -101,8 +103,10 @@ ARGUMENTS:
             countsFile = value
         elif (opt in ("--clusts")):
             clustsFile = value
-        elif opt in ("--out"):
-            outFile = value
+        elif opt in ("--outFileRoot"):
+            outFileRoot = value
+        elif opt in ("--minGQ"):
+            minGQ = value
         elif opt in ("--madeBy"):
             madeBy = value
         elif opt in ("--padding"):
@@ -128,18 +132,23 @@ ARGUMENTS:
     elif (not os.path.isfile(clustsFile)):
         raise Exception("clustsFile " + clustsFile + " doesn't exist.")
 
-    if outFile == "":
-        raise Exception("you must provide an outFile with --out. Try " + scriptName + " --help")
-    elif os.path.exists(outFile):
-        raise Exception("outFile " + outFile + " already exists")
-    elif (os.path.dirname(outFile) != '') and (not os.path.isdir(os.path.dirname(outFile))):
-        raise Exception("the directory where outFile " + outFile + " should be created doesn't exist")
+    if outFileRoot == "":
+        raise Exception("you must provide an outFileRoot with --outFileRoot. Try " + scriptName + " --help")
+    elif (os.path.dirname(outFileRoot) != '') and (not os.path.isdir(os.path.dirname(outFileRoot))):
+        raise Exception("the directory where outFileRoot " + outFileRoot + " should be created doesn't exist")
 
     if madeBy == "":
         raise Exception("you must provide a madeBy string with --madeBy. Try " + scriptName + " --help")
 
     #####################################################
     # Check other args
+    try:
+        minGQ = float(minGQ)
+        if (minGQ <= 0):
+            raise Exception()
+    except Exception:
+        raise Exception("minGQ must be a positive number, not " + str(minGQ))
+
     try:
         padding = int(padding)
         if (padding < 0):
@@ -171,7 +180,7 @@ ARGUMENTS:
                 raise Exception("plotDir " + plotDir + " doesn't exist and can't be mkdir'd: " + str(e))
 
     # AOK, return everything that's needed
-    return (countsFile, clustsFile, outFile, padding, regionsToPlot, plotDir, jobs, madeBy)
+    return (countsFile, clustsFile, outFileRoot, minGQ, padding, regionsToPlot, plotDir, jobs, madeBy)
 
 
 ####################################################
@@ -181,7 +190,7 @@ ARGUMENTS:
 # may be available in the log
 def main(argv):
     # parse, check and preprocess arguments
-    (countsFile, clustsFile, outFile, padding, regionsToPlot, plotDir, jobs, madeBy) = parseArgs(argv)
+    (countsFile, clustsFile, outFileRoot, minGQ, padding, regionsToPlot, plotDir, jobs, madeBy) = parseArgs(argv)
 
     # args seem OK, start working
     logger.debug("called with: " + " ".join(argv[1:]))
@@ -226,6 +235,11 @@ def main(argv):
         if not clustIsValid[clusterID]:
             logger.info("cluster %s is INVALID, skipping it", clusterID)
             continue
+
+        # VCF file for this cluster
+        clustOutFile = outFileRoot + '_' + clusterID + '.vcf.gz'
+        if os.path.exists(clustOutFile):
+            raise Exception("outFile " + clustOutFile + " already exists")
 
         # for plotting we actually need:
         # key==exonIndex, value==list of lists[sampleIndex, sampleID]
@@ -292,12 +306,9 @@ def main(argv):
 
         (CNVs, CN2means) = callCNVsOneCluster(
             clustExonFPMs, clustIntergenicFPMs, samplesOfInterest, clustSamples,
-            clustExons, exonsToPlot, plotDir, clusterID, isHaploid, jobs)
+            clustExons, exonsToPlot, plotDir, clusterID, isHaploid, minGQ, jobs)
 
         # print CNVs for this cluster as a VCF file
-        # TEMP dirty-patching outFile, TODO do this correctly
-        clustOutFile = outFile.replace('/callsFile_', '/callsFile_' + clusterID + '_')
-
         callCNVs.callsFile.printCallsFile(CNVs, clustExonFPMs, CN2means, clustExons, clustSamples,
                                           padding, clustOutFile, madeBy)
 
@@ -416,12 +427,13 @@ def preprocessRegionsToPlot(regionsToPlot, autosomeExons, gonosomeExons, samp2cl
 # - clusterID: string, for logging
 # - isHaploid: bool, if True this cluster of samples is assumed to be haploid
 #   for all chromosomes where the exons are located (eg chrX and chrY in men)
+# - minGQ: float, minimum Genotype Quality (GQ)
 # - jobs: number of jobs for the parallelized steps (currently viterbiAllSamples())
 #
 # Returns (CNVs, CN2means): as expected by printCallsFile(), ie as returned by
 #   viterbiAllSamples() and fitCN2() except CN2means is set to 0 for NOCALL exons
-def callCNVsOneCluster(exonFPMs, intergenicFPMs, samplesOfInterest, sampleIDs, exons, exonsToPlot,
-                       plotDir, clusterID, isHaploid, jobs):
+def callCNVsOneCluster(exonFPMs, intergenicFPMs, samplesOfInterest, sampleIDs, exons,
+                       exonsToPlot, plotDir, clusterID, isHaploid, minGQ, jobs):
     logger.info("cluster %s - starting to work", clusterID)
     startTime = time.time()
     startTimeCluster = startTime
@@ -446,7 +458,7 @@ def callCNVsOneCluster(exonFPMs, intergenicFPMs, samplesOfInterest, sampleIDs, e
     # log stats with the percentages of exons in each QC class
     logExonStats(Ecodes, clusterID)
 
-    # we only want to calculate likelihoods for the samples if interest (not the FITWITHs)
+    # we only want to calculate likelihoods for the samples of interest (not the FITWITHs)
     # => create a view with all FPMs, then squash with the FPMs of SOIs if needed
     FPMsSOIs = exonFPMs
     if exonFPMs.shape[1] != samplesOfInterest.sum():
@@ -483,7 +495,7 @@ def callCNVsOneCluster(exonFPMs, intergenicFPMs, samplesOfInterest, sampleIDs, e
 
     # call CNVs with the Viterbi algorithm
     CNVs = callCNVs.viterbi.viterbiAllSamples(likelihoods, sampleIDs, exons, transMatrix,
-                                              priors, adjustTransMatDMax, jobs)
+                                              priors, adjustTransMatDMax, minGQ, jobs)
     thisTime = time.time()
     logger.debug("cluster %s - done viterbiAllSamples in %.1fs", clusterID, thisTime - startTime)
 

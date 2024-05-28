@@ -52,6 +52,9 @@ def parseArgs(argv):
     # default values of step2 optional args, as strings
     minSamps = "20"
 
+    # default values of step3 optional args, as strings
+    minGQ = "2.0"
+
     usage = "NAME:\n" + scriptName + """\n
 DESCRIPTION:
 blablabla
@@ -78,6 +81,7 @@ Step 2 optional arguments, defaults should be OK:
    --minSamps [int]:  min number of samples for a cluster to be valid, default : """ + minSamps + """
 
 Step 3 optional arguments:
+   --minGQ [float]: minimum Genotype Quality score, default : """ + minGQ + """
    --regionsToPlot [str]: comma-separated list of sampleID:chr:start-end for which exon-profile
                plots should be produced, eg "grex003:chr2:270000-290000,grex007:chrX:620000-660000"
 """
@@ -85,7 +89,7 @@ Step 3 optional arguments:
     try:
         opts, args = getopt.gnu_getopt(argv[1:], 'h', ["bams=", "bams-from=", "bed=", "workDir=", "jobs=",
                                                        "help", "tmp=", "padding=", "maxGap=", "samtools=",
-                                                       "minSamps=", "regionsToPlot"])
+                                                       "minSamps=", "minGQ=", "regionsToPlot="])
     except getopt.GetoptError as e:
         raise Exception(e.msg + ". Try " + scriptName + " --help")
     if len(args) != 0:
@@ -104,7 +108,7 @@ Step 3 optional arguments:
             step3Args.extend([opt, value])
         elif opt in ("--minSamps"):
             step2Args.extend([opt, value])
-        elif (opt in ("--regionsToPlot")):
+        elif opt in ("--minGQ", "--regionsToPlot"):
             step3Args.extend([opt, value])
         else:
             raise Exception("unhandled option " + opt)
@@ -124,13 +128,15 @@ Step 3 optional arguments:
     if "--minSamps" not in step2Args:
         step2Args.extend(["--minSamps", minSamps])
 
+    if "--minGQ" not in step3Args:
+        step3Args.extend(["--minGQ", minGQ])
     if "--padding" not in step3Args:
         step3Args.extend(["--padding", padding])
     if "--jobs" not in step3Args:
         step3Args.extend(["--jobs", jobs])
 
     #####################################################
-    # process JACNEx.py-specific options, other options will be checked by s[1-4]_*.parseArgs()
+    # process JACNEx.py-specific options, other options will be checked by s[1-3]_*.parseArgs()
     if workDir == "":
         raise Exception("you must provide a workDir with --workDir. Try " + scriptName + " --help")
     elif not os.path.isdir(workDir):
@@ -235,7 +241,7 @@ def main(argv):
         except Exception:
             raise Exception(stepNames[0] + " clustersDir " + clustersDir + "doesn't exist and can't be mkdir'd")
 
-    # step3: callsFiles are saved (date-stamped and gzipped) in callsDir
+    # step3: callFiles are saved (date-stamped and gzipped) in callsDir
     callsDir = workDir + '/CallFiles/'
     if not os.path.isdir(callsDir):
         try:
@@ -320,11 +326,11 @@ def main(argv):
 
         step3Args.extend(["--madeBy", JACNEx_version])
 
-        # new callsFile to create
-        callsFile = callsDir + '/callsFile_' + dateStamp + '.vcf.gz'
-        if os.path.isfile(callsFile):
-            raise Exception(stepNames[3] + " callsFile " + callsFile + " already exists")
-        step3Args.extend(["--out", callsFile])
+        # new callFiles to create: will be created as {callFileRoot}_{clusterID}.vcf.gz
+        callFileRoot = callsDir + '/CNVs_' + dateStamp
+        if (len(glob.glob(callFileRoot + '_*.vcf.gz')) > 0):
+            raise Exception(stepNames[3] + " callFiles starting with callFileRoot " + callFileRoot + " already exists")
+        step3Args.extend(["--outFileRoot", callFileRoot])
 
         step3ArgsForCheck = step3Args.copy()
         step3ArgsForCheck.extend(["--counts", bogusFile])
