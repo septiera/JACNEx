@@ -127,7 +127,7 @@ def fitCN2(FPMs, clusterID, fpmCn0, isHaploid):
 #   for exon e in sample s
 # - CN0sigma: as returned by fitCN0()
 # - Ecodes, CN2means, CN2sigmas: as returned by fitCN2()
-# - isHaploid: used in CN3+ model
+# - isHaploid: boolean (used in the CN3+ model and for zeroing CN1 likelihoods)
 #
 # Returns likelihoods (allocated here):
 #   numpy 3D-array of floats of size nbSamples * nbExons * nbStates,
@@ -226,22 +226,29 @@ def cn0PDF(FPMs, sigma):
 # of CN3+, based on the CN2 mu's and sigmas, at FPMs[e,:] for every exonIndex e.
 #
 # CN3+ is currently modeled as a LogNormal that aims to:
-# - capture data around 1.5x the CN2 mean (2x if isHaploid) and beyond;
+# - capture data starting around 1.5x the CN2 mean (2x if isHaploid);
 # - avoid overlapping too much with the CN2.
 # The LogNormal is heavy-tailed, which is nice because we are modeling CN3+ not CN3.
 #
 # Args:
 # - FPMs: 2D-array of floats of size nbExons * nbSamples
 # - cn2Mu, cn2Sigma: 1D-arrays of floats of size nbExons
-# - isHaploid boolean (NOTE: currently not used - TODO)
+# - isHaploid boolean
 #
 # Returns a 2D numpy.ndarray of size nbSamples * nbExons (FPMs gets transposed)
 def cn3PDF(FPMs, cn2Mu, cn2Sigma, isHaploid):
+    # shift the whole distribution by -loc to avoid overlapping too much with CN2
+    loc = cn2Mu + 2 * cn2Sigma
     # LogNormal parameters set empirically
     sigma = 0.5
     mu = numpy.log(cn2Mu)
-    # shift the whole distribution by "loc" to avoid overlapping too much with CN2
-    loc = cn2Mu + 2 * cn2Sigma
+    # These (sigma,mu) result in ~8.3% of the distrib below 3*cn2Mu/2 + 2*cn2Sigma,
+    # i.e. we don't capture too much stuff before what really looks like CN=3
+    if isHaploid:
+        # diploid aims for 3*cn2Mu/2 while haploid aims for 2*cn2Mu, and the data is
+        # shifted by loc ~= cn2Mu (ignoring the 2 cn2Sigmas here) => rescale the
+        # distribution by a factor of 2 <=> mu += ln(2)
+        mu += math.log(2)
 
     # mask values <= loc to avoid doing any computations on them, this also copies the data
     res = numpy.ma.masked_less_equal(FPMs.T, loc)
