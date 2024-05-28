@@ -60,15 +60,16 @@ def fitCNO(intergenicFPMs):
 #   E==-2 if robustGaussianFit failed
 #   E==-3 if low support for CN2 model
 #   E==-4 if CN1 (CN2 if isHaploid) is too close to CN0
-# - the mean and stdev of the CN2 model (set to (0,0) if we couldn't fit CN2,
-# ie Ecode==-1 or -2)
+# - the mean and stdev of the CN2 model, or (1,1) if we couldn't fit CN2,
+#   ie Ecode==-1 or -2 [(1,1) allows to use vectorized gaussianPDF() and
+#   cn3PDF() without DIVBYZERO errors on NOCALL exons]
 def fitCN2(FPMs, clusterID, fpmCn0, isHaploid):
     nbExons = FPMs.shape[0]
     nbSamples = FPMs.shape[1]
 
     Ecodes = numpy.zeros(nbExons, dtype=numpy.byte)
-    CN2means = numpy.zeros(nbExons, dtype=numpy.float64)
-    CN2sigmas = numpy.zeros(nbExons, dtype=numpy.float64)
+    CN2means = numpy.ones(nbExons, dtype=numpy.float64)
+    CN2sigmas = numpy.ones(nbExons, dtype=numpy.float64)
 
     for ei in range(nbExons):
         if numpy.median(FPMs[ei, :]) <= fpmCn0:
@@ -136,31 +137,28 @@ def calcLikelihoods(FPMs, CN0scale, Ecodes, CN2means, CN2sigmas, isHaploid):
     likelihoods = numpy.full((nbSamples, nbExons, 4), fill_value=-1,
                              dtype=numpy.float64, order='C')
 
+    # NOTE: calculating likelihoods for all exons, taking advantage of numpy vectorization;
+    # afterwards we set them to -1 for NOCALL exons
+
     # CN0 model: half-normal distribution with mode=0
-    # NOTE: calculating for all exons for speed, will need to reset to -1 for NOCALL exons
-    for si in range(nbSamples):
-        likelihoods[si, :, 0] = scipy.stats.halfnorm.pdf(FPMs[:, si], scale=CN0scale)
+    likelihoods[:, :, 0] = scipy.stats.halfnorm.pdf(FPMs.T, scale=CN0scale)
 
+    # CN1:
     if isHaploid:
-        # set all likelihoods of CN1 to zero
+        # in haploids: all-zeroes
         likelihoods[:, :, 1] = 0
+    else:
+        # in diploids: shift the CN2 Gaussian so mean==cn2Mu/2 (a single copy rather than 2)
+        likelihoods[:, :, 1] = gaussianPDF(FPMs, CN2means / 2, CN2sigmas)
 
-    for ei in range(nbExons):
-        if Ecodes[ei] < 0:
-            # exon is NOCALL for the whole cluster, squash likelihoods to -1
-            likelihoods[:, ei, :] = -1.0
+    # CN2 model: the fitted CN2 Gaussian
+    likelihoods[:, :, 2] = gaussianPDF(FPMs, CN2means, CN2sigmas)
 
-        else:
-            # CN1: shift the CN2 Gaussian so mean==cn2Mu/2 (a single copy rather than 2)
-            if not isHaploid:
-                likelihoods[:, ei, 1] = gaussianPDF(FPMs[ei, :], CN2means[ei] / 2, CN2sigmas[ei])
-            # else keep CN1 likelihood at zero as set above
+    # CN3 model, as defined in cn3PDF()
+    likelihoods[:, :, 3] = cn3PDF(FPMs, CN2means, CN2sigmas, isHaploid)
 
-            # CN2 model: the fitted Gaussian
-            likelihoods[:, ei, 2] = gaussianPDF(FPMs[ei, :], CN2means[ei], CN2sigmas[ei])
-
-            # CN3 model, as defined in cn3PDF()
-            likelihoods[:, ei, 3] = cn3PDF(FPMs[ei, :], CN2means[ei], CN2sigmas[ei], isHaploid)
+    # NOCALL exons: set to -1 for every sample+state
+    likelihoods[:, Ecodes < 0, :] = -1.0
 
     return(likelihoods)
 
@@ -169,24 +167,36 @@ def calcLikelihoods(FPMs, CN0scale, Ecodes, CN2means, CN2sigmas, isHaploid):
 ############################ PRIVATE FUNCTIONS ################################
 ###############################################################################
 ############################################
-# Precompute sqrt(2*pi), used tons of times in gaussianPDF()
+# Precompute sqrt(2*pi), used many times in gaussianPDF() and cn3PDF()
 SQRT_2PI = math.sqrt(2 * math.pi)
 
 
 ############################################
 # Calculate the likelihoods (==values of the PDF) of a Gaussian distribution
-# of parameters mu and sigma, at x (1D numpy.ndarray of floats).
-# Returns a 1D numpy.ndarray, same size as x
+# of parameters mu[e] and sigma[e], at FPMs[e,:] for every exonIndex e.
+#
+# Args:
+# - FPMs: 2D-array of floats of size nbExons * nbSamples
+# - mu, sigma: 1D-arrays of floats of size nbExons
+#
+# Returns a 2D numpy.ndarray of size nbSamples * nbExons (FPMs gets transposed)
 #
 # NOTE: I tried scipy.stats.norm but it's super slow, and statistics.normalDist
-# but it's even slower (due to being unvectorized probably)
-def gaussianPDF(x, mu, sigma):
-    return numpy.exp(-0.5 * ((x - mu) / sigma)**2) / (sigma * SQRT_2PI)
+# but it's even slower (due to being unvectorized probably). This code is fast.
+def gaussianPDF(FPMs, mu, sigma):
+    # return numpy.exp(-0.5 * ((FPMs.T - mu) / sigma)**2) / (sigma * SQRT_2PI)
+    res = FPMs.T - mu
+    res /= sigma
+    res *= res
+    res /= -2
+    res = numpy.exp(res)
+    res /= (sigma * SQRT_2PI)
+    return(res)
 
 
 ############################################
 # Calculate the likelihoods (==values of the PDF) of our statistical model
-# of CN3+, based on the CN2 mu and sigma, at x (1D numpy.ndarray of floats).
+# of CN3+, based on the CN2 mu's and sigmas, at FPMs[e,:] for every exonIndex e.
 #
 # CN3+ is currently modeled as a LogNormal that aims to:
 # - capture data around 1.5x the CN2 mean (2x if isHaploid) and beyond;
@@ -194,23 +204,24 @@ def gaussianPDF(x, mu, sigma):
 # The LogNormal is heavy-tailed, which is nice because we are modeling CN3+ not CN3.
 #
 # Args:
-# - x: 1D numpy.ndarray of the FPMs for which we want to calculate the likelihoods
-# - (cn2Mu, cn2Sigma) of the CN2 model
+# - FPMs: 2D-array of floats of size nbExons * nbSamples
+# - cn2Mu, cn2Sigma: 1D-arrays of floats of size nbExons
 # - isHaploid boolean (NOTE: currently not used - TODO)
 #
-# Returns a 1D numpy.ndarray, same size as x
-def cn3PDF(x, cn2Mu, cn2Sigma, isHaploid):
+# Returns a 2D numpy.ndarray of size nbSamples * nbExons (FPMs gets transposed)
+def cn3PDF(FPMs, cn2Mu, cn2Sigma, isHaploid):
     # LogNormal parameters set empirically
     sigma = 0.5
-    mu = math.log(cn2Mu)
+    mu = numpy.log(cn2Mu)
     # shift the whole distribution by "loc" to avoid overlapping too much with CN2
     loc = cn2Mu + 2 * cn2Sigma
+
     # mask values <= loc to avoid doing any computations on them, this also copies the data
-    xm = numpy.ma.masked_less_equal(x, loc)
-    xm -= loc
+    res = numpy.ma.masked_less_equal(FPMs.T, loc)
+    res -= loc
     # the formula for the pdf of a LogNormal is pretty simple (see wikipedia), but
     # the order of operations is important to avoid overflows/underflows. The following
     # works for us and is reasonably fast
-    res = numpy.ma.log(xm)
+    res = numpy.ma.log(res)
     res = numpy.ma.exp(-(((res - mu) / sigma)**2 / 2) - res - numpy.ma.log(sigma * SQRT_2PI))
     return (res.filled(fill_value=0.0))
