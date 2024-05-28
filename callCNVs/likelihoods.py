@@ -1,7 +1,7 @@
 import logging
 import math
 import numpy
-import scipy.stats
+import pyerf
 
 ####### JACNEx modules
 import callCNVs.robustGaussianFit
@@ -15,24 +15,31 @@ logger = logging.getLogger(__name__)
 ###############################################################################
 ############################################
 # fitCNO:
-# fit a half-normal distribution with mode=0 (ie loc=0 for scipy) to all FPMs
-# in intergenicFPMs.
+# fit a half-normal distribution to all FPMs in intergenicFPMs.
 #
 # Args:
 # - intergenicFPMs numpy 2D-array of floats of size nbIntergenics * nbSamples
 #   holding the FPM-normalized counts for intergenic pseudo-exons
 #
-# Returns (CN0scale, fpmCn0):
-# - CN0scale is the scale parameter of the fitted half-normal distribution
+# Returns (CN0sigma, fpmCn0):
+# - CN0sigma is the parameter of the fitted half-normal distribution
 # - fpmCn0 is the FPM threshold up to which data looks like it could very possibly
 #   have been produced by the CN0 model (set to fracPPF of the inverse CDF == quantile
 #   function). This will be used later for filtering NOCALL exons.
 def fitCNO(intergenicFPMs):
     # fracPPF hard-coded here, should be fine and universal
     fracPPF = 0.95
-    (hnormloc, hnormscale) = scipy.stats.halfnorm.fit(intergenicFPMs.ravel(), floc=0)
-    fpmCn0 = scipy.stats.halfnorm.ppf(fracPPF, loc=0, scale=hnormscale)
-    return (hnormscale, fpmCn0)
+    # bias-corrected maximum likelihood estimator for sigma: see wikipedia
+    # calculate MLE estimate of sigma
+    N = intergenicFPMs.ravel().shape[0]
+    sigma = math.sqrt((intergenicFPMs.ravel() * intergenicFPMs.ravel()).sum() / N)
+    # correct for bias
+    sigma += sigma / 4 / N
+
+    # calculate quantile function at fracPPF
+    fpmCn0 = sigma * math.sqrt(2) * pyerf.erfinv(fracPPF)
+
+    return (sigma, fpmCn0)
 
 
 ############################################
@@ -118,14 +125,14 @@ def fitCN2(FPMs, clusterID, fpmCn0, isHaploid):
 # Args:
 # - FPMs: 2D-array of floats of size nbExons * nbSamples, FPMs[e,s] is the FPM count
 #   for exon e in sample s
-# - CN0scale: as returned by fitCN0()
+# - CN0sigma: as returned by fitCN0()
 # - Ecodes, CN2means, CN2sigmas: as returned by fitCN2()
 # - isHaploid: used in CN3+ model
 #
 # Returns likelihoods (allocated here):
 #   numpy 3D-array of floats of size nbSamples * nbExons * nbStates,
 #   likelihoods[s,e,cn] is the likelihood of state cn for exon e in sample s
-def calcLikelihoods(FPMs, CN0scale, Ecodes, CN2means, CN2sigmas, isHaploid):
+def calcLikelihoods(FPMs, CN0sigma, Ecodes, CN2means, CN2sigmas, isHaploid):
     # sanity:
     nbExons = FPMs.shape[0]
     nbSamples = FPMs.shape[1]
@@ -141,7 +148,7 @@ def calcLikelihoods(FPMs, CN0scale, Ecodes, CN2means, CN2sigmas, isHaploid):
     # afterwards we set them to -1 for NOCALL exons
 
     # CN0 model: half-normal distribution with mode=0
-    likelihoods[:, :, 0] = scipy.stats.halfnorm.pdf(FPMs.T, scale=CN0scale)
+    likelihoods[:, :, 0] = cn0PDF(FPMs, CN0sigma)
 
     # CN1:
     if isHaploid:
@@ -191,6 +198,26 @@ def gaussianPDF(FPMs, mu, sigma):
     res /= -2
     res = numpy.exp(res)
     res /= (sigma * SQRT_2PI)
+    return(res)
+
+
+############################################
+# Calculate the likelihoods (==values of the PDF) of our statistical model
+# of CN0 at every datapoint in FPMs.
+# Our current CN0 model is a half-normal distribution of parameter sigma.
+#
+# Args:
+# - FPMs: 2D-array of floats of size nbExons * nbSamples
+# - sigma: parameter of the CN0
+#
+# Returns a 2D numpy.ndarray of size nbSamples * nbExons (FPMs gets transposed)
+def cn0PDF(FPMs, sigma):
+    # return numpy.exp(-0.5 * (FPMs.T / sigma)**2) * (2 / sigma / SQRT_2PI)
+    res = FPMs.T / sigma
+    res *= res
+    res /= -2
+    res = numpy.exp(res)
+    res *= 2 / sigma / SQRT_2PI
     return(res)
 
 
