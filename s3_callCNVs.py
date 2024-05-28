@@ -78,7 +78,7 @@ ARGUMENTS:
                     [CLUSTER_ID, SAMPLES, FIT_WITH, VALID]. File obtained from 2_clusterSamps.py.
     --outFileRoot [str]: file where results will be saved, must not pre-exist, will be gzipped if it ends
                  with '.gz', can have a path component but the subdir must exist.
-    --minGQ [float]: minimum Genotype Quality score, default : """ + minGQ + """
+    --minGQ [float]: minimum Genotype Quality score, default : """ + str(minGQ) + """
     --madeBy [str]: program name + version to print as "source=" in the produced VCF.
     --padding [int]: number of bps used to pad the exon coordinates, default : """ + str(padding) + """
     --regionsToPlot [str, optional]: comma-separated list of sampleID:chr:start-end for which exon-profile
