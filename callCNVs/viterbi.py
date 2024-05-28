@@ -248,7 +248,6 @@ def appendBogusCN2Exon(calledExons, path, bestPathProbas, CN2FromCN2Probas):
 # - qualityScore = log10 of ratio between the proba of most likely path between the called
 #   exons immediately preceding and immediately following the CNV, and the proba of
 #   the CN2-only path between the same exons, capped at maxQualityScore
-@numba.njit
 def buildCNVs(calledExons, path, bestPathProbas, CN2FromCN2Probas, sampleIndex, minGQ):
     # max quality score produced, hard-coded here
     maxQualityScore = 100
