@@ -436,13 +436,13 @@ def callCNVsOneCluster(exonFPMs, intergenicFPMs, samplesOfInterest, sampleIDs, e
 
     # fit CN0 model using intergenic pseudo-exon FPMs for all samples (including
     # FITWITHs).
-    # Currently CN0 is modeled with a half-normal distribution (parameter: CN0scale).
+    # Currently CN0 is modeled with a half-normal distribution (parameter: CN0sigma).
     # Also return fpmCn0, an FPM value up to which data looks like it (probably) comes
     # from CN0. This will be useful later for identifying NOCALL exons.
-    (CN0scale, fpmCn0) = callCNVs.likelihoods.fitCNO(intergenicFPMs)
+    (CN0sigma, fpmCn0) = callCNVs.likelihoods.fitCNO(intergenicFPMs)
     thisTime = time.time()
-    logger.debug("cluster %s - done fitCN0 -> CN0Scale=%.2f fpmCn0=%.2f, in %.1fs",
-                 clusterID, CN0scale, fpmCn0, thisTime - startTime)
+    logger.debug("cluster %s - done fitCN0 -> CN0sigma=%.2f fpmCn0=%.2f, in %.1fs",
+                 clusterID, CN0sigma, fpmCn0, thisTime - startTime)
     startTime = thisTime
 
     # fit CN2 model for each exon using all samples in cluster (including FITWITHs)
@@ -461,13 +461,13 @@ def callCNVsOneCluster(exonFPMs, intergenicFPMs, samplesOfInterest, sampleIDs, e
         FPMsSOIs = exonFPMs[:, samplesOfInterest]
 
     # use the fitted models to calculate likelihoods for all exons in all SOIs
-    likelihoods = callCNVs.likelihoods.calcLikelihoods(FPMsSOIs, CN0scale, Ecodes, CN2means, CN2sigmas, isHaploid)
+    likelihoods = callCNVs.likelihoods.calcLikelihoods(FPMsSOIs, CN0sigma, Ecodes, CN2means, CN2sigmas, isHaploid)
     thisTime = time.time()
     logger.debug("cluster %s - done calcLikelihoods in %.1fs", clusterID, thisTime - startTime)
     startTime = thisTime
 
     # plot exonsToPlot if any
-    figures.plots.plotExons(plotDir, exonsToPlot, FPMsSOIs, CN0scale, Ecodes, CN2means, CN2sigmas, fpmCn0, isHaploid)
+    figures.plots.plotExons(plotDir, exonsToPlot, FPMsSOIs, CN0sigma, Ecodes, CN2means, CN2sigmas, fpmCn0, isHaploid)
 
     # calculate priors (maxing the posterior probas iteratively until convergence)
     priors = callCNVs.priors.calcPriors(likelihoods)
