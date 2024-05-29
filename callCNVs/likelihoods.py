@@ -105,7 +105,7 @@ def fitCN2(FPMs, clusterID, fpmCn0, isHaploid):
 
         # require CN1 (CN2 if haploid) to be at least minZscore sigmas from fpmCn0
         minZscore = 3
-        if ((not isHaploid and ((mu / 2 - minZscore * sigma) <= fpmCn0)) or
+        if ((not isHaploid and ((mu / 2 - minZscore * sigma / 2) <= fpmCn0)) or
             (isHaploid and ((mu - minZscore * sigma) <= fpmCn0))):
             # CN1 / CN2 too close to CN0
             Ecodes[ei] = -4
@@ -155,8 +155,9 @@ def calcLikelihoods(FPMs, CN0sigma, Ecodes, CN2means, CN2sigmas, isHaploid):
         # in haploids: all-zeroes
         likelihoods[:, :, 1] = 0
     else:
-        # in diploids: shift the CN2 Gaussian so mean==cn2Mu/2 (a single copy rather than 2)
-        likelihoods[:, :, 1] = gaussianPDF(FPMs, CN2means / 2, CN2sigmas)
+        # in diploids: rescale the CN2 Gaussian by factor 1/2 (model a single copy rather
+        # than 2) -> Normal(CN2mu/2, CN2sigma/2)
+        likelihoods[:, :, 1] = gaussianPDF(FPMs, CN2means / 2, CN2sigmas / 2)
 
     # CN2 model: the fitted CN2 Gaussian
     likelihoods[:, :, 2] = gaussianPDF(FPMs, CN2means, CN2sigmas)
