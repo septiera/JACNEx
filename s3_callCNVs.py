@@ -216,9 +216,10 @@ def main(argv):
     # - clust2samps: cluster to samples mapping,
     # - samp2clusts: sample to clusters mapping,
     # - fitWith: cluster to similar clusters mapping,
+    # - clust2gender: cluster gender (if gonosome),
     # - clustIsValid: cluster validity status.
     try:
-        (clust2samps, samp2clusts, fitWith, clustIsValid) = clusterSamps.clustFile.parseClustsFile(clustsFile)
+        (clust2samps, samp2clusts, fitWith, clust2gender, clustIsValid) = clusterSamps.clustFile.parseClustsFile(clustsFile)
     except Exception as e:
         raise Exception("parseClustsFile failed for %s : %s", clustsFile, repr(e))
 
@@ -294,15 +295,10 @@ def main(argv):
         # by default, assume samples from this cluster are diploid for the chroms
         # that carry the clustExons
         isHaploid = False
-        if clusterID.startswith("G_"):
-            # TODO: assign gender to Gonosome clusters:
-            # if cluster is Male, its samples are haploid (for chrX and chrY, which
-            #    carry the gonosomeExons) => set isHaploid=True;
-            # if Female, the samples are diploid for chrX and don't have any chrY
-            #    => keep default isHaploid=False and hopefully we don't get many CNV
-            #       calls on chrY
-            # for now, default to Male for testing
+        if (clusterID in clust2gender) and (clust2gender[clusterID] == 'M'):
+            # Male => samples are haploid for for the sex chroms
             isHaploid = True
+            # Females are diploid for chrX and don't have any chrY => NOOP
 
         (CNVs, CN2means) = callCNVsOneCluster(
             clustExonFPMs, clustIntergenicFPMs, samplesOfInterest, clustSamples,

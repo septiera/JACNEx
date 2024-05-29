@@ -103,7 +103,7 @@ def main(argv):
         logger.error("error parsing metadata file file: %s", repr(e))
         raise
     try:
-        (clust2samps, samp2clusts, fitWith, clustIsValid) = clusterSamps.clustFile.parseClustsFile(clusterFile)
+        (clust2samps, samp2clusts, fitWith, clust2gender, clustIsValid) = clusterSamps.clustFile.parseClustsFile(clusterFile)
     except Exception as e:
         logger.error("error parsing clusterFile: %s", repr(e))
         raise
@@ -150,12 +150,16 @@ def main(argv):
 
     for clusterID in sorted(clust2samps.keys()):
         toPrint = clusterID + "\t"
-        toPrint += ','.join(sorted(clust2samps[clusterID])) + "\t"
         toPrint += ','.join(sorted(fitWith[clusterID])) + "\t"
+        if clusterID in clust2gender:
+            toPrint += clust2gender[clusterID] + "\t"
+        else:
+            toPrint += "\t"
         if clustIsValid[clusterID]:
             toPrint += "1\t"
         else:
             toPrint += "0\t"
+        toPrint += ','.join(sorted(clust2samps[clusterID])) + "\t"
 
         toPrint += str(len(clust2batches[clusterID].keys())) + "\t"
         for b in sorted(clust2batches[clusterID].keys()):

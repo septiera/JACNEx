@@ -43,12 +43,12 @@ def parseArgs(argv):
 
     usage = "NAME:\n" + scriptName + """\n
 DESCRIPTION:
-Given a TSV of exon fragment counts, build clusters of "comparable" samples that
+Given a TSV of exon fragment counts, build clusters of "similar" samples that
 will be used as controls for one another.
 Clusters are built independantly for exons on autosomes ('A') and  on gonosomes ('G').
 The accepted sex chromosomes are X, Y, Z, and W.
-Results are printed to --out in TSV format: 4 columns
-[CLUSTER_ID, SAMPLES, FIT_WITH, VALID]
+Results are printed to --out in TSV format: 5 columns
+[CLUSTER_ID, FIT_WITH, GENDER, VALID, SAMPLES]
 In addition, dendrograms of the clustering results are produced as pdf files in plotDir.
 
 ARGUMENTS:
@@ -193,6 +193,8 @@ def main(argv):
     fitWith.update(fitWithGono)
     clustIsValid.update(clustIsValidGono)
 
+    clust2gender = clusterSamps.genderPrediction.assignGender()
+
     thisTime = time.time()
     logger.info("done clustering samples for gonosomes, in %.2fs", thisTime - startTime)
     startTime = thisTime
@@ -200,7 +202,7 @@ def main(argv):
     ###################
     # print clustering results
     try:
-        clusterSamps.clustFile.printClustsFile(clust2samps, fitWith, clustIsValid, outFile)
+        clusterSamps.clustFile.printClustsFile(clust2samps, fitWith, clust2gender, clustIsValid, outFile)
     except Exception as e:
         logger.error("printing clusters failed : %s", repr(e))
         raise Exception("printClustsFile failed")

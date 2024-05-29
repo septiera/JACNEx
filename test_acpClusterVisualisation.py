@@ -115,7 +115,7 @@ def main(argv):
         raise Exception("parseAndNormalizeCounts failed")
 
     try:
-        (clust2samps, samp2clusts, fitWith, clustIsValid) = clusterSamps.clustFile.parseClustsFile(clusterFile)
+        (clust2samps, samp2clusts, fitWith, clust2gender, clustIsValid) = clusterSamps.clustFile.parseClustsFile(clusterFile)
     except Exception as e:
         logger.error("error parsing clusterFile: %s", repr(e))
         raise

@@ -478,7 +478,7 @@ def main(argv):
     ###################
     # parse clusters informations
     try:
-        (clust2samps, samp2clusts, fitWith, clustIsValid) = clusterSamps.clustFile.parseClustsFile(clustsFile)
+        (clust2samps, samp2clusts, fitWith, clust2gender, clustIsValid) = clusterSamps.clustFile.parseClustsFile(clustsFile)
     except Exception as e:
         raise Exception("parseClustsFile failed for %s : %s", clustsFile, repr(e))
 
