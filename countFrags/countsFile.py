@@ -3,6 +3,9 @@ import logging
 import numba  # make python faster
 import numpy
 
+####### JACNEx modules
+import countFrags.bed
+
 # prevent numba flooding the logs when we are in DEBUG loglevel
 logging.getLogger('numba').setLevel(logging.WARNING)
 
@@ -111,7 +114,7 @@ def parseAndNormalizeCounts(countsFile):
     windowType = numpy.zeros(len(genomicWindows), dtype=numpy.uint8)
     sumOfCountsAuto = numpy.zeros(len(samples), dtype=numpy.uint64)
     sumOfCountsTotal = numpy.zeros(len(samples), dtype=numpy.uint64)
-    sexChroms = sexChromosomes()
+    sexChroms = countFrags.bed.sexChromosomes()
 
     for i in range(len(genomicWindows)):
         if genomicWindows[i][3].startswith("intergenic_"):
@@ -270,20 +273,3 @@ def counts2str(countsArray, exonIndex):
     for i in range(countsArray.shape[1]):
         toPrint += "\t" + str(countsArray[exonIndex, i])
     return(toPrint)
-
-
-###############################################################################
-# sexChromosomes: return a dict whose keys are accepted sex chromosome names,
-# and values are 1 for X|Z and 2 for Y|W.
-# This covers most species including mammals, birds, fish, reptiles.
-# Note that X or Z is present in one or two copies in each individual, and is
-# (usually?) the larger of the two sex chromosomes; while Y or W is present
-# in 0 or 1 copy and is smaller.
-# However interpretation of "having two copies of X|Z" differs: in XY species
-# (eg humans) XX is the Female, while in ZW species (eg birds) ZZ is the Male.
-def sexChromosomes():
-    sexChroms = {"X": 1, "Y": 2, "W": 2, "Z": 1}
-    # also accept the same chroms prepended with 'chr'
-    for sc in list(sexChroms.keys()):
-        sexChroms["chr" + sc] = sexChroms[sc]
-    return(sexChroms)

@@ -145,6 +145,23 @@ def sortExonsOrBPs(data):
     return()
 
 
+###############################################################################
+# sexChromosomes: return a dict whose keys are accepted sex chromosome names,
+# and values are 1 for X|Z and 2 for Y|W.
+# This covers most species including mammals, birds, fish, reptiles.
+# Note that X or Z is present in one or two copies in each individual, and is
+# (usually?) the larger of the two sex chromosomes; while Y or W is present
+# in 0 or 1 copy and is smaller.
+# However interpretation of "having two copies of X|Z" differs: in XY species
+# (eg humans) XX is the Female, while in ZW species (eg birds) ZZ is the Male.
+def sexChromosomes():
+    sexChroms = {"X": 1, "Y": 2, "W": 2, "Z": 1}
+    # also accept the same chroms prepended with 'chr'
+    for sc in list(sexChroms.keys()):
+        sexChroms["chr" + sc] = sexChroms[sc]
+    return(sexChroms)
+
+
 ####################################################
 # calcIEDCutoffs:
 # calculates two important metrics for building the base transition matrix and
