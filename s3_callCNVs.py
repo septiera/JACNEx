@@ -240,13 +240,6 @@ def main(argv):
         if os.path.exists(clustOutFile):
             raise Exception("outFile " + clustOutFile + " already exists")
 
-        # for plotting we actually need:
-        # key==exonIndex, value==list of lists[sampleIndex, sampleID]
-        exonsToPlot = {}
-        thisClust2reg = {}
-        if clusterID in clust2regions:
-            thisClust2reg = clust2regions[clusterID]
-
         # samplesInClust: temp dict, key==sampleID, value==1 if sample is in cluster
         # clusterID and value==2 if sample is in a FITWITH cluster for clusterID
         samplesInClust = {}
@@ -255,30 +248,27 @@ def main(argv):
         for fw in fitWith[clusterID]:
             for s in clust2samps[fw]:
                 samplesInClust[s] = 2
-        # OK we know how many samples are in clusterID + FITWITHs -> allocate
-        # samplesOfInterest with True's, we will just need to set to FALSE
-        # samples that belong to FITWITHs
-        samplesOfInterest = numpy.ones(len(samplesInClust.keys()), dtype=bool)
-        # sampleIndexes: 1D-array of indexes (in samples) of the sampleIDs that belong
-        # to clusterID or its FITWITHs. Init to len(samples) for sanity-checking
+        # OK we know how many samples are in clusterID + FITWITHs ->
+        # sampleIndexes: 1D-array of nbSOIs+nbFWs ints: indexes (in samples) of
+        # the sampleIDs that belong to clusterID or its FITWITHs.
+        # Init to len(samples) for sanity-checking
         sampleIndexes = numpy.full(len(samplesInClust.keys()), len(samples), dtype=int)
-        # clustSamples: list of sampleIDs in this cluster, in the same order as in samples
+        # samplesOfInterest: 1D-array of nbSOIs+nbFWs bools, True of sample is an SOI
+        # and False if it's a FITWITH
+        samplesOfInterest = numpy.ones(len(samplesInClust.keys()), dtype=bool)
+        # clustSamples: list of sampleIDs in this cluster (not its FITWITHs), in the
+        # same order as in samples
         clustSamples = []
-        siClust = 0
+        siInClust = 0
         for si in range(len(samples)):
             thisSample = samples[si]
             if thisSample in samplesInClust:
-                sampleIndexes[siClust] = si
-                if samplesInClust[thisSample] == 2:
-                    samplesOfInterest[siClust] = False
-                else:
+                sampleIndexes[siInClust] = si
+                if samplesInClust[thisSample] == 1:
                     clustSamples.append(thisSample)
-                if thisSample in thisClust2reg:
-                    thisExon = thisClust2reg[thisSample]
-                    if thisExon not in exonsToPlot:
-                        exonsToPlot[thisExon] = []
-                    exonsToPlot[thisExon].append([siClust, thisSample])
-                siClust += 1
+                else:
+                    samplesOfInterest[siInClust] = False
+                siInClust += 1
 
         # extract FPMs for the samples in cluster+FitWith (this actually makes a copy)
         clustIntergenicFPMs = intergenicFPMs[:, sampleIndexes]
@@ -289,6 +279,18 @@ def main(argv):
         else:
             clustExonFPMs = gonosomeFPMs[:, sampleIndexes]
             clustExons = gonosomeExons
+
+        # for plotting we actually need exonsToPlot:
+        # key==exonIndex, value==list of lists[sampleIndex, sampleID]
+        exonsToPlot = {}
+        if clusterID in clust2regions:
+            for si in range(len(clustSamples)):
+                thisSample = clustSamples[si]
+                if thisSample in clust2regions[clusterID]:
+                    for thisExon in clust2regions[clusterID][thisSample]:
+                        if thisExon not in exonsToPlot:
+                            exonsToPlot[thisExon] = []
+                        exonsToPlot[thisExon].append([si, thisSample])
 
         # by default, assume samples from this cluster are diploid for the chroms
         # that carry the clustExons
