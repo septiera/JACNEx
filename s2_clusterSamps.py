@@ -127,7 +127,7 @@ def main(argv):
 
     # args seem OK, start working
     logger.debug("called with: " + " ".join(argv[1:]))
-    logger.info("starting to work")
+    logger.debug("starting to work")
     startTime = time.time()
 
     ###################
@@ -194,11 +194,16 @@ def main(argv):
     fitWith.update(fitWithGono)
     clustIsValid.update(clustIsValidGono)
 
+    thisTime = time.time()
+    logger.info("done clustering samples for gonosomes, in %.2fs", thisTime - startTime)
+    startTime = thisTime
+
+    # predict genders
     clust2gender = clusterSamps.gender.assignGender(
         gonosomeFPMs, intergenicFPMs, gonosomeExons, samples, clust2sampsGono, fitWithGono)
 
     thisTime = time.time()
-    logger.info("done clustering samples for gonosomes, in %.2fs", thisTime - startTime)
+    logger.info("done predicting genders, in %.2fs", thisTime - startTime)
     startTime = thisTime
 
     ###################
@@ -209,7 +214,7 @@ def main(argv):
         logger.error("printing clusters failed : %s", repr(e))
         raise Exception("printClustsFile failed")
 
-    logger.info("ALL DONE")
+    logger.debug("ALL DONE")
 
 
 ####################################################################################

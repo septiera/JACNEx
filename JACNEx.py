@@ -57,7 +57,7 @@ def parseArgs(argv):
 
     usage = "NAME:\n" + scriptName + """\n
 DESCRIPTION:
-blablabla
+blablabla TODO
 
 ARGUMENTS:
 Global arguments:
@@ -67,6 +67,8 @@ Global arguments:
            headerless tab-separated file, columns contain CHR START END EXON_ID)
    --workDir [str] : subdir where intermediate results and QC files are produced, provide a pre-existing
            workDir to reuse results from a previous run (incremental use-case)
+   --regionsToPlot [str]: optional comma-separated list of sampleID:chr:start-end for which exon-profile
+               plots should be produced, eg "grex003:chr2:270000-290000,grex007:chrX:620000-660000"
    --jobs [int] : cores that we can use, defaults to 80% of available cores ie """ + jobs + """
    -h , --help : display this help and exit
 
@@ -80,10 +82,8 @@ Step 1 optional arguments, defaults should be OK:
 Step 2 optional arguments, defaults should be OK:
    --minSamps [int]:  min number of samples for a cluster to be valid, default : """ + minSamps + """
 
-Step 3 optional arguments:
+Step 3 optional arguments, defaults should be OK:
    --minGQ [float]: minimum Genotype Quality score, default : """ + minGQ + """
-   --regionsToPlot [str]: comma-separated list of sampleID:chr:start-end for which exon-profile
-               plots should be produced, eg "grex003:chr2:270000-290000,grex007:chrX:620000-660000"
 """
 
     try:
@@ -343,7 +343,7 @@ def main(argv):
             raise Exception(stepNames[3] + " parseArgs problem: " + str(e))
 
     ######################
-    logger.info("arguments look OK, starting to work")
+    # arguments look OK, starting to work
 
     #########
     # step 1

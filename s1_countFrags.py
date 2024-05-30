@@ -240,7 +240,7 @@ def main(argv):
 
     # args seem OK, start working
     logger.debug("called with: " + " ".join(argv[1:]))
-    logger.info("starting to work")
+    logger.debug("starting to work")
     startTime = time.time()
 
     # parse exons from BED to obtain a list of lists (dim=(NbMergedExons+NbPseudoExons) x [CHR,START,END,EXONID]),
@@ -373,7 +373,7 @@ def main(argv):
     if len(failedBams) > 0:
         raise("counting FAILED for " + len(failedBams) + " samples, check the log!")
     else:
-        logger.info("ALL DONE")
+        logger.debug("ALL DONE")
 
 
 ####################################################################################

@@ -25,8 +25,6 @@ import figures.plots
 
 # set up logger, using inherited config, in case we get called as a module
 logger = logging.getLogger(__name__)
-# override inherited level (when working on step 3)
-logger.setLevel(logging.DEBUG)
 
 
 ###############################################################################
@@ -194,7 +192,7 @@ def main(argv):
 
     # args seem OK, start working
     logger.debug("called with: " + " ".join(argv[1:]))
-    logger.info("starting to work")
+    logger.debug("starting to work")
     startTime = time.time()
 
     ###################
@@ -224,7 +222,7 @@ def main(argv):
         raise Exception("parseClustsFile failed for %s : %s", clustsFile, repr(e))
 
     thisTime = time.time()
-    logger.debug("Done parseClustsFile, in %.2f s", thisTime - startTime)
+    logger.info("Done parseClustsFile, in %.2f s", thisTime - startTime)
     startTime = thisTime
 
     clust2regions = preprocessRegionsToPlot(regionsToPlot, autosomeExons, gonosomeExons,

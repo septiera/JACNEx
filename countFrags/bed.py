@@ -309,8 +309,8 @@ def insertPseudoExons(exons):
 
     medianExonLength = int(numpy.median(exonLengths))
     selectedIED = int(numpy.quantile(interExonDistances, interExonQuantile))
-    logger.info("Creating intergenic pseudo-exons: length = %i , interExonDistance = %i",
-                medianExonLength, selectedIED)
+    logger.debug("Creating intergenic pseudo-exons: length = %i , interExonDistance = %i",
+                 medianExonLength, selectedIED)
 
     ############################
     # second pass: populate genomicWindows
