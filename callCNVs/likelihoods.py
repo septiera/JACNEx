@@ -50,8 +50,9 @@ def fitCNO(intergenicFPMs):
 # - exon isn't captured (median FPM <= fpmCn0)
 # - fitting fails (exon is very atypical, can't make any calls)
 # - CN2 model isn't supported by 50% or more of the samples
-# - CN1 Gaussian (or CN2 Gaussian if isHaploid) can't be clearly distinguished
-#   from CN0 model (see minZscore)
+# - CN2 Gaussian can't be clearly distinguished from CN0 model (see minZscore)
+# - CN1 Gaussian (in diploids only) can't be clearly distinguished
+#   from CN0 model (E==1)
 #
 # Args:
 # - FPMs: numpy 2D-array of floats of size nbExons * nbSamples, FPMs[e,s] is
@@ -62,13 +63,15 @@ def fitCNO(intergenicFPMs):
 # Return (Ecodes, CN2means, CN2sigmas):
 # each is a 1D numpy.ndarray of size=nbExons, values for each exon are:
 # - the status/error code:
-#   E==0  if all QC criteria pass
 #   E==-1 if exon isn't captured
 #   E==-2 if robustGaussianFit failed
 #   E==-3 if low support for CN2 model
-#   E==-4 if CN1 (CN2 if isHaploid) is too close to CN0
+#   E==-4 if CN2 is too close to CN0
+#   E==1  if CN1 is too close to CN0 but CN2 isn't (in diploids only)
+#   E==0  if all QC criteria pass
 # - the mean and stdev of the CN2 model, or (1,1) if we couldn't fit CN2,
-#   ie Ecode==-1 or -2 [(1,1) allows to use vectorized gaussianPDF() and
+#   ie Ecode==-1 or -2
+#   [NOTE: (mean,stdev)==(1,1) allows to use vectorized gaussianPDF() and
 #   cn3PDF() without DIVBYZERO errors on NOCALL exons]
 def fitCN2(FPMs, clusterID, fpmCn0, isHaploid):
     nbExons = FPMs.shape[0]
@@ -78,40 +81,44 @@ def fitCN2(FPMs, clusterID, fpmCn0, isHaploid):
     CN2means = numpy.ones(nbExons, dtype=numpy.float64)
     CN2sigmas = numpy.ones(nbExons, dtype=numpy.float64)
 
+    # hard-coded min Z-score parameter for "too close to CN0"
+    minZscore = 3
+
     for ei in range(nbExons):
         if numpy.median(FPMs[ei, :]) <= fpmCn0:
             # uncaptured exon
             Ecodes[ei] = -1
-            continue
+        else:
+            (mu, sigma) = callCNVs.robustGaussianFit.robustGaussianFit(FPMs[ei, :])
+            if mu == 0:
+                # cannot robustly fit Gaussian
+                Ecodes[ei] = -2
+            else:
+                # if we get here, (mu, sigma) are OK:
+                (CN2means[ei], CN2sigmas[ei]) = (mu, sigma)
 
-        (mu, sigma) = callCNVs.robustGaussianFit.robustGaussianFit(FPMs[ei, :])
-        if mu == 0:
-            # cannot robustly fit Gaussian
-            Ecodes[ei] = -2
-            continue
+                # require at least minSamps samples within sdLim sigmas of mu
+                minSamps = nbSamples * 0.5
+                sdLim = 2
+                samplesUnderCN2 = numpy.sum(numpy.logical_and(FPMs[ei, :] - mu - sdLim * sigma < 0,
+                                                              FPMs[ei, :] - mu + sdLim * sigma > 0))
+                if samplesUnderCN2 < minSamps:
+                    # low support for CN2
+                    Ecodes[ei] = -3
 
-        # if we get here, (mu, sigma) are OK:
-        (CN2means[ei], CN2sigmas[ei]) = (mu, sigma)
+                # require CN2 to be at least minZscore sigmas from fpmCn0
+                elif (mu - minZscore * sigma) <= fpmCn0:
+                    # CN2 too close to CN0
+                    Ecodes[ei] = -4
 
-        # require at least minSamps samples within sdLim sigmas of mu
-        minSamps = nbSamples * 0.5
-        sdLim = 2
-        samplesUnderCN2 = numpy.sum(numpy.logical_and(FPMs[ei, :] - mu - sdLim * sigma < 0,
-                                                      FPMs[ei, :] - mu + sdLim * sigma > 0))
-        if samplesUnderCN2 < minSamps:
-            # low support for CN2
-            Ecodes[ei] = -3
-            continue
+                # in diploids: prefer if CN1 is also at least minZscore sigmas from fpmCn0
+                elif (not isHaploid) and ((mu / 2 - minZscore * sigma / 2) <= fpmCn0):
+                    # CN1 too close to CN0
+                    Ecodes[ei] = 1
 
-        # require CN1 (CN2 if haploid) to be at least minZscore sigmas from fpmCn0
-        minZscore = 3
-        if ((not isHaploid and ((mu / 2 - minZscore * sigma / 2) <= fpmCn0)) or
-            (isHaploid and ((mu - minZscore * sigma) <= fpmCn0))):
-            # CN1 / CN2 too close to CN0
-            Ecodes[ei] = -4
-            continue
-
-        # if we get here exon is good, but there's nothing more to do
+                else:
+                    # if we get here exon is good, but there's nothing more to do
+                    pass
 
     return(Ecodes, CN2means, CN2sigmas)
 
@@ -119,8 +126,9 @@ def fitCN2(FPMs, clusterID, fpmCn0, isHaploid):
 ############################################
 # calcLikelihoods:
 # for each exon (==row of FPMs):
-# - if Ecodes[ei]==0, calculate and fill likelihoods for CN0, CN1, CN2, CN3+
+# - if Ecodes[ei] >= 0, calculate and fill likelihoods for CN0, CN1, CN2, CN3+
 # - else exon is NOCALL => set likelihoods to -1
+# NOTE: if isHapoid or Ecodes[ei]==1, likelihoods[CN1]=0.
 #
 # Args:
 # - FPMs: 2D-array of floats of size nbExons * nbSamples, FPMs[e,s] is the FPM count
@@ -158,6 +166,8 @@ def calcLikelihoods(FPMs, CN0sigma, Ecodes, CN2means, CN2sigmas, isHaploid):
         # in diploids: rescale the CN2 Gaussian by factor 1/2 (model a single copy rather
         # than 2) -> Normal(CN2mu/2, CN2sigma/2)
         likelihoods[:, :, 1] = gaussianPDF(FPMs, CN2means / 2, CN2sigmas / 2)
+        # exons where CN1 is too close to CN0 but CN2 isn't:
+        likelihoods[:, Ecodes == 1, 1] = 0
 
     # CN2 model: the fitted CN2 Gaussian
     likelihoods[:, :, 2] = gaussianPDF(FPMs, CN2means, CN2sigmas)

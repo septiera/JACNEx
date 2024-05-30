@@ -478,7 +478,7 @@ def callCNVsOneCluster(exonFPMs, intergenicFPMs, samplesOfInterest, sampleIDs, e
     startTime = thisTime
 
     # calculate metrics for building and adjusting the transition matrix, ignoring
-    # NOCALL exons (Ecodes < 0)
+    # NOCALL exons
     (baseTransMatMaxIED, adjustTransMatDMax) = countFrags.bed.calcIEDCutoffs(exons, Ecodes)
 
     # build matrix of base transition probas
@@ -508,15 +508,16 @@ def callCNVsOneCluster(exonFPMs, intergenicFPMs, samplesOfInterest, sampleIDs, e
 def logExonStats(Ecodes, clusterID):
     # log exon statuses (as percentages)
     totalCnt = Ecodes.shape[0]
-    # statusCnt: number of exons that passed (statusCnt[0]) or failed (statusCnt[1..4]) the QC criteria
-    statusCnt = numpy.zeros(5, dtype=float)
-    for s in range(5):
-        statusCnt[s] = numpy.count_nonzero(Ecodes == -s)
+    # statusCnt: number of exons that passed (statusCnt[1]), semi-passed (statusCnt[0]), or
+    # failed (statusCnt[2..5]) the QC criteria
+    statusCnt = numpy.zeros(6, dtype=float)
+    for s in range(6):
+        statusCnt[s] = numpy.count_nonzero(Ecodes == 1 - s)
     statusCnt *= (100 / totalCnt)
     toPrint = "exon QC summary for cluster " + clusterID + ":\n\t"
-    toPrint += "%.1f%% CALLED, " % statusCnt[0]
-    toPrint += "%.1f%% NOT-CAPTURED, %.1f%% FIT-CN2-FAILED, " % (statusCnt[1], statusCnt[2])
-    toPrint += "%.1f%% CN2-LOW-SUPPORT, %.1f%% CN0-TOO-CLOSE" % (statusCnt[3], statusCnt[4])
+    toPrint += "%.1f%% CALLED, %.1f%% CALLED-WITHOUT-CN1, " % (statusCnt[1], statusCnt[0])
+    toPrint += "%.1f%% NOT-CAPTURED, %.1f%% FIT-CN2-FAILED, " % (statusCnt[2], statusCnt[3])
+    toPrint += "%.1f%% CN2-LOW-SUPPORT, %.1f%% CN0-TOO-CLOSE" % (statusCnt[4], statusCnt[5])
     logger.info("%s", toPrint)
 
 
