@@ -14,6 +14,7 @@ import time
 ####### JACNEx modules
 import clusterSamps.clustering
 import clusterSamps.clustFile
+import clusterSamps.gender
 import countFrags.bed
 import countFrags.countsFile
 
@@ -193,7 +194,8 @@ def main(argv):
     fitWith.update(fitWithGono)
     clustIsValid.update(clustIsValidGono)
 
-    clust2gender = clusterSamps.genderPrediction.assignGender()
+    clust2gender = clusterSamps.gender.assignGender(
+        gonosomeFPMs, intergenicFPMs, gonosomeExons, samples, clust2sampsGono, fitWithGono)
 
     thisTime = time.time()
     logger.info("done clustering samples for gonosomes, in %.2fs", thisTime - startTime)
