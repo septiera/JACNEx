@@ -14,6 +14,8 @@ logger = logging.getLogger(__name__)
 # print CNVs in VCF format. The CNVs must belong to a single cluster.
 #
 # Args:
+# - outFile (str): Output file name. It must be non-existent and can include a path (which must exist).
+#                  The output file will be compressed in gzip format if outFile ends with '.gz'.
 # - CNVs (list of lists[int, int, int, float, int]): [CNtype, exonIndStart, exonIndEnd,
 #                                                     qualityScore, sampIndex].
 # - FPMs: 2D-array of floats, size = nbExons * nbSamples, FPMs[e,s] is the FPM
@@ -23,10 +25,8 @@ logger = logging.getLogger(__name__)
 # - exons (list of lists[str, int, int, str]): exons infos
 # - samples (list[str]): sample names.
 # - padding (int): padding bases used.
-# - outFile (str): Output file name. It must be non-existent and can include a path (which must exist).
-#                  The output file will be compressed in gzip format if outFile ends with '.gz'.
 # - madeBy (str): Name + version of program that made the CNV calls.
-def printCallsFile(CNVs, FPMs, CN2Means, exons, samples, padding, outFile, madeBy):
+def printCallsFile(outFile, CNVs, FPMs, CN2Means, exons, samples, padding, madeBy):
 
     vcf = vcfFormat(CNVs, FPMs, CN2Means, exons, samples, padding)
 

@@ -298,13 +298,9 @@ def main(argv):
             isHaploid = True
             # Females are diploid for chrX and don't have any chrY => NOOP
 
-        (CNVs, CN2means) = callCNVsOneCluster(
-            clustExonFPMs, clustIntergenicFPMs, samplesOfInterest, clustSamples,
-            clustExons, exonsToPlot, plotDir, clusterID, isHaploid, minGQ, jobs)
-
-        # print CNVs for this cluster as a VCF file
-        callCNVs.callsFile.printCallsFile(CNVs, clustExonFPMs, CN2means, clustExons, clustSamples,
-                                          padding, clustOutFile, madeBy)
+        callCNVsOneCluster(clustExonFPMs, clustIntergenicFPMs, samplesOfInterest, clustSamples,
+                           clustExons, exonsToPlot, plotDir, clusterID, isHaploid, minGQ,
+                           clustOutFile, padding, madeBy, jobs)
 
     thisTime = time.time()
     logger.info("all clusters done,  in %.1fs", thisTime - startTime)
@@ -422,12 +418,14 @@ def preprocessRegionsToPlot(regionsToPlot, autosomeExons, gonosomeExons, samp2cl
 # - isHaploid: bool, if True this cluster of samples is assumed to be haploid
 #   for all chromosomes where the exons are located (eg chrX and chrY in men)
 # - minGQ: float, minimum Genotype Quality (GQ)
+# - vcfFile: name of VCF file to create
+# - padding, madeBy: for printCallsFile
 # - jobs: number of jobs for the parallelized steps (currently viterbiAllSamples())
 #
-# Returns (CNVs, CN2means): as expected by printCallsFile(), ie as returned by
-#   viterbiAllSamples() and fitCN2() except CN2means is set to 0 for NOCALL exons
+# Produce vcfFile, return nothing.
 def callCNVsOneCluster(exonFPMs, intergenicFPMs, samplesOfInterest, sampleIDs, exons,
-                       exonsToPlot, plotDir, clusterID, isHaploid, minGQ, jobs):
+                       exonsToPlot, plotDir, clusterID, isHaploid, minGQ, vcfFile,
+                       padding, madeBy, jobs):
     logger.info("cluster %s - starting to work", clusterID)
     startTime = time.time()
     startTimeCluster = startTime
@@ -435,7 +433,7 @@ def callCNVsOneCluster(exonFPMs, intergenicFPMs, samplesOfInterest, sampleIDs, e
     # fit CN0 model using intergenic pseudo-exon FPMs for all samples (including
     # FITWITHs).
     # Currently CN0 is modeled with a half-normal distribution (parameter: CN0sigma).
-    # Also return fpmCn0, an FPM value up to which data looks like it (probably) comes
+    # Also returns fpmCn0, an FPM value up to which data looks like it (probably) comes
     # from CN0. This will be useful later for identifying NOCALL exons.
     (CN0sigma, fpmCn0) = callCNVs.likelihoods.fitCNO(intergenicFPMs)
     thisTime = time.time()
@@ -496,8 +494,12 @@ def callCNVsOneCluster(exonFPMs, intergenicFPMs, samplesOfInterest, sampleIDs, e
     # set CN2means of NOCALL exons to 0
     CN2means[Ecodes < 0] = 0
 
+    # print CNVs for this cluster as a VCF file
+    callCNVs.callsFile.printCallsFile(vcfFile, CNVs, FPMsSOIs, CN2means, exons, sampleIDs,
+                                      padding, madeBy)
+
     logger.info("cluster %s - all done, total time: %.1fs", clusterID, thisTime - startTimeCluster)
-    return(CNVs, CN2means)
+    return()
 
 
 ####################################################
