@@ -1,0 +1,8 @@
+31/05/2024
+NTM
+
+This subdir contains various scripts written during the development of JACNEx
+to address specific questions.
+They are not used anymore, and probably not in sync with the current codebase,
+but they could perhaps be updated and/or provide useful inspiration, so we
+keep them here for now.
