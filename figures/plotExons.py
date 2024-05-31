@@ -82,7 +82,7 @@ def getLabels(isHaploid, CN0Scale, CN2Mean, CN2Sigma):
     # Hardcoded variables
     CN0Mean = 0
     CN1Mean = CN2Mean / 2
-    CN1Sigma = CN2Mean / 2
+    CN1Sigma = CN2Sigma / 2
     CN3Mu = numpy.log(CN2Mean)
     CN3Sigma = 0.50
     CN3Loc = CN2Mean + 2 * CN2Sigma
