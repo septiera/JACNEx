@@ -55,20 +55,18 @@ def plotExons(exons, exonsToPlot, Ecodes, FPMsSOIs, isHaploid, CN0sigma, CN2mean
     bins = int(max(minBins, numpy.ceil(FPMsSOIs.shape[1] / denom)))
 
     for thisExon in exonsToPlot.keys():
-        # skip filtered exons
-        if Ecodes[thisExon] < 0:
+        # skip filtered exons : NOT-CAPTURED and FIT-CN2-FAILED
+        if (Ecodes[thisExon] == -1) or (Ecodes[thisExon] == -2):
             continue
     
         exonFPMs = FPMsSOIs[thisExon, :]
         fpmMax = numpy.ceil(max(exonFPMs))
         x = numpy.linspace(0, numpy.ceil(fpmMax), nbPoints)
 
-        pdfs = callCNVs.likelihoods.calcLikelihoods(x.reshape(1, nbPoints),
-                                                    CN0sigma,
-                                                    numpy.array([Ecodes[thisExon]]),
-                                                    numpy.array([CN2means[thisExon]]),
-                                                    numpy.array([CN2sigmas[thisExon]]),
-                                                    isHaploid)
+        pdfs = callCNVs.likelihoods.calcLikelihoods(
+            x.reshape(1, nbPoints), CN0sigma, numpy.array([Ecodes[thisExon]]),
+            numpy.array([CN2means[thisExon]]), numpy.array([CN2sigmas[thisExon]]),
+            isHaploid, True)
 
         labels = getLabels(isHaploid, CN0sigma, CN2means[thisExon], CN2sigmas[thisExon])
 
@@ -109,8 +107,8 @@ def getLabels(isHaploid, CN0Scale, CN2Mean, CN2Sigma):
 def plotHistogramAndPdfs(exonFPMs, bins, x, pdfs, fpmCn0, exons, thisExon, clusterId, ECodes, exonsToPlot, labels, isHaploid, pdf):
 
     colors = ['orange', 'red', 'green', 'purple']
-    eCodeStr = {1: 'CALLED-WITHOUT-CN1', 0: 'CALLED'}
-    limY = (max(pdfs[:, :, 2]) + max(pdfs[:, :, 2])/3)
+    ECodeSTR = {1: 'CALLED-WITHOUT-CN1', 0: 'CALLED', -3:'CN2-LOW-SUPPORT', -4:'CN0-TOO-CLOSE'}
+    limY = (max(pdfs[:, :, 1]) + max(pdfs[:, :, 1])/4)
 
     fig = matplotlib.pyplot.figure(figsize=(15, 10))
     # plot histogram
@@ -132,18 +130,22 @@ def plotHistogramAndPdfs(exonFPMs, bins, x, pdfs, fpmCn0, exons, thisExon, clust
     if isHaploid:
         pdf_keys = ['CN0', 'CN2', 'CN3']
         pdf_indices = [0, 2, 3]
+        limY = (max(pdfs[:, :, 2]) + max(pdfs[:, :, 2])/3)
     else:
         pdf_keys = ['CN0', 'CN1', 'CN2', 'CN3']
         pdf_indices = [0, 1, 2, 3]
-        if ECodes[thisExon] != 1:
-            limY = (max(pdfs[:, :, 1]) + max(pdfs[:, :, 1])/4)
 
     # plot CN states fits
     for key, idx in zip(pdf_keys, pdf_indices):
         if key in labels and labels[key]:
+            if (ECodes[thisExon] == 1) and (key == 'CN1'):
+                linestyleFIT = 'dashed'
+            else:
+                linestyleFIT = 'solid'
             matplotlib.pyplot.plot(x,
                                    pdfs[:, :, idx].flatten(),
                                    linewidth=3,
+                                   linestyle=linestyleFIT,
                                    color=colors[idx],
                                    label=labels[key])
 
@@ -159,7 +161,7 @@ def plotHistogramAndPdfs(exonFPMs, bins, x, pdfs, fpmCn0, exons, thisExon, clust
 
     title_text = (f"{clusterId}\n"
                   f"{exons[thisExon][0]}:{exons[thisExon][1]}-{exons[thisExon][2]} {exons[thisExon][3]}\n"
-                  f"{eCodeStr.get(ECodes[thisExon], 'UNKNOWN')}")
+                  f"{ECodeSTR.get(ECodes[thisExon], 'UNKNOWN')}")
     matplotlib.pyplot.title(title_text)
     matplotlib.pyplot.xlabel("FPM")
     matplotlib.pyplot.ylabel("Density")
