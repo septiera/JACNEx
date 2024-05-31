@@ -478,7 +478,7 @@ def callCNVsOneCluster(exonFPMs, intergenicFPMs, samplesOfInterest, sampleIDs, e
         FPMsSOIs = exonFPMs[:, samplesOfInterest]
 
     # use the fitted models to calculate likelihoods for all exons in all SOIs
-    likelihoods = callCNVs.likelihoods.calcLikelihoods(FPMsSOIs, CN0sigma, Ecodes, CN2means, CN2sigmas, isHaploid)
+    likelihoods = callCNVs.likelihoods.calcLikelihoods(FPMsSOIs, CN0sigma, Ecodes, CN2means, CN2sigmas, isHaploid, False)
     thisTime = time.time()
     logger.debug("cluster %s - done calcLikelihoods in %.1fs", clusterID, thisTime - startTime)
     startTime = thisTime
