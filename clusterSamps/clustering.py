@@ -26,7 +26,7 @@ import statistics
 
 
 ####### JACNEx modules
-import figures.plots
+import figures.plotDendrograms
 
 # set up logger, using inherited config
 logger = logging.getLogger(__name__)
@@ -135,7 +135,7 @@ def buildClusters(FPMarray, chromType, samples, minSize, plotFile):
     if os.path.isfile(plotFile):
         logger.info("pre-existing dendrogram plotFile %s will be squashed", plotFile)
     title = "chromType = " + chromType + " ,  PCA dimensions = " + str(dim)
-    figures.plots.plotDendrogram(linkageMatrix, samples, clust2samps, fitWith, clustIsValid, title, plotFile)
+    figures.plotDendrograms.plotDendrogram(linkageMatrix, samples, clust2samps, fitWith, clustIsValid, title, plotFile)
 
     return(clust2samps, fitWith, clustIsValid)
 
