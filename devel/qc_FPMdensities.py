@@ -32,7 +32,7 @@ import sys
 
 ####### JACNEx modules
 import countFrags.countsFile
-import figures.plots
+import devel.plots
 
 # set up logger, using inherited config, in case we get called as a module
 logger = logging.getLogger(__name__)
@@ -245,7 +245,7 @@ def SampsQC(counts, samples, plotFilePass, plotFileFail, minLow2high=0.2, testBW
         title = samples[sampleIndex] + " density of exon FPMs"
         # max range on Y axis for visualization, 3*ymax should be fine
         ylim = 3 * ymax
-        figures.plots.plotDensities(title, dataRanges, densities, legends, xmin, xmax, line1legend, line2legend, ylim, pdf)
+        devel.plots.plotDensities(title, dataRanges, densities, legends, xmin, xmax, line1legend, line2legend, ylim, pdf)
 
     # close PDFs
     pdfPass.close()
