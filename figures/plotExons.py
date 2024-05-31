@@ -7,6 +7,7 @@ import datetime
 
 ####### JACNEx modules
 import callCNVs.likelihoods
+import countFrags.bed
 
 # prevent matplotlib and PIL flooding the logs when we are in DEBUG loglevel
 logging.getLogger('matplotlib').setLevel(logging.WARNING)
@@ -18,6 +19,93 @@ logger = logging.getLogger(__name__)
 ###############################################################################
 ############################ PUBLIC FUNCTIONS #################################
 ###############################################################################
+####################################################
+# checkRegionsToPlot:
+# do basic syntactic sanity-check of regionsToPlot, which should be a comma-separated
+# list of sampleID:chr:start-end .
+# If AOK, return a list of lists [str, str, int, int] holding [sampleID, chrom, start, end];
+# else raise exception.
+def checkRegionsToPlot(regionsToPlot):
+    regions = []
+    RTPs = regionsToPlot.split(',')
+    for rtp in RTPs:
+        rtpList = rtp.split(':')
+        if len(rtpList) != 3:
+            raise Exception("badly formatted regionToPlot, need 3 ':'-separated fields: " + rtp)
+        startEnd = rtpList[2].split('-')
+        if len(startEnd) != 2:
+            raise Exception("badly formatted regionToPlot, need coords as start-end: " + rtp)
+        (start, end) = startEnd
+        try:
+            start = int(start)
+            end = int(end)
+            if (start < 0) or (start > end):
+                raise Exception()
+        except Exception:
+            raise Exception("badly formatted regionToPlot, must have 0 <= start <= end: " + rtp)
+        regions.append([rtpList[0], rtpList[1], start, end])
+    return(regions)
+
+
+###################
+# validate and pre-process each regionsToPlot:
+# - does the sampleID exist? In what clusters?
+# - does the chrom exist? In auto or gono?
+# - are there any exons in the coords?
+# If NO to any, log the issue and ignore this regionToPlot;
+# if YES to all, populate and return clust2regions:
+# key==clusterID, value==Dict with key==sampleID and value==list of exonIndexes
+# (in the cluster's exons, auto or gono)
+def preprocessRegionsToPlot(regionsToPlot, autosomeExons, gonosomeExons, samp2clusts, clustIsValid):
+    clust2regions = {}
+    if regionsToPlot == "":
+        return(clust2regions)
+
+    autosomeExonNCLs = countFrags.bed.buildExonNCLs(autosomeExons)
+    gonosomeExonNCLs = countFrags.bed.buildExonNCLs(gonosomeExons)
+    for region in checkRegionsToPlot(regionsToPlot):
+        (sampleID, chrom, start, end) = region
+        regionStr = sampleID + ':' + chrom + ':' + str(start) + '-' + str(end)
+        if sampleID not in samp2clusts:
+            logger.warning("ignoring bad regionToPlot %s, sample doesn't exist", regionStr)
+            continue
+        if chrom in autosomeExonNCLs:
+            clustType = 'A_'
+            exonNCLs = autosomeExonNCLs
+        elif chrom in gonosomeExonNCLs:
+            clustType = 'G_'
+            exonNCLs = gonosomeExonNCLs
+        else:
+            logger.warning("ignoring bad regionToPlot %s, chrom doesn't exist", regionStr)
+            continue
+
+        clusterID = ""
+        for clust in samp2clusts[sampleID]:
+            if clust.startswith(clustType):
+                clusterID = clust
+                break
+
+        if not clustIsValid[clusterID]:
+            logger.warning("ignoring regionToPlot %s, sample belongs to invalid cluster %s",
+                           regionStr, clusterID)
+            continue
+
+        overlappedExons = exonNCLs[chrom].find_overlap(start, end)
+        if not overlappedExons:
+            logger.warning("ignoring regionToPlot %s, region doesn't overlap any exons", regionStr)
+            continue
+        if clusterID not in clust2regions:
+            clust2regions[clusterID] = {}
+        if sampleID not in clust2regions[clusterID]:
+            clust2regions[clusterID][sampleID] = []
+        for exon in overlappedExons:
+            exonIndex = exon[2]
+            clust2regions[clusterID][sampleID].append(exonIndex)
+
+    return(clust2regions)
+
+
+###################################
 # This function generates a PDF file with histograms of FPM values and overlays
 # model likelihoods for different copy number states (CN0, CN1, CN2, CN3).
 # Args:
