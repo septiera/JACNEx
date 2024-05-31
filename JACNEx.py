@@ -237,7 +237,7 @@ def main(argv):
     # hard-coded subdir hierarchy of workDir, created if needed
 
     # step1: countsFiles are saved (date-stamped and gzipped) in countsDir
-    countsDir = workDir + '/CountFiles/'
+    countsDir = workDir + '/Counts/'
     if not os.path.isdir(countsDir):
         try:
             os.mkdir(countsDir)
@@ -245,7 +245,7 @@ def main(argv):
             raise Exception(stepNames[0] + " countsDir " + countsDir + "doesn't exist and can't be mkdir'd")
 
     # step1: breakpoint results are saved in BPDir
-    BPDir = workDir + '/BreakPoints/'
+    BPDir = workDir + '/Breakpoints/'
     if not os.path.isdir(BPDir):
         try:
             os.mkdir(BPDir)
@@ -261,7 +261,7 @@ def main(argv):
             raise Exception(stepNames[0] + " clustersDir " + clustersDir + "doesn't exist and can't be mkdir'd")
 
     # step3: callFiles are saved (date-stamped and gzipped) in callsDir
-    callsDir = workDir + '/CallFiles/'
+    callsDir = workDir + '/VCFs/'
     if not os.path.isdir(callsDir):
         try:
             os.mkdir(callsDir)
