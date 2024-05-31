@@ -18,6 +18,7 @@
 
 
 import numpy
+import math
 import matplotlib.pyplot
 import matplotlib.backends.backend_pdf
 import logging
@@ -188,17 +189,18 @@ def plotExons(exons, exonsToPlot, Ecodes, FPMsSOIs, isHaploid, CN0sigma, CN2mean
 ###############################################################################
 # Generate labels for the legend based on whether the sample is haploid
 def getLabels(isHaploid, CN0Scale, CN2Mean, CN2Sigma):
-    # Hardcoded variables
-    CN0Mean = 0
+    # parameters of CN1 and CN3 (MUST MATCH the models in likelihooods.py)
     CN1Mean = CN2Mean / 2
     CN1Sigma = CN2Sigma / 2
-    CN3Mu = numpy.log(CN2Mean)
-    CN3Sigma = 0.50
+    CN3Sigma = 0.5
     CN3Loc = CN2Mean + 2 * CN2Sigma
+    CN3Mu = numpy.log(CN2Mean)
+    if isHaploid:
+        CN3Mu += math.log(2)
 
     # Initialize labels dictionary
     labels = {
-        "CN0": fr'CN0 (halfnorm: $\mu$={CN0Mean}, $\sigma$={CN0Scale:.2f})'
+        "CN0": fr'CN0 (halfnorm: $\sigma$={CN0Scale:.2f})'
     }
 
     if isHaploid:
@@ -207,7 +209,7 @@ def getLabels(isHaploid, CN0Scale, CN2Mean, CN2Sigma):
     else:
         labels["CN1"] = fr'CN1 (norm: $\mu$={CN1Mean:.2f}, $\sigma$={CN1Sigma:.2f})'
         labels["CN2"] = fr'CN2 (norm: $\mu$={CN2Mean:.2f}, $\sigma$={CN2Sigma:.2f})'
-        labels["CN3"] = fr'CN3+ (lognorm: $\mu$={CN3Mu:.2f}, $\sigma$={CN3Sigma:.2f}, $\text{{loc}}$={CN3Loc:.2f})'
+        labels["CN3"] = fr'CN3+ (lognorm: $\mu$={CN3Mu:.2f}, $\sigma$={CN3Sigma:.1f}, $\text{{loc}}$={CN3Loc:.2f})'
 
     return labels
 
@@ -218,14 +220,14 @@ def plotHistogramAndPdfs(exonFPMs, bins, x, pdfs, fpmCn0, exons, thisExon, clust
 
     colors = ['orange', 'red', 'green', 'purple']
     ECodeSTR = {1: 'CALLED-WITHOUT-CN1', 0: 'CALLED', -3: 'CN2-LOW-SUPPORT', -4: 'CN0-TOO-CLOSE'}
-    limY = (max(pdfs[:, :, 1]) + max(pdfs[:, :, 1]) / 4)
+    limY = 5 / 4 * max(pdfs[:, :, 1])
 
     fig = matplotlib.pyplot.figure(figsize=(15, 10))
     # plot histogram
     matplotlib.pyplot.hist(exonFPMs,
                            bins=bins,
                            edgecolor='black',
-                           label='real data',
+                           label='FPMs of all samples in cluster',
                            density=True,
                            color='grey')
 
@@ -234,13 +236,13 @@ def plotHistogramAndPdfs(exonFPMs, bins, x, pdfs, fpmCn0, exons, thisExon, clust
                               color='black',
                               linewidth=3,
                               linestyle='dashed',
-                              label=f'uncaptured threshold ({fpmCn0:.2f} FPM)')
+                              label=f'looks-like-CN0 threshold ({fpmCn0:.2f} FPM)')
 
     # determine the keys and indices based on haploid status
     if isHaploid:
         pdf_keys = ['CN0', 'CN2', 'CN3']
         pdf_indices = [0, 2, 3]
-        limY = (max(pdfs[:, :, 2]) + max(pdfs[:, :, 2]) / 3)
+        limY = 2 * max(pdfs[:, :, 2])
     else:
         pdf_keys = ['CN0', 'CN1', 'CN2', 'CN3']
         pdf_indices = [0, 1, 2, 3]
