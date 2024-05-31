@@ -35,6 +35,7 @@ logging.getLogger('PIL').setLevel(logging.WARNING)
 # set up logger, using inherited config
 logger = logging.getLogger(__name__)
 
+
 ###############################################################################
 ############################ PUBLIC FUNCTIONS #################################
 ###############################################################################
@@ -165,7 +166,7 @@ def plotExons(exons, exonsToPlot, Ecodes, FPMsSOIs, isHaploid, CN0sigma, CN2mean
         # skip filtered exons : NOT-CAPTURED and FIT-CN2-FAILED
         if (Ecodes[thisExon] == -1) or (Ecodes[thisExon] == -2):
             continue
-    
+
         exonFPMs = FPMsSOIs[thisExon, :]
         fpmMax = numpy.ceil(max(exonFPMs))
         x = numpy.linspace(0, numpy.ceil(fpmMax), nbPoints)
@@ -180,6 +181,7 @@ def plotExons(exons, exonsToPlot, Ecodes, FPMsSOIs, isHaploid, CN0sigma, CN2mean
         plotHistogramAndPdfs(exonFPMs, bins, x, pdfs, fpmCn0, exons, thisExon, clusterID,
                              Ecodes, exonsToPlot, labels, isHaploid, outFile)
     outFile.close()
+
 
 ###############################################################################
 ############################ PRIVATE FUNCTIONS #################################
@@ -209,13 +211,14 @@ def getLabels(isHaploid, CN0Scale, CN2Mean, CN2Sigma):
 
     return labels
 
+
 #####################
 # Plot histogram and PDFs for an exon
 def plotHistogramAndPdfs(exonFPMs, bins, x, pdfs, fpmCn0, exons, thisExon, clusterId, ECodes, exonsToPlot, labels, isHaploid, pdf):
 
     colors = ['orange', 'red', 'green', 'purple']
-    ECodeSTR = {1: 'CALLED-WITHOUT-CN1', 0: 'CALLED', -3:'CN2-LOW-SUPPORT', -4:'CN0-TOO-CLOSE'}
-    limY = (max(pdfs[:, :, 1]) + max(pdfs[:, :, 1])/4)
+    ECodeSTR = {1: 'CALLED-WITHOUT-CN1', 0: 'CALLED', -3: 'CN2-LOW-SUPPORT', -4: 'CN0-TOO-CLOSE'}
+    limY = (max(pdfs[:, :, 1]) + max(pdfs[:, :, 1]) / 4)
 
     fig = matplotlib.pyplot.figure(figsize=(15, 10))
     # plot histogram
@@ -237,7 +240,7 @@ def plotHistogramAndPdfs(exonFPMs, bins, x, pdfs, fpmCn0, exons, thisExon, clust
     if isHaploid:
         pdf_keys = ['CN0', 'CN2', 'CN3']
         pdf_indices = [0, 2, 3]
-        limY = (max(pdfs[:, :, 2]) + max(pdfs[:, :, 2])/3)
+        limY = (max(pdfs[:, :, 2]) + max(pdfs[:, :, 2]) / 3)
     else:
         pdf_keys = ['CN0', 'CN1', 'CN2', 'CN3']
         pdf_indices = [0, 1, 2, 3]
