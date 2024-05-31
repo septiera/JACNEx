@@ -40,7 +40,7 @@ import callCNVs.likelihoods
 import callCNVs.priors
 import callCNVs.transitions
 import callCNVs.viterbi
-import figures.plots
+import figures.plotExons
 
 # set up logger, using inherited config, in case we get called as a module
 logger = logging.getLogger(__name__)
@@ -376,7 +376,7 @@ def preprocessRegionsToPlot(regionsToPlot, autosomeExons, gonosomeExons, samp2cl
     gonosomeExonNCLs = countFrags.bed.buildExonNCLs(gonosomeExons)
     for region in checkRegionsToPlot(regionsToPlot):
         (sampleID, chrom, start, end) = region
-        regionStr = sampleID + ':' + chrom + ':' + start + '-' + end
+        regionStr = sampleID + ':' + chrom + ':' + str(start) + '-' + str(end)
         if sampleID not in samp2clusts:
             logger.warning("ignoring bad regionToPlot %s, sample doesn't exist", regionStr)
             continue
@@ -484,7 +484,7 @@ def callCNVsOneCluster(exonFPMs, intergenicFPMs, samplesOfInterest, sampleIDs, e
     startTime = thisTime
 
     # plot exonsToPlot if any
-    figures.plots.plotExons(plotDir, exonsToPlot, FPMsSOIs, CN0sigma, Ecodes, CN2means, CN2sigmas, fpmCn0, isHaploid)
+    figures.plotExons.plotExons(exons, exonsToPlot, Ecodes, FPMsSOIs, isHaploid, CN0sigma, CN2means, CN2sigmas, fpmCn0, clusterID, plotDir)
 
     # calculate priors (maxing the posterior probas iteratively until convergence)
     priors = callCNVs.priors.calcPriors(likelihoods)
