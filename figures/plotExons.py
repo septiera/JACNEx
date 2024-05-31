@@ -194,7 +194,7 @@ def getLabels(isHaploid, CN0Scale, CN2Mean, CN2Sigma):
     CN1Sigma = CN2Sigma / 2
     CN3Sigma = 0.5
     CN3Loc = CN2Mean + 2 * CN2Sigma
-    CN3Mu = numpy.log(CN2Mean)
+    CN3Mu = math.log(CN2Mean)
     if isHaploid:
         CN3Mu += math.log(2)
 
