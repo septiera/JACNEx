@@ -146,8 +146,8 @@ def fitCN2(FPMs, clusterID, fpmCn0, isHaploid):
 # calcLikelihoods:
 # for each exon (==row of FPMs):
 # - if Ecodes[ei] >= 0, calculate and fill likelihoods for CN0, CN1, CN2, CN3+
-# - else exon is NOCALL => set likelihoods to -1
-# NOTE: if isHapoid or Ecodes[ei]==1, likelihoods[CN1]=0.
+# - else exon is NOCALL => set likelihoods to -1 (except if forPlots)
+# NOTE: if isHapoid or Ecodes[ei]==1, likelihoods[CN1]=0 (except if forPlots).
 #
 # Args:
 # - FPMs: 2D-array of floats of size nbExons * nbSamples, FPMs[e,s] is the FPM count
@@ -155,11 +155,12 @@ def fitCN2(FPMs, clusterID, fpmCn0, isHaploid):
 # - CN0sigma: as returned by fitCN0()
 # - Ecodes, CN2means, CN2sigmas: as returned by fitCN2()
 # - isHaploid: boolean (used in the CN3+ model and for zeroing CN1 likelihoods)
+# - forPlots: boolean if True don't set likelihoods to 0 / -1 for bad Ecodes
 #
 # Returns likelihoods (allocated here):
 #   numpy 3D-array of floats of size nbSamples * nbExons * nbStates,
 #   likelihoods[s,e,cn] is the likelihood of state cn for exon e in sample s
-def calcLikelihoods(FPMs, CN0sigma, Ecodes, CN2means, CN2sigmas, isHaploid):
+def calcLikelihoods(FPMs, CN0sigma, Ecodes, CN2means, CN2sigmas, isHaploid, forPlots):
     # sanity:
     nbExons = FPMs.shape[0]
     nbSamples = FPMs.shape[1]
@@ -185,8 +186,9 @@ def calcLikelihoods(FPMs, CN0sigma, Ecodes, CN2means, CN2sigmas, isHaploid):
         # in diploids: rescale the CN2 Gaussian by factor 1/2 (model a single copy rather
         # than 2) -> Normal(CN2mu/2, CN2sigma/2)
         likelihoods[:, :, 1] = gaussianPDF(FPMs, CN2means / 2, CN2sigmas / 2)
-        # exons where CN1 is too close to CN0 but CN2 isn't:
-        likelihoods[:, Ecodes == 1, 1] = 0
+        if not forPlots:
+            # exons where CN1 is too close to CN0 but CN2 isn't:
+            likelihoods[:, Ecodes == 1, 1] = 0
 
     # CN2 model: the fitted CN2 Gaussian
     likelihoods[:, :, 2] = gaussianPDF(FPMs, CN2means, CN2sigmas)
@@ -194,8 +196,9 @@ def calcLikelihoods(FPMs, CN0sigma, Ecodes, CN2means, CN2sigmas, isHaploid):
     # CN3 model, as defined in cn3PDF()
     likelihoods[:, :, 3] = cn3PDF(FPMs, CN2means, CN2sigmas, isHaploid)
 
-    # NOCALL exons: set to -1 for every sample+state
-    likelihoods[:, Ecodes < 0, :] = -1.0
+    if not forPlots:
+        # NOCALL exons: set to -1 for every sample+state
+        likelihoods[:, Ecodes < 0, :] = -1.0
 
     return(likelihoods)
 
