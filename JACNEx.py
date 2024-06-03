@@ -20,7 +20,6 @@
 import datetime
 import getopt
 import glob
-import gzip
 import logging
 import os
 import re
@@ -32,6 +31,7 @@ import traceback
 import s1_countFrags
 import s2_clusterSamps
 import s3_callCNVs
+import countFrags.countsFile
 
 
 ###############################################################################
@@ -186,17 +186,10 @@ def findBestPrevCF(countsFilesAll, samples):
         samplesD[s] = 1
     for cf in countsFilesAll:
         try:
-            if cf.endswith(".gz"):
-                countsFH = gzip.open(cf, "rt")
-            else:
-                countsFH = open(cf, "r")
+            samplesCF = countFrags.countsFile.parseCountsFile(cf)[1]
         except Exception as e:
-            logger.error("Opening pre-existing countsFile %s: %s", cf, e)
-            raise Exception('cannot open pre-existing countsFile')
-        # grab samples from header
-        samplesCF = countsFH.readline().rstrip().split("\t")
-        # get rid of exon definition headers
-        del samplesCF[0:4]
+            logger.error("Parsing pre-existing countsFile %s: %s", cf, e)
+            raise Exception('cannot parse pre-existing countsFile')
         commonSamplesCF = 0
         otherSamplesCF = 0
         for s in samplesCF:
@@ -208,7 +201,6 @@ def findBestPrevCF(countsFilesAll, samples):
             bestCF = cf
             commonSamples = commonSamplesCF
             otherSamples = otherSamplesCF
-        countsFH.close()
     return(bestCF, commonSamples)
 
 
@@ -236,7 +228,7 @@ def main(argv):
     ##################
     # hard-coded subdir hierarchy of workDir, created if needed
 
-    # step1: countsFiles are saved (date-stamped and gzipped) in countsDir
+    # step1: countsFiles are saved (date-stamped) in countsDir
     countsDir = workDir + '/Counts/'
     if not os.path.isdir(countsDir):
         try:
@@ -295,7 +287,7 @@ def main(argv):
         # we'll make sure findBestPrevCF() returns a file that exists
 
         # new countsFile to create
-        countsFile = countsDir + '/countsFile_' + dateStamp + '.tsv.gz'
+        countsFile = countsDir + '/counts_' + dateStamp + '.npz'
         if os.path.isfile(countsFile):
             raise Exception(stepNames[1] + " countsFile " + countsFile + " already exists")
         step1Args.extend(["--out", countsFile])
@@ -308,7 +300,7 @@ def main(argv):
             raise Exception(stepNames[1] + " parseArgs problem: " + str(e))
 
         # find pre-existing countsFile (if any) with the most common samples
-        countsFilesAll = glob.glob(countsDir + '/countsFile_*.gz')
+        countsFilesAll = glob.glob(countsDir + '/counts_*.npz')
         (countsFilePrev, commonSamples) = findBestPrevCF(countsFilesAll, samples)
         if commonSamples != 0:
             logger.info("will reuse best matching countsFile (%i common samples): %s",

@@ -20,7 +20,7 @@
 ###############################################################################################
 ######################################## JACNEx step 2: Sample clustering  ####################
 ###############################################################################################
-# Given a TSV of fragment counts as produced by 1_countFrags.py:
+# Given a NPZ with fragment counts as produced by 1_countFrags.py:
 # build clusters of samples that will be used as controls for one another.
 # See usage for details.
 ###############################################################################################
@@ -63,16 +63,18 @@ def parseArgs(argv):
 
     usage = "NAME:\n" + scriptName + """\n
 DESCRIPTION:
-Given a TSV of exon fragment counts, build clusters of "similar" samples that
+Given a NPZ file with fragment counts, build clusters of "similar" samples that
 will be used as controls for one another.
 Clusters are built independantly for exons on autosomes ('A') and  on gonosomes ('G').
 The accepted sex chromosomes are X, Y, Z, and W.
+Each gonosome cluster is (should be!) single-gender, this gender is predicted and
+printed in the GENDER column (and used in step s3).
 Results are printed to --out in TSV format: 5 columns
 [CLUSTER_ID, FIT_WITH, GENDER, VALID, SAMPLES]
 In addition, dendrograms of the clustering results are produced as pdf files in plotDir.
 
 ARGUMENTS:
-   --counts [str]: TSV file of fragment counts, possibly gzipped, produced by s1_countFrags.py
+   --counts [str]: NPZ file with the fragment counts, produced by s1_countFrags.py
    --out [str] : file where clusters will be saved, must not pre-exist, will be gzipped if it ends
                  with '.gz', can have a path component but the subdir must exist
    --minSamps [int]: minimum number of samples for a cluster to be declared valid, default : """ + str(minSamps) + """

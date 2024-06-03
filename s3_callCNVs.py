@@ -89,8 +89,7 @@ In addition, plots of FPMs and CN0-CN3+ models for specified samples+exons (if a
 produced in plotDir.
 
 ARGUMENTS:
-    --counts [str]: TSV file, first 4 columns hold the exon definitions, subsequent columns
-                    hold the fragment counts. File obtained from 1_countFrags.py.
+    --counts [str]: NPZ file with the fragment counts, produced by s1_countFrags.py.
     --clusts [str]: TSV file, contains 4 columns hold the sample cluster definitions.
                     [CLUSTER_ID, SAMPLES, FIT_WITH, VALID]. File obtained from 2_clusterSamps.py.
     --outFileRoot [str]: file where results will be saved, must not pre-exist, will be gzipped if it ends
