@@ -97,11 +97,11 @@ def plotDendrogram(linkageMatrix, samples, clust2samps, fitWith, clustIsValid, t
 
     ##################
     # for trouble-shooting: log sampleIDs + clusterIDs from left to right in the dendrogram
-    logger.debug("dendrogram leaves from left to right:")
-    for pos in range(numSamples):
-        sample = samples[pos2si[pos]]
-        clust = samp2clust[sample]
-        logger.debug("%s - %s", clust, sample)
+    # logger.debug("dendrogram leaves from left to right:")
+    # for pos in range(numSamples):
+    #     sample = samples[pos2si[pos]]
+    #     clust = samp2clust[sample]
+    #     logger.debug("%s - %s", clust, sample)
 
     ##################
     # link colors: one color for each clusterID
