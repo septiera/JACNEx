@@ -25,9 +25,12 @@
 # See usage for details.
 ###############################################################################################
 import getopt
+import glob
+import gzip
 import logging
 import numpy
 import os
+import shutil
 import sys
 import time
 
@@ -61,7 +64,7 @@ def parseArgs(argv):
     # mandatory args
     countsFile = ""
     clustsFile = ""
-    outFileRoot = ""
+    outDir = ""
     madeBy = ""
     # optional args with default values
     minGQ = 2.0
@@ -73,27 +76,31 @@ def parseArgs(argv):
 
     usage = "NAME:\n" + scriptName + """\n
 DESCRIPTION:
-Accepts exon fragment count data (from 1_countFrags.py) and sample clustering information
-(from 2_clusterSamps.py) as input.
-Performs several critical operations:
-    a) Determines parameters for CN0 (half Gaussian) and CN2 (Gaussian) distributions for
-       autosomal and gonosomal exons.
-    b) Excludes non-interpretable exons based on set criteria.
-    c) Calculates likelihoods for each CN state across exons and samples.
-    d) Generates a transition matrix for CN state changes.
-    e) Applies a Hidden Markov Model (HMM) to call and group CNVs.
-    f) Outputs the CNV calls in VCF format.
-The script utilizes multiprocessing for efficient computation and is structured to handle
-errors and exceptions effectively, providing clear error messages for troubleshooting.
+Given fragment counts (from s1_countFrags.py) and clusters (from s2_clusterSamps.py),
+call CNVs and print results as gzipped VCF files in --outDir.
+The method consists in constructing an HMM whose parameters are fitted in a data-driven
+manner for each cluster. It comprises the following steps:
+    - fit CN0 model (half-Gaussian) for all exons, using intergenic pseudo-exon FPMs;
+    - fit CN2 model (Gaussian) for each exon using all samples in cluster (including
+    FITWITHs); the CN1 (normal) and CN3+ (logNormal) models are then parameterized
+    based on the CN2 fitted parameters;
+    - apply QC criteria to identify and exclude non-interpretable (NOCALL) exons;
+    - calculate likelihoods for each CN state in each sample+exon;
+    - estimate prior probabilities for each state;
+    - build a matrix of base transition probabilities - the actual exon-specific transition
+    probabilities will be smoothed following a power law depending on the inter-exon distance,
+    from these base transition probabilities to the prior probabilities;
+    - apply the Viterbi algorithm to identify the most likely path (in the CN states), and
+    finally call the CNVs.
 In addition, plots of FPMs and CN0-CN3+ models for specified samples+exons (if any) are
 produced in plotDir.
 
 ARGUMENTS:
-    --counts [str]: NPZ file with the fragment counts, produced by s1_countFrags.py.
-    --clusts [str]: TSV file, contains 4 columns hold the sample cluster definitions.
-                    [CLUSTER_ID, SAMPLES, FIT_WITH, VALID]. File obtained from 2_clusterSamps.py.
-    --outFileRoot [str]: file where results will be saved, must not pre-exist, will be gzipped if it ends
-                 with '.gz', can have a path component but the subdir must exist.
+    --counts [str]: NPZ file with the fragment counts, as produced by s1_countFrags.py
+    --clusters [str]: TSV file with the cluster definitions, as produced by s2_clusterSamps.py
+    --outDir [str]: subdir where VCF files will be created (one vcf.gz per cluster); the subdir
+                must exist, pre-existing VCFs will be renamed *_old.vcf.gz, pre-existing
+                *old* files will be squashed
     --minGQ [float]: minimum Genotype Quality score, default : """ + str(minGQ) + """
     --madeBy [str]: program name + version to print as "source=" in the produced VCF.
     --padding [int]: number of bps used to pad the exon coordinates, default : """ + str(padding) + """
@@ -104,7 +111,7 @@ ARGUMENTS:
     -h , --help: display this help and exit\n"""
 
     try:
-        opts, args = getopt.gnu_getopt(argv[1:], 'h', ["help", "counts=", "clusts=", "outFileRoot=", "minGQ=",
+        opts, args = getopt.gnu_getopt(argv[1:], 'h', ["help", "counts=", "clusters=", "outDir=", "minGQ=",
                                                        "madeBy=", "padding=", "regionsToPlot=", "plotDir=", "jobs="])
     except getopt.GetoptError as e:
         raise Exception(e.msg + ". Try " + scriptName + " --help")
@@ -117,10 +124,10 @@ ARGUMENTS:
             sys.exit(0)
         elif (opt in ("--counts")):
             countsFile = value
-        elif (opt in ("--clusts")):
+        elif (opt in ("--clusters")):
             clustsFile = value
-        elif opt in ("--outFileRoot"):
-            outFileRoot = value
+        elif opt in ("--outDir"):
+            outDir = value
         elif opt in ("--minGQ"):
             minGQ = value
         elif opt in ("--madeBy"):
@@ -144,14 +151,14 @@ ARGUMENTS:
         raise Exception("countsFile " + countsFile + " doesn't exist.")
 
     if clustsFile == "":
-        raise Exception("you must provide a clustering results file use --clusts. Try " + scriptName + " --help.")
+        raise Exception("you must provide a clustering results file with --clusters. Try " + scriptName + " --help.")
     elif (not os.path.isfile(clustsFile)):
         raise Exception("clustsFile " + clustsFile + " doesn't exist.")
 
-    if outFileRoot == "":
-        raise Exception("you must provide an outFileRoot with --outFileRoot. Try " + scriptName + " --help")
-    elif (os.path.dirname(outFileRoot) != '') and (not os.path.isdir(os.path.dirname(outFileRoot))):
-        raise Exception("the directory where outFileRoot " + outFileRoot + " should be created doesn't exist")
+    if outDir == "":
+        raise Exception("you must provide an outDir with --outDir. Try " + scriptName + " --help")
+    elif (not os.path.isdir(outDir)):
+        raise Exception("outDir " + outDir + " doesn't exist")
 
     if madeBy == "":
         raise Exception("you must provide a madeBy string with --madeBy. Try " + scriptName + " --help")
@@ -196,7 +203,7 @@ ARGUMENTS:
                 raise Exception("plotDir " + plotDir + " doesn't exist and can't be mkdir'd: " + str(e))
 
     # AOK, return everything that's needed
-    return (countsFile, clustsFile, outFileRoot, minGQ, padding, regionsToPlot, plotDir, jobs, madeBy)
+    return (countsFile, clustsFile, outDir, minGQ, padding, regionsToPlot, plotDir, jobs, madeBy)
 
 
 ####################################################
@@ -206,7 +213,7 @@ ARGUMENTS:
 # may be available in the log
 def main(argv):
     # parse, check and preprocess arguments
-    (countsFile, clustsFile, outFileRoot, minGQ, padding, regionsToPlot, plotDir, jobs, madeBy) = parseArgs(argv)
+    (countsFile, clustsFile, outDir, minGQ, padding, regionsToPlot, plotDir, jobs, madeBy) = parseArgs(argv)
 
     # args seem OK, start working
     logger.debug("called with: " + " ".join(argv[1:]))
@@ -247,16 +254,24 @@ def main(argv):
                                                               samp2clusts, clustIsValid)
 
     ###################
+    # house-keeping of pre-existing VCFs, and prepare for possible re-use
+
+    # clust2vcf: key = clusterID, value = name of VCF file to create
+    clust2vcf = {}
+    for clustID in clust2samps.keys():
+        clust2vcf[clustID] = outDir + '/CNVs_' + clustID + '.vcf.gz'
+
+    clusterFound = checkPrevVCFs(outDir, clust2vcf, clust2samps, fitWith, clustIsValid)
+
+    ###################
     # call CNVs independently for each valid cluster
     for clusterID in sorted(clust2samps.keys()):
         if not clustIsValid[clusterID]:
             logger.info("cluster %s is INVALID, skipping it", clusterID)
             continue
-
-        # VCF file for this cluster
-        clustOutFile = outFileRoot + '_' + clusterID + '.vcf.gz'
-        if os.path.exists(clustOutFile):
-            raise Exception("outFile " + clustOutFile + " already exists")
+        elif clusterID in clusterFound:
+            # already logged (with copied filename) in checkPrevVCFs()
+            continue
 
         # samplesInClust: temp dict, key==sampleID, value==1 if sample is in cluster
         # clusterID and value==2 if sample is in a FITWITH cluster for clusterID
@@ -320,7 +335,7 @@ def main(argv):
 
         callCNVsOneCluster(clustExonFPMs, clustIntergenicFPMs, samplesOfInterest, clustSamples,
                            clustExons, exonsToPlot, plotDir, clusterID, isHaploid, minGQ,
-                           clustOutFile, padding, madeBy, jobs)
+                           clust2vcf[clusterID], padding, madeBy, jobs)
 
     thisTime = time.time()
     logger.info("all clusters done,  in %.1fs", thisTime - startTime)
@@ -455,6 +470,71 @@ def logExonStats(Ecodes, clusterID):
     toPrint += "%.1f%% NOT-CAPTURED, %.1f%% FIT-CN2-FAILED, " % (statusCnt[2], statusCnt[3])
     toPrint += "%.1f%% CN2-LOW-SUPPORT, %.1f%% CN0-TOO-CLOSE" % (statusCnt[4], statusCnt[5])
     logger.info("%s", toPrint)
+
+
+####################################################
+# house-keeping of pre-existing VCFs, and check them for possible re-use:
+# - remove pre-existing *old VCFs
+# - rename pre-existing prev VCFs as *old
+# - for each (new) cluster, if its samples exactly match those in a prev VCF and
+#   its FITWITH clusters (if any) are also in that situation, simply copy the
+#   prev VCF as newVCF and set clusterFound[clusterID] = True
+#
+# Returns: clusterFound, key==clusterID, value==True if a match was found and a
+# prev file was copied
+def checkPrevVCFs(outDir, clust2vcf, clust2samps, fitWith, clustIsValid):
+    # remove *old files
+    try:
+        for oldFile in glob.glob(outDir + '/CNVs_*_old.vcf.gz'):
+            os.unlink(oldFile)
+    except Exception as e:
+        raise Exception("cannot unlink old VCF file in %s : %s", outDir, repr(e))
+    # rename prev VCFs as *old
+    try:
+        for prevFile in glob.glob(outDir + '/CNVs_*.vcf.gz'):
+            newName = prevFile.replace('.vcf.gz', '_old.vcf.gz')
+            os.rename(prevFile, newName)
+    except Exception as e:
+        raise Exception("cannot rename prev VCF file as *old: %s", repr(e))
+    # populate clust2prev: key = custerID, value = prev VCF file whose samples exactly
+    # match those of clusterID (ignoring fitWiths for now)
+    clust2prev = {}
+    for prevFile in glob.glob(outDir + '/CNVs_*_old.vcf.gz'):
+        prevFH = gzip.open(prevFile, "rt")
+        for line in prevFH:
+            if line.startswith('#CHROM'):
+                samples = line.rstrip().split("\t")
+                del samples[:9]
+                samples.sort()
+                for clustID in clust2samps.keys():
+                    if (clustID in clust2prev) or (not clustIsValid[clustID]):
+                        continue
+                    elif clust2samps[clustID] == samples:
+                        clust2prev[clustID] = prevFile
+                        break
+                break
+            elif not line.startswith('#'):
+                raise Exception("cannot find #CHROM header line in vcf prevFile")
+        prevFH.close()
+
+    # if a cluster and all its FITWITHs have a matching prev, prev file can be copied
+    clusterFound = {}
+    for clustID in sorted(clust2prev.keys()):
+        prevOK = True
+        for fw in fitWith[clustID]:
+            if fw not in clust2prev:
+                prevOK = False
+                break
+        if prevOK:
+            try:
+                shutil.copy(clust2prev[clustID], clust2vcf[clustID])
+                logger.info("cluster %s exactly matches previous VCF %s, copying the VCF",
+                            clustID, os.path.basename(clust2prev[clustID]))
+                clusterFound[clustID] = True
+            except Exception as e:
+                raise Exception("cannot copy prev VCF %s as %s : %s",
+                                clust2prev[clustID], clust2vcf[clustID], repr(e))
+    return(clusterFound)
 
 
 ####################################################################################

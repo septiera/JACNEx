@@ -216,7 +216,7 @@ def findBestPrevCF(countsFilesAll, samples):
 def main(argv):
     # string identifying the current program name (JACNEx) and version, will appear
     # as "##source=" in the VCF
-    JACNEx_version = "JACNEx_dev_version_2024_05_NTM"
+    JACNEx_version = "JACNEx_dev_version_2024_06"
     # strings for each step, for log messages / exception names
     stepNames = ("STEP0 - CHECK/MAKE SUBDIR HIERARCHY -", "STEP1 - COUNT FRAGMENTS -",
                  "STEP2 - CLUSTER SAMPLES -", "STEP3 - CALL CNVs -")
@@ -252,13 +252,13 @@ def main(argv):
         except Exception:
             raise Exception(stepNames[0] + " clustersDir " + clustersDir + "doesn't exist and can't be mkdir'd")
 
-    # step3: callFiles are saved (date-stamped and gzipped) in callsDir
-    callsDir = workDir + '/VCFs/'
-    if not os.path.isdir(callsDir):
+    # step3: callFiles are saved (gzipped) in vcfDir
+    vcfDir = workDir + '/VCFs/'
+    if not os.path.isdir(vcfDir):
         try:
-            os.mkdir(callsDir)
+            os.mkdir(vcfDir)
         except Exception:
-            raise Exception(stepNames[0] + " callsDir " + callsDir + "doesn't exist and can't be mkdir'd")
+            raise Exception(stepNames[0] + " vcfDir " + vcfDir + "doesn't exist and can't be mkdir'd")
 
     # QC plots from step2 (and step3 if --regionsToPlot was provided) go in date-stamped
     # subdirs of plotDir
@@ -336,16 +336,11 @@ def main(argv):
             step3Args.extend(["--plotDir", thisPlotDir])
 
         step3Args.extend(["--madeBy", JACNEx_version])
-
-        # new callFiles to create: will be created as {callFileRoot}_{clusterID}.vcf.gz
-        callFileRoot = callsDir + '/CNVs_' + dateStamp
-        if (len(glob.glob(callFileRoot + '_*.vcf.gz')) > 0):
-            raise Exception(stepNames[3] + " callFiles starting with callFileRoot " + callFileRoot + " already exists")
-        step3Args.extend(["--outFileRoot", callFileRoot])
+        step3Args.extend(["--outDir", vcfDir])
 
         step3ArgsForCheck = step3Args.copy()
         step3ArgsForCheck.extend(["--counts", bogusFile])
-        step3ArgsForCheck.extend(["--clusts", bogusFile])
+        step3ArgsForCheck.extend(["--clusters", bogusFile])
 
         # check step3 args, discarding results
         try:
@@ -390,7 +385,7 @@ def main(argv):
     # step 3
     logger.info("%s STARTING", stepNames[3])
     step3Args.extend(["--counts", countsFile])
-    step3Args.extend(["--clusts", clustersFile])
+    step3Args.extend(["--clusters", clustersFile])
     try:
         s3_callCNVs.main(step3Args)
     except Exception as e:
