@@ -244,7 +244,7 @@ def main(argv):
     startTime = thisTime
 
     clust2regions = figures.plotExons.preprocessRegionsToPlot(regionsToPlot, autosomeExons, gonosomeExons,
-                                            samp2clusts, clustIsValid)
+                                                              samp2clusts, clustIsValid)
 
     ###################
     # call CNVs independently for each valid cluster
@@ -391,13 +391,15 @@ def callCNVsOneCluster(exonFPMs, intergenicFPMs, samplesOfInterest, sampleIDs, e
         FPMsSOIs = exonFPMs[:, samplesOfInterest]
 
     # use the fitted models to calculate likelihoods for all exons in all SOIs
-    likelihoods = callCNVs.likelihoods.calcLikelihoods(FPMsSOIs, CN0sigma, Ecodes, CN2means, CN2sigmas, isHaploid, False)
+    likelihoods = callCNVs.likelihoods.calcLikelihoods(FPMsSOIs, CN0sigma, Ecodes,
+                                                       CN2means, CN2sigmas, isHaploid, False)
     thisTime = time.time()
     logger.debug("cluster %s - done calcLikelihoods in %.1fs", clusterID, thisTime - startTime)
     startTime = thisTime
 
     # plot exonsToPlot if any
-    figures.plotExons.plotExons(exons, exonsToPlot, Ecodes, FPMsSOIs, isHaploid, CN0sigma, CN2means, CN2sigmas, fpmCn0, clusterID, plotDir)
+    figures.plotExons.plotExons(exons, exonsToPlot, Ecodes, FPMsSOIs, isHaploid,
+                                CN0sigma, CN2means, CN2sigmas, fpmCn0, clusterID, plotDir)
 
     # calculate priors (maxing the posterior probas iteratively until convergence)
     priors = callCNVs.priors.calcPriors(likelihoods)
