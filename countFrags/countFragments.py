@@ -29,6 +29,10 @@ import tempfile
 ####### JACNEx modules
 import countFrags.bed
 
+
+# silence numba when we are in DEBUG mode
+logging.getLogger('numba').setLevel(logging.INFO)
+
 # set up logger, using inherited config
 logger = logging.getLogger(__name__)
 

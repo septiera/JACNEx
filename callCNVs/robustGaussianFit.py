@@ -27,6 +27,9 @@ import math
 import numba
 import numpy
 
+# silence numba when we are in DEBUG mode
+logging.getLogger('numba').setLevel(logging.INFO)
+
 
 ###############################################################################
 ############################ PRIVATE FUNCTIONS ################################

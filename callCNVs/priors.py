@@ -21,6 +21,9 @@ import logging
 import numba
 import numpy
 
+# silence numba when we are in DEBUG mode
+logging.getLogger('numba').setLevel(logging.INFO)
+
 # set up logger, using inherited config
 logger = logging.getLogger(__name__)
 
