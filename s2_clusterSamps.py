@@ -1,7 +1,26 @@
+############################################################################################
+# Copyright (C) Nicolas Thierry-Mieg and Amandine Septier, 2021-2024
+#
+# This file is part of JACNEx, written by Nicolas Thierry-Mieg and Amandine Septier
+# (CNRS, France)  {Nicolas.Thierry-Mieg,Amandine.Septier}@univ-grenoble-alpes.fr
+#
+# This program is free software: you can redistribute it and/or modify it under
+# the terms of the GNU General Public License as published by the Free Software
+# Foundation, either version 3 of the License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+# without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+# See the GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along with this program.
+# If not, see <https://www.gnu.org/licenses/>.
+############################################################################################
+
+
 ###############################################################################################
 ######################################## JACNEx step 2: Sample clustering  ####################
 ###############################################################################################
-# Given a TSV of fragment counts as produced by 1_countFrags.py:
+# Given a NPZ with fragment counts as produced by 1_countFrags.py:
 # build clusters of samples that will be used as controls for one another.
 # See usage for details.
 ###############################################################################################
@@ -14,6 +33,7 @@ import time
 ####### JACNEx modules
 import clusterSamps.clustering
 import clusterSamps.clustFile
+import clusterSamps.gender
 import countFrags.bed
 import countFrags.countsFile
 
@@ -43,16 +63,18 @@ def parseArgs(argv):
 
     usage = "NAME:\n" + scriptName + """\n
 DESCRIPTION:
-Given a TSV of exon fragment counts, build clusters of "comparable" samples that
+Given a NPZ file with fragment counts, build clusters of "similar" samples that
 will be used as controls for one another.
 Clusters are built independantly for exons on autosomes ('A') and  on gonosomes ('G').
 The accepted sex chromosomes are X, Y, Z, and W.
-Results are printed to --out in TSV format: 4 columns
-[CLUSTER_ID, SAMPLES, FIT_WITH, VALID]
+Each gonosome cluster is (should be!) single-gender, this gender is predicted and
+printed in the GENDER column (and used in step s3).
+Results are printed to --out in TSV format: 5 columns
+[CLUSTER_ID, FIT_WITH, GENDER, VALID, SAMPLES]
 In addition, dendrograms of the clustering results are produced as pdf files in plotDir.
 
 ARGUMENTS:
-   --counts [str]: TSV file of fragment counts, possibly gzipped, produced by s1_countFrags.py
+   --counts [str]: NPZ file with the fragment counts, produced by s1_countFrags.py
    --out [str] : file where clusters will be saved, must not pre-exist, will be gzipped if it ends
                  with '.gz', can have a path component but the subdir must exist
    --minSamps [int]: minimum number of samples for a cluster to be declared valid, default : """ + str(minSamps) + """
@@ -99,10 +121,10 @@ ARGUMENTS:
     # Check other args
     try:
         minSamps = int(minSamps)
-        if (minSamps <= 0):
+        if (minSamps <= 1):
             raise Exception()
     except Exception:
-        raise Exception("minSamps must be a positive integer, not " + str(minSamps))
+        raise Exception("minSamps must be an integer > 1, not " + str(minSamps))
 
     # test plotdir last so we don't mkdir unless all other args are OK
     if not os.path.isdir(plotDir):
@@ -126,7 +148,7 @@ def main(argv):
 
     # args seem OK, start working
     logger.debug("called with: " + " ".join(argv[1:]))
-    logger.info("starting to work")
+    logger.debug("starting to work")
     startTime = time.time()
 
     ###################
@@ -143,6 +165,14 @@ def main(argv):
     startTime = thisTime
 
     ###################
+    # cannot make any useful clusters if too few samples, in fact sklearn.decomposition
+    # (PCA) dies with an ugly message if called with a single sample
+    if len(samples) < minSamps:
+        logger.error("JACNEx requires at least minSamps (%i) samples, you provided %i, aborting",
+                     minSamps, len(samples))
+        raise Exception("JACNEx needs more samples to go beyond counting")
+
+    ###################
     # Clustering:
     # build clusters of samples with "similar" count profiles, independently for exons
     # located on autosomes and on sex chromosomes (==gonosomes).
@@ -157,7 +187,7 @@ def main(argv):
     if dendroFileRoot.endswith(".gz"):
         dendroFileRoot = os.path.splitext(dendroFileRoot)[0]
     dendroFileRoot = os.path.splitext(dendroFileRoot)[0]
-    dendroFileRoot = "dendrogram_" + dendroFileRoot
+    dendroFileRoot = dendroFileRoot + "_dendrogram"
     dendroFileRoot = os.path.join(plotDir, dendroFileRoot)
 
     # autosomes
@@ -189,15 +219,23 @@ def main(argv):
     logger.info("done clustering samples for gonosomes, in %.2fs", thisTime - startTime)
     startTime = thisTime
 
+    # predict genders
+    clust2gender = clusterSamps.gender.assignGender(
+        gonosomeFPMs, intergenicFPMs, gonosomeExons, samples, clust2sampsGono, fitWithGono)
+
+    thisTime = time.time()
+    logger.info("done predicting genders, in %.2fs", thisTime - startTime)
+    startTime = thisTime
+
     ###################
     # print clustering results
     try:
-        clusterSamps.clustFile.printClustsFile(clust2samps, fitWith, clustIsValid, outFile)
+        clusterSamps.clustFile.printClustsFile(clust2samps, fitWith, clust2gender, clustIsValid, outFile)
     except Exception as e:
         logger.error("printing clusters failed : %s", repr(e))
         raise Exception("printClustsFile failed")
 
-    logger.info("ALL DONE")
+    logger.debug("ALL DONE")
 
 
 ####################################################################################

@@ -1,3 +1,22 @@
+############################################################################################
+# Copyright (C) Nicolas Thierry-Mieg and Amandine Septier, 2021-2024
+#
+# This file is part of JACNEx, written by Nicolas Thierry-Mieg and Amandine Septier
+# (CNRS, France)  {Nicolas.Thierry-Mieg,Amandine.Septier}@univ-grenoble-alpes.fr
+#
+# This program is free software: you can redistribute it and/or modify it under
+# the terms of the GNU General Public License as published by the Free Software
+# Foundation, either version 3 of the License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+# without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+# See the GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along with this program.
+# If not, see <https://www.gnu.org/licenses/>.
+############################################################################################
+
+
 import gzip
 import logging
 import time
@@ -11,20 +30,24 @@ logger = logging.getLogger(__name__)
 ###############################################################################
 ##########################################
 # printCallsFile
-# generate an output file in VCF format containing CNV calls for autosomes and gonosomes.
+# print CNVs in VCF format. The CNVs must belong to a single cluster.
 #
 # Args:
-# - CNVs (list of lists[int, int, int, float, str]): [CNtype, exonIndStart, exonIndEnd,
-#                                                     qualityScore, sampID].
+# - outFile (str): Output file name. It must be non-existent and can include a path (which must exist).
+#                  The output file will be compressed in gzip format if outFile ends with '.gz'.
+# - CNVs (list of lists[int, int, int, float, int]): [CNtype, exonIndStart, exonIndEnd,
+#                                                     qualityScore, sampIndex].
+# - FPMs: 2D-array of floats, size = nbExons * nbSamples, FPMs[e,s] is the FPM
+#   count for exon e in sample s
+# - CN2means: 1D-array of nbExons floats, CN2means[e] is the fitted mean of
+#   the CN2 model of exon e for the cluster, or 0 if exon is NOCALL
 # - exons (list of lists[str, int, int, str]): exons infos
 # - samples (list[str]): sample names.
 # - padding (int): padding bases used.
-# - outFile (str): Output file name. It must be non-existent and can include a path (which must exist).
-#                  The output file will be compressed in gzip format if outFile ends with '.gz'.
 # - madeBy (str): Name + version of program that made the CNV calls.
-def printCallsFile(CNVs, exons, samples, padding, outFile, madeBy):
+def printCallsFile(outFile, CNVs, FPMs, CN2Means, exons, samples, padding, madeBy):
 
-    vcf = vcfFormat(CNVs, exons, samples, padding)
+    vcf = vcfFormat(CNVs, FPMs, CN2Means, exons, samples, padding)
 
     try:
         if outFile.endswith(".gz"):
@@ -44,7 +67,8 @@ def printCallsFile(CNVs, exons, samples, padding, outFile, madeBy):
 ##INFO=<ID=SVTYPE,Number=1,Type=String,Description="Type of structural variant">
 ##INFO=<ID=END,Number=1,Type=Integer,Description="End position of the variant described in this record">
 ##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype (always 0/1 for duplications)">
-##FORMAT=<ID=QS,Number=1,Type=Float,Description="Call quality score">"""
+##FORMAT=<ID=GQ,Number=1,Type=Float,Description="Genotype quality score">
+##FORMAT=<ID=FR,Number=1,Type=Float,Description="Fragment count ratio">"""
     toPrint += "\n"
     outFH.write(toPrint)
 
@@ -69,14 +93,18 @@ def printCallsFile(CNVs, exons, samples, padding, outFile, madeBy):
 #
 # Args:
 # - CNVs (list): CNV information, each CNV formatted as [CNType, startExonIndex, endExonIndex,
-#    qualityScore, sampleID].
+#    qualityScore, sampleIndex].
+# - FPMs: 2D-array of floats, size = nbExons * nbSamples, FPMs[e,s] is the FPM
+#   count for exon e in sample s
+# - CN2means: 1D-array of nbExons floats, CN2means[e] is the fitted mean of
+#   the CN2 model of exon e for the cluster, or 0 if exon is NOCALL
 # - exons (list): Exon information, each exon formatted as [chromosome, start, end, exonID].
 # - samples (list[strs])
 # - padding [int]: Value used to adjust start and end positions of CNVs.
 #
 # Returns:
 # vcf (list[strs]): Each string represents a line in a VCF file, formatted with CNV information.
-def vcfFormat(CNVs, exons, samples, padding):
+def vcfFormat(CNVs, FPMs, CN2Means, exons, samples, padding):
     # Define the number of columns before sample information in a VCF file
     # ["#CHROM","POS","ID","REF","ALT","QUAL","FILTER","INFO","FORMAT"]
     infoColumns = 9
@@ -91,7 +119,7 @@ def vcfFormat(CNVs, exons, samples, padding):
     for cnvIndex in range(len(CNVs)):
         cnvList = CNVs[cnvIndex]
         # Unpack CNV list into variables
-        cn, startExi, endExi, qualScore, sampID = cnvList
+        cn, startExi, endExi, qualScore, sampleIndex = cnvList
 
         # Get chromosome, start and end position from exons
         chrom = exons[startExi][0]
@@ -108,12 +136,12 @@ def vcfFormat(CNVs, exons, samples, padding):
         currentCNV = (chrom, pos, end, svtype)
 
         # Calculate sample index in VCF line
-        sampi = samples.index(sampID) + infoColumns
+        sampi = sampleIndex + infoColumns
 
         # Check if CNV is already processed, otherwise create a new VCF line
         if currentCNV not in cnv_dict:
             # Format the VCF line
-            vcfLine = [chrom, pos, ".", ".", alt, ".", ".", f"SVTYPE={svtype};END={end}", "GT:QS"]
+            vcfLine = [chrom, pos, ".", ".", alt, ".", ".", f"SVTYPE={svtype};END={end}", "GT:GQ:FR"]
 
             # Initialize genotype annotations for all samples
             format = ["0/0"] * len(samples)
@@ -123,9 +151,30 @@ def vcfFormat(CNVs, exons, samples, padding):
             # Retrieve existing VCF line from dictionary
             vcfLine = cnv_dict[currentCNV]
 
-        # Determine the sample's genotype based on CN type and add quality score
-        geno = "1/1" if cn == 0 else "0/1"
-        vcfLine[sampi] = f"{geno}:{qualScore:.1f}"
+        # calculate FragRatio: average of FPM ratios over all called exons in the CNV
+        fragRat = 0
+        numExons = 0
+        for ei in range(startExi, endExi + 1):
+            if CN2Means[ei] > 0:
+                fragRat += FPMs[ei, sampleIndex] / CN2Means[ei]
+                numExons += 1
+            # else exon ei is NOCALL, ignore it
+        fragRat /= numExons
+
+        # sample's genotype, depending on fragRat for DUPs: at a diploid locus we
+        # expect fragRat ~1.5 for HET-DUPs and starting at ~2 for CN=4+ (which we
+        # will call HV-DUPs, although maybe CN=3 on one allele and CN=1 on the other)...
+        # [NOTE: at a haploid locus we expect ~2 for a hemizygous DUP but we're OK
+        # to call thosez HV-DUP]
+        # => hard-coded arbitrary cutoff between 1.5 and 2, closer to 2 to be conservative
+        minFragRatDupHomo = 1.9
+        geno = "1/1"
+        if (cn == 1):
+            geno = "0/1"
+        elif (cn == 3) and (fragRat < minFragRatDupHomo):
+            geno = "0/1"
+
+        vcfLine[sampi] = f"{geno}:{qualScore:.1f}:{fragRat:.2f}"
 
         # Update the VCF line in the dictionary
         cnv_dict[currentCNV] = vcfLine

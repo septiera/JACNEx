@@ -1,10 +1,27 @@
-import gzip
+############################################################################################
+# Copyright (C) Nicolas Thierry-Mieg and Amandine Septier, 2021-2024
+#
+# This file is part of JACNEx, written by Nicolas Thierry-Mieg and Amandine Septier
+# (CNRS, France)  {Nicolas.Thierry-Mieg,Amandine.Septier}@univ-grenoble-alpes.fr
+#
+# This program is free software: you can redistribute it and/or modify it under
+# the terms of the GNU General Public License as published by the Free Software
+# Foundation, either version 3 of the License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+# without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+# See the GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along with this program.
+# If not, see <https://www.gnu.org/licenses/>.
+############################################################################################
+
+
 import logging
-import numba  # make python faster
 import numpy
 
-# prevent numba flooding the logs when we are in DEBUG loglevel
-logging.getLogger('numba').setLevel(logging.WARNING)
+####### JACNEx modules
+import countFrags.bed
 
 # set up logger, using inherited config
 logger = logging.getLogger(__name__)
@@ -19,13 +36,14 @@ logger = logging.getLogger(__name__)
 # Args:
 #   - genomicWindows: exon and pseudo-exon definitions as returned by processBed
 #   - SOIs: list of samples of interest (ie list of strings)
-#   - prevCountsFile: a countsFile (possibly gzipped) produced by printCountsFile for some
+#   - prevCountsFile: a countsFile (npz format) produced by printCountsFile for some
 #     samples (hopefully some of the SOIs), using the same (pseudo-)exon definitions
 #     as in 'genomicWindows', if such a file is available; or '' otherwise
 #
 # Returns a tuple (countsArray, countsFilled), each is created here:
-#   - countsArray is an int numpy array, dim = NbGenomicWindows x NbSOIs, initially all-zeroes
-#   - countsFilled is a 1D boolean numpy array, dim = NbSOIs, initially all-False
+#   - countsArray is an int numpy 2D-array, size = nbGenomicWindows x nbSOIs,
+#   initially all-zeroes
+#   - countsFilled is a 1D boolean numpy array, size = nbSOIs, initially all-False
 #
 # If prevCountsFile=='' return the (all-zeroes/all-False) arrays
 # Otherwise:
@@ -42,35 +60,27 @@ def extractCountsFromPrev(genomicWindows, SOIs, prevCountsFile):
     countsArray = numpy.zeros((len(genomicWindows), len(SOIs)), dtype=numpy.uint32, order='F')
     # countsFilled: same size and order as sampleNames, value will be set
     # to True iff counts were filled from countsFile
-    countsFilled = numpy.array([False] * len(SOIs))
+    countsFilled = numpy.zeros(len(SOIs), dtype=bool)
 
     if (prevCountsFile != ''):
         # we have a prevCounts file, parse it
-        (prevGenomicWindows, prevSamples, prevCountsList) = parseCountsFile(prevCountsFile)
+        (prevGenomicWindows, prevSamples, prevCounts) = parseCountsFile(prevCountsFile)
         # compare genomicWindows definitions
         if (genomicWindows != prevGenomicWindows):
             logger.error("(pseudo-)exon definitions disagree between prevCountsFile and BED, " +
                          "countsFiles cannot be re-used if the BED file or padding changed")
             raise Exception('mismatched genomicWindows')
 
-        # fill prev2new to identify SOIs that are in prevCountsFile:
-        # prev2new is a 1D numpy array, size = len(prevSamples), prev2new[prev] is the
-        # index in SOIs of sample prevSamples[prev] if it's present, -1 otherwise
-        prev2new = numpy.full(len(prevSamples), -1, dtype=int)
         # prevIndexes: temp dict, key = sample identifier, value = index in prevSamples
         prevIndexes = {}
         for prevIndex in range(len(prevSamples)):
             prevIndexes[prevSamples[prevIndex]] = prevIndex
         for newIndex in range(len(SOIs)):
-            if SOIs[newIndex] in prevIndexes:
-                prev2new[prevIndexes[SOIs[newIndex]]] = newIndex
+            newSample = SOIs[newIndex]
+            if newSample in prevIndexes:
+                countsArray[:, newIndex] = prevCounts[:, prevIndexes[newSample]]
                 countsFilled[newIndex] = True
 
-        # Fill countsArray with prev count data
-        for i in range(len(genomicWindows)):
-            prevCountsVec2CountsArray(countsArray, i, prevCountsList[i], prev2new)
-
-    # return the arrays, whether we had a prevCountsFile or not
     return(countsArray, countsFilled)
 
 
@@ -87,75 +97,58 @@ def extractCountsFromPrev(genomicWindows, SOIs, prevCountsFile):
 # avoiding huge and meaningless intergenic FPMs (if normalized alone).
 #
 # Arg:
-#   - a countsFile produced by 1_countFrags.py, possibly gzipped
+#   - a countsFile produced by printCountsFile (npz format)
 #
 # Returns a tuple (samples, autosomeExons, gonosomeExons, intergenics,
 #                  autosomeFPMs, gonosomeFPMs, intergenicFPMs),
-# each is created here and populated by parsing countsFile:
-# -> 'samples' is the list of sampleIDs (strings) copied from countsFile's header
-# -> 'autosomeExons', 'gonosomeExons' and 'intergenics' are lists of autosome/gonosome/intergenic
-#    (pseudo-)exons as produced by processBed, copied from the first 4 columns of countsFile;
-#    EXON_ID is used to decide whether each window is an exon or an intergenic pseudo-exon
+# each is created here and populated from countsFile data:
+# -> 'samples' is the list of sampleIDs (strings)
+# -> 'autosomeExons', 'gonosomeExons' and 'intergenics' are lists of
+#    autosome/gonosome/intergenic (pseudo-)exons as produced by processBed
+#    (EXON_ID is used to decide whether each window is an exon or an intergenic pseudo-exon)
 # -> 'autosomeFPMs', 'gonosomeFPMs' and 'intergenicFPMs' are numpy 2D-arrays of floats,
-#    of sizes [len(autosomeExons) | len(gonosomeExons) | len(intergenics)] x len(samples), holding the
-#    FPM-normalized counts for autosome | gonosome exons and intergenic pseudo-exons
+#    of sizes [len(autosomeExons) | len(gonosomeExons) | len(intergenics)] x len(samples),
+#    holding the FPM-normalized counts for autosome | gonosome | intergenic (pseudo-)exons
 def parseAndNormalizeCounts(countsFile):
-    (genomicWindows, samples, countsList) = parseCountsFile(countsFile)
+    (genomicWindows, samples, counts) = parseCountsFile(countsFile)
+    sexChroms = countFrags.bed.sexChromosomes()
 
-    # First pass: identify autosoome/gonosome exons vs intergenic pseudo-exons, populate
-    # exons* and intergenics, and calculate sum of autosome/total counts for each sample
+    # First pass: identify autosome/gonosome/intergenic (pseudo-)exons and populate
+    # *Exons and intergenics
     autosomeExons = []
     gonosomeExons = []
     intergenics = []
-    # windowType==0 for intergenic pseudo-exons, 1 for gonosome exons, 2 for autosome exons
+    # windowType==0 for autosome exons, 1 for gonosome exons, 2 for intergenic pseudo-exons
     windowType = numpy.zeros(len(genomicWindows), dtype=numpy.uint8)
-    sumOfCountsAuto = numpy.zeros(len(samples), dtype=numpy.uint32)
-    sumOfCountsTotal = numpy.zeros(len(samples), dtype=numpy.uint32)
-    sexChroms = sexChromosomes()
 
     for i in range(len(genomicWindows)):
         if genomicWindows[i][3].startswith("intergenic_"):
             intergenics.append(genomicWindows[i])
-            windowType[i] = 0
-            sumOfCountsTotal += countsList[i]
+            windowType[i] = 2
         elif genomicWindows[i][0] in sexChroms:
             gonosomeExons.append(genomicWindows[i])
             windowType[i] = 1
-            sumOfCountsTotal += countsList[i]
         else:
             autosomeExons.append(genomicWindows[i])
-            windowType[i] = 2
-            sumOfCountsAuto += countsList[i]
+            windowType[i] = 0
 
-    sumOfCountsTotal += sumOfCountsAuto
+    # Second pass: populate *FPMs
+    autosomeFPMs = counts[windowType == 0, :].astype(numpy.float64, order='F', casting='safe')
+    gonosomeFPMs = counts[windowType == 1, :].astype(numpy.float64, order='F', casting='safe')
+    intergenicFPMs = counts[windowType == 2, :].astype(numpy.float64, order='F', casting='safe')
+
+    sumOfCountsAuto = autosomeFPMs.sum(dtype=numpy.float64, axis=0)
+    sumOfCountsTotal = counts.sum(dtype=numpy.float64, axis=0)
     # if any sample has sumOfCounts*==0, replace by 1 to avoid dividing by zero
-    sumOfCountsAuto[sumOfCountsAuto == 0] = 1
-    sumOfCountsTotal[sumOfCountsTotal == 0] = 1
+    sumOfCountsAuto[sumOfCountsAuto == 0] = 1.0
+    sumOfCountsTotal[sumOfCountsTotal == 0] = 1.0
+    # scale to get FPMs
+    sumOfCountsAuto /= 1e6
+    sumOfCountsTotal /= 1e6
 
-    # Second pass: populate *FPMs, normalizing the counts on the fly
-    autosomeFPMs = numpy.zeros((len(autosomeExons), len(samples)), dtype=numpy.float32)
-    gonosomeFPMs = numpy.zeros((len(gonosomeExons), len(samples)), dtype=numpy.float32)
-    intergenicFPMs = numpy.zeros((len(intergenics), len(samples)), dtype=numpy.float32)
-    # indexes of next auto / gono / intergenic window to populate
-    nextAutoIndex = 0
-    nextGonoIndex = 0
-    nextIntergenicIndex = 0
-
-    for i in range(len(genomicWindows)):
-        if windowType[i] == 2:
-            autosomeFPMs[nextAutoIndex] = countsList[i] / sumOfCountsAuto
-            nextAutoIndex += 1
-        elif windowType[i] == 1:
-            gonosomeFPMs[nextGonoIndex] = countsList[i] / sumOfCountsTotal
-            nextGonoIndex += 1
-        else:
-            intergenicFPMs[nextIntergenicIndex] = countsList[i] / sumOfCountsTotal
-            nextIntergenicIndex += 1
-
-    # scale to FPMs
-    autosomeFPMs *= 1e6
-    gonosomeFPMs *= 1e6
-    intergenicFPMs *= 1e6
+    autosomeFPMs /= sumOfCountsAuto
+    gonosomeFPMs /= sumOfCountsTotal
+    intergenicFPMs /= sumOfCountsTotal
 
     return(samples, autosomeExons, gonosomeExons, intergenics, autosomeFPMs, gonosomeFPMs, intergenicFPMs)
 
@@ -163,140 +156,73 @@ def parseAndNormalizeCounts(countsFile):
 #############################################################
 # printCountsFile:
 # Args:
-#   - 'genomicWindows' is a list of exons and pseudo-exons as returned by processBed, ie each
-#     (pseudo-)exon is a list of 4 scalars (types: str,int,int,str) containing CHR,START,END,EXON_ID
-#   - 'samples' is a list of sampleIDs
-#   - 'countsArray' is an int numpy array, dim = len(genomicWindows) x len(samples)
-#   - 'outFile' is a filename that doesn't exist, it can have a path component (which must exist),
-#      output will be gzipped if outFile ends with '.gz'
+# - 'genomicWindows' is a list of exons and pseudo-exons as returned by processBed,
+# ie each (pseudo-)exon is a list of 4 scalars (types: str,int,int,str) containing
+# CHR,START,END,EXON_ID
+# - 'samples' is a list of sampleIDs
+# - 'counts' is a numpy 2D-array of uint32 of size nbWindows * nbSamples
+# - 'outFile' is a filename with path, path must exist and file will be squashed if
+# it pre-exist
 #
-# Print this data to outFile as a 'countsFile' (same format parsed by extractCountsFromPrev).
-def printCountsFile(genomicWindows, samples, countsArray, outFile):
+# Print this data to outFile as a 'countsFile' (as parsed by parseCountsFile)
+def printCountsFile(genomicWindows, samples, counts, outFile):
     try:
-        if outFile.endswith(".gz"):
-            outFH = gzip.open(outFile, "xt", compresslevel=6)
-        else:
-            outFH = open(outFile, "x")
+        numpy.savez_compressed(outFile, exons=genomicWindows, samples=samples, counts=counts)
     except Exception as e:
-        logger.error("Cannot (gzip-)open outFile %s: %s", outFile, e)
-        raise Exception('cannot (gzip-)open outFile')
+        logger.error("Cannot save counts to outFile %s: %s", outFile, e)
+        raise Exception('cannot save counts to outFile')
 
-    toPrint = "CHR\tSTART\tEND\tEXON_ID\t" + "\t".join(samples) + "\n"
-    outFH.write(toPrint)
-    for i in range(len(genomicWindows)):
-        # exon def + counts
-        toPrint = genomicWindows[i][0] + "\t" + str(genomicWindows[i][1]) + "\t" + str(genomicWindows[i][2]) + "\t" + genomicWindows[i][3]
-        toPrint += counts2str(countsArray, i)
-        toPrint += "\n"
-        outFH.write(toPrint)
-    outFH.close()
+
+#############################################################
+# parseCountsFile:
+# Arg:
+#   - a countsFile produced by printCountsFile()
+#
+# Returns a tuple (genomicWindows, samples, counts), each is created here:
+# -> 'genomicWindows' is a list of exons and pseudo-exons as returned by processBed,
+#    ie each (pseudo-)exon is a list of 4 scalars (types: str,int,int,str) containing
+#    CHR,START,END,EXON_ID
+# -> 'samples' is the list of sampleIDs (ie strings)
+# -> 'counts' is a numpy 2D-array of uint32 of size nbWindows * nbSamples
+def parseCountsFile(countsFile):
+    try:
+        npzCounts = numpy.load(countsFile)
+    except Exception as e:
+        logger.error("Opening provided countsFile %s: %s", countsFile, e)
+        raise Exception('cannot open countsFile')
+
+    # samples
+    samples = (npzCounts['samples']).tolist()
+
+    # (pseudo-)exons
+    genomicWindows = exonsFromNdarray(npzCounts['exons'])
+
+    # counts
+    counts = npzCounts['counts']
+
+    npzCounts.close()
+    return(genomicWindows, samples, counts)
 
 
 ###############################################################################
 ############################ PRIVATE FUNCTIONS ################################
 ###############################################################################
 
-#############################################################
-# parseCountsFile:
-# Arg:
-#   - a countsFile produced by 1_countFrags.py, possibly gzipped
-#
-# Returns a tuple (genomicWindows, samples, countsList), each is created here:
-# -> 'genomicWindows' is a list of exons and pseudo-exons as returned by processBed,
-#    ie each (pseudo-)exon is a list of 4 scalars (types: str,int,int,str) containing
-#    CHR,START,END,EXON_ID copied from the first 4 columns of countsFile, in the same order
-# -> 'samples' is the list of sampleIDs (ie strings) copied from countsFile's header
-# -> 'countsList' is a list of len(genomicWindows) uint32 numpy arrays of size len(samples), filled
-#    with the counts from countsFile
-def parseCountsFile(countsFile):
-    try:
-        if countsFile.endswith(".gz"):
-            countsFH = gzip.open(countsFile, "rt")
-        else:
-            countsFH = open(countsFile, "r")
-    except Exception as e:
-        logger.error("Opening provided countsFile %s: %s", countsFile, e)
-        raise Exception('cannot open countsFile')
-
-    # list of (pseudo-)exons to return
-    genomicWindows = []
-    # list of counts to return
-    countsList = []
-
-    # grab samples from header
-    samples = countsFH.readline().rstrip().split("\t")
-    # get rid of exon definition headers "CHR", "START", "END", "EXON_ID"
-    del samples[0:4]
-
-    # populate genomicWindows and counts from data lines
-    for line in countsFH:
-        # split into 4 exon definition strings + one string containing all the counts
-        splitLine = line.rstrip().split("\t", maxsplit=4)
-        # convert START-END to ints and save
-        exon = [splitLine[0], int(splitLine[1]), int(splitLine[2]), splitLine[3]]
-        genomicWindows.append(exon)
-        # convert counts to 1D np array and save
-        counts = numpy.fromstring(splitLine[4], dtype=numpy.uint32, sep='\t')
-        countsList.append(counts)
-    countsFH.close()
-    return(genomicWindows, samples, countsList)
+#################################################
+# convertExon:
+# Arg: a list of 4 strings corresponding to an exon (CHR,START,END,EXON_ID but
+# with START and END as strings)
+# Return: a similar list where START and END are converted to ints
+def convertExon(eas):
+    return([eas[0], int(eas[1]), int(eas[2]), eas[3]])
 
 
 #################################################
-# prevCountsVec2CountsArray :
-# fill countsArray[exonIndex] with appropriate counts from prevCounts, using prev2new to
-# know which prev samples (ie columns from prev2new) go where in countsArray[exonIndex].
-# Args:
-#   - countsArray is an int numpy array to populate, dim = NbGenomicWindows x NbSOIs
-#   - exonIndex is the index of the current exon
-#   - prevCounts contains the prev counts for exon exonIndex, in a 1D np array
-#   - prev2new is a 1D np array of ints of size len(prevCounts), prev2new[i] is
-#    the column index in countsArray where counts for prev sample i (in prevCounts) must
-#    be stored, or -1 if sample i must be discarded
-@numba.njit
-def prevCountsVec2CountsArray(countsArray, exonIndex, prevCounts, prev2new):
-    for i in numba.prange(len(prev2new)):
-        if prev2new[i] != -1:
-            countsArray[exonIndex, prev2new[i]] = prevCounts[i]
-
-
-#################################################
-# countsVec2array
-# fill countsArray[exonIndex] with counts from countsVector (same order)
-# Args:
-#   - countsArray is an int numpy array to populate
-#   - exonIndex is the index of the current exon
-#   - countsVector contains the counts for exon exonIndex, in a 1D np array
-@numba.njit
-def countsVec2array(countsArray, exonIndex, countsVector):
-    for i in numba.prange(len(countsVector)):
-        countsArray[exonIndex, i] = countsVector[i]
-
-
-#################################################
-# counts2str:
-# return a string holding the counts from countsArray[exonIndex],
-# tab-separated and starting with a tab
-@numba.njit
-def counts2str(countsArray, exonIndex):
-    toPrint = ""
-    for i in range(countsArray.shape[1]):
-        toPrint += "\t" + str(countsArray[exonIndex, i])
-    return(toPrint)
-
-
-###############################################################################
-# sexChromosomes: return a dict whose keys are accepted sex chromosome names,
-# and values are 1 for X|Z and 2 for Y|W.
-# This covers most species including mammals, birds, fish, reptiles.
-# Note that X or Z is present in one or two copies in each individual, and is
-# (usually?) the larger of the two sex chromosomes; while Y or W is present
-# in 0 or 1 copy and is smaller.
-# However interpretation of "having two copies of X|Z" differs: in XY species
-# (eg humans) XX is the Female, while in ZW species (eg birds) ZZ is the Male.
-def sexChromosomes():
-    sexChroms = {"X": 1, "Y": 2, "W": 2, "Z": 1}
-    # also accept the same chroms prepended with 'chr'
-    for sc in list(sexChroms.keys()):
-        sexChroms["chr" + sc] = sexChroms[sc]
-    return(sexChroms)
+# exonsFromNdarray:
+# Arg: a 2D-array of strings representing genomicWindows (exons and intergenic
+# pseudo-exons), as obtained via numpy.load()
+# Return: the same data but structured as returned by processBed, ie a list of
+# (pseudo-)exons, where each is a list of 4 scalars (types: str,int,int,str)
+# containing CHR,START,END,EXON_ID
+def exonsFromNdarray(exonsNP):
+    return(list(map(convertExon, exonsNP.tolist())))

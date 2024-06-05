@@ -1,5 +1,25 @@
+############################################################################################
+# Copyright (C) Nicolas Thierry-Mieg and Amandine Septier, 2021-2024
+#
+# This file is part of JACNEx, written by Nicolas Thierry-Mieg and Amandine Septier
+# (CNRS, France)  {Nicolas.Thierry-Mieg,Amandine.Septier}@univ-grenoble-alpes.fr
+#
+# This program is free software: you can redistribute it and/or modify it under
+# the terms of the GNU General Public License as published by the Free Software
+# Foundation, either version 3 of the License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+# without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+# See the GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along with this program.
+# If not, see <https://www.gnu.org/licenses/>.
+############################################################################################
+
+
 import gzip
 import logging
+import ncls  # similar to interval trees but faster (https://github.com/biocore-ntnu/ncls)
 import numpy
 
 # set up logger, using inherited config
@@ -144,8 +164,25 @@ def sortExonsOrBPs(data):
     return()
 
 
+###############################################################################
+# sexChromosomes: return a dict whose keys are accepted sex chromosome names,
+# and values are 1 for X|Z and 2 for Y|W.
+# This covers most species including mammals, birds, fish, reptiles.
+# Note that X or Z is present in one or two copies in each individual, and is
+# (usually?) the larger of the two sex chromosomes; while Y or W is present
+# in 0 or 1 copy and is smaller.
+# However interpretation of "having two copies of X|Z" differs: in XY species
+# (eg humans) XX is the Female, while in ZW species (eg birds) ZZ is the Male.
+def sexChromosomes():
+    sexChroms = {"X": 1, "Y": 2, "W": 2, "Z": 1}
+    # also accept the same chroms prepended with 'chr'
+    for sc in list(sexChroms.keys()):
+        sexChroms["chr" + sc] = sexChroms[sc]
+    return(sexChroms)
+
+
 ####################################################
-# getInterExonDistCutoffs:
+# calcIEDCutoffs:
 # calculates two important metrics for building the base transition matrix and
 # for adjusting the transition probas: baseTransMatMaxIED and adjustTransMatDMax.
 # These are defined by the *Quantile values hard-coded below, which should be fine.
@@ -154,9 +191,10 @@ def sortExonsOrBPs(data):
 #
 # Args:
 # - exons: list of nbExons exons, one exon is a list [CHR, START, END, EXONID]
+# -Ecodes: 1D numpy.ndarray size=len(exons) value < 0 if exon is NOCALL
 #
 # Returns the tuple (baseTransMatMaxIED, adjustTransMatDMax).
-def getInterExonDistCutoffs(exons):
+def calcIEDCutoffs(exons, Ecodes):
     # baseTransMatQuantile: inter-exon distance quantile to use as cutoff when building
     # the base transition matrix, hard-coded here. See buildBaseTransMatrix()
     baseTransMatQuantile = 0.5
@@ -168,18 +206,58 @@ def getInterExonDistCutoffs(exons):
 
     prevChrom = ""
     prevEnd = 0
+    nextIEDindex = 0
     for ei in range(len(exons)):
-        if exons[ei][0] != prevChrom:
-            # changed chrom, keeping the default IED==0, doesn't matter
+        if Ecodes[ei] < 0:
+            # NOCALL, skip exon
+            continue
+        elif exons[ei][0] != prevChrom:
+            # changed chrom, no IED
             prevChrom = exons[ei][0]
+            prevEnd = exons[ei][2]
         else:
-            interExonDistances[ei] = exons[ei][1] - prevEnd
-        # in all cases, update prevEnd
-        prevEnd = exons[ei][2]
+            interExonDistances[nextIEDindex] = exons[ei][1] - prevEnd
+            nextIEDindex += 1
+            prevEnd = exons[ei][2]
 
-    baseTransMatMaxIED = int(numpy.quantile(interExonDistances, baseTransMatQuantile))
-    adjustTransMatDMax = int(numpy.quantile(interExonDistances, adjustTransMatQuantile))
-    return(baseTransMatMaxIED, adjustTransMatDMax)
+    # resize to ignore NOCALL exons and first exons on chorms
+    interExonDistances.resize(nextIEDindex, refcheck=False)
+
+    # calculate quantiles and round to int
+    return(numpy.quantile(interExonDistances, (baseTransMatQuantile, adjustTransMatQuantile)).astype(int))
+
+
+####################################################
+# buildExonNCLs:
+# Create nested containment lists (similar to interval trees but faster), one per
+# chromosome, representing the exons.
+# Arg: exon definitions as returned by processBed, padded and sorted.
+# Returns a dict: key=chr, value=NCL
+def buildExonNCLs(exons):
+    exonNCLs = {}
+    # for each chrom, build 3 lists with same length: starts, ends, indexes (in
+    # the complete exons list). key is the CHR
+    starts = {}
+    ends = {}
+    indexes = {}
+    for i in range(len(exons)):
+        # exons[i] is a list: CHR, START, END, EXON_ID
+        chrom = exons[i][0]
+        if chrom not in starts:
+            # first time we see chrom, initialize with empty lists
+            starts[chrom] = []
+            ends[chrom] = []
+            indexes[chrom] = []
+        # in all cases, append current values to the lists
+        starts[chrom].append(exons[i][1])
+        ends[chrom].append(exons[i][2])
+        indexes[chrom].append(i)
+
+    # populate exonNCLs, one NCL per chromosome
+    for chrom in starts.keys():
+        ncl = ncls.NCLS(starts[chrom], ends[chrom], indexes[chrom])
+        exonNCLs[chrom] = ncl
+    return(exonNCLs)
 
 
 ###############################################################################
@@ -250,8 +328,8 @@ def insertPseudoExons(exons):
 
     medianExonLength = int(numpy.median(exonLengths))
     selectedIED = int(numpy.quantile(interExonDistances, interExonQuantile))
-    logger.info("Creating intergenic pseudo-exons: length = %i , interExonDistance = %i",
-                medianExonLength, selectedIED)
+    logger.debug("Creating intergenic pseudo-exons: length = %i , interExonDistance = %i",
+                 medianExonLength, selectedIED)
 
     ############################
     # second pass: populate genomicWindows

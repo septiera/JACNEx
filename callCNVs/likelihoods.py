@@ -1,12 +1,29 @@
-import concurrent.futures
+############################################################################################
+# Copyright (C) Nicolas Thierry-Mieg and Amandine Septier, 2021-2024
+#
+# This file is part of JACNEx, written by Nicolas Thierry-Mieg and Amandine Septier
+# (CNRS, France)  {Nicolas.Thierry-Mieg,Amandine.Septier}@univ-grenoble-alpes.fr
+#
+# This program is free software: you can redistribute it and/or modify it under
+# the terms of the GNU General Public License as published by the Free Software
+# Foundation, either version 3 of the License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+# without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+# See the GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along with this program.
+# If not, see <https://www.gnu.org/licenses/>.
+############################################################################################
+
+
 import logging
 import math
 import numpy
-import scipy.stats
-import traceback
+import pyerf
 
 ####### JACNEx modules
-import callCNVs.exonProfiling
+import callCNVs.robustGaussianFit
 
 # set up logger, using inherited config
 logger = logging.getLogger(__name__)
@@ -15,238 +32,263 @@ logger = logging.getLogger(__name__)
 ###############################################################################
 ############################ PUBLIC FUNCTIONS #################################
 ###############################################################################
-##############################
-# calcLikelihoods
-# calculates the likelihoods of genomic segments (exons) in samples, considering
-# both autosomes and gonosomes.
-#
-# Specs:
-# - Processes autosomal and gonosomal data separately, allowing chromosome-specific analysis.
-# - Employs FPM data
-# - Utilizes a process pool for parallel computing, enhancing efficiency and reducing
-#   processing time.
-# - Individual clusters are processed.
-# - Integrates parameters from statistical distributions to model CN profiles.
-# - Computes likelihoods for each exon in each sample.
+############################################
+# fitCNO:
+# fit a half-normal distribution to all FPMs in intergenicFPMs.
 #
 # Args:
-# - samples (list[strs]): sample identifiers.
-# - autosomeFPMs (numpy.ndarray[floats]): FPM data for autosomes. dim=[NbOfExons, NBOfSamples]
-# - gonosomeFPMs (numpy.ndarray[floats]): same as autosomeFPMs but for gonosomes.
-# - clust2samps (dict): key==clusterIDs, value==lists of sample IDs.
-# - params_A (dict): key==clusterID, value== numpy.ndarray dim=[nbOfExons, NbOfParams]
-#                     CN2 and CN0 rescale stdev in autosomes.
-# - params_G (dict): same as params_G but for gonosomes.
-# - CNStates (list[strs]): representing the different copy number states (e.g., CN0, CN1, CN2, CN3+).
-# - jobs [int]: number of parallel jobs to run.
+# - intergenicFPMs numpy 2D-array of floats of size nbIntergenics * nbSamples
+#   holding the FPM-normalized counts for intergenic pseudo-exons
 #
-# Returns a tuple (likelihoods_A, likelihoods_G), where:
-# - likelihoods_A (dict): key==sampleIDs, value==numpy.ndarray dim=[NBOfExons, NBOfCNStates]
-#                         containing likelihoods for each sample in autosomes.
-# - likelihoods_G (dict): same as likelihoods_A but for gonosomes.
-def calcLikelihoods(samples, autosomeFPMs, gonosomeFPMs, clust2samps, clustIsValid, params_A, params_G, CNStates, jobs):
-    # initialize output dictionaries
-    likelihoods_A = {}
-    likelihoods_G = {}
+# Returns (CN0sigma, fpmCn0):
+# - CN0sigma is the parameter of the fitted half-normal distribution
+# - fpmCn0 is the FPM threshold up to which data looks like it could very possibly
+#   have been produced by the CN0 model (set to fracPPF of the inverse CDF == quantile
+#   function). This will be used later for filtering NOCALL exons.
+def fitCNO(intergenicFPMs):
+    # fracPPF hard-coded here, should be fine and universal
+    fracPPF = 0.95
+    # bias-corrected maximum likelihood estimator for sigma: see wikipedia
+    # calculate MLE estimate of sigma
+    N = intergenicFPMs.ravel().shape[0]
+    sigma = math.sqrt((intergenicFPMs.ravel() * intergenicFPMs.ravel()).sum() / N)
+    # correct for bias
+    sigma += sigma / 4 / N
 
-    # map sample names to indices for fast lookup
-    sampIndexMap = callCNVs.exonProfiling.createSampleIndexMap(samples)
+    # calculate quantile function at fracPPF
+    fpmCn0 = sigma * math.sqrt(2) * pyerf.erfinv(fracPPF)
 
-    # determine the number of clusters to process in parallel, based on available jobs
-    paraClusters = min(math.ceil(jobs / 2), len(clust2samps))
-    logger.info("%i new clusters => will process %i in parallel", len(clust2samps), paraClusters)
+    return (sigma, fpmCn0)
 
-    # set up a pool of workers for parallel processing
-    with concurrent.futures.ProcessPoolExecutor(paraClusters) as pool:
-        # iterate over all clusters and submit them for processing
-        for clusterID in clust2samps:
 
-            # skip processing for invalid clusters
-            if not clustIsValid[clusterID]:
-                continue
+############################################
+# fitCN2:
+# for each exon (==row of FPMs), try to fit a normal distribution to the
+# dominant component of the FPMs (this is our model of CN2, we assume that
+# most samples are CN2), and apply  the following QC criteria, testing if:
+# - exon isn't captured (median FPM <= fpmCn0)
+# - fitting fails (exon is very atypical, can't make any calls)
+# - CN2 model isn't supported by 50% or more of the samples
+# - CN2 Gaussian can't be clearly distinguished from CN0 model (see minZscore)
+# - CN1 Gaussian (in diploids only) can't be clearly distinguished
+#   from CN0 model (E==1)
+#
+# Args:
+# - FPMs: numpy 2D-array of floats of size nbExons * nbSamples, FPMs[e,s] is
+#   the FPM-normalized count for exon e in sample s
+# - clusterID: name of cluster (for logging)
+# - fpmCn0, isHaploid: used for the QC criteria
+#
+# Return (Ecodes, CN2means, CN2sigmas):
+# each is a 1D numpy.ndarray of size=nbExons, values for each exon are:
+# - the status/error code:
+#   E==-1 if exon isn't captured
+#   E==-2 if robustGaussianFit failed
+#   E==-3 if low support for CN2 model
+#   E==-4 if CN2 is too close to CN0
+#   E==1  if CN1 is too close to CN0 but CN2 isn't (in diploids only)
+#   E==0  if all QC criteria pass
+# - the mean and stdev of the CN2 model, or (1,1) if we couldn't fit CN2,
+#   ie Ecode==-1 or -2
+#   [NOTE: (mean,stdev)==(1,1) allows to use vectorized gaussianPDF() and
+#   cn3PDF() without DIVBYZERO errors on NOCALL exons]
+def fitCN2(FPMs, clusterID, fpmCn0, isHaploid):
+    nbExons = FPMs.shape[0]
+    nbSamples = FPMs.shape[1]
 
-            # determine the type of chromosome and process accordingly
-            if clusterID.startswith("A"):
-                # process autosomal clusters
-                processClusterLikelihoods(clusterID, clust2samps, sampIndexMap, autosomeFPMs,
-                                          params_A, len(CNStates), likelihoods_A, pool)
+    Ecodes = numpy.zeros(nbExons, dtype=numpy.byte)
+    CN2means = numpy.ones(nbExons, dtype=numpy.float64)
+    CN2sigmas = numpy.ones(nbExons, dtype=numpy.float64)
+
+    # hard-coded min Z-score parameter for "too close to CN0"
+    minZscore = 3
+
+    for ei in range(nbExons):
+        if numpy.median(FPMs[ei, :]) <= fpmCn0:
+            # uncaptured exon
+            Ecodes[ei] = -1
+        else:
+            (mu, sigma) = callCNVs.robustGaussianFit.robustGaussianFit(FPMs[ei, :])
+            if mu == 0:
+                # cannot robustly fit Gaussian
+                Ecodes[ei] = -2
             else:
-                # process gonosomal clusters
-                processClusterLikelihoods(clusterID, clust2samps, sampIndexMap, gonosomeFPMs,
-                                          params_G, len(CNStates), likelihoods_G, pool)
+                # if we get here, (mu, sigma) are OK:
+                (CN2means[ei], CN2sigmas[ei]) = (mu, sigma)
 
-    return (likelihoods_A, likelihoods_G)
+                # require at least minSamps samples within sdLim sigmas of mu
+                minSamps = nbSamples * 0.5
+                sdLim = 2
+                samplesUnderCN2 = numpy.sum(numpy.logical_and(FPMs[ei, :] - mu - sdLim * sigma < 0,
+                                                              FPMs[ei, :] - mu + sdLim * sigma > 0))
+                if samplesUnderCN2 < minSamps:
+                    # low support for CN2
+                    Ecodes[ei] = -3
+
+                # require CN2 to be at least minZscore sigmas from fpmCn0
+                elif (mu - minZscore * sigma) <= fpmCn0:
+                    # CN2 too close to CN0
+                    Ecodes[ei] = -4
+
+                # in diploids: prefer if CN1 is also at least minZscore sigmas from fpmCn0
+                elif (not isHaploid) and ((mu / 2 - minZscore * sigma / 2) <= fpmCn0):
+                    # CN1 too close to CN0
+                    Ecodes[ei] = 1
+
+                else:
+                    # if we get here exon is good, but there's nothing more to do
+                    pass
+
+    return(Ecodes, CN2means, CN2sigmas)
+
+
+############################################
+# calcLikelihoods:
+# for each exon (==row of FPMs):
+# - if Ecodes[ei] >= 0, calculate and fill likelihoods for CN0, CN1, CN2, CN3+
+# - else exon is NOCALL => set likelihoods to -1 (except if forPlots)
+# NOTE: if isHapoid or Ecodes[ei]==1, likelihoods[CN1]=0 (except if forPlots).
+#
+# Args:
+# - FPMs: 2D-array of floats of size nbExons * nbSamples, FPMs[e,s] is the FPM count
+#   for exon e in sample s
+# - CN0sigma: as returned by fitCN0()
+# - Ecodes, CN2means, CN2sigmas: as returned by fitCN2()
+# - isHaploid: boolean (used in the CN3+ model and for zeroing CN1 likelihoods)
+# - forPlots: boolean if True don't set likelihoods to 0 / -1 for bad Ecodes
+#
+# Returns likelihoods (allocated here):
+#   numpy 3D-array of floats of size nbSamples * nbExons * nbStates,
+#   likelihoods[s,e,cn] is the likelihood of state cn for exon e in sample s
+def calcLikelihoods(FPMs, CN0sigma, Ecodes, CN2means, CN2sigmas, isHaploid, forPlots):
+    # sanity:
+    nbExons = FPMs.shape[0]
+    nbSamples = FPMs.shape[1]
+    if nbExons != len(Ecodes):
+        logger.error("sanity check failed in calcLikelihoods(), impossible!")
+        raise Exception("calcLikelihoods sanity check failed")
+
+    # allocate 3D-array (hard-coded: 4 states CN0, CN1, CN2, CN3+)
+    likelihoods = numpy.full((nbSamples, nbExons, 4), fill_value=-1,
+                             dtype=numpy.float64, order='C')
+
+    # NOTE: calculating likelihoods for all exons, taking advantage of numpy vectorization;
+    # afterwards we set them to -1 for NOCALL exons
+
+    # CN0 model: half-normal distribution with mode=0
+    likelihoods[:, :, 0] = cn0PDF(FPMs, CN0sigma)
+
+    # CN1:
+    if isHaploid:
+        # in haploids: all-zeroes
+        likelihoods[:, :, 1] = 0
+    else:
+        # in diploids: rescale the CN2 Gaussian by factor 1/2 (model a single copy rather
+        # than 2) -> Normal(CN2mu/2, CN2sigma/2)
+        likelihoods[:, :, 1] = gaussianPDF(FPMs, CN2means / 2, CN2sigmas / 2)
+        if not forPlots:
+            # exons where CN1 is too close to CN0 but CN2 isn't:
+            likelihoods[:, Ecodes == 1, 1] = 0
+
+    # CN2 model: the fitted CN2 Gaussian
+    likelihoods[:, :, 2] = gaussianPDF(FPMs, CN2means, CN2sigmas)
+
+    # CN3 model, as defined in cn3PDF()
+    likelihoods[:, :, 3] = cn3PDF(FPMs, CN2means, CN2sigmas, isHaploid)
+
+    if not forPlots:
+        # NOCALL exons: set to -1 for every sample+state
+        likelihoods[:, Ecodes < 0, :] = -1.0
+
+    return(likelihoods)
 
 
 ###############################################################################
 ############################ PRIVATE FUNCTIONS ################################
 ###############################################################################
-######################################
-# processClusterLikelihoods
-# Submits a task to calculate the likelihoods for a given cluster using parallel processing.
+############################################
+# Precompute sqrt(2*pi), used many times in gaussianPDF() and cn3PDF()
+SQRT_2PI = math.sqrt(2 * math.pi)
+
+
+############################################
+# Calculate the likelihoods (==values of the PDF) of a Gaussian distribution
+# of parameters mu[e] and sigma[e], at FPMs[e,:] for every exonIndex e.
 #
 # Args:
-# - clusterID (str): identifier of the cluster being processed.
-# - clust2samps (dict): key==clusterIDs, value==lists of sample IDs.
-# - samp2Index (dict): key==sampleID[str], value==exonsFPM samples column index[int].
-# - exonsFPMs (numpy.ndarray): Normalized fragment counts for exons (FPM data).
-# - hnorm_loc (float), hnorm_scale (float): Parameters for the half-Gaussian distribution.
-# - params (dict): CN2 and CN0 rescale stdev, keyed by cluster ID.
-# - numCNStates (int): The number of Copy Number (CN) states.
-# - likelihoods (dict): Dictionary to store calculated likelihoods.
-# - pool (ProcessPoolExecutor): Pool of workers for parallel processing.
-# This function submits a calculation task to the pool and assigns a callback function
-# to handle the results.
-def processClusterLikelihoods(clusterID, clust2samps, samp2Index, exonsFPMs,
-                              params, numCNStates, likelihoods, pool):
-    future_res = pool.submit(calcClustLikelihoods, clusterID, samp2Index,
-                             exonsFPMs, clust2samps, params[clusterID], numCNStates)
-    future_res.add_done_callback(lambda future: updateLikelihoods(future, likelihoods, clusterID))
+# - FPMs: 2D-array of floats of size nbExons * nbSamples
+# - mu, sigma: 1D-arrays of floats of size nbExons
+#
+# Returns a 2D numpy.ndarray of size nbSamples * nbExons (FPMs gets transposed)
+#
+# NOTE: I tried scipy.stats.norm but it's super slow, and statistics.normalDist
+# but it's even slower (due to being unvectorized probably). This code is fast.
+def gaussianPDF(FPMs, mu, sigma):
+    # return numpy.exp(-0.5 * ((FPMs.T - mu) / sigma)**2) / (sigma * SQRT_2PI)
+    res = FPMs.T - mu
+    res /= sigma
+    res *= res
+    res /= -2
+    res = numpy.exp(res)
+    res /= (sigma * SQRT_2PI)
+    return(res)
 
 
-######################################
-# updateLikelihoods
-# Callback function to update the likelihoods dictionary with results from parallel processing.
+############################################
+# Calculate the likelihoods (==values of the PDF) of our statistical model
+# of CN0 at every datapoint in FPMs.
+# Our current CN0 model is a half-normal distribution of parameter sigma.
 #
 # Args:
-# - future_clusterLikelihoods (Future): A Future object containing the result or exception.
-# - likelihoods (dict): Dictionary to store calculated likelihoods.
-# - clusterID (str): identifier of the cluster.
-# This function is called once the parallel processing task is completed. It checks for
-# exceptions and updates the likelihoods dictionary with the calculated values.
-def updateLikelihoods(future_clusterLikelihoods, likelihoods, clusterID):
-    e = future_clusterLikelihoods.exception()
-    if e is not None:
-        logger.debug(traceback.format_exc())
-        logger.warning("Analysis failed for cluster %s: %s.", clusterID, str(e))
-    else:
-        clusterLikelihoods = future_clusterLikelihoods.result()
-        likelihoods.update(clusterLikelihoods)
-        logger.info("Completed analysis for cluster %s.", clusterID)
+# - FPMs: 2D-array of floats of size nbExons * nbSamples
+# - sigma: parameter of the CN0
+#
+# Returns a 2D numpy.ndarray of size nbSamples * nbExons (FPMs gets transposed)
+def cn0PDF(FPMs, sigma):
+    # return numpy.exp(-0.5 * (FPMs.T / sigma)**2) * (2 / sigma / SQRT_2PI)
+    res = FPMs.T / sigma
+    res *= res
+    res /= -2
+    res = numpy.exp(res)
+    res *= 2 / sigma / SQRT_2PI
+    return(res)
 
 
-######################################
-# calcClustLikelihoods:
-# calculates the likelihoods (probability density values) for various copy number
-# scenarios for each exon's FPM within a sample, using different statistical distributions.
-# The probability density functions (PDFs) are computed as follows for each copy number
-# (CN) state:
-#   - CN0: Uses a half-normal distribution, typically fitted to intergenic regions where
-#          no genes are present, indicating the absence of the genomic segment.
-#   - CN2: Utilizes a Gaussian distribution that is robustly fitted to represent the typical
-#          coverage observed in the genomic data (loc = mean, scale = standard deviation).
-#   - CN1: Employs the Gaussian parameters from CN2 but adjusts the mean (loc) by a factor of 0.5,
-#          representing a single copy loss.
-#   - CN3+: For scenarios where copy numbers exceed 2, it applies a gamma distribution
-#           with parameters derived from the CN2 Gaussian distribution to model the heavy-tailed
-#           nature of higher copy number events.
-#           This involves:
-#           - An alpha parameter (shape in SciPy), which determines the tail behavior of the distribution.
-#             Alpha > 1 indicates a heavy tail, alpha = 1 resembles a Gaussian distribution,
-#             and alpha < 1 suggests a light tail.
-#           - A theta parameter (scale in SciPy) that modifies the spread of the distribution.
-#             A higher theta value expands the distribution, while a lower value compresses it.
-#           - A 'loc' parameter in SciPy that shifts the distribution along the x-axis,
-#             modifying the central tendency without altering the shape or spread.
+############################################
+# Calculate the likelihoods (==values of the PDF) of our statistical model
+# of CN3+, based on the CN2 mu's and sigmas, at FPMs[e,:] for every exonIndex e.
+#
+# CN3+ is currently modeled as a LogNormal that aims to:
+# - capture data starting around 1.5x the CN2 mean (2x if isHaploid);
+# - avoid overlapping too much with the CN2.
+# The LogNormal is heavy-tailed, which is nice because we are modeling CN3+ not CN3.
 #
 # Args:
-# - clusterID [str]: cluster identifier being processed
-# - samp2Index (dict): key==sampleID[str], value==exonsFPM samples column index[int]
-# - exonsFPM (numpy.ndarray[floats]): normalized fragment counts (FPMs)
-# - clust2samps (dict): key==clusterID, value==list of sampleIDs
-# - params (numpy.ndarray[floats]): Dim = nbOfExons * [stdevCN2, stdevCN0].
-# - numCNs [int]: 4 copy number status ["CN0", "CN1", "CN2", "CN3"]
+# - FPMs: 2D-array of floats of size nbExons * nbSamples
+# - cn2Mu, cn2Sigma: 1D-arrays of floats of size nbExons
+# - isHaploid boolean
 #
-# Returns:
-# - likelihoodsDict : keys==sampleID, values==numpy.ndarray(nbExons * nbCNStates)
-#                     contains all the samples in a cluster.
-def calcClustLikelihoods(clusterID, samp2Index, exonsFPM, clust2samps, params, numCNs):
+# Returns a 2D numpy.ndarray of size nbSamples * nbExons (FPMs gets transposed)
+def cn3PDF(FPMs, cn2Mu, cn2Sigma, isHaploid):
+    # shift the whole distribution by -loc to avoid overlapping too much with CN2
+    loc = cn2Mu + 2 * cn2Sigma
+    # LogNormal parameters set empirically
+    sigma = 0.5
+    mu = numpy.log(cn2Mu)
+    # These (sigma,mu) result in ~8.3% of the distrib below 3*cn2Mu/2 + 2*cn2Sigma,
+    # i.e. we don't capture too much stuff before what really looks like CN=3
+    if isHaploid:
+        # diploid aims for 3*cn2Mu/2 while haploid aims for 2*cn2Mu, and the data is
+        # shifted by loc ~= cn2Mu (ignoring the 2 cn2Sigmas here) => rescale the
+        # distribution by a factor of 2 <=> mu += ln(2)
+        mu += math.log(2)
 
-    sampleIDs = clust2samps[clusterID]
-    sampsIndexes = [samp2Index[samp] for samp in sampleIDs]
-
-    # dictionary to hold the likelihoods for each sample, initialized to -1 for
-    # all exons and CN states.
-    likelihoodsDict = {samp: numpy.full((exonsFPM.shape[0], numCNs), -1, dtype=numpy.float128)
-                       for samp in sampleIDs}
-
-    # Identify exons with non-interpretable data
-    isSkipped = numpy.any(params == -1, axis=1)
-
-    # looping over each exon to compute the likelihoods for each CN state
-    for ei in range(len(params)):
-        if isSkipped[ei]:
-            continue
-
-        gauss_loc = 1
-        gauss_scale = params[ei, 0]
-        hnorm_loc = 0
-        hnorm_scale = params[ei, 1]
-        CN_params = setupCNDistribParams(hnorm_loc, hnorm_scale, gauss_loc, gauss_scale)
-
-        for ci, (pdfFunction, loc, scale, shape) in enumerate(CN_params):
-            exonFPMs = exonsFPM[ei, sampsIndexes]
-            if shape is not None:
-                # Apply gamma distribution
-                likelihoods = pdfFunction(exonFPMs, loc=loc, scale=scale, a=shape)
-            else:
-                # Apply normal or half-normal distribution
-                likelihoods = pdfFunction(exonFPMs, loc=loc, scale=scale)
-
-            for si, likelihood in enumerate(likelihoods):
-                sampID = sampleIDs[si]
-                likelihoodsDict[sampID][ei, ci] = likelihood
-
-    return likelihoodsDict
-
-
-######################################
-# setupCNDistribParams
-# Defines parameters for four types of distributions (CN0, CN1, CN2, CN3+),
-# involving half normal, normal, and gamma distributions.
-# For CN3+, the parameters are empriricaly adjusted to ensure compatibility with
-# Gaussian distribution.
-#
-# Args:
-# - hnorm_loc[float], hnorm_scale[float]: parameters of the half normal distribution
-# - gauss_loc [float]: Mean parameter for the Gaussian distribution (CN2).
-# - gauss_scale [float]: Standard deviation parameter for the Gaussian distribution (CN2).
-# Returns:
-# - CN_params(list of list): contains distribution objects from Scipy representing
-#                            different copy number types (CN0, CN1, CN2, CN3+).
-#                            Parameters vary based on distribution type (ordering: loc, scale, shape).
-def setupCNDistribParams(hnorm_loc, hnorm_scale, gauss_loc, gauss_scale):
-
-    # shifting Gaussian mean for CN1
-    gaussShiftLoc = gauss_loc * 0.5
-
-    # For the CN3+ distribution, a gamma distribution is used.
-    # The gamma distribution is chosen for its ability to model data that are always positive
-    # and might exhibit asymmetry, which is typical in certain data distributions.
-
-    # The 'shape' parameter of the gamma distribution is set to 8.
-    # This choice is the result of empirical testing, where different values were experimented
-    # with, and 6 proved to provide the best fit to the data.
-    # A higher 'shape' concentrates the distribution around the mean and reduces the spread,
-    # which was found to be suitable for the characteristics of the CN3+ data.
-    gamma_shape = 6
-
-    # The 'loc' parameter is defined as the sum of 'gauss_loc' and 'gauss_scale'.
-    # This sum shifts the gamma distribution to avoid significant overlap with the Gaussian
-    # CN2 distribution, allowing for a clearer distinction between CN2 and CN3+.
-    gauss_locAddScale = gauss_loc + gauss_scale
-
-    # The 'scale' parameter is determined by the base 10 logarithm of 'gauss_locAddScale + 1'.
-    # Adding '+1' is crucial to prevent issues with the logarithm of a zero or negative value.
-    # The use of the logarithm helps to reduce the scale of values, making the model more
-    # adaptable and stable, especially if 'gauss_locAddScale' varies over a wide range.
-    # This approach creates a narrower distribution more in line with the expected
-    # characteristics of CN3+ data.
-    gauss_logLocAdd1 = numpy.log10(gauss_locAddScale + 1)
-
-    # Distribution parameters for CN0, CN1, CN2, and CN3+ are stored in CN_params.
-    CN_params = [(scipy.stats.halfnorm.pdf, hnorm_loc, hnorm_scale, None),  # CN0
-                 (scipy.stats.norm.pdf, gaussShiftLoc, gauss_scale, None),  # CN1
-                 (scipy.stats.norm.pdf, gauss_loc, gauss_scale, None),  # CN2
-                 (scipy.stats.gamma.pdf, gauss_locAddScale, gauss_logLocAdd1, gamma_shape)]  # CN3+
-    return CN_params
+    # mask values <= loc to avoid doing any computations on them, this also copies the data
+    res = numpy.ma.masked_less_equal(FPMs.T, loc)
+    res -= loc
+    # the formula for the pdf of a LogNormal is pretty simple (see wikipedia), but
+    # the order of operations is important to avoid overflows/underflows. The following
+    # works for us and is reasonably fast
+    res = numpy.ma.log(res)
+    res = numpy.ma.exp(-(((res - mu) / sigma)**2 / 2) - res - numpy.ma.log(sigma * SQRT_2PI))
+    return (res.filled(fill_value=0.0))

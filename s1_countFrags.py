@@ -1,3 +1,22 @@
+############################################################################################
+# Copyright (C) Nicolas Thierry-Mieg and Amandine Septier, 2021-2024
+#
+# This file is part of JACNEx, written by Nicolas Thierry-Mieg and Amandine Septier
+# (CNRS, France)  {Nicolas.Thierry-Mieg,Amandine.Septier}@univ-grenoble-alpes.fr
+#
+# This program is free software: you can redistribute it and/or modify it under
+# the terms of the GNU General Public License as published by the Free Software
+# Foundation, either version 3 of the License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+# without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+# See the GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along with this program.
+# If not, see <https://www.gnu.org/licenses/>.
+############################################################################################
+
+
 ###############################################################################################
 ######################################## JACNEx step 1: count reads ###########################
 ###############################################################################################
@@ -61,10 +80,9 @@ Given a BED of exons and one or more BAM files:
 - pad the exons (+- padding), merge overlapping padded exons, and create intergenic (or deep
     intronic) pseudo-exons in the larger gaps between exons;
 - count the number of sequenced fragments from each BAM that overlap each (pseudo-)exon.
-Results are printed to --out in TSV format (possibly gzipped): first 4 columns hold the
-(pseudo-)exon definitions after padding and sorting, subsequent columns hold the counts.
+Results (sample names, genomic windows, counts) are saved to --out in NPZ format.
 The "sample names" are the BAM filenames stripped of their path and .bam extension, they
-are sorted alphanumerically and listed in the header line.
+are sorted alphanumerically.
 In addition, any support for putative breakpoints is printed to sample-specific TSV.gz files
 created in BPDir.
 If a pre-existing counts file produced by this program with the same BED is provided (with --counts),
@@ -76,11 +94,10 @@ ARGUMENTS:
    --bams-from [str] : text file listing BAM files (with path), one per line
    --bed [str] : BED file, possibly gzipped, containing exon definitions (format: 4-column
            headerless tab-separated file, columns contain CHR START END EXON_ID)
-   --out [str] : file where results will be saved (unless BAMs exactly match those in --counts), must not
-           pre-exist, will be gzipped if it ends with '.gz', can have a path component but the subdir must exist
+   --out [str] : file where results will be saved (unless BAMs exactly match those in --counts),
+           must not pre-exist, can have a path component but the subdir must exist
    --BPDir [str] : dir (created if needed) where breakpoint files will be produced, default :  """ + BPDir + """
-   --counts [str] optional: pre-existing counts file produced by this program, possibly gzipped,
-           counts for requested BAMs will be copied from this file if present
+   --counts [str] optional: pre-existing counts file produced by this program
    --jobs [int] : cores that we can use, defaults to 80% of available cores ie """ + str(jobs) + "\n" + """
    --padding [int] : number of bps used to pad the exon coordinates, default : """ + str(padding) + """
    --maxGap [int] : maximum accepted gap length (bp) between reads pairs, pairs separated by a longer gap
@@ -240,7 +257,7 @@ def main(argv):
 
     # args seem OK, start working
     logger.debug("called with: " + " ".join(argv[1:]))
-    logger.info("starting to work")
+    logger.debug("starting to work")
     startTime = time.time()
 
     # parse exons from BED to obtain a list of lists (dim=(NbMergedExons+NbPseudoExons) x [CHR,START,END,EXONID]),
@@ -326,8 +343,7 @@ def main(argv):
             else:
                 bam2countsRes = futureBam2countsRes.result()
                 si = bam2countsRes[0]
-                for exonIndex in range(len(bam2countsRes[1])):
-                    countsArray[exonIndex, si] = bam2countsRes[1][exonIndex]
+                countsArray[:, si] = bam2countsRes[1][:]
                 if (len(bam2countsRes[2]) > 0):
                     try:
                         bpFile = BPDir + '/' + samples[si] + '.breakPoints.tsv.gz'
@@ -365,15 +381,15 @@ def main(argv):
         startTime = thisTime
 
     #####################################################
-    # Print exon defs + counts to outFile
+    # save exon defs + samples + counts to outFile
     countFrags.countsFile.printCountsFile(exons, samples, countsArray, outFile)
 
     thisTime = time.time()
-    logger.info("Done printing counts for all (non-failed) samples, in %.2fs", thisTime - startTime)
+    logger.info("Done saving counts for all (non-failed) samples, in %.2fs", thisTime - startTime)
     if len(failedBams) > 0:
         raise("counting FAILED for " + len(failedBams) + " samples, check the log!")
     else:
-        logger.info("ALL DONE")
+        logger.debug("ALL DONE")
 
 
 ####################################################################################

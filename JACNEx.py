@@ -1,17 +1,37 @@
+############################################################################################
+# Copyright (C) Nicolas Thierry-Mieg and Amandine Septier, 2021-2024
+#
+# This file is part of JACNEx, written by Nicolas Thierry-Mieg and Amandine Septier
+# (CNRS, France)  {Nicolas.Thierry-Mieg,Amandine.Septier}@univ-grenoble-alpes.fr
+#
+# This program is free software: you can redistribute it and/or modify it under
+# the terms of the GNU General Public License as published by the Free Software
+# Foundation, either version 3 of the License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+# without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+# See the GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along with this program.
+# If not, see <https://www.gnu.org/licenses/>.
+############################################################################################
+
+
 import datetime
 import getopt
 import glob
-import gzip
 import logging
 import os
 import re
 import sys
 import tempfile
+import traceback
 
 ####### JACNEx modules
 import s1_countFrags
 import s2_clusterSamps
 import s3_callCNVs
+import countFrags.countsFile
 
 
 ###############################################################################
@@ -51,9 +71,12 @@ def parseArgs(argv):
     # default values of step2 optional args, as strings
     minSamps = "20"
 
+    # default values of step3 optional args, as strings
+    minGQ = "2.0"
+
     usage = "NAME:\n" + scriptName + """\n
 DESCRIPTION:
-blablabla
+blablabla TODO
 
 ARGUMENTS:
 Global arguments:
@@ -63,6 +86,8 @@ Global arguments:
            headerless tab-separated file, columns contain CHR START END EXON_ID)
    --workDir [str] : subdir where intermediate results and QC files are produced, provide a pre-existing
            workDir to reuse results from a previous run (incremental use-case)
+   --regionsToPlot [str]: optional comma-separated list of sampleID:chr:start-end for which exon-profile
+               plots should be produced, eg "grex003:chr2:270000-290000,grex007:chrX:620000-660000"
    --jobs [int] : cores that we can use, defaults to 80% of available cores ie """ + jobs + """
    -h , --help : display this help and exit
 
@@ -74,13 +99,16 @@ Step 1 optional arguments, defaults should be OK:
    --samtools [str] : samtools binary (with path if not in $PATH), default: """ + samtools + """
 
 Step 2 optional arguments, defaults should be OK:
-   --minSamps [int]: blablabla, default : """ + minSamps + """
+   --minSamps [int]:  min number of samples for a cluster to be valid, default : """ + minSamps + """
+
+Step 3 optional arguments, defaults should be OK:
+   --minGQ [float]: minimum Genotype Quality score, default : """ + minGQ + """
 """
 
     try:
         opts, args = getopt.gnu_getopt(argv[1:], 'h', ["bams=", "bams-from=", "bed=", "workDir=", "jobs=",
                                                        "help", "tmp=", "padding=", "maxGap=", "samtools=",
-                                                       "minSamps="])
+                                                       "minSamps=", "minGQ=", "regionsToPlot="])
     except getopt.GetoptError as e:
         raise Exception(e.msg + ". Try " + scriptName + " --help")
     if len(args) != 0:
@@ -99,6 +127,8 @@ Step 2 optional arguments, defaults should be OK:
             step3Args.extend([opt, value])
         elif opt in ("--minSamps"):
             step2Args.extend([opt, value])
+        elif opt in ("--minGQ", "--regionsToPlot"):
+            step3Args.extend([opt, value])
         else:
             raise Exception("unhandled option " + opt)
 
@@ -117,13 +147,15 @@ Step 2 optional arguments, defaults should be OK:
     if "--minSamps" not in step2Args:
         step2Args.extend(["--minSamps", minSamps])
 
+    if "--minGQ" not in step3Args:
+        step3Args.extend(["--minGQ", minGQ])
     if "--padding" not in step3Args:
         step3Args.extend(["--padding", padding])
     if "--jobs" not in step3Args:
         step3Args.extend(["--jobs", jobs])
 
     #####################################################
-    # process JACNEx.py-specific options, other options will be checked by s[1-4]_*.parseArgs()
+    # process JACNEx.py-specific options, other options will be checked by s[1-3]_*.parseArgs()
     if workDir == "":
         raise Exception("you must provide a workDir with --workDir. Try " + scriptName + " --help")
     elif not os.path.isdir(workDir):
@@ -154,17 +186,10 @@ def findBestPrevCF(countsFilesAll, samples):
         samplesD[s] = 1
     for cf in countsFilesAll:
         try:
-            if cf.endswith(".gz"):
-                countsFH = gzip.open(cf, "rt")
-            else:
-                countsFH = open(cf, "r")
+            samplesCF = countFrags.countsFile.parseCountsFile(cf)[1]
         except Exception as e:
-            logger.error("Opening pre-existing countsFile %s: %s", cf, e)
-            raise Exception('cannot open pre-existing countsFile')
-        # grab samples from header
-        samplesCF = countsFH.readline().rstrip().split("\t")
-        # get rid of exon definition headers
-        del samplesCF[0:4]
+            logger.error("Parsing pre-existing countsFile %s: %s", cf, e)
+            raise Exception('cannot parse pre-existing countsFile')
         commonSamplesCF = 0
         otherSamplesCF = 0
         for s in samplesCF:
@@ -176,7 +201,6 @@ def findBestPrevCF(countsFilesAll, samples):
             bestCF = cf
             commonSamples = commonSamplesCF
             otherSamples = otherSamplesCF
-        countsFH.close()
     return(bestCF, commonSamples)
 
 
@@ -192,7 +216,7 @@ def findBestPrevCF(countsFilesAll, samples):
 def main(argv):
     # string identifying the current program name (JACNEx) and version, will appear
     # as "##source=" in the VCF
-    JACNEx_version = "JACNEx_dev_version_2024_05_NTM"
+    JACNEx_version = "JACNEx_dev_version_2024_06"
     # strings for each step, for log messages / exception names
     stepNames = ("STEP0 - CHECK/MAKE SUBDIR HIERARCHY -", "STEP1 - COUNT FRAGMENTS -",
                  "STEP2 - CLUSTER SAMPLES -", "STEP3 - CALL CNVs -")
@@ -204,8 +228,8 @@ def main(argv):
     ##################
     # hard-coded subdir hierarchy of workDir, created if needed
 
-    # step1: countsFiles are saved (date-stamped and gzipped) in countsDir
-    countsDir = workDir + '/CountFiles/'
+    # step1: countsFiles are saved (date-stamped) in countsDir
+    countsDir = workDir + '/Counts/'
     if not os.path.isdir(countsDir):
         try:
             os.mkdir(countsDir)
@@ -213,7 +237,7 @@ def main(argv):
             raise Exception(stepNames[0] + " countsDir " + countsDir + "doesn't exist and can't be mkdir'd")
 
     # step1: breakpoint results are saved in BPDir
-    BPDir = workDir + '/BreakPoints/'
+    BPDir = workDir + '/Breakpoints/'
     if not os.path.isdir(BPDir):
         try:
             os.mkdir(BPDir)
@@ -221,22 +245,23 @@ def main(argv):
             raise Exception(stepNames[0] + " BPDir " + BPDir + " doesn't exist and can't be mkdir'd")
 
     # step2: clusterFiles are saved (date-stamped and gzipped) in clustersDir
-    clustersDir = workDir + '/ClusterFiles/'
+    clustersDir = workDir + '/Clusters/'
     if not os.path.isdir(clustersDir):
         try:
             os.mkdir(clustersDir)
         except Exception:
             raise Exception(stepNames[0] + " clustersDir " + clustersDir + "doesn't exist and can't be mkdir'd")
 
-    # step3: callsFiles are saved (date-stamped and gzipped) in callsDir
-    callsDir = workDir + '/CallFiles/'
-    if not os.path.isdir(callsDir):
+    # step3: callFiles are saved (gzipped) in vcfDir
+    vcfDir = workDir + '/VCFs/'
+    if not os.path.isdir(vcfDir):
         try:
-            os.mkdir(callsDir)
+            os.mkdir(vcfDir)
         except Exception:
-            raise Exception(stepNames[0] + " callsDir " + callsDir + "doesn't exist and can't be mkdir'd")
+            raise Exception(stepNames[0] + " vcfDir " + vcfDir + "doesn't exist and can't be mkdir'd")
 
-    # QC plots from step2 and step3 go in date-stamped subdirs of plotDir
+    # QC plots from step2 (and step3 if --regionsToPlot was provided) go in date-stamped
+    # subdirs of plotDir
     plotDir = workDir + '/QCPlots/'
     if not os.path.isdir(plotDir):
         try:
@@ -262,7 +287,7 @@ def main(argv):
         # we'll make sure findBestPrevCF() returns a file that exists
 
         # new countsFile to create
-        countsFile = countsDir + '/countsFile_' + dateStamp + '.tsv.gz'
+        countsFile = countsDir + '/counts_' + dateStamp + '.npz'
         if os.path.isfile(countsFile):
             raise Exception(stepNames[1] + " countsFile " + countsFile + " already exists")
         step1Args.extend(["--out", countsFile])
@@ -275,22 +300,19 @@ def main(argv):
             raise Exception(stepNames[1] + " parseArgs problem: " + str(e))
 
         # find pre-existing countsFile (if any) with the most common samples
-        countsFilesAll = glob.glob(countsDir + '/countsFile_*.gz')
+        countsFilesAll = glob.glob(countsDir + '/counts_*.npz')
         (countsFilePrev, commonSamples) = findBestPrevCF(countsFilesAll, samples)
         if commonSamples != 0:
             logger.info("will reuse best matching countsFile (%i common samples): %s",
-                        commonSamples, countsFilePrev)
+                        commonSamples, os.path.basename(countsFilePrev))
             step1Args.extend(["--counts", countsFilePrev])
 
         #########
         # complement step2Args and check them
-        thisPlotDir = plotDir + 'QCPlots_' + dateStamp
-        if os.path.isdir(thisPlotDir):
-            raise Exception(stepNames[2] + " plotDir " + thisPlotDir + " already exists")
-        step2Args.extend(["--plotDir", thisPlotDir])
+        step2Args.extend(["--plotDir", plotDir])
 
         # new clustersFile to create
-        clustersFile = clustersDir + '/clustersFile_' + dateStamp + '.tsv.gz'
+        clustersFile = clustersDir + '/clusters_' + dateStamp + '.tsv.gz'
         if os.path.isfile(clustersFile):
             raise Exception(stepNames[2] + " clustersFile " + clustersFile + " already exists")
         step2Args.extend(["--out", clustersFile])
@@ -307,22 +329,18 @@ def main(argv):
 
         #########
         # complement step3Args and check them
+        if "--regionsToPlot" in step3Args:
+            thisPlotDir = plotDir + '/exonProfiles_' + dateStamp
+            if os.path.isdir(thisPlotDir):
+                raise Exception(stepNames[3] + " plotDir " + thisPlotDir + " already exists")
+            step3Args.extend(["--plotDir", thisPlotDir])
+
         step3Args.extend(["--madeBy", JACNEx_version])
-
-        thisPlotDir = plotDir + 'exonFilteringPieCharts_' + dateStamp
-        if os.path.isdir(thisPlotDir):
-            raise Exception(stepNames[3] + " plotDir " + thisPlotDir + " already exists")
-        step3Args.extend(["--plotDir", thisPlotDir])
-
-        # new callsFile to create
-        callsFile = callsDir + '/callsFile_' + dateStamp + '.vcf.gz'
-        if os.path.isfile(callsFile):
-            raise Exception(stepNames[3] + " callsFile " + callsFile + " already exists")
-        step3Args.extend(["--out", callsFile])
+        step3Args.extend(["--outDir", vcfDir])
 
         step3ArgsForCheck = step3Args.copy()
         step3ArgsForCheck.extend(["--counts", bogusFile])
-        step3ArgsForCheck.extend(["--clusts", bogusFile])
+        step3ArgsForCheck.extend(["--clusters", bogusFile])
 
         # check step3 args, discarding results
         try:
@@ -331,7 +349,7 @@ def main(argv):
             raise Exception(stepNames[3] + " parseArgs problem: " + str(e))
 
     ######################
-    logger.info("arguments look OK, starting to work")
+    # arguments look OK, starting to work
 
     #########
     # step 1
@@ -344,7 +362,7 @@ def main(argv):
             # specific exception string for this particular case
             raise Exception("STEP1 FAILED, use the same --bed and --padding as in previous runs or specify a new --workDir")
         else:
-            raise Exception("STEP2 FAILED, check log")
+            raise Exception("STEP1 FAILED, check log")
 
     # countsFile wasn't created if it would be identical to countsFilePrev, if this
     # is the case just use countsFilePrev downstream
@@ -367,7 +385,7 @@ def main(argv):
     # step 3
     logger.info("%s STARTING", stepNames[3])
     step3Args.extend(["--counts", countsFile])
-    step3Args.extend(["--clusts", clustersFile])
+    step3Args.extend(["--clusters", clustersFile])
     try:
         s3_callCNVs.main(step3Args)
     except Exception as e:
@@ -386,7 +404,7 @@ if __name__ == '__main__':
     # configure logging, sub-modules will inherit this config
     logging.basicConfig(format='%(levelname)s %(asctime)s %(name)s: %(message)s',
                         datefmt='%Y-%m-%d %H:%M:%S',
-                        level=logging.INFO)
+                        level=logging.DEBUG)
     # set up logger: we want script name rather than 'root'
     logger = logging.getLogger(scriptName)
 
@@ -395,4 +413,6 @@ if __name__ == '__main__':
     except Exception as e:
         # details on the issue should be in the exception name, print it to stderr and die
         sys.stderr.write("ERROR in " + scriptName + " : " + str(e) + "\n")
+        # actually while we debug things I want the tracebacks
+        traceback.print_exc()
         sys.exit(1)

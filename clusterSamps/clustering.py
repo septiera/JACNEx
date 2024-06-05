@@ -1,3 +1,22 @@
+############################################################################################
+# Copyright (C) Nicolas Thierry-Mieg and Amandine Septier, 2021-2024
+#
+# This file is part of JACNEx, written by Nicolas Thierry-Mieg and Amandine Septier
+# (CNRS, France)  {Nicolas.Thierry-Mieg,Amandine.Septier}@univ-grenoble-alpes.fr
+#
+# This program is free software: you can redistribute it and/or modify it under
+# the terms of the GNU General Public License as published by the Free Software
+# Foundation, either version 3 of the License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+# without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+# See the GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along with this program.
+# If not, see <https://www.gnu.org/licenses/>.
+############################################################################################
+
+
 import logging
 import numpy
 import os
@@ -7,7 +26,7 @@ import statistics
 
 
 ####### JACNEx modules
-import figures.plots
+import figures.plotDendrograms
 
 # set up logger, using inherited config
 logger = logging.getLogger(__name__)
@@ -116,7 +135,7 @@ def buildClusters(FPMarray, chromType, samples, minSize, plotFile):
     if os.path.isfile(plotFile):
         logger.info("pre-existing dendrogram plotFile %s will be squashed", plotFile)
     title = "chromType = " + chromType + " ,  PCA dimensions = " + str(dim)
-    figures.plots.plotDendrogram(linkageMatrix, samples, clust2samps, fitWith, clustIsValid, title, plotFile)
+    figures.plotDendrograms.plotDendrogram(linkageMatrix, samples, clust2samps, fitWith, clustIsValid, title, plotFile)
 
     return(clust2samps, fitWith, clustIsValid)
 

@@ -55,36 +55,46 @@ python JACNEx/s3_callCNVs.py --counts $COUNT --clusts $CLUST > callCNVs.vcf 2> s
 
 
 ### DEPENDENCIES:
-It is necessary that all the software used are present. <br>
-Samtools (tested with v1.15.1 - v1.18): <br>
+
+#### samtools
+JACNEx needs samtools (tested with v1.15.1 - v1.18), can be installed with: <br>
 ```
-wget https://github.com/samtools/samtools/releases/download/1.15.1/samtools-1.15.1.tar.bz2
-tar -vxjf samtools-1.15.1.tar.bz2
-cd samtools-1.15.1
+wget https://github.com/samtools/samtools/releases/download/1.18/samtools-1.18.tar.bz2
+tar xfvj samtools-1.18.tar.bz2
+cd samtools-1.18
 ./configure
 make all all-htslib
 ```
-It is also necessary to have python version >= 3.7 (3.6 and earlier have a bug that breaks JACNEx).
+You then need to place samtools-1.18/samtools in your $PATH (e.g. create a symlink to it in /usr/local/bin/ if you are sudoer), or pass it to JACNEx.py with --samtools= .
 
-JACNEx also requires the following python modules:<br>
-numpy scipy numba ncls matplotlib scikit-learn KDEpy<br>
-We recommend the following commands, which cleanly install all the requirements in
-a virtual environment, using the system-wide versions if available:
+#### python
+JACNEx needs python version >= 3.7 (3.6 and earlier have a bug that breaks JACNEx).
+For example on ALMA Linux 9 we use python3.12, available in the standard repos since ALMA 9.4:
 ```
-PYTHON=python3.11 ### or python3, or python, or... on ALMA9 we use python3.11
+sudo dnf install python3.12 python3.12-setuptools python3.12-numpy python3.12-scipy
+sudo dnf install python3.12-pip-wheel python3.12-setuptools-wheel python3.12-wheel-wheel
+```
+
+#### python modules
+JACNEx requires the following python modules:<br>
+_numpy scipy numba ncls matplotlib pyerf scikit-learn KDEpy_<br>
+We recommend the following commands, which cleanly install all the requirements in
+a python virtual environment, using the system-wide versions if available:
+```
+PYTHON=python3.12 ### or python3, or python, or...
 $PYTHON -m venv --system-site-packages ~/pyEnv_JACNEx
 source ~/pyEnv_JACNEx/bin/activate
 pip install --upgrade pip
-pip install numpy scipy matplotlib ncls numba scikit-learn KDEpy
+pip install numpy scipy numba ncls matplotlib pyerf scikit-learn KDEpy
 ```
-On an ALMA9 system today (12/02/2024) this uses the system-wide:<br>
-numpy-1.23.5 (from python3.11-numpy-1.23.5-1.el9.x86_64)<br>
-SciPy-1.10.1 (from python3.11-scipy-1.10.1-2.el9.x86_64)
+On an ALMA9.4 system today (28/05/2024) this uses the system-wide:<br>
+**numpy-1.24.4 scipy-1.11.1**
 
 and it installs in ~/pyEnv_JACNEx/ :<br>
-matplotlib-3.8.2<br>
-ncls-0.0.68<br>
-numba-0.59.0<br>
-scikit-learn-1.4.0<br>
-KDEpy-1.1.8<br>
+**numba-0.59.1 ncls-0.0.68 matplotlib-3.8.4 pyerf-1.0.1 scikit_learn-1.4.2 KDEpy-1.1.9**
 
+You then need to activate the venv before running JACNEx, e.g.:
+```
+$ source ~/pyEnv_JACNEx/bin/activate
+(pyEnv_JACNEx) $ python path/to/JACNEx/JACNEx.py --help
+```

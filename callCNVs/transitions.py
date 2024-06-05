@@ -1,3 +1,22 @@
+############################################################################################
+# Copyright (C) Nicolas Thierry-Mieg and Amandine Septier, 2021-2024
+#
+# This file is part of JACNEx, written by Nicolas Thierry-Mieg and Amandine Septier
+# (CNRS, France)  {Nicolas.Thierry-Mieg,Amandine.Septier}@univ-grenoble-alpes.fr
+#
+# This program is free software: you can redistribute it and/or modify it under
+# the terms of the GNU General Public License as published by the Free Software
+# Foundation, either version 3 of the License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+# without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+# See the GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along with this program.
+# If not, see <https://www.gnu.org/licenses/>.
+############################################################################################
+
+
 import logging
 import numpy
 
@@ -15,9 +34,9 @@ logger = logging.getLogger(__name__)
 # pair of called exons that are "close enough" (maxIED).
 #
 # Args:
-# - likelihoodsDict: key==sampleID, value==(ndarray[floats] dim NbExons*NbStates)
-#   holding the likelihoods of each state for each exon for this sample (no-call
-#   exons should have all likelihoods == -1)
+# - likelihoods: numpy 3D-array of floats of size nbSamples * nbExons * nbStates,
+#   likelihoods[s,e,cn] is the likehood of state cn for exon e in sample s
+#   (NOCALL exons must have all likelihoods == -1)
 # - exons: list of nbExons exons, one exon is a list [CHR, START, END, EXONID]
 # - priors (ndarray dim nbStates): prior probabilities for each state
 # - maxIED (int): max inter-exon distance for a pair of consecutive called exons
@@ -25,34 +44,39 @@ logger = logging.getLogger(__name__)
 #
 # Returns transMatrix (ndarray[floats] dim nbStates*nbStates): base transition
 # probas between states
-def buildBaseTransMatrix(likelihoodsDict, exons, priors, maxIED):
+def buildBaseTransMatrix(likelihoods, exons, priors, maxIED):
     nbStates = len(priors)
-    # count transitions between valid, close-enough exons in all samples
-    countsAllSamples = numpy.zeros((nbStates, nbStates), dtype=numpy.uint64)
+    # count transitions between valid, close-enough exons in all samples, and
+    # init counts with a pseudo-count of one (avoid issues if no counts at all),
+    #  this won't matter for haploids since their CN1 likelihoods are zero
+    countsAllSamples = numpy.ones((nbStates, nbStates), dtype=numpy.uint64)
 
-    for likelihoods in likelihoodsDict.values():
-        bestStates = (priors * likelihoods).argmax(axis=1)
-        prevChrom = ""
-        prevEnd = 0
-        prevState = 2
-        for ei in range(len(exons)):
-            # ignore NOCALL (ie all likelihoods == -1) exons
-            if likelihoods[ei, 0] < 0:
-                continue
-            else:
-                if exons[ei][0] != prevChrom:
-                    # changed chrom
-                    prevChrom = exons[ei][0]
-                elif exons[ei][1] - prevEnd <= maxIED:
-                    countsAllSamples[prevState, bestStates[ei]] += 1
-                # in all cases, update prevs
-                prevEnd = exons[ei][2]
-                prevState = bestStates[ei]
+    bestStates = (priors * likelihoods).argmax(axis=2)
+    prevChrom = ""
+    prevEnd = 0
+    prevExind = 0
+    for ei in range(len(exons)):
+        # ignore NOCALL (ie all likelihoods == -1) exons
+        if likelihoods[0, ei, 0] < 0:
+            continue
+        else:
+            if exons[ei][0] != prevChrom:
+                # changed chrom
+                prevChrom = exons[ei][0]
+            elif exons[ei][1] - prevEnd <= maxIED:
+                for si in range(likelihoods.shape[0]):
+                    countsAllSamples[bestStates[si, prevExind], bestStates[si, ei]] += 1
+            # in all cases, update prevs
+            prevEnd = exons[ei][2]
+            prevExind = ei
 
     # Normalize each row to obtain the transition matrix
-    baseTransMat = countsAllSamples.astype(numpy.float128)
+    baseTransMat = countsAllSamples.astype(numpy.float64)
     for i in range(nbStates):
-        baseTransMat[i, :] /= countsAllSamples[i, :].sum()
+        rowSum = countsAllSamples[i, :].sum()
+        if rowSum > 0:
+            baseTransMat[i, :] /= rowSum
+        # else the row is all-zeroes, nothing to do
     return(baseTransMat)
 
 

@@ -1,6 +1,24 @@
+############################################################################################
+# Copyright (C) Nicolas Thierry-Mieg and Amandine Septier, 2021-2024
+#
+# This file is part of JACNEx, written by Nicolas Thierry-Mieg and Amandine Septier
+# (CNRS, France)  {Nicolas.Thierry-Mieg,Amandine.Septier}@univ-grenoble-alpes.fr
+#
+# This program is free software: you can redistribute it and/or modify it under
+# the terms of the GNU General Public License as published by the Free Software
+# Foundation, either version 3 of the License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+# without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+# See the GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along with this program.
+# If not, see <https://www.gnu.org/licenses/>.
+############################################################################################
+
+
 import concurrent.futures
 import logging
-import ncls  # similar to interval trees but faster (https://github.com/biocore-ntnu/ncls)
 import numba  # make python faster
 import numpy
 import os
@@ -10,6 +28,10 @@ import tempfile
 
 ####### JACNEx modules
 import countFrags.bed
+
+
+# silence numba when we are in DEBUG mode
+logging.getLogger('numba').setLevel(logging.INFO)
 
 # set up logger, using inherited config
 logger = logging.getLogger(__name__)
@@ -41,28 +63,7 @@ def initExonNCLs(exons):
     if exonNCLs:
         logger.error("initExonNCLs called but exonNCLs already initialized, fix your code")
         raise Exception("initExonNCLs() called twice")
-    # for each chrom, build 3 lists with same length: starts, ends, indexes (in
-    # the complete exons list). key is the CHR
-    starts = {}
-    ends = {}
-    indexes = {}
-    for i in range(len(exons)):
-        # exons[i] is a list: CHR, START, END, EXON_ID
-        chrom = exons[i][0]
-        if chrom not in starts:
-            # first time we see chrom, initialize with empty lists
-            starts[chrom] = []
-            ends[chrom] = []
-            indexes[chrom] = []
-        # in all cases, append current values to the lists
-        starts[chrom].append(exons[i][1])
-        ends[chrom].append(exons[i][2])
-        indexes[chrom].append(i)
-
-    # populate global dictionary of NCLs, one per chromosome
-    for chrom in starts.keys():
-        ncl = ncls.NCLS(starts[chrom], ends[chrom], indexes[chrom])
-        exonNCLs[chrom] = ncl
+    exonNCLs = countFrags.bed.buildExonNCLs(exons)
 
 
 ####################################################

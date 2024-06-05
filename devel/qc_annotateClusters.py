@@ -1,3 +1,22 @@
+############################################################################################
+# Copyright (C) Nicolas Thierry-Mieg and Amandine Septier, 2021-2024
+#
+# This file is part of JACNEx, written by Nicolas Thierry-Mieg and Amandine Septier
+# (CNRS, France)  {Nicolas.Thierry-Mieg,Amandine.Septier}@univ-grenoble-alpes.fr
+#
+# This program is free software: you can redistribute it and/or modify it under
+# the terms of the GNU General Public License as published by the Free Software
+# Foundation, either version 3 of the License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+# without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+# See the GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along with this program.
+# If not, see <https://www.gnu.org/licenses/>.
+############################################################################################
+
+
 ###############################################################################################
 # Given a clusterFile produced by s2_clusterSamps.py and a metadata file in TSV format,
 # print to stdout the same clusterFile but annotated with additional columns.
@@ -103,7 +122,7 @@ def main(argv):
         logger.error("error parsing metadata file file: %s", repr(e))
         raise
     try:
-        (clust2samps, samp2clusts, fitWith, clustIsValid) = clusterSamps.clustFile.parseClustsFile(clusterFile)
+        (clust2samps, samp2clusts, fitWith, clust2gender, clustIsValid) = clusterSamps.clustFile.parseClustsFile(clusterFile)
     except Exception as e:
         logger.error("error parsing clusterFile: %s", repr(e))
         raise
@@ -150,12 +169,16 @@ def main(argv):
 
     for clusterID in sorted(clust2samps.keys()):
         toPrint = clusterID + "\t"
-        toPrint += ','.join(sorted(clust2samps[clusterID])) + "\t"
         toPrint += ','.join(sorted(fitWith[clusterID])) + "\t"
+        if clusterID in clust2gender:
+            toPrint += clust2gender[clusterID] + "\t"
+        else:
+            toPrint += "\t"
         if clustIsValid[clusterID]:
             toPrint += "1\t"
         else:
             toPrint += "0\t"
+        toPrint += ','.join(sorted(clust2samps[clusterID])) + "\t"
 
         toPrint += str(len(clust2batches[clusterID].keys())) + "\t"
         for b in sorted(clust2batches[clusterID].keys()):

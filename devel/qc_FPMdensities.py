@@ -1,3 +1,22 @@
+############################################################################################
+# Copyright (C) Nicolas Thierry-Mieg and Amandine Septier, 2021-2024
+#
+# This file is part of JACNEx, written by Nicolas Thierry-Mieg and Amandine Septier
+# (CNRS, France)  {Nicolas.Thierry-Mieg,Amandine.Septier}@univ-grenoble-alpes.fr
+#
+# This program is free software: you can redistribute it and/or modify it under
+# the terms of the GNU General Public License as published by the Free Software
+# Foundation, either version 3 of the License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+# without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+# See the GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along with this program.
+# If not, see <https://www.gnu.org/licenses/>.
+############################################################################################
+
+
 ###########################################################################
 # Given a countsFile made by s1_countFrags.py, produce density plots of the
 # FPMs for each sample, and identify any atypical "QC-failing" samples.
@@ -13,7 +32,7 @@ import sys
 
 ####### JACNEx modules
 import countFrags.countsFile
-import figures.plots
+import devel.plots
 
 # set up logger, using inherited config, in case we get called as a module
 logger = logging.getLogger(__name__)
@@ -226,7 +245,7 @@ def SampsQC(counts, samples, plotFilePass, plotFileFail, minLow2high=0.2, testBW
         title = samples[sampleIndex] + " density of exon FPMs"
         # max range on Y axis for visualization, 3*ymax should be fine
         ylim = 3 * ymax
-        figures.plots.plotDensities(title, dataRanges, densities, legends, xmin, xmax, line1legend, line2legend, ylim, pdf)
+        devel.plots.plotDensities(title, dataRanges, densities, legends, xmin, xmax, line1legend, line2legend, ylim, pdf)
 
     # close PDFs
     pdfPass.close()

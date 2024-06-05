@@ -1,34 +1,52 @@
+############################################################################################
+# Copyright (C) Nicolas Thierry-Mieg and Amandine Septier, 2021-2024
+#
+# This file is part of JACNEx, written by Nicolas Thierry-Mieg and Amandine Septier
+# (CNRS, France)  {Nicolas.Thierry-Mieg,Amandine.Septier}@univ-grenoble-alpes.fr
+#
+# This program is free software: you can redistribute it and/or modify it under
+# the terms of the GNU General Public License as published by the Free Software
+# Foundation, either version 3 of the License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+# without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+# See the GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along with this program.
+# If not, see <https://www.gnu.org/licenses/>.
+############################################################################################
+
+
 ###############################################################################################
 ######################## JACNEx step 3: exon filtering and calling ############################
 ###############################################################################################
-# Given a TSV of exon fragment counts produced by 1_countFrags.py
-# and a TSV with clustering information produced by 2_clusterSamps.py:
-# It operates as the third step in the CNV analysis pipeline, emphasizing exon filtering and CNV calling.
+# Given fragment counts produced by 1_countFrags.py and clusters of samples produced by
+# 2_clusterSamps.py, call CNVs.
 # See usage for details.
 ###############################################################################################
 import getopt
+import glob
+import gzip
 import logging
 import numpy
 import os
+import shutil
 import sys
 import time
 
 ####### JACNEx modules
-import countFrags.countsFile
 import countFrags.bed
+import countFrags.countsFile
 import clusterSamps.clustFile
-import callCNVs.exonProfiling
-import callCNVs.rescaling
-import callCNVs.priors
-import callCNVs.likelihoods
-import callCNVs.transitions
-import callCNVs.callCNVs
 import callCNVs.callsFile
+import callCNVs.likelihoods
+import callCNVs.priors
+import callCNVs.transitions
+import callCNVs.viterbi
+import figures.plotExons
 
 # set up logger, using inherited config, in case we get called as a module
 logger = logging.getLogger(__name__)
-# override inherited level (when working on step 3)
-logger.setLevel(logging.DEBUG)
 
 
 ###############################################################################
@@ -46,49 +64,55 @@ def parseArgs(argv):
     # mandatory args
     countsFile = ""
     clustsFile = ""
-    outFile = ""
+    outDir = ""
     madeBy = ""
     # optional args with default values
+    minGQ = 2.0
     padding = 10
-    transMatrixCutoff = 90
-    plotDir = "./plotDir/"
+    regionsToPlot = ""
+    plotDir = ""
     # jobs default: 80% of available cores
     jobs = round(0.8 * len(os.sched_getaffinity(0)))
 
     usage = "NAME:\n" + scriptName + """\n
 DESCRIPTION:
-Accepts exon fragment count data (from 1_countFrags.py) and sample clustering information
-(from 2_clusterSamps.py) as input.
-Performs several critical operations:
-    a) Determines parameters for CN0 (half Gaussian) and CN2 (Gaussian) distributions for
-       autosomal and gonosomal exons.
-    b) Excludes non-interpretable exons based on set criteria.
-    c) Calculates likelihoods for each CN state across exons and samples.
-    d) Generates a transition matrix for CN state changes.
-    e) Applies a Hidden Markov Model (HMM) to call and group CNVs.
-    f) Outputs the CNV calls in VCF format.
-The script utilizes multiprocessing for efficient computation and is structured to handle
-errors and exceptions effectively, providing clear error messages for troubleshooting.
-In addition, pie chart summarising exon filtering are produced as pdf files in plotDir.
+Given fragment counts (from s1_countFrags.py) and clusters (from s2_clusterSamps.py),
+call CNVs and print results as gzipped VCF files in --outDir.
+The method consists in constructing an HMM whose parameters are fitted in a data-driven
+manner for each cluster. It comprises the following steps:
+    - fit CN0 model (half-Gaussian) for all exons, using intergenic pseudo-exon FPMs;
+    - fit CN2 model (Gaussian) for each exon using all samples in cluster (including
+    FITWITHs); the CN1 (normal) and CN3+ (logNormal) models are then parameterized
+    based on the CN2 fitted parameters;
+    - apply QC criteria to identify and exclude non-interpretable (NOCALL) exons;
+    - calculate likelihoods for each CN state in each sample+exon;
+    - estimate prior probabilities for each state;
+    - build a matrix of base transition probabilities - the actual exon-specific transition
+    probabilities will be smoothed following a power law depending on the inter-exon distance,
+    from these base transition probabilities to the prior probabilities;
+    - apply the Viterbi algorithm to identify the most likely path (in the CN states), and
+    finally call the CNVs.
+In addition, plots of FPMs and CN0-CN3+ models for specified samples+exons (if any) are
+produced in plotDir.
 
 ARGUMENTS:
-    --counts [str]: TSV file, first 4 columns hold the exon definitions, subsequent columns
-                    hold the fragment counts. File obtained from 1_countFrags.py.
-    --clusts [str]: TSV file, contains 4 columns hold the sample cluster definitions.
-                    [CLUSTER_ID, SAMPLES, FIT_WITH, VALID]. File obtained from 2_clusterSamps.py.
-    --out [str]: file where results will be saved, must not pre-exist, will be gzipped if it ends
-                 with '.gz', can have a path component but the subdir must exist.
+    --counts [str]: NPZ file with the fragment counts, as produced by s1_countFrags.py
+    --clusters [str]: TSV file with the cluster definitions, as produced by s2_clusterSamps.py
+    --outDir [str]: subdir where VCF files will be created (one vcf.gz per cluster); the subdir
+                must exist, pre-existing VCFs will be renamed *_old.vcf.gz, pre-existing
+                *old* files will be squashed
+    --minGQ [float]: minimum Genotype Quality score, default : """ + str(minGQ) + """
     --madeBy [str]: program name + version to print as "source=" in the produced VCF.
-    --padding [int] : number of bps used to pad the exon coordinates, default : """ + str(padding) + """
-    --transMatrixCutoff [int]: inter-exon percentile threshold for initializing the transition matrix,
-                               default : """ + str(transMatrixCutoff) + """
-    --plotDir [str]: subdir (created if needed) where plot files will be produced, default:  """ + plotDir + """
+    --padding [int]: number of bps used to pad the exon coordinates, default : """ + str(padding) + """
+    --regionsToPlot [str, optional]: comma-separated list of sampleID:chr:start-end for which exon-profile
+               plots will be produced, eg "grex003:chr2:270000-290000,grex007:chrX:620000-660000"
+    --plotDir [str]: subdir (created if needed) where exon-profile plots will be produced
     --jobs [int]: cores that we can use, defaults to 80% of available cores ie """ + str(jobs) + "\n" + """
     -h , --help: display this help and exit\n"""
 
     try:
-        opts, args = getopt.gnu_getopt(argv[1:], 'h', ["help", "counts=", "clusts=", "out=", "madeBy=",
-                                                       "padding=", "transMatrixCutoff=", "plotDir=", "jobs="])
+        opts, args = getopt.gnu_getopt(argv[1:], 'h', ["help", "counts=", "clusters=", "outDir=", "minGQ=",
+                                                       "madeBy=", "padding=", "regionsToPlot=", "plotDir=", "jobs="])
     except getopt.GetoptError as e:
         raise Exception(e.msg + ". Try " + scriptName + " --help")
     if len(args) != 0:
@@ -100,16 +124,18 @@ ARGUMENTS:
             sys.exit(0)
         elif (opt in ("--counts")):
             countsFile = value
-        elif (opt in ("--clusts")):
+        elif (opt in ("--clusters")):
             clustsFile = value
-        elif opt in ("--out"):
-            outFile = value
+        elif opt in ("--outDir"):
+            outDir = value
+        elif opt in ("--minGQ"):
+            minGQ = value
         elif opt in ("--madeBy"):
             madeBy = value
         elif opt in ("--padding"):
             padding = value
-        elif opt in ("--transMatrixCutoff"):
-            transMatrixCutoff = value
+        elif (opt in ("--regionsToPlot")):
+            regionsToPlot = value
         elif (opt in ("--plotDir")):
             plotDir = value
         elif opt in ("--jobs"):
@@ -125,22 +151,27 @@ ARGUMENTS:
         raise Exception("countsFile " + countsFile + " doesn't exist.")
 
     if clustsFile == "":
-        raise Exception("you must provide a clustering results file use --clusts. Try " + scriptName + " --help.")
+        raise Exception("you must provide a clustering results file with --clusters. Try " + scriptName + " --help.")
     elif (not os.path.isfile(clustsFile)):
         raise Exception("clustsFile " + clustsFile + " doesn't exist.")
 
-    if outFile == "":
-        raise Exception("you must provide an outFile with --out. Try " + scriptName + " --help")
-    elif os.path.exists(outFile):
-        raise Exception("outFile " + outFile + " already exists")
-    elif (os.path.dirname(outFile) != '') and (not os.path.isdir(os.path.dirname(outFile))):
-        raise Exception("the directory where outFile " + outFile + " should be created doesn't exist")
+    if outDir == "":
+        raise Exception("you must provide an outDir with --outDir. Try " + scriptName + " --help")
+    elif (not os.path.isdir(outDir)):
+        raise Exception("outDir " + outDir + " doesn't exist")
 
     if madeBy == "":
         raise Exception("you must provide a madeBy string with --madeBy. Try " + scriptName + " --help")
 
     #####################################################
     # Check other args
+    try:
+        minGQ = float(minGQ)
+        if (minGQ <= 0):
+            raise Exception()
+    except Exception:
+        raise Exception("minGQ must be a positive number, not " + str(minGQ))
+
     try:
         padding = int(padding)
         if (padding < 0):
@@ -149,35 +180,32 @@ ARGUMENTS:
         raise Exception("padding must be a non-negative integer, not " + str(padding))
 
     try:
-        transMatrixCutoff = int(transMatrixCutoff)
-        if (transMatrixCutoff < 10):
-            raise Exception()
-        elif (transMatrixCutoff < 50):
-            logger.warning("transMatrixCutoff smaller than 50 may be insufficient?")
-    except Exception:
-        raise Exception("transMatrixCutoff must be greater than 10, not " + str(transMatrixCutoff))
-
-    # test plotdir last so we don't mkdir unless all other args are OK
-    if not os.path.isdir(plotDir):
-        try:
-            os.mkdir(plotDir)
-        except Exception as e:
-            raise Exception("plotDir " + plotDir + " doesn't exist and can't be mkdir'd: " + str(e))
-
-    try:
         jobs = int(jobs)
         if (jobs <= 0):
             raise Exception()
     except Exception:
         raise Exception("jobs must be a positive integer, not " + str(jobs))
 
+    if regionsToPlot != "" and plotDir == "":
+        raise Exception("you cannot provide --regionsToPlot without --plotDir")
+    elif regionsToPlot == "" and plotDir != "":
+        raise Exception("you cannot provide --plotDir without --regionsToPlot")
+    elif regionsToPlot != "":
+        # regionsToPlot: basic syntax check, discarding results;
+        # if check fails, it raises an exception that just propagates to caller
+        figures.plotExons.checkRegionsToPlot(regionsToPlot)
+
+        # test plotdir last so we don't mkdir unless all other args are OK
+        if not os.path.isdir(plotDir):
+            try:
+                os.mkdir(plotDir)
+            except Exception as e:
+                raise Exception("plotDir " + plotDir + " doesn't exist and can't be mkdir'd: " + str(e))
+
     # AOK, return everything that's needed
-    return (countsFile, clustsFile, outFile, padding, transMatrixCutoff, plotDir, jobs, madeBy)
+    return (countsFile, clustsFile, outDir, minGQ, padding, regionsToPlot, plotDir, jobs, madeBy)
 
 
-###############################################################################
-############################ PUBLIC FUNCTIONS #################################
-###############################################################################
 ####################################################
 # main function
 # Arg: list of strings, eg sys.argv
@@ -185,11 +213,11 @@ ARGUMENTS:
 # may be available in the log
 def main(argv):
     # parse, check and preprocess arguments
-    (countsFile, clustsFile, outFile, padding, pDist, plotDir, jobs, madeBy) = parseArgs(argv)
+    (countsFile, clustsFile, outDir, minGQ, padding, regionsToPlot, plotDir, jobs, madeBy) = parseArgs(argv)
 
     # args seem OK, start working
     logger.debug("called with: " + " ".join(argv[1:]))
-    logger.info("starting to work")
+    logger.debug("starting to work")
     startTime = time.time()
 
     ###################
@@ -211,192 +239,302 @@ def main(argv):
     # - clust2samps: cluster to samples mapping,
     # - samp2clusts: sample to clusters mapping,
     # - fitWith: cluster to similar clusters mapping,
+    # - clust2gender: cluster gender (if gonosome),
     # - clustIsValid: cluster validity status.
     try:
-        (clust2samps, samp2clusts, fitWith, clustIsValid) = clusterSamps.clustFile.parseClustsFile(clustsFile)
+        (clust2samps, samp2clusts, fitWith, clust2gender, clustIsValid) = clusterSamps.clustFile.parseClustsFile(clustsFile)
     except Exception as e:
         raise Exception("parseClustsFile failed for %s : %s", clustsFile, repr(e))
 
     thisTime = time.time()
-    logger.debug("Done parseClustsFile, in %.2f s", thisTime - startTime)
+    logger.info("Done parseClustsFile, in %.2f s", thisTime - startTime)
     startTime = thisTime
+
+    clust2regions = figures.plotExons.preprocessRegionsToPlot(regionsToPlot, autosomeExons, gonosomeExons,
+                                                              samp2clusts, clustIsValid)
 
     ###################
-    # calculate metrics for building and adjusting the transition matrix.
-    # These will be used later, but we calculate them now because they are
-    # cluster-independant.
-    allExons = autosomeExons.copy()
-    allExons.extend(gonosomeExons)
-    (baseTransMatMaxIED, adjustTransMatDMax) = countFrags.bed.getInterExonDistCutoffs(allExons)
+    # house-keeping of pre-existing VCFs, and prepare for possible re-use
 
-    ####################
-    # Exon profiling:
-    # To assign specific CN profiles to each exon, applies continuous statistical distributions
-    # to approximate CN profiles for each sample cluster and individual exon.
+    # clust2vcf: key = clusterID, value = name of VCF file to create
+    clust2vcf = {}
+    for clustID in clust2samps.keys():
+        clust2vcf[clustID] = outDir + '/CNVs_' + clustID + '.vcf.gz'
 
-    # For the CN0 profile (homodeletion represented by uncaptured exon), the script uses data from
-    # intergenic pseudo-exons.
-    # Calculates key parameters of the best-fit half-Gaussian distribution for CN0 profiles
-    # from 111 tested continuous distributions (scipy.stats.rv_continuous).
-    # Determines a threshold (uncaptThreshold) to identify exons that are not captured
-    # in the sequencing process, distinguishing them from captured exons.
-    try:
-        (hnorm_loc, hnorm_scale, uncaptThreshold) = callCNVs.exonProfiling.calcCN0Params(intergenicFPMs)
-    except Exception as e:
-        raise Exception("calcCN0Params failed: %s", repr(e))
+    clusterFound = checkPrevVCFs(outDir, clust2vcf, clust2samps, fitWith, clustIsValid)
 
-    thisTime = time.time()
-    logger.debug("Done calcCN0Params, loc=%.2f, scale=%.2f, uncaptThreshold=%.2f in %.2f s",
-                 hnorm_loc, hnorm_scale, uncaptThreshold, thisTime - startTime)
-    startTime = thisTime
+    ###################
+    # call CNVs independently for each valid cluster
+    for clusterID in sorted(clust2samps.keys()):
+        if not clustIsValid[clusterID]:
+            logger.info("cluster %s is INVALID, skipping it", clusterID)
+            continue
+        elif clusterID in clusterFound:
+            # already logged (with copied filename) in checkPrevVCFs()
+            continue
 
-    # For the CN2 profile, performs robust fitting of a Gaussian distribution to determine
-    # the CN2 profile, representing the normal or diploid state of exons.
-    # Focuses on capturing the predominant signal, filtering out noise or less significant data.
-    # Implements a distinct approach for autosomes and gonosomes to enhance accuracy.
-    # Specific clusters and corresponding FPM data are used for each, accounting for the
-    # unique characteristics of autosomal and gonosomal exons.
-    # Calculates parameters for the Gaussian distribution representing CN2 profiles for each cluster.
-    # The CN1 (single copy loss) and CN3+ (copy gain) profiles are deduced from the parameters
-    # of the Gaussian distribution established for CN2. Based on the assumption that CN1 and
-    # CN3 represent deviations from the CN2 state.
-    try:
-        (CN2Params_A, CN2Params_G) = callCNVs.exonProfiling.calcCN2Params(autosomeFPMs, gonosomeFPMs, samples,
-                                                                          uncaptThreshold, clust2samps, fitWith,
-                                                                          clustIsValid, plotDir, jobs)
-    except Exception as e:
-        raise Exception("calcCN2Params failed: %s", repr(e))
+        # samplesInClust: temp dict, key==sampleID, value==1 if sample is in cluster
+        # clusterID and value==2 if sample is in a FITWITH cluster for clusterID
+        samplesInClust = {}
+        for s in clust2samps[clusterID]:
+            samplesInClust[s] = 1
+        for fw in fitWith[clusterID]:
+            for s in clust2samps[fw]:
+                samplesInClust[s] = 2
+        # OK we know how many samples are in clusterID + FITWITHs ->
+        # sampleIndexes: 1D-array of nbSOIs+nbFWs ints: indexes (in samples) of
+        # the sampleIDs that belong to clusterID or its FITWITHs.
+        # Init to len(samples) for sanity-checking
+        sampleIndexes = numpy.full(len(samplesInClust.keys()), len(samples), dtype=int)
+        # samplesOfInterest: 1D-array of nbSOIs+nbFWs bools, True of sample is an SOI
+        # and False if it's a FITWITH
+        samplesOfInterest = numpy.ones(len(samplesInClust.keys()), dtype=bool)
+        # clustSamples: list of sampleIDs in this cluster (not its FITWITHs), in the
+        # same order as in samples
+        clustSamples = []
+        siInClust = 0
+        for si in range(len(samples)):
+            thisSample = samples[si]
+            if thisSample in samplesInClust:
+                sampleIndexes[siInClust] = si
+                if samplesInClust[thisSample] == 1:
+                    clustSamples.append(thisSample)
+                else:
+                    samplesOfInterest[siInClust] = False
+                siInClust += 1
 
-    thisTime = time.time()
-    logger.debug("Done calcCN2Params in %.2f s", thisTime - startTime)
-    startTime = thisTime
+        # extract FPMs for the samples in cluster+FitWith (this actually makes a copy)
+        clustIntergenicFPMs = intergenicFPMs[:, sampleIndexes]
 
-    ####################
-    # Rescaling:
-    # Rescaling FPMs ensure consistency across samples.
-    # FPM values can vary due to factors like sequencing depth, necessitating rescaling for comparability.
-    # Additionally, rescaling is crucial for adjusting parameters of probability distributions,
-    # like the standard deviation of the half-normal distribution and standard deviation of the main normal distribution.
-    # This adjustment ensures that statistical assumptions remain valid and models accurately reflect
-    # data characteristics, enhancing the accuracy of subsequent analyses.
-    # dictionaries params_A and params_G follow the same format as CN2Params but contain different data
-    # [stdCN2/meanCN2, stdCN0/meanCN2].
-    # The arrays FPMsrescal_A and FPMsrescal_G have the same dimensions as the original arrays autosomeFPMs and gonosomeFPMs,
-    # respectively.
-    try:
-        (params_A, params_G, FPMsrescal_A, FPMsrescal_G) = callCNVs.rescaling.rescaleClusterFPMAndParams(autosomeFPMs, gonosomeFPMs,
-                                                                                                         CN2Params_A, CN2Params_G,
-                                                                                                         hnorm_scale, samples,
-                                                                                                         clust2samps, fitWith,
-                                                                                                         clustIsValid)
-    except Exception as e:
-        raise Exception("rescaleClusterFPMAndParams failed: %s", repr(e))
-
-    thisTime = time.time()
-    logger.debug("Done rescaleClusterFPMAndParams in %.2f s", thisTime - startTime)
-    startTime = thisTime
-
-    ########################
-    # Build HMM input datas:
-    # determines copy states (e.g., diploid, deletion, duplication) for each genome region and sample
-    # based on probabilistic data and state transitions, enabling the detection of significant genomic variations.
-
-    # - States to be emitted by the HMM corresponding to different types of copy numbers.
-    CNStates = ["CN0", "CN1", "CN2", "CN3"]
-
-    ####################
-    # - Calculates the likelihoods for each sample in a genomic dataset,
-    # considering both autosomal and gonosomal data. It uses FPM data.
-    # The function applies continuous distribution parameters (specifically designed to
-    # describe the CN profile for each exon) to compute the likelihoods. These likelihoods
-    # are essentially Pseudo Emission Probabilities, at the exon level in different samples.
-    # The calculation is performed in parallel for efficiency, handling autosomes and gonosomes separately.
-    try:
-        (likelihoods_A, likelihoods_G) = callCNVs.likelihoods.calcLikelihoods(samples, FPMsrescal_A, FPMsrescal_G,
-                                                                              clust2samps, clustIsValid, params_A,
-                                                                              params_G, CNStates, jobs)
-    except Exception as e:
-        raise Exception("calcLikelihoods failed: %s", repr(e))
-
-    thisTime = time.time()
-    logger.debug("Done calcLikelihoods in %.2f s", thisTime - startTime)
-    startTime = thisTime
-
-    # temp trick for comparing with AS implem: merge auto and gono likelihoodDicts, stacking the
-    # gonosome likelihoods below thed autosome likelihoods for each sample
-    likelihoodsDict = {}
-    for s in likelihoods_A.keys():
-        if s in likelihoods_G:
-            likelihoodsDict[s] = numpy.vstack((likelihoods_A[s], likelihoods_G[s]))
+        if clusterID.startswith("A_"):
+            clustExonFPMs = autosomeFPMs[:, sampleIndexes]
+            clustExons = autosomeExons
         else:
-            likelihoodsDict[s] = numpy.vstack((likelihoods_A[s],
-                                               numpy.full((len(gonosomeExons), len(CNStates)), -1)))
+            clustExonFPMs = gonosomeFPMs[:, sampleIndexes]
+            clustExons = gonosomeExons
 
-    #########
-    # Obtain priors probabilities using likelihood data for each CN.
-    # The process follows Bayesian principles, which involve updating prior probabilities based on observed data.
-    # This ensures that the estimation of prior probabilities aligns with the evidence provided by likelihood
-    # data for each CN.
-    # Bayesian theory provides a robust framework for this adjustment, facilitating convergence between
-    # previous and current priors.
-    try:
-        priors = callCNVs.priors.calcPriors(likelihoodsDict, jobs)
-    except Exception as e:
-        raise Exception("calcPriors failed: %s", repr(e))
+        # for plotting we actually need exonsToPlot:
+        # key==exonIndex, value==list of lists[sampleIndex, sampleID]
+        exonsToPlot = {}
+        if clusterID in clust2regions:
+            for si in range(len(clustSamples)):
+                thisSample = clustSamples[si]
+                if thisSample in clust2regions[clusterID]:
+                    for thisExon in clust2regions[clusterID][thisSample]:
+                        if thisExon not in exonsToPlot:
+                            exonsToPlot[thisExon] = []
+                        exonsToPlot[thisExon].append([si, thisSample])
 
-    formatted_priors = "  ".join(["%.2e" % x for x in priors])
-    logger.info("Calculated priors: %s", formatted_priors)
-    thisTime = time.time()
-    logger.debug("Done calcPriors in %.2f s", thisTime - startTime)
-    startTime = thisTime
+        # by default, assume samples from this cluster are diploid for the chroms
+        # that carry the clustExons
+        isHaploid = False
+        if (clusterID in clust2gender) and (clust2gender[clusterID] == 'M'):
+            # Male => samples are haploid for for the sex chroms
+            isHaploid = True
+            # Females are diploid for chrX and don't have any chrY => NOOP
 
-    #########
-    # - generates a transition matrix for CN states from likelihood data,
-    # and computes CN probabilities for both autosomal and gonosomal samples.
-    # The function adds an 'init' state to the transition matrix, improving its use
-    # in Hidden Markov Models (HMMs).
-    # The resulting 'transMatrix' is a 2D numpy array. dim =(nbOfCNStates) * (nbOfCNStates)
-    try:
-        transMatrix = callCNVs.transitions.buildBaseTransMatrix(likelihoodsDict, allExons,
-                                                                priors, baseTransMatMaxIED)
-    except Exception as e:
-        raise Exception("buildBaseTransMatrix failed: %s", repr(e))
+        callCNVsOneCluster(clustExonFPMs, clustIntergenicFPMs, samplesOfInterest, clustSamples,
+                           clustExons, exonsToPlot, plotDir, clusterID, isHaploid, minGQ,
+                           clust2vcf[clusterID], padding, madeBy, jobs)
 
     thisTime = time.time()
-    logger.debug("Done buildBaseTransMatrix, in %.2fs", thisTime - startTime)
-    startTime = thisTime
+    logger.info("all clusters done,  in %.1fs", thisTime - startTime)
 
-    ######## DEBUG PRINT
-    formatted_matrix = "\n".join(["\t".join([f"{cell:.2e}" for cell in row]) for row in transMatrix])
-    logger.debug("Transition Matrix:\n%s", formatted_matrix)
-    ########
 
-    #########
-    # Application of the HMM using the Viterbi algorithm. (calling step)
-    # processes both autosomal and gonosomal exon data for a set of samples, yielding
-    # a list of CNVs for each category. Each CNV is detailed with information including
-    # CNV type, start and end positions of the affected exons, the event quality score,
-    # and the sample ID.
-    try:
-        CNVs = callCNVs.callCNVs.callAllCNVs(likelihoodsDict, allExons, transMatrix,
-                                             priors, adjustTransMatDMax, jobs)
-    except Exception as e:
-        raise Exception("callAllCNVs() failed: %s", repr(e))
+###############################################################################
+########################### PRIVATE FUNCTIONS #################################
+###############################################################################
+####################################################
+# callCNVsOneCluster:
+# call CNVs for each sample in one cluster. Results are produced as a single
+# VCF file for the cluster.
+#
+# Args:
+# - exonFPMs: 2D-array of floats of size nbExons * nbSamples, FPMs[e,s] is the FPM
+#   count for exon e in sample s (includes samples in FITWITH clusters, these are
+#   used for fitting the CN2)
+# - intergenicFPMs: 2D-array of floats of size nbIntergenics * nbSamples,
+#   intergenicFPMs[i,s] is the FPM count for intergenic pseudo-exon i in sample s
+# - samplesOfInterest: 1D-array of bools of size nbSamples, value==True iff the sample
+#   is in the cluster of interest (vs being in a FITWITH cluster)
+# - sampleIDs: list of nbSOIs sampleIDs (==strings), must be in the same order
+#   as the corresponding samplesOfInterest columns in exonFPMs
+# - exons: list of nbExons exons, one exon is a list [CHR, START, END, EXONID]
+# - exonsToPlot: Dict with key==exonIndex, value==list of lists[sampleIndex, sampleID] for
+#   which we need to plot the FPMs and CN0-CN3+ models
+# - plotDir: subdir where plots will be created (if any)
+# - clusterID: string, for logging
+# - isHaploid: bool, if True this cluster of samples is assumed to be haploid
+#   for all chromosomes where the exons are located (eg chrX and chrY in men)
+# - minGQ: float, minimum Genotype Quality (GQ)
+# - vcfFile: name of VCF file to create
+# - padding, madeBy: for printCallsFile
+# - jobs: number of jobs for the parallelized steps (currently viterbiAllSamples())
+#
+# Produce vcfFile, return nothing.
+def callCNVsOneCluster(exonFPMs, intergenicFPMs, samplesOfInterest, sampleIDs, exons,
+                       exonsToPlot, plotDir, clusterID, isHaploid, minGQ, vcfFile,
+                       padding, madeBy, jobs):
+    logger.info("cluster %s - starting to work", clusterID)
+    startTime = time.time()
+    startTimeCluster = startTime
 
+    # fit CN0 model using intergenic pseudo-exon FPMs for all samples (including
+    # FITWITHs).
+    # Currently CN0 is modeled with a half-normal distribution (parameter: CN0sigma).
+    # Also returns fpmCn0, an FPM value up to which data looks like it (probably) comes
+    # from CN0. This will be useful later for identifying NOCALL exons.
+    (CN0sigma, fpmCn0) = callCNVs.likelihoods.fitCNO(intergenicFPMs)
     thisTime = time.time()
-    logger.debug("Done callAllCNVs() in %.2f s", thisTime - startTime)
+    logger.debug("cluster %s - done fitCN0 -> CN0sigma=%.2f fpmCn0=%.2f, in %.1fs",
+                 clusterID, CN0sigma, fpmCn0, thisTime - startTime)
     startTime = thisTime
 
-    #########
-    # VCF printing
-    try:
-        callCNVs.callsFile.printCallsFile(CNVs, allExons, samples, padding, outFile, madeBy)
-    except Exception as e:
-        raise Exception("printCallsFile failed: %s", repr(e))
-
+    # fit CN2 model for each exon using all samples in cluster (including FITWITHs)
+    (Ecodes, CN2means, CN2sigmas) = callCNVs.likelihoods.fitCN2(exonFPMs, clusterID, fpmCn0, isHaploid)
     thisTime = time.time()
-    logger.debug("Done printCallsFile in %.2f s", thisTime - startTime)
+    logger.debug("cluster %s - done fitCN2 in %.1fs", clusterID, thisTime - startTime)
     startTime = thisTime
+
+    # log stats with the percentages of exons in each QC class
+    logExonStats(Ecodes, clusterID)
+
+    # we only want to calculate likelihoods for the samples of interest (not the FITWITHs)
+    # => create a view with all FPMs, then squash with the FPMs of SOIs if needed
+    FPMsSOIs = exonFPMs
+    if exonFPMs.shape[1] != samplesOfInterest.sum():
+        FPMsSOIs = exonFPMs[:, samplesOfInterest]
+
+    # use the fitted models to calculate likelihoods for all exons in all SOIs
+    likelihoods = callCNVs.likelihoods.calcLikelihoods(FPMsSOIs, CN0sigma, Ecodes,
+                                                       CN2means, CN2sigmas, isHaploid, False)
+    thisTime = time.time()
+    logger.debug("cluster %s - done calcLikelihoods in %.1fs", clusterID, thisTime - startTime)
+    startTime = thisTime
+
+    # plot exonsToPlot if any
+    figures.plotExons.plotExons(exons, exonsToPlot, Ecodes, FPMsSOIs, isHaploid,
+                                CN0sigma, CN2means, CN2sigmas, fpmCn0, clusterID, plotDir)
+
+    # calculate priors (maxing the posterior probas iteratively until convergence)
+    priors = callCNVs.priors.calcPriors(likelihoods)
+    formattedPriors = "  ".join(["%.2e" % x for x in priors])
+    logger.debug("cluster %s - priors = %s", clusterID, formattedPriors)
+    thisTime = time.time()
+    logger.debug("cluster %s - done calcPriors in %.1fs", clusterID, thisTime - startTime)
+    startTime = thisTime
+
+    # calculate metrics for building and adjusting the transition matrix, ignoring
+    # NOCALL exons
+    (baseTransMatMaxIED, adjustTransMatDMax) = countFrags.bed.calcIEDCutoffs(exons, Ecodes)
+
+    # build matrix of base transition probas
+    transMatrix = callCNVs.transitions.buildBaseTransMatrix(likelihoods, exons, priors, baseTransMatMaxIED)
+    formattedMatrix = "\n\t".join(["\t".join([f"{cell:.2e}" for cell in row]) for row in transMatrix])
+    logger.debug("cluster %s - base transition matrix =\n\t%s", clusterID, formattedMatrix)
+    thisTime = time.time()
+    logger.debug("cluster %s - done buildBaseTransMatrix in %.1fs", clusterID, thisTime - startTime)
+    startTime = thisTime
+
+    # call CNVs with the Viterbi algorithm
+    CNVs = callCNVs.viterbi.viterbiAllSamples(likelihoods, sampleIDs, exons, transMatrix,
+                                              priors, adjustTransMatDMax, minGQ, jobs)
+    thisTime = time.time()
+    logger.debug("cluster %s - done viterbiAllSamples in %.1fs", clusterID, thisTime - startTime)
+
+    # set CN2means of NOCALL exons to 0
+    CN2means[Ecodes < 0] = 0
+
+    # print CNVs for this cluster as a VCF file
+    callCNVs.callsFile.printCallsFile(vcfFile, CNVs, FPMsSOIs, CN2means, exons, sampleIDs,
+                                      padding, madeBy)
+
+    logger.info("cluster %s - all done, total time: %.1fs", clusterID, thisTime - startTimeCluster)
+    return()
+
+
+####################################################
+# logExonStats:
+# log stats with the percentages of exons in each QC class
+def logExonStats(Ecodes, clusterID):
+    # log exon statuses (as percentages)
+    totalCnt = Ecodes.shape[0]
+    # statusCnt: number of exons that passed (statusCnt[1]), semi-passed (statusCnt[0]), or
+    # failed (statusCnt[2..5]) the QC criteria
+    statusCnt = numpy.zeros(6, dtype=float)
+    for s in range(6):
+        statusCnt[s] = numpy.count_nonzero(Ecodes == 1 - s)
+    statusCnt *= (100 / totalCnt)
+    toPrint = "exon QC summary for cluster " + clusterID + ":\n\t"
+    toPrint += "%.1f%% CALLED, %.1f%% CALLED-WITHOUT-CN1, " % (statusCnt[1], statusCnt[0])
+    toPrint += "%.1f%% NOT-CAPTURED, %.1f%% FIT-CN2-FAILED, " % (statusCnt[2], statusCnt[3])
+    toPrint += "%.1f%% CN2-LOW-SUPPORT, %.1f%% CN0-TOO-CLOSE" % (statusCnt[4], statusCnt[5])
+    logger.info("%s", toPrint)
+
+
+####################################################
+# house-keeping of pre-existing VCFs, and check them for possible re-use:
+# - remove pre-existing *old VCFs
+# - rename pre-existing prev VCFs as *old
+# - for each (new) cluster, if its samples exactly match those in a prev VCF and
+#   its FITWITH clusters (if any) are also in that situation, simply copy the
+#   prev VCF as newVCF and set clusterFound[clusterID] = True
+#
+# Returns: clusterFound, key==clusterID, value==True if a match was found and a
+# prev file was copied
+def checkPrevVCFs(outDir, clust2vcf, clust2samps, fitWith, clustIsValid):
+    # remove *old files
+    try:
+        for oldFile in glob.glob(outDir + '/CNVs_*_old.vcf.gz'):
+            os.unlink(oldFile)
+    except Exception as e:
+        raise Exception("cannot unlink old VCF file in %s : %s", outDir, repr(e))
+    # rename prev VCFs as *old
+    try:
+        for prevFile in glob.glob(outDir + '/CNVs_*.vcf.gz'):
+            newName = prevFile.replace('.vcf.gz', '_old.vcf.gz')
+            os.rename(prevFile, newName)
+    except Exception as e:
+        raise Exception("cannot rename prev VCF file as *old: %s", repr(e))
+    # populate clust2prev: key = custerID, value = prev VCF file whose samples exactly
+    # match those of clusterID (ignoring fitWiths for now)
+    clust2prev = {}
+    for prevFile in glob.glob(outDir + '/CNVs_*_old.vcf.gz'):
+        prevFH = gzip.open(prevFile, "rt")
+        for line in prevFH:
+            if line.startswith('#CHROM'):
+                samples = line.rstrip().split("\t")
+                del samples[:9]
+                samples.sort()
+                for clustID in clust2samps.keys():
+                    if (clustID in clust2prev) or (not clustIsValid[clustID]):
+                        continue
+                    elif clust2samps[clustID] == samples:
+                        clust2prev[clustID] = prevFile
+                        break
+                break
+            elif not line.startswith('#'):
+                raise Exception("cannot find #CHROM header line in vcf prevFile")
+        prevFH.close()
+
+    # if a cluster and all its FITWITHs have a matching prev, prev file can be copied
+    clusterFound = {}
+    for clustID in sorted(clust2prev.keys()):
+        prevOK = True
+        for fw in fitWith[clustID]:
+            if fw not in clust2prev:
+                prevOK = False
+                break
+        if prevOK:
+            try:
+                shutil.copy(clust2prev[clustID], clust2vcf[clustID])
+                logger.info("cluster %s exactly matches previous VCF %s, copying the VCF",
+                            clustID, os.path.basename(clust2prev[clustID]))
+                clusterFound[clustID] = True
+            except Exception as e:
+                raise Exception("cannot copy prev VCF %s as %s : %s",
+                                clust2prev[clustID], clust2vcf[clustID], repr(e))
+    return(clusterFound)
 
 
 ####################################################################################

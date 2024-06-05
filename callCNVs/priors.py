@@ -1,12 +1,31 @@
-import concurrent.futures
+############################################################################################
+# Copyright (C) Nicolas Thierry-Mieg and Amandine Septier, 2021-2024
+#
+# This file is part of JACNEx, written by Nicolas Thierry-Mieg and Amandine Septier
+# (CNRS, France)  {Nicolas.Thierry-Mieg,Amandine.Septier}@univ-grenoble-alpes.fr
+#
+# This program is free software: you can redistribute it and/or modify it under
+# the terms of the GNU General Public License as published by the Free Software
+# Foundation, either version 3 of the License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+# without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+# See the GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along with this program.
+# If not, see <https://www.gnu.org/licenses/>.
+############################################################################################
+
+
 import logging
+import numba
 import numpy
+
+# silence numba when we are in DEBUG mode
+logging.getLogger('numba').setLevel(logging.INFO)
 
 # set up logger, using inherited config
 logger = logging.getLogger(__name__)
-
-# override inherited level
-logger.setLevel(logging.DEBUG)
 
 
 ###############################################################################
@@ -22,20 +41,18 @@ logger.setLevel(logging.DEBUG)
 # decimals in scentific notation for each proba) or after maxIter iterations.
 #
 # Args:
-# - likelihoodsDict: key==sampleID, value==(ndarray[floats] dim nbExons*nbStates)
-#   holding the likelihoods of each state for each exon for this sample (no-call
-#   exons should have all likelihoods == -1)
-# - jobs (int): number of jobs to run in parallel
+# - likelihoods: numpy 3D-array of floats of size nbSamples * nbExons * nbStates,
+#   likelihoods[s,e,cn] is the likehood of state cn for exon e in sample s
+#   (NOCALL exons must have all likelihoods == -1)
 #
 # Returns priors (ndarray of nbStates floats): prior probabilities for each state.
-def calcPriors(likelihoodsDict, jobs):
+def calcPriors(likelihoods):
     # max number of iterations, hard-coded
     maxIter = 20
 
-    # need nbStates, super ugly but it seems "this is the python way"
-    nbStates = next(iter(likelihoodsDict.values())).shape[1]
+    nbStates = likelihoods.shape[2]
     # priors start at 1 (ie we will initially count states with max likelihood)
-    priors = numpy.ones(nbStates, dtype=numpy.float128)
+    priors = numpy.ones(nbStates, dtype=numpy.float64)
 
     # to check for (approximate) convergence
     formattedPriorsPrev = ""
@@ -45,7 +62,7 @@ def calcPriors(likelihoodsDict, jobs):
     converged = 0
 
     for i in range(maxIter):
-        priors = calcPosteriors(likelihoodsDict, priors, jobs)
+        priors = calcPosteriors(likelihoods, priors)
         formattedPriors = " ".join(["%.2e" % x for x in priors])
         debugString = "Priors at iteration " + str(i + 1) + ":\t" + formattedPriors
         noConvergeString += "\n" + debugString
@@ -71,60 +88,27 @@ def calcPriors(likelihoodsDict, jobs):
 
 ####################
 # calcPosteriors:
-# Given a likelihoodsDict and vector of prior probabilities, calculate and return
-# the vector of posterior probabilities, which can be considered as an updated
-# vector of priors. Samples are processed in parallel.
+# Given likelihoods and prior probabilities for each state, calculate the
+# posterior probabilities for each state. These can then be considered as an
+# updated vector of priors.
 #
 # Args:
-# - likelihoodsDict: key==sampleID, value==(ndarray[floats] dim nbExons*nbStates)
-#   holding the likelihoods of each state for each exon for this sample
+# - likelihoods: numpy 3D-array of floats of size nbSamples * nbExons * nbStates,
+#   likelihoods[s,e,cn] is the likehood of state cn for exon e in sample s
 # - priors (ndarray of nbStates floats): initial prior probabilities for each state
-# - jobs (int): number of jobs to run in parallel.
 #
 # Returns posteriors, same type as priors.
-def calcPosteriors(likelihoodsDict, priors, jobs):
-    countsPerState = numpy.zeros(len(priors), dtype=numpy.uint64)
+@numba.njit
+def calcPosteriors(likelihoods, priors):
+    # init counts with a pseudo-count of one (avoid issues if no counts at all), this
+    # won't matter for haploids since their CN1 likelihoods are zero
+    countsPerState = numpy.ones(len(priors), dtype=numpy.uint64)
 
-    ##################
-    # Define nested callback for processing countMostLikelyStates() result.
-    # sampleDone:
-    # args: a Future object returned by ProcessPoolExecutor.submit(countMostLikelyStates),
-    # and an ndarray that will be updated in-place (ie countsPerState).
-    # If something went wrong, log and propagate exception, otherwise update countsPerState.
-    def sampleDone(futureRes, counts):
-        e = futureRes.exception()
-        if e is not None:
-            logger.error("countMostLikelyStates() failed for sample %s", str(e))
-            raise(e)
-        else:
-            counts += futureRes.result()
+    calledExons = likelihoods[0, :, 0] >= 0
+    calledExonLikelihoods = likelihoods[:, calledExons, :]
+    bestStates = (priors * calledExonLikelihoods).argmax(axis=2)
+    for bs in bestStates.ravel():
+        countsPerState[bs] += 1
 
-    ##################
-    with concurrent.futures.ProcessPoolExecutor(jobs) as pool:
-        for likelihoods in likelihoodsDict.values():
-            futureRes = pool.submit(countMostLikelyStates, likelihoods, priors)
-            futureRes.add_done_callback(lambda f: sampleDone(f, countsPerState))
-
-    posteriors = countsPerState.astype(numpy.float128) / countsPerState.sum()
+    posteriors = countsPerState.astype(numpy.float64) / countsPerState.sum()
     return(posteriors)
-
-
-####################
-# countMostLikelyStates:
-# count for each CN state the number of exons whose most likely a posteriori state is CN.
-#
-# Args:
-# - likelihoods (ndarray[floats] dim nbExons*nbStates): likelihoods of each state
-#   for each exon for one sample
-# - priors (ndarray of nbStates floats): initial prior probabilities for each state
-#
-# Returns the counts as an ndarray of nbStates uint64s
-def countMostLikelyStates(likelihoods, priors):
-    counts = numpy.zeros(len(priors), dtype=numpy.uint64)
-    bestStates = (priors * likelihoods).argmax(axis=1)
-
-    for ei in range(len(bestStates)):
-        # ignore NOCALL (ie all likelihoods == -1) exons
-        if likelihoods[ei, 0] >= 0:
-            counts[bestStates[ei]] += 1
-    return(counts)
