@@ -333,9 +333,16 @@ def main(argv):
             isHaploid = True
             # Females are diploid for chrX and don't have any chrY => NOOP
 
+        # if this cluster has FITWITHs, find its reference cluster
+        refVcfFile = ""
+        for fw in fitWith[clusterID]:
+            if len(fitWith[fw]) == 0:
+                refVcfFile = clust2vcf[fw]
+                break
+
         callCNVsOneCluster(clustExonFPMs, clustIntergenicFPMs, samplesOfInterest, clustSamples,
                            clustExons, exonsToPlot, plotDir, clusterID, isHaploid, minGQ,
-                           clust2vcf[clusterID], padding, madeBy, jobs)
+                           clust2vcf[clusterID], padding, madeBy, refVcfFile, jobs)
 
     thisTime = time.time()
     logger.info("all clusters done,  in %.1fs", thisTime - startTime)
@@ -374,7 +381,7 @@ def main(argv):
 # Produce vcfFile, return nothing.
 def callCNVsOneCluster(exonFPMs, intergenicFPMs, samplesOfInterest, sampleIDs, exons,
                        exonsToPlot, plotDir, clusterID, isHaploid, minGQ, vcfFile,
-                       padding, madeBy, jobs):
+                       padding, madeBy, refVcfFile, jobs):
     logger.info("cluster %s - starting to work", clusterID)
     startTime = time.time()
     startTimeCluster = startTime
@@ -446,8 +453,8 @@ def callCNVsOneCluster(exonFPMs, intergenicFPMs, samplesOfInterest, sampleIDs, e
     CN2means[Ecodes < 0] = 0
 
     # print CNVs for this cluster as a VCF file
-    callCNVs.callsFile.printCallsFile(vcfFile, CNVs, FPMsSOIs, CN2means, exons, sampleIDs,
-                                      padding, madeBy)
+    callCNVs.callsFile.printCallsFile(vcfFile, CNVs, FPMsSOIs, CN2means, sampleIDs, exons,
+                                      padding, madeBy, refVcfFile, clusterID)
 
     logger.info("cluster %s - all done, total time: %.1fs", clusterID, thisTime - startTimeCluster)
     return()
