@@ -51,11 +51,12 @@ logger = logging.getLogger(__name__)
 # - madeBy (str): Name + version of program that made the CNV calls
 # - refVcfFile (str): name (with path) of the VCF file for the reference cluster (ie cluster
 #   without any FITWITHs) that serves as FITWITH for the current cluster, if any
+# - minGQ: float, minimum Genotype Quality (GQ)
 # - clusterID (str): id of current cluster (for logging)
-def printCallsFile(outFile, CNVs, FPMs, CN2Means, samples, exons, padding, madeBy, refVcfFile, clusterID):
+def printCallsFile(outFile, CNVs, FPMs, CN2Means, samples, exons, padding, madeBy, refVcfFile, minGQ, clusterID):
     if refVcfFile != "":
         maxCalls = countCallsFromVCF(refVcfFile)
-        CNVs = recalibrateGQs(CNVs, len(samples), maxCalls, clusterID)
+        CNVs = recalibrateGQs(CNVs, len(samples), maxCalls, minGQ, clusterID)
 
     try:
         if outFile.endswith(".gz"):
@@ -212,7 +213,7 @@ def countCallsFromVCF(vcfFile):
 # for each CN type, calculate the recalGQ corresponding to the provided max numbers
 # of calls (on average per sample), and recalibrate the GQs accordingly (-= recalGQ).
 # Returns the recalibrated CNVs
-def recalibrateGQs(CNVs, numSamples, maxCalls, clusterID):
+def recalibrateGQs(CNVs, numSamples, maxCalls, minGQ, clusterID):
     recalCNVs = []
     # GQs[CN] is the list of GQs of calls of type CN
     GQs = [[], [], [], []]
@@ -230,7 +231,7 @@ def recalibrateGQs(CNVs, numSamples, maxCalls, clusterID):
 
     for cnv in CNVs:
         recalGQ = cnv[3] - recalGQ[cnv[0]]
-        if recalGQ >= 0:
+        if recalGQ >= minGQ:
             recalCNVs.append([cnv[0], cnv[1], cnv[2], recalGQ, cnv[4]])
 
     if recalGQ != [0, 0, 0, 0]:
