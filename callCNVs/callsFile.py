@@ -225,9 +225,10 @@ def recalibrateGQs(CNVs, numSamples, maxCalls, minGQ, clusterID):
     minGQperCN = [0, 0, 0, 0]
     for cn in (0, 1, 3):
         numAcceptedCalls = math.floor(numSamples * maxCalls[cn])
+        # we want numAcceptedCalls to have GQs >= minGQ (so they are actually accepted)
         if numAcceptedCalls < len(GQs[cn]):
             sortedGQs = sorted(GQs[cn], reverse=True)
-            minGQperCN[cn] = sortedGQs[numAcceptedCalls]
+            minGQperCN[cn] = sortedGQs[numAcceptedCalls] - minGQ
 
     for cnv in CNVs:
         thisRecalGQ = cnv[3] - minGQperCN[cnv[0]]
