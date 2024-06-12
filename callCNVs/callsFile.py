@@ -54,6 +54,9 @@ logger = logging.getLogger(__name__)
 # - minGQ: float, minimum Genotype Quality (GQ)
 # - clusterID (str): id of current cluster (for logging)
 def printCallsFile(outFile, CNVs, FPMs, CN2Means, samples, exons, padding, madeBy, refVcfFile, minGQ, clusterID):
+    # max GQ to produce in the VCF
+    maxGQ = 100
+
     if refVcfFile != "":
         maxCalls = countCallsFromVCF(refVcfFile)
         CNVs = recalibrateGQs(CNVs, len(samples), maxCalls, minGQ, clusterID)
@@ -115,6 +118,10 @@ def printCallsFile(outFile, CNVs, FPMs, CN2Means, samples, exons, padding, madeB
             prevVcfStart = vcfStart
             # default to all-HomoRef
             vcfGenos = ["0/0"] * len(samples)
+
+        # cap GQ
+        if qualScore > maxGQ:
+            qualScore = maxGQ
 
         # calculate FragRatio: average of FPM ratios over all called exons in the CNV
         fragRat = 0

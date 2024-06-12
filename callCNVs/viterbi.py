@@ -266,10 +266,11 @@ def appendBogusCN2Exon(calledExons, path, bestPathProbas, CN2FromCN2Probas):
 #   last exons defining this CNV
 # - qualityScore = log10 of ratio between the proba of most likely path between the called
 #   exons immediately preceding and immediately following the CNV, and the proba of
-#   the CN2-only path between the same exons, capped at maxQualityScore
+#   the CN2-only path between the same exons, capped here at maxQualityScore
 def buildCNVs(calledExons, path, bestPathProbas, CN2FromCN2Probas, sampleIndex, minGQ):
-    # max quality score produced, hard-coded here
-    maxQualityScore = 100
+    # max quality score of the returned CNVs, hard-coded here - this should be larger than
+    # the quality score cap in the final VCF (see printCallsFile())
+    maxQualityScore = 200
     CNVs = []
 
     # if each exon's bestPath-to-CN2 comes from CN2 in prev exon,
