@@ -317,7 +317,7 @@ def buildCNVs(calledExons, path, bestPathProbas, CN2FromCN2Probas, sampleIndex, 
                     qualityScore = math.log10(qualityScore)
                     qualityScore = min(qualityScore, maxQualityScore)
 
-                if qualityScore >= minGQ:
+                if qualityScore > minGQ:
                     CNVs.append([currentState, calledExons[firstExonInCurrentState],
                                  calledExons[cei - 1], qualityScore, sampleIndex])
             # in any case we changed states, update accumulators

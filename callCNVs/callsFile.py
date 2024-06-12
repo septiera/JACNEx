@@ -239,7 +239,7 @@ def recalibrateGQs(CNVs, numSamples, maxCalls, minGQ, clusterID):
 
     for cnv in CNVs:
         thisRecalGQ = cnv[3] - minGQperCN[cnv[0]]
-        if thisRecalGQ >= minGQ:
+        if thisRecalGQ > minGQ:
             recalCNVs.append([cnv[0], cnv[1], cnv[2], thisRecalGQ, cnv[4]])
 
     if minGQperCN != [0, 0, 0, 0]:
