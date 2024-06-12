@@ -264,7 +264,10 @@ def main(argv):
     clusterFound = checkPrevVCFs(outDir, clust2vcf, clust2samps, fitWith, clustIsValid)
 
     ###################
-    # call CNVs independently for each valid cluster
+    # call CNVs independently for each valid cluster, but must start with all
+    # reference clusters
+    refClusters = []
+    clustersWithFitWiths = []
     for clusterID in sorted(clust2samps.keys()):
         if not clustIsValid[clusterID]:
             logger.info("cluster %s is INVALID, skipping it", clusterID)
@@ -272,7 +275,12 @@ def main(argv):
         elif clusterID in clusterFound:
             # already logged (with copied filename) in checkPrevVCFs()
             continue
+        elif len(fitWith[clusterID]) == 0:
+            refClusters.append(clusterID)
+        else:
+            clustersWithFitWiths.append(clusterID)
 
+    for clusterID in (refClusters + clustersWithFitWiths):
         # samplesInClust: temp dict, key==sampleID, value==1 if sample is in cluster
         # clusterID and value==2 if sample is in a FITWITH cluster for clusterID
         samplesInClust = {}
@@ -376,12 +384,22 @@ def main(argv):
 # - minGQ: float, minimum Genotype Quality (GQ)
 # - vcfFile: name of VCF file to create
 # - padding, madeBy: for printCallsFile
+# - refVcfFile: name of VCF file holding calls for the "reference" cluster that
+#   is FITWITH for clusterID if any ('' if clusterID is a reference cluster itself,
+#   ie it has no FITWITH), if non-empty it MUST exist ie we need to make calls for
+#   all reference clusters before starting on clusters with FITWITHs
 # - jobs: number of jobs for the parallelized steps (currently viterbiAllSamples())
 #
 # Produce vcfFile, return nothing.
 def callCNVsOneCluster(exonFPMs, intergenicFPMs, samplesOfInterest, sampleIDs, exons,
                        exonsToPlot, plotDir, clusterID, isHaploid, minGQ, vcfFile,
                        padding, madeBy, refVcfFile, jobs):
+    # sanity
+    if (refVcfFile != '') and (not os.path.isfile(refVcfFile)):
+        logger.error("sanity: callCNVs for cluster %s but it needs VCF %s of its ref cluster!",
+                     clusterID, refVcfFile)
+        raise Exception("sanity: make VCFs of ref clusters first!")
+
     logger.info("cluster %s - starting to work", clusterID)
     startTime = time.time()
     startTimeCluster = startTime

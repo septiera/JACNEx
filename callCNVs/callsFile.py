@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 ###############################################################################
 ##########################################
 # printCallsFile:
-# print CNVsfor a single cluster in VCF format.
+# print CNVs for a single cluster in VCF format.
 #
 # Args:
 # - outFile (str): name of VCF file to create. Will be squashed if pre-exists,
