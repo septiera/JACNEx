@@ -122,8 +122,9 @@ def printCallsFile(outFile, CNVs, FPMs, CN2Means, samples, exons, padding, madeB
             svtype = "DUP"
         alt = '<' + svtype + '>'
 
-        # TODO: VCF spec says we should use POS = pos-1 and REF = the ref genome's base at pos-1
-        vcfStart = [chrom, str(pos), ".", ".", alt, ".", ".", f"SVTYPE={svtype};END={end}", "GT:GS:FR"]
+        # VCF spec says we should use POS = pos-1 and REF = the ref genome's base at pos-1,
+        # use N so we are compliant
+        vcfStart = [chrom, str(pos-1), ".", "N", alt, ".", ".", f"SVTYPE={svtype};END={end}", "GT:GS:FR"]
 
         if vcfStart != prevVcfStart:
             if len(prevVcfStart) > 0:
