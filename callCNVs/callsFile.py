@@ -85,7 +85,7 @@ def printCallsFile(outFile, CNVs, FPMs, CN2Means, samples, exons, padding, madeB
 ##INFO=<ID=SVTYPE,Number=1,Type=String,Description="Type of structural variant">
 ##INFO=<ID=END,Number=1,Type=Integer,Description="End position of the variant described in this record">
 ##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
-##FORMAT=<ID=GS,Number=1,Type=Float,Description="Genotype quality Score, ie log10(P[sample has CNV] / P[sample is HOMOREF])">
+##FORMAT=<ID=GQ,Number=1,Type=Integer,Description="Genotype Quality, ie log10(P[sample has CNV] / P[sample is HOMOREF]) rounded to nearest int">
 ##FORMAT=<ID=FR,Number=1,Type=Float,Description="Fragment count Ratio, ie mean (over all overlapped called exons) of the ratio [FPM in sample] / [mean FPM of all HOMOREF samples in cluster]">
 """
     # COULD/SHOULD ADD:
@@ -124,7 +124,7 @@ def printCallsFile(outFile, CNVs, FPMs, CN2Means, samples, exons, padding, madeB
 
         # VCF spec says we should use POS = pos-1 and REF = the ref genome's base at pos-1,
         # use N so we are compliant
-        vcfStart = [chrom, str(pos-1), ".", "N", alt, ".", ".", f"SVTYPE={svtype};END={end}", "GT:GS:FR"]
+        vcfStart = [chrom, str(pos - 1), ".", "N", alt, ".", ".", f"SVTYPE={svtype};END={end}", "GT:GQ:FR"]
 
         if vcfStart != prevVcfStart:
             if len(prevVcfStart) > 0:
@@ -134,7 +134,7 @@ def printCallsFile(outFile, CNVs, FPMs, CN2Means, samples, exons, padding, madeB
             # default to all-HomoRef
             vcfGenos = ["0/0"] * len(samples)
 
-        # cap GQ
+        # cap GQ and round to nearest int
         if qualScore > maxGQ:
             qualScore = maxGQ
 
@@ -161,7 +161,8 @@ def printCallsFile(outFile, CNVs, FPMs, CN2Means, samples, exons, padding, madeB
         elif (cn == 3) and (fragRat < minFragRatDupHomo):
             geno = "0/1"
 
-        vcfGenos[sampleIndex] = f"{geno}:{qualScore:.1f}:{fragRat:.2f}"
+        # round qualScore to nearest int with .0f
+        vcfGenos[sampleIndex] = f"{geno}:{qualScore:.0f}:{fragRat:.2f}"
 
     # print last CNV
     if len(prevVcfStart) > 0:
