@@ -530,7 +530,7 @@ def checkPrevVCFs(outDir, clust2vcf, clust2samps, fitWith, clustIsValid, minGQ):
         for line in prevFH:
             if line.startswith('##JACNEx_minGQ='):
                 # these JACNEx_minGQ strings must exactly match those we produce in printCallsFile()
-                if line != ('##JACNEx_minGQ=' + str(minGQ)):
+                if line.rstrip() != ('##JACNEx_minGQ=' + str(minGQ)):
                     # minGQ mismatch, cannot reuse this file
                     break
                 else:
