@@ -21,6 +21,7 @@ import gzip
 import logging
 import math
 import numpy
+import sys
 import time
 
 # set up logger, using inherited config
@@ -74,14 +75,23 @@ def printCallsFile(outFile, CNVs, FPMs, CN2Means, samples, exons, padding, madeB
     toPrint = """##fileformat=VCFv4.3
 ##fileDate=""" + time.strftime("%y%m%d") + """
 ##source=""" + madeBy + """
+##JACNEx_commandLine=""" + ' '.join(sys.argv) + """
+##JACNEx_minGQ=""" + str(minGQ) + """
 ##ALT=<ID=DEL,Description="Deletion">
 ##ALT=<ID=DUP,Description="Duplication">
 ##INFO=<ID=SVTYPE,Number=1,Type=String,Description="Type of structural variant">
 ##INFO=<ID=END,Number=1,Type=Integer,Description="End position of the variant described in this record">
 ##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
-##FORMAT=<ID=GQ,Number=1,Type=Float,Description="Genotype quality score">
-##FORMAT=<ID=FR,Number=1,Type=Float,Description="Fragment count ratio">
+##FORMAT=<ID=GS,Number=1,Type=Float,Description="Genotype quality Score, ie log10(P[sample has CNV] / P[sample is HOMOREF])">
+##FORMAT=<ID=FR,Number=1,Type=Float,Description="Fragment count Ratio, ie mean (over all overlapped called exons) of the ratio [FPM in sample] / [mean FPM of all HOMOREF samples in cluster]">
 """
+    # COULD/SHOULD ADD:
+    """
+    ##reference=file:///path/to/hs38DH.fa
+    ##contig=<ID=chr1,length=248956422>
+    ##contig=...
+    """
+
     colNames = ["#CHROM", "POS", "ID", "REF", "ALT", "QUAL", "FILTER", "INFO", "FORMAT"] + samples
     toPrint += "\t".join(colNames) + "\n"
     outFH.write(toPrint)
@@ -109,7 +119,7 @@ def printCallsFile(outFile, CNVs, FPMs, CN2Means, samples, exons, padding, madeB
             svtype = "DUP"
         alt = '<' + svtype + '>'
 
-        vcfStart = [chrom, str(pos), ".", ".", alt, ".", ".", f"SVTYPE={svtype};END={end}", "GT:GQ:FR"]
+        vcfStart = [chrom, str(pos), ".", ".", alt, ".", ".", f"SVTYPE={svtype};END={end}", "GT:GS:FR"]
 
         if vcfStart != prevVcfStart:
             if len(prevVcfStart) > 0:
