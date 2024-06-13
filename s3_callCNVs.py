@@ -261,7 +261,7 @@ def main(argv):
     for clustID in clust2samps.keys():
         clust2vcf[clustID] = outDir + '/CNVs_' + clustID + '.vcf.gz'
 
-    clusterFound = checkPrevVCFs(outDir, clust2vcf, clust2samps, fitWith, clustIsValid)
+    clusterFound = checkPrevVCFs(outDir, clust2vcf, clust2samps, fitWith, clustIsValid, minGQ)
 
     ###################
     # call CNVs independently for each valid cluster, but must start with all
@@ -502,12 +502,12 @@ def logExonStats(Ecodes, clusterID):
 # - remove pre-existing *old VCFs
 # - rename pre-existing prev VCFs as *old
 # - for each (new) cluster, if its samples exactly match those in a prev VCF and
-#   its FITWITH clusters (if any) are also in that situation, simply copy the
-#   prev VCF as newVCF and set clusterFound[clusterID] = True
+#   its FITWITH clusters (if any) are also in that situation, and the minGQs were
+#   equal: simply copy the prev VCF as newVCF and set clusterFound[clusterID] = True
 #
 # Returns: clusterFound, key==clusterID, value==True if a match was found and a
 # prev file was copied
-def checkPrevVCFs(outDir, clust2vcf, clust2samps, fitWith, clustIsValid):
+def checkPrevVCFs(outDir, clust2vcf, clust2samps, fitWith, clustIsValid, minGQ):
     # remove *old files
     try:
         for oldFile in glob.glob(outDir + '/CNVs_*_old.vcf.gz'):
@@ -522,12 +522,23 @@ def checkPrevVCFs(outDir, clust2vcf, clust2samps, fitWith, clustIsValid):
     except Exception as e:
         raise Exception("cannot rename prev VCF file as *old: %s", repr(e))
     # populate clust2prev: key = custerID, value = prev VCF file whose samples exactly
-    # match those of clusterID (ignoring fitWiths for now)
+    # match those of clusterID (ignoring fitWiths for now) and whose minGQ is good
     clust2prev = {}
     for prevFile in glob.glob(outDir + '/CNVs_*_old.vcf.gz'):
         prevFH = gzip.open(prevFile, "rt")
+        minGQmatch = False
         for line in prevFH:
-            if line.startswith('#CHROM'):
+            if line.startswith('##JACNEx_minGQ='):
+                # these JACNEx_minGQ strings must exactly match those we produce in printCallsFile()
+                if line != ('##JACNEx_minGQ=' + str(minGQ)):
+                    # minGQ mismatch, cannot reuse this file
+                    break
+                else:
+                    minGQmatch = True
+            elif line.startswith('#CHROM'):
+                if not minGQmatch:
+                    logger.error("sanity: could not find ##JACNEx_minGQ line in %s", prevFile)
+                    raise Exception("cannot find ##JACNEx_minGQ header line in previous vcf %s", prevFile)
                 samples = line.rstrip().split("\t")
                 del samples[:9]
                 samples.sort()
@@ -539,7 +550,7 @@ def checkPrevVCFs(outDir, clust2vcf, clust2samps, fitWith, clustIsValid):
                         break
                 break
             elif not line.startswith('#'):
-                raise Exception("cannot find #CHROM header line in vcf prevFile")
+                raise Exception("cannot find #CHROM header line in previous vcf %s", prevFile)
         prevFH.close()
 
     # if a cluster and all its FITWITHs have a matching prev, prev file can be copied

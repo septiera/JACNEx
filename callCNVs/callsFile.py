@@ -72,12 +72,15 @@ def printCallsFile(outFile, CNVs, FPMs, CN2Means, samples, exons, padding, madeB
         raise Exception('cannot (gzip-)open CNCallsFile')
 
     # Header
-    toPrint = """##fileformat=VCFv4.3
-##fileDate=""" + time.strftime("%y%m%d") + """
-##source=""" + madeBy + """
-##JACNEx_commandLine=""" + ' '.join(sys.argv) + """
-##JACNEx_minGQ=""" + str(minGQ) + """
-##ALT=<ID=DEL,Description="Deletion">
+    toPrint = "##fileformat=VCFv4.3\n"
+    toPrint += "##fileDate=" + time.strftime("%y%m%d") + "\n"
+    toPrint += "##source=" + madeBy + "\n"
+    toPrint += "##JACNEx_commandLine=" + ' '.join(sys.argv) + "\n"
+    # minGQ line must stay in sync with parsing lines in checkPrevVCFs(), if this
+    # line changes remember to update checkPrevVCFs()
+    toPrint += "##JACNEx_minGQ=" + str(minGQ) + "\n"
+
+    toPrint += """##ALT=<ID=DEL,Description="Deletion">
 ##ALT=<ID=DUP,Description="Duplication">
 ##INFO=<ID=SVTYPE,Number=1,Type=String,Description="Type of structural variant">
 ##INFO=<ID=END,Number=1,Type=Integer,Description="End position of the variant described in this record">
@@ -119,6 +122,7 @@ def printCallsFile(outFile, CNVs, FPMs, CN2Means, samples, exons, padding, madeB
             svtype = "DUP"
         alt = '<' + svtype + '>'
 
+        # TODO: VCF spec says we should use POS = pos-1 and REF = the ref genome's base at pos-1
         vcfStart = [chrom, str(pos), ".", ".", alt, ".", ".", f"SVTYPE={svtype};END={end}", "GT:GS:FR"]
 
         if vcfStart != prevVcfStart:
