@@ -501,9 +501,10 @@ def logExonStats(Ecodes, clusterID):
 # house-keeping of pre-existing VCFs, and check them for possible re-use:
 # - remove pre-existing *old VCFs
 # - rename pre-existing prev VCFs as *old
-# - for each (new) cluster, if its samples exactly match those in a prev VCF and
-#   its FITWITH clusters (if any) are also in that situation, and the minGQs were
-#   equal: simply copy the prev VCF as newVCF and set clusterFound[clusterID] = True
+# - for each (new) cluster, if its samples exactly match those in a prev VCF of the
+#   same type (auto/gono), and its FITWITH clusters (if any) are also in that situation,
+#   and the minGQs were equal: simply copy the prev VCF as newVCF and set
+#   clusterFound[clusterID] = True
 #
 # Returns: clusterFound, key==clusterID, value==True if a match was found and a
 # prev file was copied
@@ -521,8 +522,9 @@ def checkPrevVCFs(outDir, clust2vcf, clust2samps, fitWith, clustIsValid, minGQ):
             os.rename(prevFile, newName)
     except Exception as e:
         raise Exception("cannot rename prev VCF file as *old: %s", repr(e))
-    # populate clust2prev: key = custerID, value = prev VCF file whose samples exactly
-    # match those of clusterID (ignoring fitWiths for now) and whose minGQ is good
+    # populate clust2prev: key = custerID, value = prev VCF file of the same auto/gono
+    # type and whose samples exactly match those of clusterID (ignoring fitWiths for now)
+    # and whose minGQ is good
     clust2prev = {}
     for prevFile in glob.glob(outDir + '/CNVs_*_old.vcf.gz'):
         prevFH = gzip.open(prevFile, "rt")
@@ -542,8 +544,17 @@ def checkPrevVCFs(outDir, clust2vcf, clust2samps, fitWith, clustIsValid, minGQ):
                 samples = line.rstrip().split("\t")
                 del samples[:9]
                 samples.sort()
+
+                # prevType: is prevFile for auto or gono?
+                if os.path.basename(prevFile).startswith('CNVs_A_'):
+                    prevType = 'A_'
+                elif os.path.basename(prevFile).startswith('CNVs_G_'):
+                    prevType = 'G_'
+                else:
+                    logger.error("sanity: could not find auto/gono type in prev VCF filename: %s", prevFile)
+
                 for clustID in clust2samps.keys():
-                    if (clustID in clust2prev) or (not clustIsValid[clustID]):
+                    if (not clustID.startswith(prevType)) or (clustID in clust2prev) or (not clustIsValid[clustID]):
                         continue
                     elif clust2samps[clustID] == samples:
                         clust2prev[clustID] = prevFile
