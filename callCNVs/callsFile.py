@@ -240,6 +240,10 @@ def recalibrateGQs(CNVs, numSamples, maxCalls, minGQ, clusterID):
     for cnv in CNVs:
         thisRecalGQ = cnv[3] - minGQperCN[cnv[0]]
         if thisRecalGQ > minGQ:
+            # > rather than >= , because some non-ref clusters are actually too far from
+            # their ref cluster on many exons and result in poor calls even at max GQ...
+            # these get recalibrated by -(maxGQ-minGQ) (eg -98 with defaults maxGQ==100
+            # and minGQ==2), but we still produce many (bogus) calls if testing with >=
             recalCNVs.append([cnv[0], cnv[1], cnv[2], thisRecalGQ, cnv[4]])
 
     if minGQperCN != [0, 0, 0, 0]:
