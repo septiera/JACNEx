@@ -438,9 +438,9 @@ def callCNVsOneCluster(exonFPMs, intergenicFPMs, samplesOfInterest, sampleIDs, e
     startTime = thisTime
 
     # plot exonsToPlot if any
-    figures.plotExons.plotExons(exons, exonsToPlot, Ecodes, FPMsSOIs, isHaploid,
+    figures.plotExons.plotExons(exons, exonsToPlot, Ecodes, exonFPMs, samplesOfInterest, isHaploid,
                                 CN0sigma, CN2means, CN2sigmas, fpmCn0, clusterID, plotDir)
-
+                                
     # calculate priors (maxing the posterior probas iteratively until convergence)
     priors = callCNVs.priors.calcPriors(likelihoods)
     formattedPriors = "  ".join(["%.2e" % x for x in priors])

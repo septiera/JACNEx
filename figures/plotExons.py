@@ -131,19 +131,23 @@ def preprocessRegionsToPlot(regionsToPlot, autosomeExons, gonosomeExons, samp2cl
 # model likelihoods for different copy number states (CN0, CN1, CN2, CN3).
 # Args:
 # - exons (list[str, int, int, str]): exon information.
-# - exonsToPlot (dict): Dict with key==exonIndex, value==list of lists[sampleIndex, sampleID] for
+# - exonsToPlot (dict): key==exonIndex, value==list of lists[sampleIndex, sampleID] for
 #                       which we need to plot the FPMs and CN0-CN3+ models
 # - Ecodes (numpy.ndarray[ints]): exons filtering codes.
-# - FPMsSOIs (numpy.ndarray[floats]): FPM values for the samples of interest.
+# - exonFPMs: 2D-array of floats of size nbExons * nbSamples, FPMs[e,s] is the FPM
+#   count for exon e in sample s (includes samples in FITWITH clusters, these are
+#   used for fitting the CN2)
+# - samplesOfInterest: 1D-array of bools of size nbSamples, value==True iff the sample
+#   is in the cluster of interest (vs being in a FITWITH cluster)
 # - isHaploid (bool): Whether the sample is haploid.
 # - CN0sigma (float): Scale parameter for CN0 distribution.
 # - CN2means (numpy.ndarray[floats]): means for CN2 distribution.
 # - CN2sigmas (numpy.ndarray[floats]): standard deviations for CN2 distribution.
 # - fpmCn0 [float]: FPM value for the uncaptured threshold.
 # - clusterID [str]
-# - plotFile [str]: File path to save the generated PDF.
+# - plotDir [str]: Folder path to save the generated PDF.
 # Produces plotFile (pdf format), returns nothing.
-def plotExons(exons, exonsToPlot, Ecodes, FPMsSOIs, isHaploid, CN0sigma, CN2means, CN2sigmas, fpmCn0, clusterID, plotDir):
+def plotExons(exons, exonsToPlot, Ecodes, exonFPMs, samplesOfInterest, isHaploid, CN0sigma, CN2means, CN2sigmas, fpmCn0, clusterID, plotDir):
     # hardcoded variables
     nbPoints = 1000  # used to generate the x-axis for the likelihood plots
     minBins = 20
@@ -157,31 +161,40 @@ def plotExons(exons, exonsToPlot, Ecodes, FPMsSOIs, isHaploid, CN0sigma, CN2mean
     current_time = datetime.datetime.now().strftime("%y%m%d_%H-%M-%S")
     numExons = len(exonsToPlot)
     plotFile = os.path.join(plotDir, f'{clusterID}_plotExons_{numExons}_{current_time}.pdf')
-    outFile = matplotlib.backends.backend_pdf.PdfPages(plotFile)
-    matplotlib.pyplot.ioff()
+    with matplotlib.backends.backend_pdf(plotFile) as matplotFile:
+        matplotlib.pyplot.ioff()
 
-    # number of bins based on the number of samples.
-    bins = int(max(minBins, numpy.ceil(FPMsSOIs.shape[1] / denom)))
+        # number of bins based on the number of samples.
+        bins = int(max(minBins, numpy.ceil(exonFPMs.shape[1] / denom)))
 
-    for thisExon in exonsToPlot.keys():
-        # skip filtered exons : NOT-CAPTURED and FIT-CN2-FAILED
-        if (Ecodes[thisExon] == -1) or (Ecodes[thisExon] == -2):
-            continue
+        for thisExon in exonsToPlot.keys():
+            # skip filtered exons : NOT-CAPTURED and FIT-CN2-FAILED
+            if (Ecodes[thisExon] == -1) or (Ecodes[thisExon] == -2):
+                logging.info(f"Skipping exon {thisExon} ({exons[thisExon][0]}:{exons[thisExon][1]}-{exons[thisExon][2]} {exons[thisExon][3]}), Status: {Ecodes[thisExon]}")
+                continue
 
-        exonFPMs = FPMsSOIs[thisExon, :]
-        fpmMax = numpy.ceil(max(exonFPMs))
-        x = numpy.linspace(0, numpy.ceil(fpmMax), nbPoints)
+            fpms = exonFPMs[thisExon, :]
 
-        pdfs = callCNVs.likelihoods.calcLikelihoods(
-            x.reshape(1, nbPoints), CN0sigma, numpy.array([Ecodes[thisExon]]),
-            numpy.array([CN2means[thisExon]]), numpy.array([CN2sigmas[thisExon]]),
-            isHaploid, True)
+            fpmMax = numpy.ceil(max(fpms))
+            x = numpy.linspace(0, numpy.ceil(fpmMax), nbPoints)
 
-        labels = getLabels(isHaploid, CN0sigma, CN2means[thisExon], CN2sigmas[thisExon])
+            pdfs = callCNVs.likelihoods.calcLikelihoods(
+                x.reshape(1, nbPoints), CN0sigma, numpy.array([Ecodes[thisExon]]),
+                numpy.array([CN2means[thisExon]]), numpy.array([CN2sigmas[thisExon]]),
+                isHaploid, True)
 
-        plotHistogramAndPdfs(exonFPMs, bins, x, pdfs, fpmCn0, exons, thisExon, clusterID,
-                             Ecodes, exonsToPlot, labels, isHaploid, outFile)
-    outFile.close()
+            labels = getLabels(isHaploid, CN0sigma, CN2means[thisExon], CN2sigmas[thisExon])
+
+            # Separate FPMs into samples of interest and not of interest, if applicable
+            if len(fpms) == samplesOfInterest.sum():
+                fpmSOI = fpms[samplesOfInterest]
+                fpmNonSOI = fpms[~samplesOfInterest]
+            else:
+                fpmSOI = fpms[samplesOfInterest]
+                fpmNonSOI = None
+
+            plotHistogramAndPdfs(fpmSOI, fpmNonSOI, bins, x, pdfs, fpmCn0, exons, thisExon, clusterID,
+                                Ecodes, exonsToPlot, labels, isHaploid, matplotFile)
 
 
 ###############################################################################
@@ -216,15 +229,25 @@ def getLabels(isHaploid, CN0Scale, CN2Mean, CN2Sigma):
 
 #####################
 # Plot histogram and PDFs for an exon
-def plotHistogramAndPdfs(exonFPMs, bins, x, pdfs, fpmCn0, exons, thisExon, clusterId, ECodes, exonsToPlot, labels, isHaploid, pdf):
+def plotHistogramAndPdfs(fpmSOI, fpmNonSOI, bins, x, pdfs, fpmCn0, exons, thisExon, clusterId, ECodes, exonsToPlot, labels, isHaploid, matplotFile):
 
     colors = ['orange', 'red', 'green', 'purple']
     ECodeSTR = {1: 'CALLED-WITHOUT-CN1', 0: 'CALLED', -3: 'CN2-LOW-SUPPORT', -4: 'CN0-TOO-CLOSE'}
     limY = 5 / 4 * max(pdfs[:, :, 1])
 
     fig = matplotlib.pyplot.figure(figsize=(15, 10))
-    # plot histogram
-    matplotlib.pyplot.hist(exonFPMs,
+
+    # Plot histogram for non-SOI samples
+    if fpmNonSOI is not None:
+        matplotlib.pyplot.hist(fpmNonSOI,
+                                bins=bins,
+                                edgecolor='black',
+                                label='FPMs of other samples in cluster',
+                                density=True,
+                                color='darkgrey')
+
+
+    matplotlib.pyplot.hist(fpmSOI,
                            bins=bins,
                            edgecolor='black',
                            label='FPMs of all samples in cluster',
@@ -264,7 +287,7 @@ def plotHistogramAndPdfs(exonFPMs, bins, x, pdfs, fpmCn0, exons, thisExon, clust
     # vertical line(s) for target sample(s) FPM(s)
     sampleColors = matplotlib.pyplot.cm.tab20(numpy.linspace(0, 1, len(exonsToPlot[thisExon])))
     for sampleInfo, sampleColor in zip(exonsToPlot[thisExon], sampleColors):
-        sampleFpm = exonFPMs[sampleInfo[0]]
+        sampleFpm = fpmSOI[sampleInfo[0]]
         matplotlib.pyplot.axvline(sampleFpm,
                                   color=sampleColor,
                                   linewidth=3,
@@ -280,5 +303,5 @@ def plotHistogramAndPdfs(exonFPMs, bins, x, pdfs, fpmCn0, exons, thisExon, clust
     matplotlib.pyplot.legend()
     matplotlib.pyplot.xlim(0, max(x))
     matplotlib.pyplot.ylim(0, limY)
-    pdf.savefig(fig)
+    matplotFile.savefig(fig)
     matplotlib.pyplot.close()
