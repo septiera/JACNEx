@@ -33,7 +33,9 @@ logger = logging.getLogger(__name__)
 ###############################################################################
 ##########################################
 # printCallsFile:
-# print CNVs for a single cluster in VCF format.
+# print CNVs for a single cluster in VCF format. GQs of FITWITH clusters are
+# "recalibrated" in order to obtain similar numbers of calls of each CNVType as
+# in their reference cluster.
 #
 # Args:
 # - outFile (str): name of VCF file to create. Will be squashed if pre-exists,
@@ -50,8 +52,8 @@ logger = logging.getLogger(__name__)
 # - exons: list of nbExons exons, one exon is a list [CHR, START, END, EXONID]
 # - padding (int): padding bases used
 # - madeBy (str): Name + version of program that made the CNV calls
-# - refVcfFile (str): name (with path) of the VCF file for the reference cluster (ie cluster
-#   without any FITWITHs) that serves as FITWITH for the current cluster, if any
+# - refVcfFile (str): name (with path) of the VCF file for the reference cluster (ie
+#   cluster without FITWITHs) that serves as FITWITH for the current cluster, if any
 # - minGQ: float, minimum Genotype Quality (GQ)
 # - clusterID (str): id of current cluster (for logging)
 def printCallsFile(outFile, CNVs, FPMs, CN2Means, samples, exons, padding, madeBy, refVcfFile, minGQ, clusterID):
@@ -182,7 +184,9 @@ def printCallsFile(outFile, CNVs, FPMs, CN2Means, samples, exons, padding, madeB
 # of each CN type for "similar" samples: the vcfFile holds calls made for
 # a "reference" cluster, and the stats will be used to recalibrate the GQ
 # scores of an associated cluster that uses this ref cluster as FITWITH,
-# in order to obtain (at most) similar numbers of calls of each type.
+# in order to obtain (at most) "similar" numbers of calls of each type.
+# "Similar" here is hard-coded as the 80%-quantile of numbers of calls (of
+# each type) from the ref cluster, see numCallsQuantile.
 #
 # Args:
 # - vcfFile: string, name of an existing VCF file (with path)
