@@ -194,6 +194,50 @@ def printCallsFile(outFile, CNVs, FPMs, CN2Means, samples, exons, madeBy, refVcf
     outFH.close()
 
 
+##########################################
+# mergeVCFs:
+# given a list of VCF files corresponding to different clusters, produce a
+# single VCF file with all samples, one variant per line:
+# -> identical chrom-pos-ALT-END from different files get merged;
+# -> if chrom-pos-ALT-END is not present in a file, samples from this file get 0/0.
+#
+# NOTE this strategy isn't great: it pretends that all clusters examined
+# the same exons, but in reality some exons may be CALL in some clusters and
+# NOCALL in others (eg different capture kits)... A better strategy could be to
+# set 0/0 to samples whose cluster has at least one CALLED exon overlapping the
+# CNV, and ./. otherwise. However this would require recording (in the VCF?) the
+# called exons for each cluster, because JACNEx reuses pre-existing VCFs for
+# clusters whose samples didn't change since the previous run... so when merging
+# we don't currently know the called-but-all-samples-homoref exons.
+# Actually, even within a single cluster, printCallsFile() is already pretending
+# that samples are 0/0 (rather than ./.) when they are non-HR for an overlapping CNV...
+# For now we'll just use 0/0.
+#
+# Args:
+# - infiles: list of strings, each string is a VCF filename (with path) produced
+#   by JACNEx for one cluster
+# - outFile (str): name of VCF file to create. Will be squashed if pre-exists,
+#   can include a path (which must exist), will be gzipped if outFile ends with '.gz'
+def mergeVCFs(inFiles, outFile):
+    try:
+        if outFile.endswith(".gz"):
+            outFH = gzip.open(outFile, "xt", compresslevel=6)
+        else:
+            outFH = open(outFile, "x")
+    except Exception as e:
+        logger.error("Cannot (gzip-)open merged VCF file %s: %s", outFile, e)
+        raise Exception('cannot (gzip-)open merged VCF')
+
+    # headers: copy from first autosome VCF, discard headers from other VCFs but
+    # build list of samples (present in any VCF) and build a mapping: for each inFile,
+    # clust2global[infile][i] = j means that sample in column i in infile is
+    # the sample in column j in outFile
+
+    # merge autosome VCFs, then merge gonosome VCFs
+
+    outFH.close()
+
+
 ###############################################################################
 ############################ PRIVATE FUNCTIONS ################################
 ###############################################################################
