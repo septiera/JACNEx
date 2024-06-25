@@ -101,7 +101,7 @@ def fitCN2(FPMs, clusterID, fpmCn0, isHaploid):
     CN2sigmas = numpy.ones(nbExons, dtype=numpy.float64)
 
     # hard-coded min Z-score parameter for "too close to CN0"
-    minZscore = 3
+    minZscore = 2
 
     for ei in range(nbExons):
         if numpy.median(FPMs[ei, :]) <= fpmCn0:
