@@ -68,7 +68,6 @@ def parseArgs(argv):
     madeBy = ""
     # optional args with default values
     minGQ = 2.0
-    padding = 10
     regionsToPlot = ""
     plotDir = ""
     # jobs default: 80% of available cores
@@ -103,7 +102,6 @@ ARGUMENTS:
                 *old* files will be squashed
     --minGQ [float]: minimum Genotype Quality score, default : """ + str(minGQ) + """
     --madeBy [str]: program name + version to print as "source=" in the produced VCF.
-    --padding [int]: number of bps used to pad the exon coordinates, default : """ + str(padding) + """
     --regionsToPlot [str, optional]: comma-separated list of sampleID:chr:start-end for which exon-profile
                plots will be produced, eg "grex003:chr2:270000-290000,grex007:chrX:620000-660000"
     --plotDir [str]: subdir (created if needed) where exon-profile plots will be produced
@@ -112,7 +110,7 @@ ARGUMENTS:
 
     try:
         opts, args = getopt.gnu_getopt(argv[1:], 'h', ["help", "counts=", "clusters=", "outDir=", "minGQ=",
-                                                       "madeBy=", "padding=", "regionsToPlot=", "plotDir=", "jobs="])
+                                                       "madeBy=", "regionsToPlot=", "plotDir=", "jobs="])
     except getopt.GetoptError as e:
         raise Exception(e.msg + ". Try " + scriptName + " --help")
     if len(args) != 0:
@@ -132,8 +130,6 @@ ARGUMENTS:
             minGQ = value
         elif opt in ("--madeBy"):
             madeBy = value
-        elif opt in ("--padding"):
-            padding = value
         elif (opt in ("--regionsToPlot")):
             regionsToPlot = value
         elif (opt in ("--plotDir")):
@@ -173,13 +169,6 @@ ARGUMENTS:
         raise Exception("minGQ must be a positive number, not " + str(minGQ))
 
     try:
-        padding = int(padding)
-        if (padding < 0):
-            raise Exception()
-    except Exception:
-        raise Exception("padding must be a non-negative integer, not " + str(padding))
-
-    try:
         jobs = int(jobs)
         if (jobs <= 0):
             raise Exception()
@@ -203,7 +192,7 @@ ARGUMENTS:
                 raise Exception("plotDir " + plotDir + " doesn't exist and can't be mkdir'd: " + str(e))
 
     # AOK, return everything that's needed
-    return (countsFile, clustsFile, outDir, minGQ, padding, regionsToPlot, plotDir, jobs, madeBy)
+    return (countsFile, clustsFile, outDir, minGQ, regionsToPlot, plotDir, jobs, madeBy)
 
 
 ####################################################
@@ -213,7 +202,7 @@ ARGUMENTS:
 # may be available in the log
 def main(argv):
     # parse, check and preprocess arguments
-    (countsFile, clustsFile, outDir, minGQ, padding, regionsToPlot, plotDir, jobs, madeBy) = parseArgs(argv)
+    (countsFile, clustsFile, outDir, minGQ, regionsToPlot, plotDir, jobs, madeBy) = parseArgs(argv)
 
     # args seem OK, start working
     logger.debug("called with: " + " ".join(argv[1:]))
@@ -350,7 +339,7 @@ def main(argv):
 
         callCNVsOneCluster(clustExonFPMs, clustIntergenicFPMs, samplesOfInterest, clustSamples,
                            clustExons, exonsToPlot, plotDir, clusterID, isHaploid, minGQ,
-                           clust2vcf[clusterID], padding, madeBy, refVcfFile, jobs)
+                           clust2vcf[clusterID], madeBy, refVcfFile, jobs)
 
     thisTime = time.time()
     logger.info("all clusters done,  in %.1fs", thisTime - startTime)
@@ -383,7 +372,7 @@ def main(argv):
 #   for all chromosomes where the exons are located (eg chrX and chrY in men)
 # - minGQ: float, minimum Genotype Quality (GQ)
 # - vcfFile: name of VCF file to create
-# - padding, madeBy: for printCallsFile
+# - madeBy: for printCallsFile
 # - refVcfFile: name of VCF file holding calls for the "reference" cluster that
 #   is FITWITH for clusterID if any ('' if clusterID is a reference cluster itself,
 #   ie it has no FITWITH), if non-empty it MUST exist ie we need to make calls for
@@ -393,7 +382,7 @@ def main(argv):
 # Produce vcfFile, return nothing.
 def callCNVsOneCluster(exonFPMs, intergenicFPMs, samplesOfInterest, sampleIDs, exons,
                        exonsToPlot, plotDir, clusterID, isHaploid, minGQ, vcfFile,
-                       padding, madeBy, refVcfFile, jobs):
+                       madeBy, refVcfFile, jobs):
     # sanity
     if (refVcfFile != '') and (not os.path.isfile(refVcfFile)):
         logger.error("sanity: callCNVs for cluster %s but it needs VCF %s of its ref cluster!",
@@ -472,7 +461,7 @@ def callCNVsOneCluster(exonFPMs, intergenicFPMs, samplesOfInterest, sampleIDs, e
 
     # print CNVs for this cluster as a VCF file
     callCNVs.callsFile.printCallsFile(vcfFile, CNVs, FPMsSOIs, CN2means, sampleIDs, exons,
-                                      padding, madeBy, refVcfFile, minGQ, clusterID)
+                                      madeBy, refVcfFile, minGQ, clusterID)
 
     logger.info("cluster %s - all done, total time: %.1fs", clusterID, thisTime - startTimeCluster)
     return()

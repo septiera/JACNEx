@@ -33,9 +33,12 @@ logger = logging.getLogger(__name__)
 ###############################################################################
 ##########################################
 # printCallsFile:
-# print CNVs for a single cluster in VCF format. GQs of FITWITH clusters are
-# "recalibrated" in order to obtain similar numbers of calls of each CNVType as
-# in their reference cluster.
+# print CNVs for a single cluster in VCF format.
+# GQs of FITWITH clusters are "recalibrated" in order to obtain similar numbers
+# of calls of each CNVType as in their reference cluster.
+# POS is the middle of the interval between end of prev CALLED exon and start
+# of first CNV exon; similarly, END= is the middle of the interval between end
+# of last CNV exon and start of next CALLED exon.
 #
 # Args:
 # - outFile (str): name of VCF file to create. Will be squashed if pre-exists,
@@ -50,13 +53,12 @@ logger = logging.getLogger(__name__)
 #   the CN2 model of exon e for the cluster, or 0 if exon is NOCALL
 # - samples: list of nbSamples sampleIDs (==strings)
 # - exons: list of nbExons exons, one exon is a list [CHR, START, END, EXONID]
-# - padding (int): padding bases used
 # - madeBy (str): Name + version of program that made the CNV calls
 # - refVcfFile (str): name (with path) of the VCF file for the reference cluster (ie
 #   cluster without FITWITHs) that serves as FITWITH for the current cluster, if any
 # - minGQ: float, minimum Genotype Quality (GQ)
 # - clusterID (str): id of current cluster (for logging)
-def printCallsFile(outFile, CNVs, FPMs, CN2Means, samples, exons, padding, madeBy, refVcfFile, minGQ, clusterID):
+def printCallsFile(outFile, CNVs, FPMs, CN2Means, samples, exons, madeBy, refVcfFile, minGQ, clusterID):
     # max GQ to produce in the VCF
     maxGQ = 100
 
@@ -110,13 +112,30 @@ def printCallsFile(outFile, CNVs, FPMs, CN2Means, samples, exons, padding, madeB
     for CNV in CNVs:
         (cn, startExi, endExi, qualScore, sampleIndex) = CNV
         chrom = exons[startExi][0]
-        pos = exons[startExi][1]
-        if (pos == 0):
-            logger.warning("exon %s START <= padding, cannot remove padding -> using POS=0 in VCF",
-                           exons[startExi][3])
+
+        # POS: need prev called exon
+        prevCalled = startExi - 1
+        while ((prevCalled > 0) and (CN2Means[prevCalled] == 0)):
+            prevCalled -= 1
+        if (exons[prevCalled][0] == chrom) and (CN2Means[prevCalled] != 0):
+            # middle between end of prev called exon and start of CNV
+            pos = round((exons[prevCalled][2] + exons[startExi][1]) / 2)
         else:
-            pos += padding
-        end = exons[endExi][2] - padding
+            # no prev called exon on chrom, exceptionally POS = start of
+            # first (padded) CNV exon
+            pos = exons[startExi][1]
+
+        # END: similar to POS, need next called exon
+        nextCalled = endExi + 1
+        while ((nextCalled < len(CN2Means)) and (CN2Means[nextCalled] == 0)):
+            nextCalled += 1
+        if (nextCalled < len(CN2Means)) and (exons[nextCalled][0] == chrom):
+            # middle between end of CNV and start of next called exon
+            end = round((exons[endExi][2] + exons[nextCalled][1]) / 2)
+        else:
+            # no next called exon on chrom, exceptionally END = end of
+            # last (padded) CNV exon
+            end = exons[endExi][2]
 
         if cn <= 1:
             svtype = "DEL"
@@ -124,9 +143,11 @@ def printCallsFile(outFile, CNVs, FPMs, CN2Means, samples, exons, padding, madeB
             svtype = "DUP"
         alt = '<' + svtype + '>'
 
-        # VCF spec says we should use POS = pos-1 and REF = the ref genome's base at pos-1,
-        # use N so we are compliant
-        vcfStart = [chrom, str(pos - 1), ".", "N", alt, ".", ".", f"SVTYPE={svtype};END={end}", "GT:GQ:FR"]
+        # VCF spec says POS and REF should correspond to the last base before
+        # the variant, but we don't know the breakpoints... POS is our best
+        # guess and can be used as-is, and REF doesn't matter -> just use REF=N
+        # so we are spec-compliant
+        vcfStart = [chrom, str(pos), ".", "N", alt, ".", ".", f"SVTYPE={svtype};END={end}", "GT:GQ:FR"]
 
         if vcfStart != prevVcfStart:
             if len(prevVcfStart) > 0:
