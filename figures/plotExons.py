@@ -161,7 +161,7 @@ def plotExons(exons, exonsToPlot, Ecodes, exonFPMs, samplesOfInterest, isHaploid
     current_time = datetime.datetime.now().strftime("%y%m%d_%H-%M-%S")
     numExons = len(exonsToPlot)
     plotFile = os.path.join(plotDir, f'{clusterID}_plotExons_{numExons}_{current_time}.pdf')
-    with matplotlib.backends.backend_pdf(plotFile) as matplotFile:
+    with matplotlib.backends.backend_pdf.PdfPages(plotFile) as matplotFile:
         matplotlib.pyplot.ioff()
 
         # number of bins based on the number of samples.
@@ -235,10 +235,10 @@ def plotHistogramAndPdfs(fpmSOI, fpmNonSOI, bins, x, pdfs, fpmCn0, exons, thisEx
     ECodeSTR = {1: 'CALLED-WITHOUT-CN1', 0: 'CALLED', -3: 'CN2-LOW-SUPPORT', -4: 'CN0-TOO-CLOSE'}
     limY = 5 / 4 * max(pdfs[:, :, 1])
 
-    fig = matplotlib.pyplot.figure(figsize=(15, 10))
+    fig = matplotlib.pyplot.figure(figsize=(8, 6))
 
     # Plot histogram for non-SOI samples
-    if fpmNonSOI is not None:
+    if fpmNonSOI:
         matplotlib.pyplot.hist(fpmNonSOI,
                                 bins=bins,
                                 edgecolor='black',
@@ -251,8 +251,7 @@ def plotHistogramAndPdfs(fpmSOI, fpmNonSOI, bins, x, pdfs, fpmCn0, exons, thisEx
                            bins=bins,
                            edgecolor='black',
                            label='FPMs of all samples in cluster',
-                           density=True,
-                           color='grey')
+                           density=True)
 
     # vertical line for uncaptured threshold
     matplotlib.pyplot.axvline(fpmCn0,
