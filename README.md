@@ -4,51 +4,27 @@ The pipeline enables germline Copy Number Variations (CNVs) to be called from hu
 The input data of this pipeline are Binary Alignment Maps (BAM) and Browser Extensible Data (BED) containing the intervals associated with the canonical transcripts.<br>
 For more information how obtaining the different files see https://github.com/ntm/grexome-TIMC-Primary<br>
 
-### EXAMPLE USAGE:
+##### STEP 1 : Prepare the Environment<br>
 
-##### STEP 1 : Fragments counting <br>
+Before running JACNEx, ensure all dependencies are installed, and the environment is set up correctly.<br>
 
-Given a BED of exons and one or more BAM files, count the number of sequenced fragments from each BAM that overlap each exon (+- padding).<br>
-Results are printed to stdout in TSV format: first 4 columns hold the exon definitions after padding and sorting, subsequent columns (one per BAM) hold the counts.<br>
-If a pre-existing counts file produced by this program with the same BED is provided (with --counts), counts for requested BAMs are copied from this file and counting is only performed for the new BAM(s).<br>
-In addition, any support for putative breakpoints is printed to sample-specific TSV.gz files created in BPdir.<br>
+##### STEP 2 : Run JACNEx<br>
 
-Example:
+JACNEx.py orchestrates the entire pipeline, running the necessary steps to count fragments, cluster samples, and call CNVs. This involves the following steps:<br>
+
+1. **Fragments Counting**: Counts the number of sequenced fragments from each BAM file that overlap each exon.<br>
+2. **Samples Clustering**: Normalizes the counts, performs quality control on the samples, and forms the reference clusters.<br>
+3. **Copy Number Calling**: Determines parameters for CN0 and CN2 distributions, excludes non-interpretable exons, calculates likelihoods for each CN state, and applies a Continuous Hidden Markov Model (CO-HMM) to call and group CNVs.<br>
+
+The pipeline also handles intermediate results, quality control checks, and outputs the CNV calls in VCF format.<br>
+
+To run JACNEx.py, use the following command syntax:
 ```
 BAMS="BAMs/sample1.bam,BAMs/sample2.bam"
 BED="Transcripts_Data/ensemblCanonicalTranscripts.bed.gz"
-python JACNEx/s1_countFrags.py --bams $BAMS --bed $BED --tmp /mnt/RamDisk/ --jobs 30 > fragCounts.tsv 2> step1.log
-```
+WORKDIR="/path/to/workDir"
 
-##### STEP 2 : Samples clustering <br>
-
-Given a TSV of exon fragment counts, normalizes the counts (Fragment Per Million), performs quality control on the samples and forms the reference clusters for the call.<br>
-The execution of the default command separates autosomes ("A") and gonosomes ("G") for clustering, to avoid bias (accepted sex chromosomes: X, Y, Z, W).<br>
-Results are printed to stdout in TSV format: 5 columns [clusterID, sampsInCluster, controlledBy, validCluster, clusterStatus]. <br>
-In addition, all graphical support (quality control histogram for each sample and dendogram from clustering) are printed in pdf files created in plotDir.<br>
-
-Example:
-```
-COUNT="fragCounts.tsv"
-python JACNEx/s2_clusterSamps.py --counts $COUNT > resClustering.tsv 2> step2.log
-```
-##### STEP 3 : Copy numbers calls<br>
-Accepts exon fragment count data (from 1_countFrags.py) and sample clustering information (from 2_clusterSamps.py) as input.<br>
-Performs several critical operations:<br>
-    a) Determines parameters for CN0 (half Gaussian) and CN2 (Gaussian) distributions for autosomal and gonosomal exons.<br>
-    b) Excludes non-interpretable exons based on set criteria.<br>
-    c) Calculates likelihoods for each CN state across exons and samples.<br>
-    d) Generates a transition matrix for CN state changes.<br>
-    e) Applies a Hidden Markov Model (HMM) to call and group CNVs.<br>
-    f) Outputs the CNV calls in VCF format.<br>
-The script utilizes multiprocessing for efficient computation and is structured to handle errors and exceptions effectively, providing clear error messages for troubleshooting.<br>
-In addition, pie chart summarising exon filtering are produced as pdf files in plotDir.<br>
-
-Example:
-```
-COUNT="fragCounts.tsv"
-CLUST="clusters.tsv"
-python JACNEx/s3_callCNVs.py --counts $COUNT --clusts $CLUST > callCNVs.vcf 2> step3.log
+python JACNEx.py --bams $BAMS --bed $BED --workDir $WORKDIR 2> jacnex.log
 ```
 
 ### CONFIGURATION:
