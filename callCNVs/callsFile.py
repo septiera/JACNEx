@@ -201,8 +201,9 @@ def printCallsFile(outFile, CNVs, FPMs, CN2Means, samples, exons, BPDir, padding
         # round GQ to nearest int and fragRat to 2 decimals
         vcfGenos[sampleIndex] = f"{geno}:{qualScore:.0f}:{fragRat:.2f}:{bpRange}"
         if (breakPoints != ""):
-            # we have breakpoints for at least one sample, append :BP to FORMAT
-            prevVcfStart += ':BP'
+            # we have breakpoints for at least one sample
+            if not prevVcfStart.endswith(':BP'):
+                prevVcfStart += ':BP'
             vcfGenos[sampleIndex] += f":{breakPoints}"
 
     # print last CNV
