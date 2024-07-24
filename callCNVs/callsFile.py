@@ -206,8 +206,8 @@ def printCallsFile(outFile, CNVs, FPMs, CN2Means, samples, exons, BPDir, padding
             vcfGenos[sampleIndex] += f":{breakPoints}"
 
     # print last CNV
-    if len(prevVcfStart) > 0:
-        toPrint = "\t".join(prevVcfStart + vcfGenos) + "\n"
+    if prevVcfStart != "":
+        toPrint = prevVcfStart + "\t" + "\t".join(vcfGenos) + "\n"
         outFH.write(toPrint)
     outFH.close()
 
