@@ -216,10 +216,12 @@ def findBestPrevCF(countsFilesAll, samples):
 def main(argv):
     # string identifying the current program name (JACNEx) and version, will appear
     # as "##source=" in the VCF
-    JACNEx_version = "JACNEx_dev_version_2024_06"
+    JACNEx_version = "JACNEx_dev_version_2024_07"
     # strings for each step, for log messages / exception names
-    stepNames = ("STEP0 - CHECK/MAKE SUBDIR HIERARCHY -", "STEP1 - COUNT FRAGMENTS -",
+    stepNames = ("STEP0 - CHECK ARGUMENTS AND SUBDIR HIERARCHY -", "STEP1 - COUNT FRAGMENTS -",
                  "STEP2 - CLUSTER SAMPLES -", "STEP3 - CALL CNVs -")
+
+    logger.info("%s STARTING", stepNames[0])
 
     # parse, check and preprocess arguments
     (workDir, step1Args, step2Args, step3Args) = parseArgs(argv)
@@ -349,6 +351,7 @@ def main(argv):
         except Exception as e:
             raise Exception(stepNames[3] + " parseArgs problem: " + str(e))
 
+    logger.info("%s DONE", stepNames[0])
     ######################
     # arguments look OK, starting to work
 
