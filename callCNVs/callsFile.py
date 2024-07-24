@@ -61,6 +61,10 @@ logger = logging.getLogger(__name__)
 def printCallsFile(outFile, CNVs, FPMs, CN2Means, samples, exons, BPDir, padding, madeBy, refVcfFile, minGQ, clusterID):
     # max GQ to produce in the VCF
     maxGQ = 100
+    # min number of aligned fragments supporting given breakpoints to consider
+    # them well-supported, hard-coded here
+    minSupportingFrags = 3
+    BPs = parseBreakpoints(BPDir, samples, minSupportingFrags)
 
     if refVcfFile != "":
         maxCalls = countCallsFromVCF(refVcfFile)
@@ -79,7 +83,7 @@ def printCallsFile(outFile, CNVs, FPMs, CN2Means, samples, exons, BPDir, padding
     toPrint = "##fileformat=VCFv4.3\n"
     toPrint += "##fileDate=" + time.strftime("%y%m%d") + "\n"
     toPrint += "##source=" + madeBy + "\n"
-    toPrint += "##JACNEx_commandLine=" + ' '.join(sys.argv) + "\n"
+    toPrint += "##JACNEx_commandLine=" + os.path.basename(sys.argv[0]) + ' ' + ' '.join(sys.argv[1:]) + "\n"
     # minGQ line must stay in sync with parsing lines in checkPrevVCFs(), if this
     # line changes remember to update checkPrevVCFs()
     toPrint += "##JACNEx_minGQ=" + str(minGQ) + "\n"
@@ -195,8 +199,8 @@ def printCallsFile(outFile, CNVs, FPMs, CN2Means, samples, exons, BPDir, padding
             e2 = exons[nextCalled - 1][1] - 1
         bpRange = str(s1) + '-' + str(e1) + ',' + str(s2) + '-' + str(e2)
 
-        # BP: look for compatible split reads that support breakpoints
-        breakPoints = findBreakpoints(BPDir, samples[sampleIndex], chrom, s1, e1, s2, e2, svtype)
+        # BP: find any split-read-supported breakpoints compatible with this CNV
+        breakPoints = findBreakpoints(BPs, samples[sampleIndex], chrom, svType, s1, e1, s2, e2)
 
         # round GQ to nearest int and fragRat to 2 decimals
         vcfGenos[sampleIndex] = f"{geno}:{qualScore:.0f}:{fragRat:.2f}:{bpRange}"
@@ -358,43 +362,68 @@ def recalibrateGQs(CNVs, numSamples, maxCalls, minGQ, clusterID):
 
 
 ##########################################
+# parseBreakpoints:
+# parse the breakPoints files in subdir BPDir for all specified samples,
+# filter out those supported by less than minSupportingFrags fragments==QNAMES,
+# and return the others as BPs:
+# dict, key==sample and value is a dict with key==chrom and value is a dict
+# with key==svType and value is a list of lists [start, end, countQnames], ie:
+# BPs[sample][chrom][svType] is a list of lists [start, end, countQnames].
+def parseBreakpoints(BPDir, samples, minSupportingFrags):
+    BPs = {}
+
+    for sample in samples:
+        # NOTE: keep filenames in sync with bpFile in s1_countFrags.py
+        bpFile = BPDir + '/' + sample + '.breakPoints.tsv.gz'
+        if (not os.path.isfile(bpFile)):
+            logger.warning("cannot find breakPoints file %s for sample %s, this is unexpected... investigate?",
+                           bpFile, sample)
+            continue
+
+        BPs[sample] = {}
+        bpFH = gzip.open(bpFile, "rt")
+        # check header
+        if (bpFH.readline().rstrip() != "CHR\tSTART\tEND\tCNVTYPE\tCOUNT-QNAMES\tQNAMES"):
+            logger.error("breakPoints file %s has unexpected header, FIX CODE", bpFile)
+            raise Exception('bpFile bad header')
+
+        for line in bpFH:
+            try:
+                (thisChrom, start, end, thisType, countQnames, qnames) = line.rstrip().split("\t")
+                start = int(start)
+                end = int(end)
+                countQnames = int(countQnames)
+            except Exception:
+                logger.error("breakPoints file has line with wrong number of fields: %s", line)
+                raise Exception('bpFile bad line')
+
+            if (countQnames < minSupportingFrags):
+                continue
+
+            if thisChrom not in BPs[sample]:
+                BPs[sample][thisChrom] = {}
+            if thisType not in BPs[sample][thisChrom]:
+                BPs[sample][thisChrom][thisType] = []
+            BPs[sample][thisChrom][thisType].append([start, end, countQnames])
+        bpFH.close()
+    return(BPs)
+
+
+##########################################
 # findBreakpoints:
 # look for split-read-supported breakpoint info that could support a CNV of
-# type svtype, whose breakpoints lie in ranges s1-e1 and s2-e2
-#
-# Returns all putative breakpoints (supported by at least minSupportingFrags) as
-# a single string: comma-separated BP1-BP2-N blocks, where N is the number of
-# supporting fragments
-def findBreakpoints(BPDir, sample, chrom, s1, e1, s2, e2, svType):
-    # min number of aligned fragments supporting given breakpoints to consider
-    # this as acceptable evidence, hard-coded here
-    minSupportingFrags = 3
-    # NOTE: keep filename in sync with bpFile in s1_countFrags.py
-    bpFile = BPDir + '/' + sample + '.breakPoints.tsv.gz'
-    if (not os.path.isfile(bpFile)):
-        logger.warning("cannot find breakPoints file %s for sample %s, this is unexpected... investigate?",
-                       bpFile, sample)
-        return("")
-
-    bpFH = gzip.open(bpFile, "rt")
-    # check header
-    if (bpFH.readline().rstrip() != "CHR\tSTART\tEND\tCNVTYPE\tCOUNT-QNAMES\tQNAMES"):
-        logger.error("breakPoints file %s has unexpected header, FIX CODE", bpFile)
-        raise Exception('bpFile bad header')
-
+# type svtype, whose breakpoints lie in ranges s1-e1 and s2-e2.
+# Breakpoints in BPs are as returned by parseBreakpoints().
+# Returns all putative breakpoints as a single string:
+# comma-separated BP1-BP2-N blocks, where N is the number of supporting fragments
+def findBreakpoints(BPs, sample, chrom, svType, s1, e1, s2, e2):
     breakpoints = []
-    for line in bpFH:
-        try:
-            (thisChrom, start, end, thisType, countQnames, qnames) = line.rstrip().split("\t")
-            start = int(start)
-            end = int(end)
-            countQnames = int(countQnames)
-        except Exception:
-            logger.error("breakPoints file has line with wrong number of fields: %s", line)
-            raise Exception('bpFile bad line')
-
-        if ((thisChrom == chrom) and (start >= s1) and (start <= e1) and (end >= s2) and (end <= e2) and
-            (thisType == svType) and (countQnames >= minSupportingFrags)):
-            breakpoints.append(f"{start}-{end}-{countQnames}")
-    bpFH.close()
+    if (sample in BPs) and (chrom in BPs[sample]) and (svType in BPs[sample][chrom]):
+        for bpInfo in BPs[sample][chrom][svType]:
+            (start, end, countQnames) = bpInfo
+            if ((start >= s1) and (start <= e1) and (end >= s2) and (end <= e2)):
+                breakpoints.append(f"{start}-{end}-{countQnames}")
+            elif (start > e1):
+                # breakpoints in BPFiles are sorted by chrom then start then...
+                break
     return(','.join(breakpoints))

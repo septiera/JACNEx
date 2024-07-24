@@ -346,7 +346,7 @@ def main(argv):
                 countsArray[:, si] = bam2countsRes[1][:]
                 if (len(bam2countsRes[2]) > 0):
                     try:
-                        # NOTE: keep filename in sync with bpFile in callsFile.py:findBreakpoints()
+                        # NOTE: keep filename in sync with bpFile in callsFile.py:parseBreakpoints()
                         bpFile = BPDir + '/' + samples[si] + '.breakPoints.tsv.gz'
                         BPFH = gzip.open(bpFile, "xt", compresslevel=6)
                         BPFH.write(bam2countsRes[2])
