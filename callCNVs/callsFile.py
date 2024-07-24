@@ -107,13 +107,13 @@ def printCallsFile(outFile, CNVs, FPMs, CN2Means, samples, exons, padding, madeB
     # create (up to) 2 VCF lines: for DELs then DUPs -> sort by CNVType
     CNVs.sort(key=lambda CNV: (CNV[1], CNV[2], CNV[0], CNV[4]))
 
-    prevVcfStart = []
+    prevVcfStart = ""
     vcfGenos = []
     for CNV in CNVs:
         (cn, startExi, endExi, qualScore, sampleIndex) = CNV
         chrom = exons[startExi][0]
 
-        # VCF spec says we must use POS = last base before the CNV, ie pos-1
+        # VCF spec says we must use POS = last base before the CNV
         pos = exons[startExi][1] - 1
         if (pos <= 0):
             pos = 0
@@ -124,48 +124,26 @@ def printCallsFile(outFile, CNVs, FPMs, CN2Means, samples, exons, padding, madeB
 
         end = exons[endExi][2] - padding
 
-        # BPR: need prev called exon for upstream range
-        bpr = ""
-        prevCalled = startExi - 1
-        while ((prevCalled > 0) and (CN2Means[prevCalled] == 0) and (exons[prevCalled][0] == chrom)):
-            prevCalled -= 1
-        if (exons[prevCalled][0] == chrom) and (CN2Means[prevCalled] != 0):
-            bpr = str(exons[prevCalled][2] + 1) + "-" + str(pos) + ","
-        else:
-            # no prev called exon on chrom, range starts at POS=0
-            bpr = "0-" + str(pos) + ","
-        # similarly, we need the next called exon for the downstream range
-        nextCalled = endExi + 1
-        while ((nextCalled < len(CN2Means)) and (CN2Means[nextCalled] == 0) and (exons[nextCalled][0] == chrom)):
-            nextCalled += 1
-        if (nextCalled < len(CN2Means)) and (exons[nextCalled][0] == chrom):
-            bpr += str(end + 1) + "-" + str(exons[nextCalled][1] - 1)
-        else:
-            # no next called exon on chrom, range ends at end of last (padded) chrom exon
-            bpr += str(end + 1) + "-" + str(exons[nextCalled - 1][1] - 1)
-
+        # type of CNV
         if cn <= 1:
             svtype = "DEL"
         else:
             svtype = "DUP"
         alt = '<' + svtype + '>'
 
-        # VCF spec says we should use the ref genome's base at pos-1, use N so we are compliant
-        vcfStart = [chrom, str(pos - 1), ".", "N", alt, ".", "PASS", f"SVTYPE={svtype};END={end}", "GT:GQ:FR:BPR"]
+        # VCF spec says we should use the ref genome's base, use N so we are compliant
+        vcfStart = f"{chrom}\t{pos}\t.\tN\t{alt}\t.\tPASS\tSVTYPE={svtype};END={end}\tGT:GQ:FR:BPR"
 
         if vcfStart != prevVcfStart:
-            if len(prevVcfStart) > 0:
-                toPrint = "\t".join(prevVcfStart + vcfGenos) + "\n"
+            if prevVcfStart != "":
+                toPrint = prevVcfStart + "\t" + "\t".join(vcfGenos) + "\n"
                 outFH.write(toPrint)
             prevVcfStart = vcfStart
             # default to all-HomoRef
             vcfGenos = ["0/0"] * len(samples)
 
-        # cap GQ (will round to nearest int later)
-        if qualScore > maxGQ:
-            qualScore = maxGQ
-
-        # calculate FragRatio: average of FPM ratios over all called exons in the CNV
+        # FragRatio: average of FPM ratios over all called exons in the CNV, calculate this
+        # first because we need it for GT of DUPs
         fragRat = 0
         numExons = 0
         for ei in range(startExi, endExi + 1):
@@ -188,8 +166,32 @@ def printCallsFile(outFile, CNVs, FPMs, CN2Means, samples, exons, padding, madeB
         elif (cn == 3) and (fragRat < minFragRatDupHomo):
             geno = "0/1"
 
-        # round qualScore to nearest int with .0f and fragRat to 2 decimals
-        vcfGenos[sampleIndex] = f"{geno}:{qualScore:.0f}:{fragRat:.2f}:{bpr}"
+        # cap GQ (will round to nearest int later)
+        if qualScore > maxGQ:
+            qualScore = maxGQ
+
+        # BPR == s1-e1,s2-e2:
+        e1 = pos
+        s2 = end + 1
+        # for s1 we need prev called exon
+        prevCalled = startExi - 1
+        while ((prevCalled > 0) and (CN2Means[prevCalled] == 0) and (exons[prevCalled][0] == chrom)):
+            prevCalled -= 1
+        if (exons[prevCalled][0] == chrom) and (CN2Means[prevCalled] != 0):
+            s1 = exons[prevCalled][2] + 1
+        else:
+            # no prev called exon on chrom, range starts at POS=0
+            s1 = 0
+        # similarly, for e2 we need the next called exon
+        nextCalled = endExi + 1
+        while ((nextCalled < len(CN2Means)) and (CN2Means[nextCalled] == 0) and (exons[nextCalled][0] == chrom)):
+            nextCalled += 1
+        if (nextCalled < len(CN2Means)) and (exons[nextCalled][0] == chrom):
+            e2 = exons[nextCalled][1] - 1
+        else:
+            # no next called exon on chrom, range ends at end of last exon on chorm
+            e2 = exons[nextCalled - 1][1] - 1
+        bpRange = str(s1) + '-' + str(e1) + ',' + str(s2) + '-' + str(e2)
 
     # print last CNV
     if len(prevVcfStart) > 0:
