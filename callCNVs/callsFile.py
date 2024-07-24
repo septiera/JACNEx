@@ -21,6 +21,7 @@ import gzip
 import logging
 import math
 import numpy
+import os
 import sys
 import time
 
@@ -50,13 +51,14 @@ logger = logging.getLogger(__name__)
 #   the CN2 model of exon e for the cluster, or 0 if exon is NOCALL
 # - samples: list of nbSamples sampleIDs (==strings)
 # - exons: list of nbExons exons, one exon is a list [CHR, START, END, EXONID]
+# - BPDir: dir containing the breakpoint files
 # - padding (int): padding bases used
 # - madeBy (str): Name + version of program that made the CNV calls
 # - refVcfFile (str): name (with path) of the VCF file for the reference cluster (ie
 #   cluster without FITWITHs) that serves as FITWITH for the current cluster, if any
 # - minGQ: float, minimum Genotype Quality (GQ)
 # - clusterID (str): id of current cluster (for logging)
-def printCallsFile(outFile, CNVs, FPMs, CN2Means, samples, exons, padding, madeBy, refVcfFile, minGQ, clusterID):
+def printCallsFile(outFile, CNVs, FPMs, CN2Means, samples, exons, BPDir, padding, madeBy, refVcfFile, minGQ, clusterID):
     # max GQ to produce in the VCF
     maxGQ = 100
 
@@ -89,8 +91,8 @@ def printCallsFile(outFile, CNVs, FPMs, CN2Means, samples, exons, padding, madeB
 ##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
 ##FORMAT=<ID=GQ,Number=1,Type=Integer,Description="Genotype Quality, ie log10(P[sample has CNV] / P[sample is HOMOREF]) rounded to nearest int">
 ##FORMAT=<ID=FR,Number=1,Type=Float,Description="Fragment count Ratio, ie mean (over all overlapped called exons) of the ratio [FPM in sample] / [mean FPM of all HOMOREF samples in cluster]">
-##FORMAT=<ID=BPR,Number=2,Type=String,Description="Breakpoint Ranges, ie ranges of coordinates where upstream and downstream breakpoints should be located">
-
+##FORMAT=<ID=BPR,Number=2,Type=String,Description="BreakPoint Ranges, ie ranges of coordinates containing the upstream and downstream breakpoints">
+##FORMAT=<ID=BP,Number=.,Type=String,Description="Putative BreakPoints based on split reads (when available), formatted as BP1-BP2-N where N is the number of supporting fragments">
 """
     # COULD/SHOULD ADD:
     """
@@ -192,6 +194,16 @@ def printCallsFile(outFile, CNVs, FPMs, CN2Means, samples, exons, padding, madeB
             # no next called exon on chrom, range ends at end of last exon on chorm
             e2 = exons[nextCalled - 1][1] - 1
         bpRange = str(s1) + '-' + str(e1) + ',' + str(s2) + '-' + str(e2)
+
+        # BP: look for compatible split reads that support breakpoints
+        breakPoints = findBreakpoints(BPDir, samples[sampleIndex], chrom, s1, e1, s2, e2, svtype)
+
+        # round GQ to nearest int and fragRat to 2 decimals
+        vcfGenos[sampleIndex] = f"{geno}:{qualScore:.0f}:{fragRat:.2f}:{bpRange}"
+        if (breakPoints != ""):
+            # we have breakpoints for at least one sample, append :BP to FORMAT
+            prevVcfStart += ':BP'
+            vcfGenos[sampleIndex] += f":{breakPoints}"
 
     # print last CNV
     if len(prevVcfStart) > 0:
@@ -342,3 +354,46 @@ def recalibrateGQs(CNVs, numSamples, maxCalls, minGQ, clusterID):
                     clusterID, minGQperCN[0], minGQperCN[1], minGQperCN[3])
 
     return(recalCNVs)
+
+
+##########################################
+# findBreakpoints:
+# look for split-read-supported breakpoint info that could support a CNV of
+# type svtype, whose breakpoints lie in ranges s1-e1 and s2-e2
+#
+# Returns all putative breakpoints (supported by at least minSupportingFrags) as
+# a single string: comma-separated BP1-BP2-N blocks, where N is the number of
+# supporting fragments
+def findBreakpoints(BPDir, sample, chrom, s1, e1, s2, e2, svType):
+    # min number of aligned fragments supporting given breakpoints to consider
+    # this as acceptable evidence, hard-coded here
+    minSupportingFrags = 3
+    # NOTE: keep filename in sync with bpFile in s1_countFrags.py
+    bpFile = BPDir + '/' + sample + '.breakPoints.tsv.gz'
+    if (not os.path.isfile(bpFile)):
+        logger.warning("cannot find breakPoints file %s for sample %s, this is unexpected... investigate?",
+                       bpFile, sample)
+        return("")
+
+    bpFH = gzip.open(bpFile, "rt")
+    # check header
+    if (bpFH.readline().rstrip() != "CHR\tSTART\tEND\tCNVTYPE\tCOUNT-QNAMES\tQNAMES"):
+        logger.error("breakPoints file %s has unexpected header, FIX CODE", bpFile)
+        raise Exception('bpFile bad header')
+
+    breakpoints = []
+    for line in bpFH:
+        try:
+            (thisChrom, start, end, thisType, countQnames, qnames) = line.rstrip().split("\t")
+            start = int(start)
+            end = int(end)
+            countQnames = int(countQnames)
+        except Exception:
+            logger.error("breakPoints file has line with wrong number of fields: %s", line)
+            raise Exception('bpFile bad line')
+
+        if ((thisChrom == chrom) and (start >= s1) and (start <= e1) and (end >= s2) and (end <= e2) and
+            (thisType == svType) and (countQnames >= minSupportingFrags)):
+            breakpoints.append(f"{start}-{end}-{countQnames}")
+    bpFH.close()
+    return(','.join(breakpoints))
