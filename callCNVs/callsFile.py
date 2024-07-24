@@ -151,7 +151,7 @@ def printCallsFile(outFile, CNVs, FPMs, CN2Means, samples, exons, padding, madeB
         alt = '<' + svtype + '>'
 
         # VCF spec says we should use the ref genome's base at pos-1, use N so we are compliant
-        vcfStart = [chrom, str(pos - 1), ".", "N", alt, ".", "PASS", f"SVTYPE={svtype};END={end}", "GT:GQ:FR"]
+        vcfStart = [chrom, str(pos - 1), ".", "N", alt, ".", "PASS", f"SVTYPE={svtype};END={end}", "GT:GQ:FR:BPR"]
 
         if vcfStart != prevVcfStart:
             if len(prevVcfStart) > 0:
@@ -188,7 +188,7 @@ def printCallsFile(outFile, CNVs, FPMs, CN2Means, samples, exons, padding, madeB
         elif (cn == 3) and (fragRat < minFragRatDupHomo):
             geno = "0/1"
 
-        # round qualScore to nearest int with .0f
+        # round qualScore to nearest int with .0f and fragRat to 2 decimals
         vcfGenos[sampleIndex] = f"{geno}:{qualScore:.0f}:{fragRat:.2f}:{bpr}"
 
     # print last CNV
