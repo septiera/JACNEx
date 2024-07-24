@@ -63,6 +63,7 @@ def parseArgs(argv):
 
     # mandatory args
     countsFile = ""
+    BPDir = ""
     clustsFile = ""
     outDir = ""
     madeBy = ""
@@ -88,15 +89,17 @@ manner for each cluster. It comprises the following steps:
     - calculate likelihoods for each CN state in each sample+exon;
     - estimate prior probabilities for each state;
     - build a matrix of base transition probabilities - the actual exon-specific transition
-    probabilities will be smoothed following a power law depending on the inter-exon distance,
-    from these base transition probabilities to the prior probabilities;
+    probabilities depend on the inter-exon distances, and result from a smoothing (following
+    a power law of the inter-exon distance) from these base transition probabilities to the
+    prior probabilities;
     - apply the Viterbi algorithm to identify the most likely path (in the CN states), and
     finally call the CNVs.
-In addition, plots of FPMs and CN0-CN3+ models for specified samples+exons (if any) are
+In addition, plots of FPMs and CN0-CN3+ models for specified samples+exons (if specified) are
 produced in plotDir.
 
 ARGUMENTS:
     --counts [str]: NPZ file with the fragment counts, as produced by s1_countFrags.py
+    --BPDir [str] : dir containing the breakpoint files, as produced by s1_countFrags.py
     --clusters [str]: TSV file with the cluster definitions, as produced by s2_clusterSamps.py
     --outDir [str]: subdir where VCF files will be created (one vcf.gz per cluster); the subdir
                 must exist, pre-existing VCFs will be renamed *_old.vcf.gz, pre-existing
@@ -111,7 +114,7 @@ ARGUMENTS:
     -h , --help: display this help and exit\n"""
 
     try:
-        opts, args = getopt.gnu_getopt(argv[1:], 'h', ["help", "counts=", "clusters=", "outDir=", "minGQ=",
+        opts, args = getopt.gnu_getopt(argv[1:], 'h', ["help", "counts=", "BPDir=", "clusters=", "outDir=", "minGQ=",
                                                        "madeBy=", "padding=", "regionsToPlot=", "plotDir=", "jobs="])
     except getopt.GetoptError as e:
         raise Exception(e.msg + ". Try " + scriptName + " --help")
@@ -124,6 +127,8 @@ ARGUMENTS:
             sys.exit(0)
         elif (opt in ("--counts")):
             countsFile = value
+        elif (opt in ("--BPDir")):
+            BPDir = value
         elif (opt in ("--clusters")):
             clustsFile = value
         elif opt in ("--outDir"):
@@ -149,6 +154,11 @@ ARGUMENTS:
         raise Exception("you must provide a counts file with --counts. Try " + scriptName + " --help.")
     elif (not os.path.isfile(countsFile)):
         raise Exception("countsFile " + countsFile + " doesn't exist.")
+
+    if BPDir == "":
+        raise Exception("you must provide a BPDir file with --BPDir. Try " + scriptName + " --help.")
+    elif (not os.path.isdir(BPDir)):
+        raise Exception("BPDir " + BPDir + " doesn't exist.")
 
     if clustsFile == "":
         raise Exception("you must provide a clustering results file with --clusters. Try " + scriptName + " --help.")
@@ -203,7 +213,7 @@ ARGUMENTS:
                 raise Exception("plotDir " + plotDir + " doesn't exist and can't be mkdir'd: " + str(e))
 
     # AOK, return everything that's needed
-    return (countsFile, clustsFile, outDir, minGQ, padding, regionsToPlot, plotDir, jobs, madeBy)
+    return (countsFile, BPDir, clustsFile, outDir, minGQ, padding, regionsToPlot, plotDir, jobs, madeBy)
 
 
 ####################################################
@@ -213,7 +223,7 @@ ARGUMENTS:
 # may be available in the log
 def main(argv):
     # parse, check and preprocess arguments
-    (countsFile, clustsFile, outDir, minGQ, padding, regionsToPlot, plotDir, jobs, madeBy) = parseArgs(argv)
+    (countsFile, BPDir, clustsFile, outDir, minGQ, padding, regionsToPlot, plotDir, jobs, madeBy) = parseArgs(argv)
 
     # args seem OK, start working
     logger.debug("called with: " + " ".join(argv[1:]))
@@ -350,7 +360,7 @@ def main(argv):
 
         callCNVsOneCluster(clustExonFPMs, clustIntergenicFPMs, samplesOfInterest, clustSamples,
                            clustExons, exonsToPlot, plotDir, clusterID, isHaploid, minGQ,
-                           clust2vcf[clusterID], padding, madeBy, refVcfFile, jobs)
+                           clust2vcf[clusterID], BPDir, padding, madeBy, refVcfFile, jobs)
 
     thisTime = time.time()
     logger.info("all clusters done,  in %.1fs", thisTime - startTime)
@@ -383,7 +393,7 @@ def main(argv):
 #   for all chromosomes where the exons are located (eg chrX and chrY in men)
 # - minGQ: float, minimum Genotype Quality (GQ)
 # - vcfFile: name of VCF file to create
-# - padding, madeBy: for printCallsFile
+# - BPDir, padding, madeBy: for printCallsFile
 # - refVcfFile: name of VCF file holding calls for the "reference" cluster that
 #   is FITWITH for clusterID if any ('' if clusterID is a reference cluster itself,
 #   ie it has no FITWITH), if non-empty it MUST exist ie we need to make calls for
@@ -393,7 +403,7 @@ def main(argv):
 # Produce vcfFile, return nothing.
 def callCNVsOneCluster(exonFPMs, intergenicFPMs, samplesOfInterest, sampleIDs, exons,
                        exonsToPlot, plotDir, clusterID, isHaploid, minGQ, vcfFile,
-                       padding, madeBy, refVcfFile, jobs):
+                       BPDir, padding, madeBy, refVcfFile, jobs):
     # sanity
     if (refVcfFile != '') and (not os.path.isfile(refVcfFile)):
         logger.error("sanity: callCNVs for cluster %s but it needs VCF %s of its ref cluster!",
@@ -472,7 +482,7 @@ def callCNVsOneCluster(exonFPMs, intergenicFPMs, samplesOfInterest, sampleIDs, e
 
     # print CNVs for this cluster as a VCF file
     callCNVs.callsFile.printCallsFile(vcfFile, CNVs, FPMsSOIs, CN2means, sampleIDs, exons,
-                                      padding, madeBy, refVcfFile, minGQ, clusterID)
+                                      BPDir, padding, madeBy, refVcfFile, minGQ, clusterID)
 
     logger.info("cluster %s - all done, total time: %.1fs", clusterID, thisTime - startTimeCluster)
     return()

@@ -236,7 +236,7 @@ def main(argv):
         except Exception:
             raise Exception(stepNames[0] + " countsDir " + countsDir + "doesn't exist and can't be mkdir'd")
 
-    # step1: breakpoint results are saved in BPDir
+    # breakpoint results are saved in BPDir during step1, and used by step3
     BPDir = workDir + '/Breakpoints/'
     if not os.path.isdir(BPDir):
         try:
@@ -337,6 +337,7 @@ def main(argv):
 
         step3Args.extend(["--madeBy", JACNEx_version])
         step3Args.extend(["--outDir", vcfDir])
+        step3Args.extend(["--BPDir", BPDir])
 
         step3ArgsForCheck = step3Args.copy()
         step3ArgsForCheck.extend(["--counts", bogusFile])
