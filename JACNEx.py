@@ -120,9 +120,9 @@ Step 3 optional arguments, defaults should be OK:
             sys.exit(0)
         elif opt in ("--workDir"):
             workDir = value
-        elif opt in ("--bams", "--bams-from", "--bed", "--tmp", "--maxGap", "--samtools", "--padding"):
+        elif opt in ("--bams", "--bams-from", "--bed", "--tmp", "--maxGap", "--samtools"):
             step1Args.extend([opt, value])
-        elif opt in ("--jobs"):
+        elif opt in ("--jobs", "--padding"):
             step1Args.extend([opt, value])
             step3Args.extend([opt, value])
         elif opt in ("--minSamps"):
@@ -149,6 +149,8 @@ Step 3 optional arguments, defaults should be OK:
 
     if "--minGQ" not in step3Args:
         step3Args.extend(["--minGQ", minGQ])
+    if "--padding" not in step3Args:
+        step3Args.extend(["--padding", padding])
     if "--jobs" not in step3Args:
         step3Args.extend(["--jobs", jobs])
 

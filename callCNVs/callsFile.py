@@ -33,12 +33,9 @@ logger = logging.getLogger(__name__)
 ###############################################################################
 ##########################################
 # printCallsFile:
-# print CNVs for a single cluster in VCF format.
-# GQs of FITWITH clusters are "recalibrated" in order to obtain similar numbers
-# of calls of each CNVType as in their reference cluster.
-# POS is the middle of the interval between end of prev CALLED exon and start
-# of first CNV exon; similarly, END= is the middle of the interval between end
-# of last CNV exon and start of next CALLED exon.
+# print CNVs for a single cluster in VCF format. GQs of FITWITH clusters are
+# "recalibrated" in order to obtain similar numbers of calls of each CNVType as
+# in their reference cluster.
 #
 # Args:
 # - outFile (str): name of VCF file to create. Will be squashed if pre-exists,
@@ -53,12 +50,13 @@ logger = logging.getLogger(__name__)
 #   the CN2 model of exon e for the cluster, or 0 if exon is NOCALL
 # - samples: list of nbSamples sampleIDs (==strings)
 # - exons: list of nbExons exons, one exon is a list [CHR, START, END, EXONID]
+# - padding (int): padding bases used
 # - madeBy (str): Name + version of program that made the CNV calls
 # - refVcfFile (str): name (with path) of the VCF file for the reference cluster (ie
 #   cluster without FITWITHs) that serves as FITWITH for the current cluster, if any
 # - minGQ: float, minimum Genotype Quality (GQ)
 # - clusterID (str): id of current cluster (for logging)
-def printCallsFile(outFile, CNVs, FPMs, CN2Means, samples, exons, madeBy, refVcfFile, minGQ, clusterID):
+def printCallsFile(outFile, CNVs, FPMs, CN2Means, samples, exons, padding, madeBy, refVcfFile, minGQ, clusterID):
     # max GQ to produce in the VCF
     maxGQ = 100
 
@@ -91,6 +89,8 @@ def printCallsFile(outFile, CNVs, FPMs, CN2Means, samples, exons, madeBy, refVcf
 ##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
 ##FORMAT=<ID=GQ,Number=1,Type=Integer,Description="Genotype Quality, ie log10(P[sample has CNV] / P[sample is HOMOREF]) rounded to nearest int">
 ##FORMAT=<ID=FR,Number=1,Type=Float,Description="Fragment count Ratio, ie mean (over all overlapped called exons) of the ratio [FPM in sample] / [mean FPM of all HOMOREF samples in cluster]">
+##FORMAT=<ID=BPR,Number=2,Type=String,Description="Breakpoint Ranges, ie ranges of coordinates where upstream and downstream breakpoints should be located">
+
 """
     # COULD/SHOULD ADD:
     """
@@ -113,29 +113,36 @@ def printCallsFile(outFile, CNVs, FPMs, CN2Means, samples, exons, madeBy, refVcf
         (cn, startExi, endExi, qualScore, sampleIndex) = CNV
         chrom = exons[startExi][0]
 
-        # POS: need prev called exon
+        # VCF spec says we must use POS = last base before the CNV, ie pos-1
+        pos = exons[startExi][1] - 1
+        if (pos <= 0):
+            pos = 0
+            logger.warning("exon %s START <= padding, cannot remove padding -> using POS=0 in VCF",
+                           exons[startExi][3])
+        else:
+            pos += padding
+
+        end = exons[endExi][2] - padding
+
+        # BPR: need prev called exon for upstream range
+        bpr = ""
         prevCalled = startExi - 1
-        while ((prevCalled > 0) and (CN2Means[prevCalled] == 0)):
+        while ((prevCalled > 0) and (CN2Means[prevCalled] == 0) and (exons[prevCalled][0] == chrom)):
             prevCalled -= 1
         if (exons[prevCalled][0] == chrom) and (CN2Means[prevCalled] != 0):
-            # middle between end of prev called exon and start of CNV
-            pos = round((exons[prevCalled][2] + exons[startExi][1]) / 2)
+            bpr = str(exons[prevCalled][2] + 1) + "-" + str(pos) + ","
         else:
-            # no prev called exon on chrom, exceptionally POS = start of
-            # first (padded) CNV exon
-            pos = exons[startExi][1]
-
-        # END: similar to POS, need next called exon
+            # no prev called exon on chrom, range starts at POS=0
+            bpr = "0-" + str(pos) + ","
+        # similarly, we need the next called exon for the downstream range
         nextCalled = endExi + 1
-        while ((nextCalled < len(CN2Means)) and (CN2Means[nextCalled] == 0)):
+        while ((nextCalled < len(CN2Means)) and (CN2Means[nextCalled] == 0) and (exons[nextCalled][0] == chrom)):
             nextCalled += 1
         if (nextCalled < len(CN2Means)) and (exons[nextCalled][0] == chrom):
-            # middle between end of CNV and start of next called exon
-            end = round((exons[endExi][2] + exons[nextCalled][1]) / 2)
+            bpr += str(end + 1) + "-" + str(exons[nextCalled][1] - 1)
         else:
-            # no next called exon on chrom, exceptionally END = end of
-            # last (padded) CNV exon
-            end = exons[endExi][2]
+            # no next called exon on chrom, range ends at end of last (padded) chrom exon
+            bpr += str(end + 1) + "-" + str(exons[nextCalled - 1][1] - 1)
 
         if cn <= 1:
             svtype = "DEL"
@@ -143,11 +150,9 @@ def printCallsFile(outFile, CNVs, FPMs, CN2Means, samples, exons, madeBy, refVcf
             svtype = "DUP"
         alt = '<' + svtype + '>'
 
-        # VCF spec says POS and REF should correspond to the last base before
-        # the variant, but we don't know the breakpoints... POS is our best
-        # guess and can be used as-is, and REF doesn't matter -> just use REF=N
-        # so we are spec-compliant
-        vcfStart = [chrom, str(pos), ".", "N", alt, ".", ".", f"SVTYPE={svtype};END={end}", "GT:GQ:FR"]
+        # VCF spec says we should use POS = pos-1 and REF = the ref genome's base at pos-1,
+        # use N so we are compliant
+        vcfStart = [chrom, str(pos - 1), ".", "N", alt, ".", ".", f"SVTYPE={svtype};END={end}", "GT:GQ:FR"]
 
         if vcfStart != prevVcfStart:
             if len(prevVcfStart) > 0:
@@ -157,7 +162,7 @@ def printCallsFile(outFile, CNVs, FPMs, CN2Means, samples, exons, madeBy, refVcf
             # default to all-HomoRef
             vcfGenos = ["0/0"] * len(samples)
 
-        # cap GQ and round to nearest int
+        # cap GQ (will round to nearest int later)
         if qualScore > maxGQ:
             qualScore = maxGQ
 
@@ -185,7 +190,7 @@ def printCallsFile(outFile, CNVs, FPMs, CN2Means, samples, exons, madeBy, refVcf
             geno = "0/1"
 
         # round qualScore to nearest int with .0f
-        vcfGenos[sampleIndex] = f"{geno}:{qualScore:.0f}:{fragRat:.2f}"
+        vcfGenos[sampleIndex] = f"{geno}:{qualScore:.0f}:{fragRat:.2f}:{bpr}"
 
     # print last CNV
     if len(prevVcfStart) > 0:
