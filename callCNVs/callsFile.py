@@ -128,13 +128,13 @@ def printCallsFile(outFile, CNVs, FPMs, CN2Means, samples, exons, BPDir, padding
 
         # type of CNV
         if cn <= 1:
-            svtype = "DEL"
+            svType = "DEL"
         else:
-            svtype = "DUP"
-        alt = '<' + svtype + '>'
+            svType = "DUP"
+        alt = '<' + svType + '>'
 
         # VCF spec says we should use the ref genome's base, use N so we are compliant
-        vcfStart = f"{chrom}\t{pos}\t.\tN\t{alt}\t.\tPASS\tSVTYPE={svtype};END={end}\tGT:GQ:FR:BPR"
+        vcfStart = f"{chrom}\t{pos}\t.\tN\t{alt}\t.\tPASS\tSVTYPE={svType};END={end}\tGT:GQ:FR:BPR"
 
         if vcfStart != prevVcfStart:
             if prevVcfStart != "":
@@ -294,16 +294,16 @@ def countCallsFromVCF(vcfFile):
             CN3perSample = numpy.zeros(numSamples, dtype=numpy.uint32)
         elif not line.startswith('#'):
             calls = line.rstrip().split("\t")
-            svtype = calls[4]
+            alt = calls[4]
             del calls[:9]
             for si in range(len(calls)):
                 if calls[si].startswith('0/1:'):
-                    if svtype == '<DEL>':
+                    if alt == '<DEL>':
                         CN1perSample[si] += 1
                     else:
                         CN3perSample[si] += 1
                 elif calls[si].startswith('1/1'):
-                    if svtype == '<DEL>':
+                    if alt == '<DEL>':
                         CN0perSample[si] += 1
                     else:
                         CN3perSample[si] += 1
