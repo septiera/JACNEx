@@ -25,7 +25,8 @@ import os
 import re
 import sys
 import tempfile
-import traceback
+# only when debugging:
+# import traceback
 
 ####### JACNEx modules
 import s1_countFrags
@@ -218,7 +219,7 @@ def main(argv):
     # as "##source=" in the VCF
     JACNEx_version = "JACNEx_dev_version_2024_07"
     # strings for each step, for log messages / exception names
-    stepNames = ("STEP0 - CHECK ARGUMENTS AND SUBDIR HIERARCHY -", "STEP1 - COUNT FRAGMENTS -",
+    stepNames = ("STEP0 - CHECK ARGS, SUBDIRS AND PRE-EXISTING COUNTFILES -", "STEP1 - COUNT FRAGMENTS -",
                  "STEP2 - CLUSTER SAMPLES -", "STEP3 - CALL CNVs -")
 
     logger.info("%s STARTING", stepNames[0])
@@ -408,7 +409,7 @@ if __name__ == '__main__':
     # configure logging, sub-modules will inherit this config
     logging.basicConfig(format='%(levelname)s %(asctime)s %(name)s: %(message)s',
                         datefmt='%Y-%m-%d %H:%M:%S',
-                        level=logging.DEBUG)
+                        level=logging.INFO)
     # set up logger: we want script name rather than 'root'
     logger = logging.getLogger(scriptName)
 
@@ -417,6 +418,6 @@ if __name__ == '__main__':
     except Exception as e:
         # details on the issue should be in the exception name, print it to stderr and die
         sys.stderr.write("ERROR in " + scriptName + " : " + str(e) + "\n")
-        # actually while we debug things I want the tracebacks
-        traceback.print_exc()
+        # when we debug things we want tracebacks -> uncomment below
+        # traceback.print_exc()
         sys.exit(1)
