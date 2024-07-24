@@ -431,6 +431,7 @@ def callCNVsOneCluster(exonFPMs, intergenicFPMs, samplesOfInterest, sampleIDs, e
     logger.debug("cluster %s - done fitCN2 in %.1fs", clusterID, thisTime - startTime)
     startTime = thisTime
 
+    logger.info("cluster %s - done fitting CN0 and CN2 models to data", clusterID)
     # log stats with the percentages of exons in each QC class
     logExonStats(Ecodes, clusterID)
 
@@ -444,19 +445,22 @@ def callCNVsOneCluster(exonFPMs, intergenicFPMs, samplesOfInterest, sampleIDs, e
     likelihoods = callCNVs.likelihoods.calcLikelihoods(FPMsSOIs, CN0sigma, Ecodes,
                                                        CN2means, CN2sigmas, isHaploid, False)
     thisTime = time.time()
-    logger.debug("cluster %s - done calcLikelihoods in %.1fs", clusterID, thisTime - startTime)
+    logger.info("cluster %s - done calcLikelihoods in %.1fs", clusterID, thisTime - startTime)
     startTime = thisTime
 
     # plot exonsToPlot if any
     figures.plotExons.plotExons(exons, exonsToPlot, Ecodes, exonFPMs, samplesOfInterest, isHaploid,
                                 CN0sigma, CN2means, CN2sigmas, fpmCn0, clusterID, plotDir)
+    thisTime = time.time()
+    logger.info("cluster %s - done plotExons in %.1fs", clusterID, thisTime - startTime)
+    startTime = thisTime
 
     # calculate priors (maxing the posterior probas iteratively until convergence)
     priors = callCNVs.priors.calcPriors(likelihoods)
     formattedPriors = "  ".join(["%.2e" % x for x in priors])
     logger.debug("cluster %s - priors = %s", clusterID, formattedPriors)
     thisTime = time.time()
-    logger.debug("cluster %s - done calcPriors in %.1fs", clusterID, thisTime - startTime)
+    logger.info("cluster %s - done calcPriors in %.1fs", clusterID, thisTime - startTime)
     startTime = thisTime
 
     # calculate metrics for building and adjusting the transition matrix, ignoring
@@ -468,14 +472,15 @@ def callCNVsOneCluster(exonFPMs, intergenicFPMs, samplesOfInterest, sampleIDs, e
     formattedMatrix = "\n\t".join(["\t".join([f"{cell:.2e}" for cell in row]) for row in transMatrix])
     logger.debug("cluster %s - base transition matrix =\n\t%s", clusterID, formattedMatrix)
     thisTime = time.time()
-    logger.debug("cluster %s - done buildBaseTransMatrix in %.1fs", clusterID, thisTime - startTime)
+    logger.info("cluster %s - done buildBaseTransMatrix in %.1fs", clusterID, thisTime - startTime)
     startTime = thisTime
 
     # call CNVs with the Viterbi algorithm
     CNVs = callCNVs.viterbi.viterbiAllSamples(likelihoods, sampleIDs, exons, transMatrix,
                                               priors, adjustTransMatDMax, minGQ, jobs)
     thisTime = time.time()
-    logger.debug("cluster %s - done viterbiAllSamples in %.1fs", clusterID, thisTime - startTime)
+    logger.info("cluster %s - done viterbiAllSamples in %.1fs", clusterID, thisTime - startTime)
+    startTime = thisTime
 
     # set CN2means of NOCALL exons to 0
     CN2means[Ecodes < 0] = 0
@@ -484,6 +489,7 @@ def callCNVsOneCluster(exonFPMs, intergenicFPMs, samplesOfInterest, sampleIDs, e
     callCNVs.callsFile.printCallsFile(vcfFile, CNVs, FPMsSOIs, CN2means, sampleIDs, exons,
                                       BPDir, padding, madeBy, refVcfFile, minGQ, clusterID)
 
+    thisTime = time.time()
     logger.info("cluster %s - all done, total time: %.1fs", clusterID, thisTime - startTimeCluster)
     return()
 
@@ -502,7 +508,7 @@ def logExonStats(Ecodes, clusterID):
     statusCnt *= (100 / totalCnt)
     toPrint = "exon QC summary for cluster " + clusterID + ":\n\t"
     toPrint += "%.1f%% CALLED, %.1f%% CALLED-WITHOUT-CN1, " % (statusCnt[1], statusCnt[0])
-    toPrint += "%.1f%% NOT-CAPTURED, %.1f%% FIT-CN2-FAILED, " % (statusCnt[2], statusCnt[3])
+    toPrint += "%.1f%% NOT-CAPTURED,\n\t%.1f%% FIT-CN2-FAILED, " % (statusCnt[2], statusCnt[3])
     toPrint += "%.1f%% CN2-LOW-SUPPORT, %.1f%% CN0-TOO-CLOSE" % (statusCnt[4], statusCnt[5])
     logger.info("%s", toPrint)
 
