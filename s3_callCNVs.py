@@ -410,7 +410,7 @@ def callCNVsOneCluster(exonFPMs, intergenicFPMs, samplesOfInterest, sampleIDs, e
                      clusterID, refVcfFile)
         raise Exception("sanity: make VCFs of ref clusters first!")
 
-    logger.info("cluster %s - starting to work", clusterID)
+    logger.info("cluster %s - STARTING TO WORK", clusterID)
     startTime = time.time()
     startTimeCluster = startTime
 
@@ -490,7 +490,7 @@ def callCNVsOneCluster(exonFPMs, intergenicFPMs, samplesOfInterest, sampleIDs, e
                                       BPDir, padding, madeBy, refVcfFile, minGQ, clusterID)
 
     thisTime = time.time()
-    logger.info("cluster %s - all done, total time: %.1fs", clusterID, thisTime - startTimeCluster)
+    logger.info("cluster %s - ALL DONE, total time: %.1fs", clusterID, thisTime - startTimeCluster)
     return()
 
 
@@ -506,7 +506,7 @@ def logExonStats(Ecodes, clusterID):
     for s in range(6):
         statusCnt[s] = numpy.count_nonzero(Ecodes == 1 - s)
     statusCnt *= (100 / totalCnt)
-    toPrint = "exon QC summary for cluster " + clusterID + ":\n\t"
+    toPrint = "cluster " + clusterID + " - exon QC summary:\n\t"
     toPrint += "%.1f%% CALLED, %.1f%% CALLED-WITHOUT-CN1, " % (statusCnt[1], statusCnt[0])
     toPrint += "%.1f%% NOT-CAPTURED,\n\t%.1f%% FIT-CN2-FAILED, " % (statusCnt[2], statusCnt[3])
     toPrint += "%.1f%% CN2-LOW-SUPPORT, %.1f%% CN0-TOO-CLOSE" % (statusCnt[4], statusCnt[5])
