@@ -220,12 +220,13 @@ def printCallsFile(outFile, CNVs, FPMs, CN2Means, samples, exons, BPDir, padding
 
 ##########################################
 # mergeVCFs:
-# given a list of VCF files corresponding to different clusters, produce a
-# single VCF file with all samples, one variant per line:
+# given a list of samples and a list of VCF files corresponding to different
+# clusters (each concerning a subset of the samples), produce a single VCF
+# file with data columns in the "samples" order, one variant per line:
 # -> identical chrom-pos-ALT-END from different files get merged;
 # -> if chrom-pos-ALT-END is not present in a file, samples from this file get 0/0.
 #
-# NOTE this strategy isn't great: it pretends that all clusters examined
+# NOTE this strategy isn't perfect: it pretends that all clusters examined
 # the same exons, but in reality some exons may be CALL in some clusters and
 # NOCALL in others (eg different capture kits)... A better strategy could be to
 # set 0/0 to samples whose cluster has at least one CALLED exon overlapping the
@@ -238,11 +239,12 @@ def printCallsFile(outFile, CNVs, FPMs, CN2Means, samples, exons, BPDir, padding
 # For now we'll just use 0/0.
 #
 # Args:
+# - samples: list of strings == sampleIDs
 # - infiles: list of strings, each string is a VCF filename (with path) produced
 #   by JACNEx for one cluster
 # - outFile (str): name of VCF file to create. Will be squashed if pre-exists,
 #   can include a path (which must exist), will be gzipped if outFile ends with '.gz'
-def mergeVCFs(inFiles, outFile):
+def mergeVCFs(samples, inFiles, outFile):
     try:
         if outFile.endswith(".gz"):
             outFH = gzip.open(outFile, "xt", compresslevel=6)
@@ -252,10 +254,47 @@ def mergeVCFs(inFiles, outFile):
         logger.error("Cannot (gzip-)open merged VCF file %s: %s", outFile, e)
         raise Exception('cannot (gzip-)open merged VCF')
 
-    # headers: copy from first autosome VCF, discard headers from other VCFs but
-    # build list of samples (present in any VCF) and build a mapping: for each inFile,
-    # clust2global[infile][i] = j means that sample in column i in infile is
-    # the sample in column j in outFile
+    # inFH: key=inFile, value= filehandle open for reading
+    inFH = {}
+    try:
+        for inFile in inFiles:
+            if inFile.endswith(".gz"):
+                inFH[inFile] = gzip.open(inFile, "rt")
+            else:
+                inFH[inFile] = open(inFile, "r")
+    except Exception as e:
+        logger.error("in mergeVCFs, cannot open inFile %s: %s", inFile, e)
+        raise Exception('mergeVCFs cannot open inFile')
+
+    # samp2i: key==sampleID, value==index of sampleID in samples
+    samp2i = {}
+    for si in range(samples):
+        samp2i[samples[si]] = si
+
+    # headers: copy from first VCF, discard headers from other VCFs but
+    # build a mapping: for each inFile, clust2global[infile][i] = j means that
+    # sample in data column i in infile is the sample in data column j in outFile
+    clust2global = {}
+    toPrint = ""
+    for ifi in range(inFiles):
+        thisFile = inFiles[ifi]
+        for line in inFH[thisFile]:
+            if line.startswith('#CHROM'):
+                fields = line.rstrip().split("\t")
+                # first 9 fields are #CHROM...FORMAT (VCF spec)
+                if (ifi == 0):
+                    for i in range(9):
+                        toPrint += fields[i] + "\t"
+                    toPrint += "\t".join(samples) + "\n"
+                del fields[:9]
+                clust2global[thisFile] = [None] * len(fields)
+                for i in range(len(fields)):
+                    clust2global[thisFile][i] = samp2i[fields[i]]
+                break
+            elif (ifi == 0):
+                toPrint += line
+            # else this is a non-#CHROM header line and not the first file, ignore
+    outFH.write(toPrint)
 
     # merge autosome VCFs, then merge gonosome VCFs
 
