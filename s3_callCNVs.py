@@ -40,6 +40,7 @@ import countFrags.countsFile
 import clusterSamps.clustFile
 import callCNVs.callsFile
 import callCNVs.likelihoods
+import callCNVs.mergeVCFs
 import callCNVs.priors
 import callCNVs.transitions
 import callCNVs.viterbi
@@ -66,6 +67,7 @@ def parseArgs(argv):
     BPDir = ""
     clustsFile = ""
     outDir = ""
+    outFile = ""
     madeBy = ""
     # optional args with default values
     minGQ = 2.0
@@ -101,9 +103,10 @@ ARGUMENTS:
     --counts [str]: NPZ file with the fragment counts, as produced by s1_countFrags.py
     --BPDir [str] : dir containing the breakpoint files, as produced by s1_countFrags.py
     --clusters [str]: TSV file with the cluster definitions, as produced by s2_clusterSamps.py
-    --outDir [str]: subdir where VCF files will be created (one vcf.gz per cluster); the subdir
-                must exist, pre-existing VCFs will be renamed *_old.vcf.gz, pre-existing
-                *old* files will be squashed
+    --outDir [str]: subdir where VCF files will be created (one vcf.gz per cluster and one
+                global merged vcf.gz); the subdir must exist, pre-existing cluster VCFs will be
+                renamed *_old.vcf.gz, pre-existing *old* files will be squashed
+    --outFile [str]: name of global merged VCF to create in outDir, pre-existing will be squashed
     --minGQ [float]: minimum Genotype Quality score, default : """ + str(minGQ) + """
     --madeBy [str]: program name + version to print as "source=" in the produced VCF.
     --padding [int]: number of bps used to pad the exon coordinates, default : """ + str(padding) + """
@@ -114,8 +117,8 @@ ARGUMENTS:
     -h , --help: display this help and exit\n"""
 
     try:
-        opts, args = getopt.gnu_getopt(argv[1:], 'h', ["help", "counts=", "BPDir=", "clusters=", "outDir=", "minGQ=",
-                                                       "madeBy=", "padding=", "regionsToPlot=", "plotDir=", "jobs="])
+        opts, args = getopt.gnu_getopt(argv[1:], 'h', ["help", "counts=", "BPDir=", "clusters=", "outDir=", "outFile=",
+                                                       "minGQ=", "madeBy=", "padding=", "regionsToPlot=", "plotDir=", "jobs="])
     except getopt.GetoptError as e:
         raise Exception(e.msg + ". Try " + scriptName + " --help")
     if len(args) != 0:
@@ -133,6 +136,8 @@ ARGUMENTS:
             clustsFile = value
         elif opt in ("--outDir"):
             outDir = value
+        elif opt in ("--outFile"):
+            outFile = value
         elif opt in ("--minGQ"):
             minGQ = value
         elif opt in ("--madeBy"):
@@ -169,6 +174,12 @@ ARGUMENTS:
         raise Exception("you must provide an outDir with --outDir. Try " + scriptName + " --help")
     elif (not os.path.isdir(outDir)):
         raise Exception("outDir " + outDir + " doesn't exist")
+
+    if outFile == "":
+        raise Exception("you must provide an outFile with --outFile. Try " + scriptName + " --help.")
+    elif (os.path.isfile(outDir + '/' + outFile)):
+        logger.warning("outFile %s pre-exists, squashing it", outDir + '/' + outFile)
+        os.unlink(outDir + '/' + outFile)
 
     if madeBy == "":
         raise Exception("you must provide a madeBy string with --madeBy. Try " + scriptName + " --help")
@@ -213,7 +224,7 @@ ARGUMENTS:
                 raise Exception("plotDir " + plotDir + " doesn't exist and can't be mkdir'd: " + str(e))
 
     # AOK, return everything that's needed
-    return (countsFile, BPDir, clustsFile, outDir, minGQ, padding, regionsToPlot, plotDir, jobs, madeBy)
+    return (countsFile, BPDir, clustsFile, outDir, outFile, minGQ, padding, regionsToPlot, plotDir, jobs, madeBy)
 
 
 ####################################################
@@ -223,7 +234,7 @@ ARGUMENTS:
 # may be available in the log
 def main(argv):
     # parse, check and preprocess arguments
-    (countsFile, BPDir, clustsFile, outDir, minGQ, padding, regionsToPlot, plotDir, jobs, madeBy) = parseArgs(argv)
+    (countsFile, BPDir, clustsFile, outDir, outFile, minGQ, padding, regionsToPlot, plotDir, jobs, madeBy) = parseArgs(argv)
 
     # args seem OK, start working
     logger.debug("called with: " + " ".join(argv[1:]))
@@ -364,6 +375,19 @@ def main(argv):
 
     thisTime = time.time()
     logger.info("all clusters done,  in %.1fs", thisTime - startTime)
+    startTime = thisTime
+
+    # merge the per-cluster VCFs
+    mergedVCF = outDir + '/' + outFile
+    clusterVCFs = []
+    for clustID in clustIsValid.keys():
+        if clustIsValid[clustID]:
+            clusterVCFs.append(clust2vcf[clustID])
+    callCNVs.mergeVCFs.mergeVCFs(samples, clusterVCFs, mergedVCF)
+
+    thisTime = time.time()
+    logger.info("merging per-cluster VCFs done,  in %.1fs", thisTime - startTime)
+
 
 
 ###############################################################################
@@ -533,7 +557,7 @@ def checkPrevVCFs(outDir, clust2vcf, clust2samps, fitWith, clustIsValid, minGQ):
         raise Exception("cannot unlink old VCF file in %s : %s", outDir, repr(e))
     # rename prev VCFs as *old
     try:
-        for prevFile in glob.glob(outDir + '/CNVs_*.vcf.gz'):
+        for prevFile in glob.glob(outDir + '/CNVs_[AG]_*.vcf.gz'):
             newName = prevFile.replace('.vcf.gz', '_old.vcf.gz')
             os.rename(prevFile, newName)
     except Exception as e:
@@ -542,7 +566,7 @@ def checkPrevVCFs(outDir, clust2vcf, clust2samps, fitWith, clustIsValid, minGQ):
     # type and whose samples exactly match those of clusterID (ignoring fitWiths for now)
     # and whose minGQ is good
     clust2prev = {}
-    for prevFile in glob.glob(outDir + '/CNVs_*_old.vcf.gz'):
+    for prevFile in glob.glob(outDir + '/CNVs_[AG]_*_old.vcf.gz'):
         prevFH = gzip.open(prevFile, "rt")
         minGQmatch = False
         for line in prevFH:

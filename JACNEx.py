@@ -340,6 +340,8 @@ def main(argv):
 
         step3Args.extend(["--madeBy", JACNEx_version])
         step3Args.extend(["--outDir", vcfDir])
+        vcfFile = 'CNVs_' + dateStamp + '.vcf.gz'
+        step3Args.extend(["--outFile", vcfFile])
         step3Args.extend(["--BPDir", BPDir])
 
         step3ArgsForCheck = step3Args.copy()
