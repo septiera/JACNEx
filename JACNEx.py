@@ -73,7 +73,7 @@ def parseArgs(argv):
     minSamps = "20"
 
     # default values of step3 optional args, as strings
-    minGQ = "2.0"
+    minGQ = "5.0"
 
     usage = "NAME:\n" + scriptName + """\n
 DESCRIPTION:

@@ -70,7 +70,7 @@ def parseArgs(argv):
     outFile = ""
     madeBy = ""
     # optional args with default values
-    minGQ = 2.0
+    minGQ = 5.0
     padding = 10
     regionsToPlot = ""
     plotDir = ""
