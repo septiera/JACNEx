@@ -194,7 +194,7 @@ def plotExons(exons, exonsToPlot, Ecodes, exonFPMs, samplesOfInterest, isHaploid
                 fpmNonSOI = None
 
             plotHistogramAndPdfs(fpmSOI, fpmNonSOI, bins, x, pdfs, fpmCn0, exons, thisExon, clusterID,
-                                Ecodes, exonsToPlot, labels, isHaploid, matplotFile)
+                                 Ecodes, exonsToPlot, labels, isHaploid, matplotFile)
 
 
 ###############################################################################
@@ -240,12 +240,11 @@ def plotHistogramAndPdfs(fpmSOI, fpmNonSOI, bins, x, pdfs, fpmCn0, exons, thisEx
     # Plot histogram for non-SOI samples
     if fpmNonSOI:
         matplotlib.pyplot.hist(fpmNonSOI,
-                                bins=bins,
-                                edgecolor='black',
-                                label='FPMs of other samples in cluster',
-                                density=True,
-                                color='darkgrey')
-
+                               bins=bins,
+                               edgecolor='black',
+                               label='FPMs of other samples in cluster',
+                               density=True,
+                               color='darkgrey')
 
     matplotlib.pyplot.hist(fpmSOI,
                            bins=bins,
